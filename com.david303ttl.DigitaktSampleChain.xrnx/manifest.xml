@@ -4,7 +4,7 @@
   <Id>com.david303ttl.DigitaktSampleChain</Id>
   <Version>1.0</Version>
   <Author>David303ttl</Author>
-  <Name>DigitaktChainExporter</Name>
+  <Name>DigitaktSampleChain</Name>
   <Category>Sample Export</Category>
   <Description>Export tool for Digitakt</Description>
   <ScriptProperties>
