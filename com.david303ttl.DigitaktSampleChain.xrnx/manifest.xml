@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.1</ApiVersion>
+  <Id>com.david303ttl.DigitaktSampleChain</Id>
+  <Version>1.0</Version>
+  <Author>David303ttl</Author>
+  <Name>DigitaktChainExporter</Name>
+  <Category>Sample Export</Category>
+  <Description>Export tool for Digitakt</Description>
+  <ScriptProperties>
+    <SupportSampleEditor>true</SupportSampleEditor>
+  </ScriptProperties>
+</RenoiseScriptingTool>
