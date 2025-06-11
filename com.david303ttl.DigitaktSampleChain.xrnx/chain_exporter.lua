@@ -49,7 +49,16 @@ end
 -- @param ms The duration of the fade-out in milliseconds.
 -- @return The sample data table with fade-out applied.
 local function apply_fade(data, ms)
+  if not data or type(data) ~= "table" or #data == 0 then
+    renoise.app():show_error("apply_fade: Invalid or empty sample data received.")
+    return data
+  end
+
   local fade_samples = math.floor(sample_rate * (ms / 1000))
+  if fade_samples <= 0 or fade_samples >= #data then
+    return data
+  end
+
   for i = #data - fade_samples + 1, #data do
     local scale = (i - (#data - fade_samples)) / fade_samples
     data[i] = data[i] * (1.0 - scale)
