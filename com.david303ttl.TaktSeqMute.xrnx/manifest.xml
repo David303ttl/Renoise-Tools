@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.1</ApiVersion>
+  <Id>com.david303ttl.TaktSeqMute</Id>
+  <Version>1.0</Version>
+  <Author>David303ttl</Author>
+  <Name>TaktSeqMute</Name>
+  <Category>Midi Tool</Category>
+  <Description>Mute to level while external sequencing. Midi CC</Description>
+  <ScriptProperties>
+    <SupportSampleEditor>true</SupportSampleEditor>
+  </ScriptProperties>
+  <Preferences>
+    <Preference name="midi_input_device" type="string"  value=""     />
+    <Preference name="midi_output_device" type="string"  value=""     />
+  </Preferences>
+</RenoiseScriptingTool>
