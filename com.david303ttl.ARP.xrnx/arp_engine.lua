@@ -246,7 +246,10 @@ function M.plan_fractional_release(chords, length, units, mode, octaves, gate)
     local finish=start+duration
     local off_line=math.floor(finish/256)+1
     if off_line>length then
-      return nil,"Final gate exceeds pattern boundary; use a compatible pattern length"
+      return nil,string.format(
+        "Gate from %02X+%02X needs OFF at %02X+%02X outside %d-line pattern; "
+        .."increase pattern length or use Gate 100%%",
+        note.line-1,note.delay,off_line-1,finish%256,length)
     end
     if off_line==note.line then
       return nil,"Note-Off shares a pattern line with its Note-On. "
