@@ -11,7 +11,7 @@ package.loaded.pattern_writer={
     return {action="Generated",notes=4,offs=4}
   end
 }
-local song=setmetatable({selected_track_index=1},
+local song=setmetatable({selected_track_index=1,selected_instrument_index=1,instruments={{name="Bass"}}},
   {__eq=function() error("Renoise Song equality is unsupported") end})
 local last_dialog
 renoise={
@@ -31,7 +31,7 @@ renoise={
   } end,
   ViewBuilder=function()
     local b={}
-    for _,kind in ipairs({"text","popup","column","row","button"}) do
+    for _,kind in ipairs({"text","popup","column","row","button","checkbox"}) do
       b[kind]=function(_,obj)
         if kind=="button" then button_callback=obj.notifier end
         if kind=="text" and obj.width==455 then status=obj end
@@ -50,7 +50,7 @@ new_document()
 button_callback()
 assert(calls==1 and status.text=="Song changed. Close and reopen ARP.")
 local prior=last_dialog
-song=setmetatable({selected_track_index=1},
+song=setmetatable({selected_track_index=1,selected_instrument_index=1,instruments={{name="Bass"}}},
   {__eq=function() error("Renoise Song equality is unsupported") end})
 gui.show()
 assert(prior.closed and last_dialog~=prior)
