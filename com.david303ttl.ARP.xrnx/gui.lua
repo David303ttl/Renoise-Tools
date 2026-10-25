@@ -118,8 +118,9 @@ function M.show()
         elseif not result then
           status.text=err or "Generation was refused."
         else
-          status.text=string.format("%s %d notes, %d note-offs in %d columns.",
-            result.action,result.notes,result.offs,result.columns)
+          local column_word = result.columns == 1 and "column" or "columns"
+          status.text=string.format("%s %d notes, %d note-offs in %d %s.",
+            result.action,result.notes,result.offs,result.columns,column_word)
         end
       end
     },

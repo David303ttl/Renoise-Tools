@@ -8,7 +8,7 @@ package.loaded.pattern_writer={
   generate=function(source,dest)
     calls=calls+1
     assert(source==1 and dest==2)
-    return {action="Generated",notes=4,offs=4}
+    return {action="Generated",notes=4,offs=4,columns=1}
   end
 }
 local song=setmetatable({selected_track_index=1,selected_instrument_index=1,instruments={{name="Bass"}}},
@@ -45,7 +45,7 @@ local gui=require("gui")
 gui.show()
 assert(button_callback and new_document)
 button_callback()
-assert(calls==1 and status.text=="Generated 4 notes, 4 note-offs.")
+assert(calls==1 and status.text=="Generated 4 notes, 4 note-offs in 1 column.")
 new_document()
 button_callback()
 assert(calls==1 and status.text=="Song changed. Close and reopen ARP.")
