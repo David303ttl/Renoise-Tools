@@ -57,11 +57,11 @@ function M.show()
   local rate_choice, mode_choice, octave_choice, gate_choice = 3,1,1,4
   local status = vb:text {
     width=455,
-    text="Sub-line rates work at 100% gate; add note columns if prompted."
+    text="Sub-line short gates use exact OFFs when representable."
   }
   local content = vb:column {
     margin=12, spacing=8,
-    vb:text { text="ARP.xrnx v0.5 - instrument routing + sub-line timing" },
+    vb:text { text="ARP.xrnx v0.7 - guarded release timing" },
     vb:row {
       vb:text {text="Source"},
       vb:popup {width=290,items=labels,value=source_choice,
@@ -96,7 +96,7 @@ function M.show()
       vb:text {text="Gate"},
       vb:popup {width=110,items={"25%","50%","75%","100%"},value=gate_choice,
         notifier=function(v) gate_choice=v end},
-      vb:text {text="Sub-line rates currently require Gate 100%."}
+      vb:text {text="Unsupported short gates are refused safely."}
     },
     vb:button {
       text="Generate / Regenerate (verified destination only)",
@@ -125,7 +125,7 @@ function M.show()
       end
     },
     status,
-    vb:text {text="Sub-line timing uses multiple note columns and delay values."}
+    vb:text {text="Short gates preserve note release; no automatic tick-cuts."}
   }
   dialog=renoise.app():show_custom_dialog("ARP",content)
   dialog_generation = opened_generation
