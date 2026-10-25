@@ -74,8 +74,8 @@ local function make_song(lines)
   }
   local song={
     tracks={
-      {type=1,name="Source",visible_note_columns=2},
-      {type=1,name="Dest",visible_note_columns=2}
+      {type=1,name="Source",visible_note_columns=2,max_note_columns=12,delay_column_visible=false},
+      {type=1,name="Dest",visible_note_columns=2,max_note_columns=12,delay_column_visible=false}
     },
     transport={lpb=4}, selected_pattern=pattern,
     selected_pattern_index=1,selected_instrument_index=1,
@@ -97,7 +97,7 @@ assert(first.action=="Generated" and first.notes==4 and first.offs==4)
 assert(dst:line(1).note_columns[1].note_value==60)
 assert(dst:line(3).note_columns[1].note_value==120)
 assert(dst:line(5).note_columns[1].note_value==64)
-assert(current_song.tool_data:find("ARP04",1,true)==1)
+assert(current_song.tool_data:find("ARP05",1,true)==1)
 local data=current_song.tool_data
 local registry,parse_err=owned.load(data)
 assert(registry,parse_err)
@@ -160,4 +160,78 @@ local declined,decline_err=writer.generate(1,2,"1/4","up",1,50)
 assert(not declined and decline_err:find("note=72"))
 assert(dst:line(1).note_columns[1].note_value==72)
 
-print("ARP v0.4 gate, ownership and regeneration tests passed")
+
+-- v0.5 fractional-rate scheduling, including multiple columns per line.
+assert(engine.rate_subunits(4,"1/32")==128)
+assert(engine.rate_subunits(1,"1/32")==32)
+assert(engine.rate_subunits(3,"1/8")==384)
+local fractional,fractional_err,nc,oc,cols=engine.plan_subline(
+  {{line=1,notes={60,64},instrument=0}},2,128,"up",1,100)
+assert(fractional,fractional_err)
+assert(nc==4 and oc==0 and cols==2)
+assert(fractional[1].line==1 and fractional[1].column==1
+  and fractional[1].delay==0 and fractional[1].note==60)
+assert(fractional[2].line==1 and fractional[2].column==2
+  and fractional[2].delay==128 and fractional[2].note==64)
+assert(fractional[3].line==2 and fractional[3].column==1)
+local too_short,short_err=engine.plan_subline(
+  {{line=1,notes={60},instrument=0}},4,128,"up",1,50)
+assert(not too_short and short_err:find("100%%"))
+
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+dst=current_song.selected_pattern.tracks[2]
+src:line(1).note_columns[1].note_value=60
+src:line(1).note_columns[1].instrument_value=0
+src:line(1).note_columns[2].note_value=64
+local sub_result,sub_error=writer.generate(1,2,"1/32","up",1,100)
+assert(sub_result,sub_error)
+assert(sub_result.notes==32 and sub_result.columns==2)
+assert(dst:line(1).note_columns[1].note_value==60)
+assert(dst:line(1).note_columns[2].note_value==64)
+assert(dst:line(1).note_columns[2].delay_value==128)
+assert(current_song.tracks[2].delay_column_visible==true)
+local fractional_meta=current_song.tool_data
+local parsed,parse_error=owned.load(fractional_meta)
+assert(parsed,parse_error)
+assert(parsed[1].columns==2)
+assert(owned.save(parsed)==fractional_meta)
+
+-- A changing rate can free its previously generated second column safely.
+local slower,slower_error=writer.generate(1,2,"1/4","up",1,50)
+assert(slower,slower_error)
+assert(slower.action=="Regenerated" and slower.columns==1)
+assert(dst:line(1).note_columns[2].is_empty)
+assert(dst:line(3).note_columns[1].note_value==120)
+assert(dst:line(1).note_columns[1].note_value==60)
+
+-- Any unowned note in a needed second column blocks regeneration.
+dst:line(1).note_columns[2].note_value=79
+local prevented,prevented_err=writer.generate(1,2,"1/32","up",1,100)
+assert(not prevented and prevented_err:find("column 2"))
+assert(dst:line(1).note_columns[2].note_value==79)
+
+-- A 1/32 note with Gate 50% cannot be represented and must not mutate.
+local unsupported_sub,unsupported_sub_err=writer.generate(
+  1,2,"1/32","up",1,50)
+assert(not unsupported_sub and unsupported_sub_err:find("100%%"))
+assert(dst:line(1).note_columns[1].note_value==60)
+
+-- More demanding rates require a suitably configured destination.
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+src:line(1).note_columns[1].note_value=60
+current_song.tracks[2].visible_note_columns=1
+local missing_cols,columns_err=writer.generate(1,2,"1/32","up",1,100)
+assert(not missing_cols and columns_err:find("2 visible"))
+assert(current_song.selected_pattern.tracks[2]:line(1).note_columns[1].is_empty)
+
+-- Legacy v0.4 ownership loads into v0.5 keyed snapshot records.
+local old="ARP04\nR|1|2|1|16|41|42|43|1,60,0,255,255,0,0,0\n"
+local migrated,migration_error=owned.load(old)
+assert(migrated,migration_error)
+assert(migrated[1].columns==1)
+assert(migrated[1].events[owned.key(1,1)][1]==60)
+assert(owned.save(migrated):find("ARP05",1,true)==1)
+
+print("ARP v0.4/v0.5 gate, sub-line timing and ownership tests passed")

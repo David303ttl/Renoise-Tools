@@ -45,11 +45,11 @@ function M.show()
   local rate_choice, mode_choice, octave_choice, gate_choice = 3,1,1,4
   local status = vb:text {
     width=455,
-    text="Gate 100% keeps v0.3 note-on-only behavior; shorter gates add OFFs."
+    text="Sub-line rates work at 100% gate; add note columns if prompted."
   }
   local content = vb:column {
     margin=12, spacing=8,
-    vb:text { text="ARP.xrnx v0.4 - gate + safe regeneration" },
+    vb:text { text="ARP.xrnx v0.5 - sub-line timing" },
     vb:row {
       vb:text {text="Source"},
       vb:popup {width=290,items=labels,value=source_choice,
@@ -75,7 +75,7 @@ function M.show()
       vb:text {text="Gate"},
       vb:popup {width=110,items={"25%","50%","75%","100%"},value=gate_choice,
         notifier=function(v) gate_choice=v end},
-      vb:text {text="Short gates need a separate OFF line."}
+      vb:text {text="Sub-line rates currently require Gate 100%."}
     },
     vb:button {
       text="Generate / Regenerate (verified destination only)",
@@ -96,13 +96,13 @@ function M.show()
         elseif not result then
           status.text=err or "Generation was refused."
         else
-          status.text=string.format("%s %d notes, %d note-offs.",
-            result.action,result.notes,result.offs)
+          status.text=string.format("%s %d notes, %d note-offs in %d columns.",
+            result.action,result.notes,result.offs,result.columns)
         end
       end
     },
     status,
-    vb:text {text="Ownership is saved with XRNS; edits prevent regeneration."}
+    vb:text {text="Sub-line timing uses multiple note columns and delay values."}
   }
   dialog=renoise.app():show_custom_dialog("ARP",content)
   dialog_generation = opened_generation

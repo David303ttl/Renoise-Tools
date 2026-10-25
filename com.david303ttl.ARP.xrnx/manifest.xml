@@ -2,9 +2,9 @@
 <RenoiseScriptingTool doc_version="0">
   <ApiVersion>6.2</ApiVersion>
   <Id>com.david303ttl.ARP</Id>
-  <Version>0.4</Version>
+  <Version>0.5</Version>
   <Author>David303ttl</Author>
   <Name>ARP</Name>
   <Category>Sequencer</Category>
-  <Description>Experimental gate and safe-regeneration pattern arpeggiator</Description>
+  <Description>Experimental LPB-independent ARP with safe regeneration</Description>
 </RenoiseScriptingTool>

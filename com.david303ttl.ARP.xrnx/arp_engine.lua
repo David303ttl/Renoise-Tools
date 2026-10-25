@@ -124,4 +124,54 @@ function M.plan(chords, length, rate, mode, octaves, gate)
   return events, nil, #ons, off_count
 end
 
+-- Precise musical rate in 1/256-line units, independent of global LPB.
+function M.rate_subunits(lpb, division)
+  assert(type(lpb)=="number" and lpb>=1 and lpb%1==0,"invalid LPB")
+  local denominator=({["1/4"]=4,["1/8"]=8,
+    ["1/16"]=16,["1/32"]=32})[division]
+  if not denominator then return nil,"Unsupported musical division" end
+  local units=4*lpb*256/denominator
+  if units<1 or units%1~=0 then
+    return nil,"Rate is below Renoise delay resolution"
+  end
+  return units
+end
+
+-- Schedule non-integer-line note-ons. Every event on a shared line gets
+-- its own note column, ordered from left to right by delay.
+-- At 100% gate no OFFs are emitted, matching the legacy note-on mode.
+-- Short gates with fractional rates are intentionally not implemented:
+-- a voice cannot receive ON and OFF on the same line/column.
+function M.plan_subline(chords, length, units, mode, octaves, gate)
+  if gate~=100 then
+    return nil,"Sub-line rate currently supports Gate 100% only"
+  end
+  local events,per_line,max_columns={}, {}, 0
+  for i,chord in ipairs(chords) do
+    local start=(chord.line-1)*256
+    local next_chord=chords[i+1]
+    local finish=next_chord and (next_chord.line-1)*256 or length*256
+    local ordered=M.expand_notes(chord.notes,octaves,mode)
+    local cursor=1
+    if #ordered>0 then
+      for tick=start,finish-1,units do
+        local line=math.floor(tick/256)+1
+        local delay=tick%256
+        local column=(per_line[line] or 0)+1
+        per_line[line]=column
+        if column>max_columns then max_columns=column end
+        if max_columns>12 then
+          return nil,"Musical rate needs more than Renoise's 12 note columns"
+        end
+        events[#events+1]={
+          line=line,column=column,delay=delay,kind="on",
+          note=ordered[cursor],instrument=chord.instrument
+        }
+        cursor=cursor%#ordered+1
+      end
+    end
+  end
+  return events,nil,#events,0,max_columns
+end
+
 return M
