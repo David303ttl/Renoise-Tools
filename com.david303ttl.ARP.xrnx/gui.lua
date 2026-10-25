@@ -78,7 +78,7 @@ function M.show()
         notifier=function(v) instrument_choice=v end}
     },
     vb:row {
-      vb:text {text="Mute source track after generation"},
+      vb:text {text="Disable source note playback (OFF)"},
       vb:checkbox {value=true,notifier=function(v) mute_source=v end}
     },
     vb:row {
