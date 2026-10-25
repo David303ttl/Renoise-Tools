@@ -86,8 +86,13 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
       for _,event in ipairs(plan) do event.column=1 end
     end
   else
-    plan,plan_error,note_count,off_count,required_columns=
-      engine.plan_subline(chords,length,units,mode,octaves,gate)
+    if gate==100 then
+      plan,plan_error,note_count,off_count,required_columns=
+        engine.plan_subline(chords,length,units,mode,octaves,gate)
+    else
+      plan,plan_error,note_count,off_count,required_columns=
+        engine.plan_fractional_release(chords,length,units,mode,octaves,gate)
+    end
   end
   if not plan then return nil,plan_error end
   if #plan==0 then return nil,"No ARP events to generate" end
