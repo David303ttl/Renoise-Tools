@@ -293,9 +293,9 @@ assert(current_song.tracks[1].mute_state==renoise.Track.MUTE_STATE_ACTIVE)
 -- Gate 50% needs a same-line OFF and must reject. A fractional 1/8
 -- at LPB 3 and Gate 75% can create a delayed next-line OFF.
 local fractional_ok,fe,n_on,n_off,ncols=engine.plan_fractional_release(
-  {{line=1,notes={60,64},instrument=0}},8,384,"up",1,75)
+  {{line=1,notes={60,64},instrument=0}},9,384,"up",1,75)
 assert(fractional_ok,fe)
-assert(n_on==5 and n_off==5 and ncols>=1)
+assert(n_on==6 and n_off==6 and ncols>=1)
 assert(fractional_ok[1].kind=="on" and fractional_ok[2].kind=="off")
 local fractional_no,fr_err=engine.plan_fractional_release(
   {{line=1,notes={60},instrument=0}},8,128,"up",1,50)
