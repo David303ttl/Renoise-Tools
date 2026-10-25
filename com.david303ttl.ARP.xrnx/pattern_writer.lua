@@ -76,6 +76,21 @@ function M.generate(source_index, dest_index, division, mode, octaves, gate)
   local previous, old_index = owned.find(
     records, song.selected_pattern_index, dest_index)
 
+  -- A user may have manually cleared all generated events, leaving only
+  -- an obsolete ownership snapshot in XRNS. An *entirely empty* first
+  -- note column is always safe to adopt again: there is nothing to erase.
+  -- Retain old_index so new metadata replaces the stale entry atomically.
+  local completely_empty = true
+  for line=1,length do
+    if not destination:line(line).note_columns[1].is_empty then
+      completely_empty = false
+      break
+    end
+  end
+  if previous and completely_empty then
+    previous = nil
+  end
+
   if previous then
     if previous.source ~= source_index
       or previous.length ~= length
@@ -90,8 +105,17 @@ function M.generate(source_index, dest_index, division, mode, octaves, gate)
     local cell = destination:line(line).note_columns[1]
     local expected = previous and previous.events[line] or nil
     if not owned.matches(cell,expected) then
+      local reason = expected and "owned output differs from saved snapshot"
+        or "column is not completely empty"
       return nil, string.format(
-        "Destination column changed at line %02d; refusing overwrite",line-1)
+        "Destination column changed at line %02d: %s. "
+        .. "Current values note=%s instr=%s vol=%s pan=%s delay=%s fx=%s/%s. "
+        .. "No overwrite.",
+        line-1, reason,
+        tostring(cell.note_value), tostring(cell.instrument_value),
+        tostring(cell.volume_value), tostring(cell.panning_value),
+        tostring(cell.delay_value), tostring(cell.effect_number_value),
+        tostring(cell.effect_amount_value))
     end
   end
 
