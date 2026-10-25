@@ -64,7 +64,7 @@ end
 
 local current_song
 renoise={
-  Track={TRACK_TYPE_SEQUENCER=1,MUTE_STATE_ACTIVE=1,MUTE_STATE_MUTED=2},
+  Track={TRACK_TYPE_SEQUENCER=1,MUTE_STATE_ACTIVE=1,MUTE_STATE_MUTED=2,MUTE_STATE_OFF=3},
   song=function() return current_song end
 }
 local function make_song(lines)
@@ -249,11 +249,11 @@ local routed,routed_err=writer.generate(1,2,"1/4","up",1,100,2,true)
 assert(routed,routed_err)
 assert(dst:line(1).note_columns[1].instrument_value==1)
 assert(src:line(1).note_columns[1].instrument_value==0)
-assert(current_song.tracks[1].mute_state==2)
+assert(current_song.tracks[1].mute_state==3)
 local second,second_err=writer.generate(1,2,"1/8","up",1,100,1,false)
 assert(second,second_err)
 assert(dst:line(1).note_columns[1].instrument_value==0)
-assert(current_song.tracks[1].mute_state==2) -- no implicit unmute
+assert(current_song.tracks[1].mute_state==3) -- no implicit unmute
 local invalid,invalid_err=writer.generate(1,2,"1/4","up",1,100,99,true)
 assert(not invalid and invalid_err:find("valid destination instrument"))
 
@@ -270,5 +270,22 @@ assert(not rounded and rounded_err:find("exact integer"))
 local crosses,cross_err=engine.attach_tick_cuts(
   {{line=1,delay=128,note=60,column=1}},256,75,8)
 assert(not crosses and cross_err:find("line boundary"))
+
+
+-- Even a previously MIXER-MUTED source must become OFF, not just muted.
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+src:line(1).note_columns[1].note_value=60
+current_song.tracks[1].mute_state=renoise.Track.MUTE_STATE_MUTED
+local routed_off,routed_off_err=writer.generate(1,2,"1/4","up",1,100,2,true)
+assert(routed_off,routed_off_err)
+assert(current_song.tracks[1].mute_state==renoise.Track.MUTE_STATE_OFF)
+-- On refusal, existing source track state must remain unchanged.
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+src:line(1).note_columns[1].note_value=60
+local rejected_off,rejected_off_err=writer.generate(1,2,"1/16","up",1,25,2,true)
+assert(not rejected_off)
+assert(current_song.tracks[1].mute_state==renoise.Track.MUTE_STATE_ACTIVE)
 
 print("ARP gates, ownership, routing and cut planning tests passed")
