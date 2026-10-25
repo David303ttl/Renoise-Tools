@@ -1,4 +1,4 @@
--- ARP.xrnx entry point. No pattern-writing actions are registered yet.
+-- ARP.xrnx entry point. Pattern generation is available from the GUI.
 local gui = require("gui")
 
 local function show_tool()
