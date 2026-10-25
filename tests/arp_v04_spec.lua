@@ -80,7 +80,7 @@ local function make_song(lines)
       {type=1,name="Dest",visible_note_columns=2,max_note_columns=12,delay_column_visible=false,
        mute_state=1,mute=function(self) self.mute_state=2 end}
     },
-    transport={lpb=4}, selected_pattern=pattern,
+    transport={lpb=4}, patterns={pattern}, selected_pattern=pattern,
     selected_pattern_index=1,selected_instrument_index=1,
     instruments={{name="A"},{name="B"}},tool_data=nil,
     describe_undo=function(self,msg) self.undo_description=msg end
@@ -287,5 +287,28 @@ src:line(1).note_columns[1].note_value=60
 local rejected_off,rejected_off_err=writer.generate(1,2,"1/16","up",1,25,2,true)
 assert(not rejected_off)
 assert(current_song.tracks[1].mute_state==renoise.Track.MUTE_STATE_ACTIVE)
+
+
+-- v0.7 fractional release events: exactly representable 1/32 at LPB 4,
+-- Gate 50% needs a same-line OFF and must reject. A fractional 1/8
+-- at LPB 3 and Gate 75% can create a delayed next-line OFF.
+local fractional_ok,fe,n_on,n_off,ncols=engine.plan_fractional_release(
+  {{line=1,notes={60,64},instrument=0}},8,384,"up",1,75)
+assert(fractional_ok,fe)
+assert(n_on==5 and n_off==5 and ncols>=1)
+assert(fractional_ok[1].kind=="on" and fractional_ok[2].kind=="off")
+local fractional_no,fr_err=engine.plan_fractional_release(
+  {{line=1,notes={60},instrument=0}},8,128,"up",1,50)
+assert(not fractional_no and fr_err:find("shares a pattern line"))
+-- Renaming a different track invalidates ownership without changing output.
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+src:line(1).note_columns[1].note_value=60
+local created,created_err=writer.generate(1,2,"1/4","up",1,100,1,false)
+assert(created,created_err)
+current_song.tracks[1].name="Renamed source"
+local structural,structural_err=writer.generate(1,2,"1/4","up",1,100,1,false)
+assert(not structural and structural_err:find("ownership"))
+assert(current_song.selected_pattern.tracks[2]:line(1).note_columns[1].note_value==60)
 
 print("ARP gates, ownership, routing and cut planning tests passed")
