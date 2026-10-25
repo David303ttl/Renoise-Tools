@@ -43,6 +43,25 @@ local function cell_at(track,line,column)
   return track:line(line).note_columns[column]
 end
 
+-- Conservative structural signature: prevents index-based ownership from
+-- silently following renamed/reordered tracks or patterns. If duplicate
+-- track names exist, row identity is ambiguous and regeneration is refused.
+local function structure_signature(song)
+  local track_parts,seen={},{}
+  for i,t in ipairs(song.tracks) do
+    local name=t.name or ""
+    if seen[name] then return nil,"Duplicate track names: ARP cannot verify track identity" end
+    seen[name]=true
+    track_parts[#track_parts+1]=string.format("%d:%s",t.type or 0,name)
+  end
+  local pattern_parts={}
+  for i,p in ipairs(song.patterns) do
+    pattern_parts[#pattern_parts+1]=string.format("%d:%s",p.number_of_lines,p.name or "")
+  end
+  return owned.encode_name(table.concat(track_parts,"|")
+    .."||"..table.concat(pattern_parts,"|"))
+end
+
 function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_instrument_index,mute_source)
   local song=renoise.song()
   if not song then return nil,"Open a song first" end
@@ -64,6 +83,8 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
   end
   local dest_instrument_value=dest_instrument_index-1
   local source_track=song.tracks[source_index]
+  local fingerprint,identity_error=structure_signature(song)
+  if not fingerprint then return nil,identity_error end
   local pattern=song.selected_pattern
   local length=pattern.number_of_lines
   local target=pattern.tracks[dest_index]
@@ -86,8 +107,13 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
       for _,event in ipairs(plan) do event.column=1 end
     end
   else
-    plan,plan_error,note_count,off_count,required_columns=
-      engine.plan_subline(chords,length,units,mode,octaves,gate)
+    if gate==100 then
+      plan,plan_error,note_count,off_count,required_columns=
+        engine.plan_subline(chords,length,units,mode,octaves,gate)
+    else
+      plan,plan_error,note_count,off_count,required_columns=
+        engine.plan_fractional_release(chords,length,units,mode,octaves,gate)
+    end
   end
   if not plan then return nil,plan_error end
   if #plan==0 then return nil,"No ARP events to generate" end
@@ -134,7 +160,7 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
   if previous then
     if previous.length~=length
       or previous.source~=source_index
-      or previous.pattern_name~=owned.encode_name(pattern.name or "")
+      or previous.pattern_name~=fingerprint
       or previous.dest_name~=owned.encode_name(track.name)
       or previous.source_name~=owned.encode_name(song.tracks[source_index].name) then
       return nil,"Previous ARP ownership does not match this pattern or routing"
@@ -173,7 +199,7 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
     destination=dest_index,
     source=source_index,
     length=length,columns=required_columns,
-    pattern_name=owned.encode_name(pattern.name or ""),
+    pattern_name=fingerprint,
     dest_name=owned.encode_name(track.name),
     source_name=owned.encode_name(song.tracks[source_index].name),
     events={}

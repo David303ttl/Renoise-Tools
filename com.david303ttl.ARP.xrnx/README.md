@@ -91,3 +91,38 @@ chosen destination instrument must contain a playable sample or plugin.
 ## Source OFF state
 
 When the source-playback option is enabled, ARP sets the source track to Renoise's explicit OFF state after successful generation. Unlike a mixer MUTE, OFF prevents new note and command triggers even when the instrument is routed to another track. The source chord data remains editable and readable. Disabling the option does not automatically reactivate an OFF track. Previously sounding voices may still need to be stopped.
+
+## v0.7 experimental hardening
+
+Fractional rates now attempt normal **Note-Off** events at 25/50/75%
+gates. They use a fixed note column per voice and precise note delays.
+If the OFF and ON would occupy the same pattern line/column, or the
+release crosses the pattern end, generation refuses without altering
+the destination. Tick-based Cx **cuts are not enabled**; cuts and normal
+Note-Offs have different articulation semantics.
+
+For regeneration, saved ownership now includes a fingerprint of all
+track names/types and pattern names/lengths in song order. Renaming,
+inserting or reordering these invalidates prior ownership instead of
+allowing unsafe index reuse. **Track names must be unique.** Legacy
+ownership snapshots lacking this fingerprint will refuse regeneration
+unless the previous generated destination has been completely cleared.
+
+This is a conservative guard, NOT a permanent Renoise pattern GUID:
+two indistinguishable same-name/same-length patterns can still be
+reordered without being detected. Do not restructure songs with owned
+ARP output. Undo/redo is protected by event-snapshot comparison but
+the ownership metadata and Renoise undo are not yet one atomic state.
+
+Manual test: LPB 3, Rate 1/8, Gate 75%, use an 18-line pattern and enough
+destination note columns for the planned releases. Confirm delayed OFF
+events and the instrument's release response. Also verify an LPB 4,
+Rate 1/32, Gate 50% combination is refused without pattern changes.
+Rename a source track after successful generation and verify a later
+regeneration refuses to overwrite output.
+
+Run tests locally from VS Code: lua tests/arp_v04_spec.lua.
+
+### End-of-pattern release check
+
+At LPB 3, Rate 1/8 and Gate 75%, the last note in a 16-line pattern starts at zero-based line 15 and its OFF would fall at line 16 + 20 hex (past the boundary). Use an 18-line test pattern to fit that final release. The tool refuses any OFF outside the current pattern rather than clipping or silently truncating it.
