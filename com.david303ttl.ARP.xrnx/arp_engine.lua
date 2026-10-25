@@ -174,4 +174,50 @@ function M.plan_subline(chords, length, units, mode, octaves, gate)
   return events,nil,#events,0,max_columns
 end
 
+-- Fractional-line gates that cannot be expressed as same-column Note-Offs
+-- may be represented as explicit Renoise Cx tick-cuts. This is NOT a
+-- Note-Off: it stops the voice without running a release envelope.
+-- Conservative rule: each cut must be EXACTLY on a tick and before its
+-- note's pattern-line boundary; no TPL or LPB adjustments are made.
+function M.attach_tick_cuts(events, units, gate, tpl)
+  if type(tpl)~="number" or tpl%1~=0 or tpl<1 or tpl>16 then
+    return nil,"Invalid TPL (expected 1..16)"
+  end
+  if gate~=25 and gate~=50 and gate~=75 then
+    return nil,"Tick Cut requires a 25%, 50% or 75% gate"
+  end
+  local duration_units=units*gate/100
+  local ticks=duration_units*tpl/256
+  if ticks%1~=0 or ticks<1 or ticks>15 then
+    return nil,string.format(
+      "Cut duration is %.3f ticks at TPL %d; "
+      .."Cx requires an exact integer from 1 to 15",ticks,tpl)
+  end
+  local planned={}
+  for i,event in ipairs(events) do
+    local end_delay=event.delay+duration_units
+    if end_delay>=256 then
+      return nil,string.format(
+        "Cut on pattern line %02d would cross the line boundary; "
+        .."cannot guarantee gate timing",event.line-1)
+    end
+    local cloned={}
+    for k,v in pairs(event) do cloned[k]=v end
+    cloned.cut_ticks=ticks
+    planned[i]=cloned
+  end
+  return planned,nil,ticks
+end
+
+-- Renoise NoteColumn panning_value command representation: 0x0000xxyy,
+-- where xy is the ASCII two-character effect command (e.g. C3 -> 0x4333).
+-- Separate helper makes the encoding unit-testable.
+function M.cut_command_value(ticks)
+  if type(ticks)~="number" or ticks%1~=0 or ticks<1 or ticks>15 then
+    error("Invalid Cx tick-cut value")
+  end
+  local command=string.format("C%X",ticks)
+  return string.byte(command,1)*256+string.byte(command,2)
+end
+
 return M

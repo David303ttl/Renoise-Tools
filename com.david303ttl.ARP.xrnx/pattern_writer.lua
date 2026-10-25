@@ -203,12 +203,15 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
     else records[#records+1]=record end
     song.tool_data=owned.save(records)
     if needs_delay then track.delay_column_visible=true end
-    -- Mute the entire control track only after successful note writing,
-    -- and only when explicitly requested. Already muted/off states stay
-    -- untouched. A muted source is still readable by the Lua tool.
+    -- A mixer MUTE silences only the source track's audio. With a plugin
+    -- routed to another track, the source notes would still be triggered.
+    -- Explicit OFF suppresses *new note and effect triggers*, regardless
+    -- of the user's global Renoise mute preference. Existing chord
+    -- data is unchanged and remains readable by this Lua tool.
+    -- Perform this only after successfully writing output.
     if mute_source
-      and source_track.mute_state==renoise.Track.MUTE_STATE_ACTIVE then
-      source_track:mute()
+      and source_track.mute_state~=renoise.Track.MUTE_STATE_OFF then
+      source_track.mute_state=renoise.Track.MUTE_STATE_OFF
     end
   end)
   if not ok then
@@ -234,7 +237,7 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
     action=previous and "Regenerated" or "Generated",
     notes=note_count,offs=off_count,columns=required_columns,
     instrument=dest_instrument_value,
-    source_muted=source_track.mute_state~=renoise.Track.MUTE_STATE_ACTIVE
+    source_off=source_track.mute_state==renoise.Track.MUTE_STATE_OFF
   }
 end
 return M
