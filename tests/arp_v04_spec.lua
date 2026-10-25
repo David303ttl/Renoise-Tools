@@ -139,4 +139,25 @@ assert(not unsupported and msg:find("same line"))
 assert(dst:line(1).note_columns[1].is_empty)
 assert(current_song.tool_data==nil)
 
+-- Manual clearing of all owned destination events should allow a fresh
+-- generation, even if XRNS still contains stale ownership metadata.
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+dst=current_song.selected_pattern.tracks[2]
+src:line(1).note_columns[1].note_value=60
+local initial,initial_err=writer.generate(1,2,"1/4","up",1,50)
+assert(initial,initial_err)
+for i=1,16 do dst:line(i).note_columns[1]:clear() end
+local recovery,recovery_err=writer.generate(1,2,"1/4","up",1,50)
+assert(recovery,recovery_err)
+assert(recovery.action=="Generated")
+assert(dst:line(1).note_columns[1].note_value==60)
+
+-- With stale ownership AND a real, unowned note, refuse without erasing.
+for i=1,16 do dst:line(i).note_columns[1]:clear() end
+dst:line(1).note_columns[1].note_value=72
+local declined,decline_err=writer.generate(1,2,"1/4","up",1,50)
+assert(not declined and decline_err:find("note=72"))
+assert(dst:line(1).note_columns[1].note_value==72)
+
 print("ARP v0.4 gate, ownership and regeneration tests passed")
