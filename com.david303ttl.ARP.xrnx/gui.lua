@@ -1,13 +1,33 @@
+-- ARP v0.4 Renoise GUI. Never compare Renoise Song objects with == or ~=:
+-- they do not implement Lua's __eq operator.
 local M = {}
 local writer = require("pattern_writer")
 local dialog
+local document_generation = 0
+local dialog_generation = nil
+
+local function on_new_document()
+  document_generation = document_generation + 1
+end
+renoise.tool().app_new_document_observable:add_notifier(on_new_document)
+
 function M.show()
-  if dialog and dialog.visible then dialog:show(); return end
+  if dialog and dialog.visible then
+    if dialog_generation == document_generation then
+      dialog:show()
+      return
+    end
+    -- After loading a different song, rebuild track selectors from scratch.
+    dialog:close()
+    dialog = nil
+  end
+
   local song = renoise.song()
   if not song then
     renoise.app():show_warning("Open a Renoise song first.")
     return
   end
+  local opened_generation = document_generation
   local labels, indices = writer.track_choices()
   if #indices < 2 then
     renoise.app():show_warning("ARP needs at least two sequencer tracks.")
@@ -60,22 +80,31 @@ function M.show()
     vb:button {
       text="Generate / Regenerate (verified destination only)",
       notifier=function()
-        if renoise.song() ~= song then
+        if opened_generation ~= document_generation then
           status.text="Song changed. Close and reopen ARP."
           return
         end
-        local result, err = writer.generate(
-          indices[source_choice],indices[dest_choice],
-          divisions[rate_choice],modes[mode_choice],
-          octave_choice,gate_values[gate_choice])
-        status.text = err or string.format(
-          "%s %d notes, %d note-offs.",
-          result.action,result.notes,result.offs)
+        local ok, result, err = pcall(
+          writer.generate,
+          indices[source_choice], indices[dest_choice],
+          divisions[rate_choice], modes[mode_choice],
+          octave_choice, gate_values[gate_choice]
+        )
+        if not ok then
+          status.text="ARP error: " .. tostring(result)
+          print("[ARP v0.4] " .. tostring(result))
+        elseif not result then
+          status.text=err or "Generation was refused."
+        else
+          status.text=string.format("%s %d notes, %d note-offs.",
+            result.action,result.notes,result.offs)
+        end
       end
     },
     status,
     vb:text {text="Ownership is saved with XRNS; edits prevent regeneration."}
   }
   dialog=renoise.app():show_custom_dialog("ARP",content)
+  dialog_generation = opened_generation
 end
 return M
