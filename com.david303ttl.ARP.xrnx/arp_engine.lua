@@ -220,4 +220,76 @@ function M.cut_command_value(ticks)
   return string.byte(command,1)*256+string.byte(command,2)
 end
 
+-- Fractional-line *release* planner. Renoise only permits one event in
+-- each note-column/line cell. Allocate ON/OFF pairs to a stable column
+-- (voice lane), rejecting same-line releases and any overlapping cells.
+-- Does not implement tick cuts: those do not trigger release envelopes.
+function M.plan_fractional_release(chords, length, units, mode, octaves, gate)
+  if gate~=25 and gate~=50 and gate~=75 then
+    return nil,"Fractional release gate must be 25%, 50%, or 75%"
+  end
+  if units%256==0 then
+    return nil,"Use the whole-line release planner for this rate"
+  end
+  local duration=units*gate/100
+  if duration<1 or duration%1~=0 then
+    return nil,"Gate falls between Renoise's 1/256-line delay positions"
+  end
+  local ons,err,note_count= M.plan_subline(
+    chords,length,units,mode,octaves,100)
+  if not ons then return nil,err end
+
+  local events,occupied,available={}, {}, {}
+  local max_columns=0
+  for i, note in ipairs(ons) do
+    local start=(note.line-1)*256+note.delay
+    local finish=start+duration
+    local off_line=math.floor(finish/256)+1
+    if off_line>length then
+      return nil,"Final gate exceeds pattern boundary; use a compatible pattern length"
+    end
+    if off_line==note.line then
+      return nil,"Note-Off shares a pattern line with its Note-On. "
+        .."Choose a longer rate, larger LPB, or Gate 100%."
+    end
+    if ons[i+1] then
+      local next_start=(ons[i+1].line-1)*256+ons[i+1].delay
+      if finish>=next_start then
+        return nil,"Gate overlaps the next note"
+      end
+    end
+    local lane
+    for col=1,12 do
+      local slots=occupied[col] or {}
+      if not slots[note.line] and not slots[off_line]
+        and (available[col] or -1)<start then
+        lane=col
+        break
+      end
+    end
+    if not lane then
+      return nil,"Release timing requires more than 12 independent note columns"
+    end
+    occupied[lane]=occupied[lane] or {}
+    occupied[lane][note.line]=true
+    occupied[lane][off_line]=true
+    available[lane]=finish
+    if lane>max_columns then max_columns=lane end
+    events[#events+1]={
+      line=note.line,column=lane,delay=note.delay,
+      kind="on",note=note.note,instrument=note.instrument
+    }
+    events[#events+1]={
+      line=off_line,column=lane,delay=finish%256,
+      kind="off",note=120,instrument=255
+    }
+  end
+  table.sort(events,function(a,b)
+    if a.line~=b.line then return a.line<b.line end
+    if a.delay~=b.delay then return a.delay<b.delay end
+    return a.column<b.column
+  end)
+  return events,nil,note_count,note_count,max_columns
+end
+
 return M
