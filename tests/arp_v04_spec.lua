@@ -257,4 +257,18 @@ assert(current_song.tracks[1].mute_state==2) -- no implicit unmute
 local invalid,invalid_err=writer.generate(1,2,"1/4","up",1,100,99,true)
 assert(not invalid and invalid_err:find("valid destination instrument"))
 
-print("ARP v0.4/v0.5 gate, timing, ownership and instrument routing tests passed")
+
+-- Tick-cut planner validation (not yet part of the Renoise renderer).
+local cut_plan=assert(engine.plan_subline(
+  {{line=1,notes={60},instrument=0}},4,128,"up",1,100))
+local cut,cut_error=engine.attach_tick_cuts(cut_plan,128,50,12)
+assert(cut,cut_error)
+assert(cut[1].cut_ticks==3)
+assert(engine.cut_command_value(3)==0x4333)
+local rounded,rounded_err=engine.attach_tick_cuts(cut_plan,128,25,12)
+assert(not rounded and rounded_err:find("exact integer"))
+local crosses,cross_err=engine.attach_tick_cuts(
+  {{line=1,delay=128,note=60,column=1}},256,75,8)
+assert(not crosses and cross_err:find("line boundary"))
+
+print("ARP gates, ownership, routing and cut planning tests passed")
