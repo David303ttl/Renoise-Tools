@@ -1,8 +1,6 @@
--- ARP v0.2: explicit track routing, read source, generate into empty destination.
 local M = {}
 local writer = require("pattern_writer")
 local dialog
-
 function M.show()
   if dialog and dialog.visible then dialog:show(); return end
   local song = renoise.song()
@@ -21,15 +19,15 @@ function M.show()
     if idx == song.selected_track_index then source_choice = i end
   end
   dest_choice = source_choice == 1 and 2 or 1
-  local rate_choices = {1, 2, 4, 8}
-  local mode_choices = {"up","down","up_down"}
-  local rate_choice, mode_choice = 3, 1
+  local divisions = {"1/4", "1/8", "1/16", "1/32"}
+  local modes = {"up", "down", "up_down"}
+  local rate_choice, mode_choice, octave_choice = 3, 1, 1
   local status = vb:text {
-    width = 390, text = "Generates note-ons only. Destination column 1 must be empty."
+    width = 410, text = "Only note-ons. Destination column 1 must be empty."
   }
   local content = vb:column {
     margin = 12, spacing = 8,
-    vb:text { text = "ARP.xrnx v0.2 - experimental pattern generator" },
+    vb:text { text = "ARP.xrnx v0.3 - experimental generator" },
     vb:row {
       vb:text { text = "Source track" },
       vb:popup { width = 255, items = labels, value = source_choice,
@@ -41,26 +39,28 @@ function M.show()
         notifier = function(v) dest_choice = v end }
     },
     vb:row {
-      vb:text { text = "Rate (pattern lines)" },
-      vb:popup { width = 90, items = {"1","2","4","8"}, value = rate_choice,
+      vb:text { text = "Rate" },
+      vb:popup { width = 90, items = divisions, value = rate_choice,
         notifier = function(v) rate_choice = v end },
       vb:text { text = "Order" },
-      vb:popup { width = 110, items = {"Up","Down","Up-Down"}, value = mode_choice,
-        notifier = function(v) mode_choice = v end }
+      vb:popup { width = 110, items = {"Up", "Down", "Up-Down"},
+        value = mode_choice, notifier = function(v) mode_choice = v end },
+      vb:text { text = "Octaves" },
+      vb:popup { width = 60, items = {"1", "2", "3", "4"},
+        value = octave_choice, notifier = function(v) octave_choice = v end }
     },
     vb:button {
       text = "Generate into empty destination",
       notifier = function()
         local count, err = writer.generate(indices[source_choice],
-          indices[dest_choice], rate_choices[rate_choice],
-          mode_choices[mode_choice])
+          indices[dest_choice], divisions[rate_choice],
+          modes[mode_choice], octave_choice)
         status.text = err or ("Generated " .. tostring(count) .. " note events.")
       end
     },
     status,
-    vb:text { text = "No gate, note-offs, glide, swing or regeneration yet." }
+    vb:text { text = "Sub-line rates are refused. Gate and regeneration: pending." }
   }
   dialog = renoise.app():show_custom_dialog("ARP", content)
 end
-
 return M

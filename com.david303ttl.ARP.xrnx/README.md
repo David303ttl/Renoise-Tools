@@ -1,13 +1,17 @@
-# ARP.xrnx v0.2 (experimental)
+# ARP.xrnx v0.3 (experimental)
 
-Native Renoise 3.5+ pattern-to-pattern arpeggio generator.
+Up/Down/Up-Down pattern-to-pattern note generator for Renoise 3.5+.
 
-Open **Tools > ARP...**. Select different sequencer tracks as source and destination, choose a rate in pattern lines and Up/Down/Up-Down ordering, then **Generate**.
+## New in v0.3
 
-The source is read from the selected pattern, including chord notes placed in visible note columns on the same line. Each new chord onset restarts the arpeggiator cycle. The latest chord plays until the next chord onset or pattern end. If an instrument number is present on the source chord, it is copied; otherwise the currently selected instrument is used.
+- Musical rate choices: 1/4, 1/8, 1/16, 1/32, converted into pattern lines using song LPB.
+- Octave expansion from 1 to 4 octaves; out-of-range notes (>119) are skipped.
+- Rates needing a fractional pattern-line interval **fail safely with an explanation**. Example: LPB 4 allows 1/4 (4 lines), 1/8 (2 lines), 1/16 (1 line), but not 1/32. Increase LPB to enable finer rates.
 
-**Write safety:** destination note column 1 must be completely empty throughout the selected pattern. The tool refuses to write if it is occupied, if the source and destination are the same, or if no source notes are found. Other destination note columns, effect columns and tracks are untouched.
+## Usage and limitations
 
-**Known musical limitations:** only note-ons are emitted. Gate lengths, note-offs, deliberate rests, source note releases, hold/retrigger options, swing, delay, automatic regeneration, instrument selection in UI, and crossing pattern boundaries have **not** been implemented. Choose a short pluck or one-shot instrument to hear an arpeggio without sustained notes. Rate units are *Renoise pattern lines*, not note divisions.
+Choose source and different destination sequencer tracks, rate, direction and octave range. Enter simultaneous chord notes in visible note columns of the source track; each new chord onset restarts the arpeggio. Generate into destination column 1, which must be **entirely empty**.
 
-The code is experimental and has not been executed inside a Renoise instance by the assistant. Test on a disposable song first. The older TB303 scaffold remains unchanged.
+The engine emits note-ons only; it does not yet create note-offs or gate lengths, process source releases, swing, delays, regenerate output, or continue over pattern boundaries. A short pluck/one-shot instrument is recommended. Use a disposable song for testing.
+
+Source track and existing destination content are never intentionally overwritten; the destination is preflighted before writes. Code has not been executed in the user's Renoise installation yet.
