@@ -64,7 +64,7 @@ end
 
 local current_song
 renoise={
-  Track={TRACK_TYPE_SEQUENCER=1},
+  Track={TRACK_TYPE_SEQUENCER=1,MUTE_STATE_ACTIVE=1,MUTE_STATE_MUTED=2},
   song=function() return current_song end
 }
 local function make_song(lines)
@@ -74,12 +74,15 @@ local function make_song(lines)
   }
   local song={
     tracks={
-      {type=1,name="Source",visible_note_columns=2,max_note_columns=12,delay_column_visible=false},
-      {type=1,name="Dest",visible_note_columns=2,max_note_columns=12,delay_column_visible=false}
+      {type=1,name="Source",visible_note_columns=2,max_note_columns=12,
+       delay_column_visible=false,mute_state=1,
+       mute=function(self) self.mute_state=2 end},
+      {type=1,name="Dest",visible_note_columns=2,max_note_columns=12,delay_column_visible=false,
+       mute_state=1,mute=function(self) self.mute_state=2 end}
     },
     transport={lpb=4}, selected_pattern=pattern,
     selected_pattern_index=1,selected_instrument_index=1,
-    tool_data=nil,
+    instruments={{name="A"},{name="B"}},tool_data=nil,
     describe_undo=function(self,msg) self.undo_description=msg end
   }
   return song
@@ -234,4 +237,24 @@ assert(migrated[1].columns==1)
 assert(migrated[1].events[owned.key(1,1)][1]==60)
 assert(owned.save(migrated):find("ARP05",1,true)==1)
 
-print("ARP v0.4/v0.5 gate, sub-line timing and ownership tests passed")
+
+-- Instrument routing must override source cell instrument regardless of
+-- which instrument was used to enter the chord.
+current_song=make_song(16)
+src=current_song.selected_pattern.tracks[1]
+dst=current_song.selected_pattern.tracks[2]
+src:line(1).note_columns[1].note_value=60
+src:line(1).note_columns[1].instrument_value=0
+local routed,routed_err=writer.generate(1,2,"1/4","up",1,100,2,true)
+assert(routed,routed_err)
+assert(dst:line(1).note_columns[1].instrument_value==1)
+assert(src:line(1).note_columns[1].instrument_value==0)
+assert(current_song.tracks[1].mute_state==2)
+local second,second_err=writer.generate(1,2,"1/8","up",1,100,1,false)
+assert(second,second_err)
+assert(dst:line(1).note_columns[1].instrument_value==0)
+assert(current_song.tracks[1].mute_state==2) -- no implicit unmute
+local invalid,invalid_err=writer.generate(1,2,"1/4","up",1,100,99,true)
+assert(not invalid and invalid_err:find("valid destination instrument"))
+
+print("ARP v0.4/v0.5 gate, timing, ownership and instrument routing tests passed")
