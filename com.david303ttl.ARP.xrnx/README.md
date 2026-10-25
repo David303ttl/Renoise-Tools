@@ -57,3 +57,33 @@ not fully supported. Work on an experimental song.
 
 See ../../tests/arp_v05_manual.md, then review existing
 tests/arp_v04_manual.md for gate and edit-protection checks.
+
+## Instrument routing and silent control track
+
+The source note track provides pitches and chord boundaries only. ARP no
+longer inherits an instrument number from those notes. Select a
+**Destination instrument** in the dialog (00, 01, etc.). Generated note
+columns will explicitly contain that instrument number, independently of
+source chord instrument numbers.
+
+The **Mute source track after generation** checkbox is enabled by default.
+After a successful Generate/Regenerate, ARP mutes the source track to avoid
+hearing the original chord. Its notes remain intact and available for later
+generations. This is a **whole-track mute**; use a dedicated source control
+track if other musical content on that track must remain audible. A failed
+generation does not change mute state. Uncheck the box to leave mute state
+unchanged (it does not unmute an already muted track). To hear output, the
+chosen destination instrument must contain a playable sample or plugin.
+
+## Instrument routing test
+
+1. Put an instrument 00 chord on source Track 01 and a playable instrument
+   01 on destination Track 02.
+2. Select instrument 01 in ARP, leave source mute enabled, Generate.
+3. Confirm generated note instrument fields show 01, while source still
+   displays 00 and the source track is muted.
+4. Regenerate using instrument 00. Destination note instrument fields
+   should change to 00, source notes unchanged.
+5. Disable automatic source mute, manually unmute Track 01, and regenerate.
+   The tool should leave its mute state unchanged, so source chords
+   become audible again.
