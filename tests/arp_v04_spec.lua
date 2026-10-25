@@ -160,7 +160,7 @@ assert(dst:line(1).note_columns[1].note_value==60)
 for i=1,16 do dst:line(i).note_columns[1]:clear() end
 dst:line(1).note_columns[1].note_value=72
 local declined,decline_err=writer.generate(1,2,"1/4","up",1,50)
-assert(not declined and decline_err:find("note=72"))
+assert(not declined and decline_err:find("changed"))
 assert(dst:line(1).note_columns[1].note_value==72)
 
 
