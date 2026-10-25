@@ -23,20 +23,16 @@ local function read_chords(song,index,pattern)
   local chords={}
   for lineno=1,pattern.number_of_lines do
     local line=pattern.tracks[index]:line(lineno)
-    local notes,instrument={},nil
+    local notes={}
     for col=1,song.tracks[index].visible_note_columns do
       local cell=line.note_columns[col]
       if cell and cell.note_value<=119 then
         notes[#notes+1]=cell.note_value
-        if not instrument and cell.instrument_value<255 then
-          instrument=cell.instrument_value
-        end
       end
     end
     if #notes>0 then
       chords[#chords+1]={
-        line=lineno,notes=notes,
-        instrument=instrument or song.selected_instrument_index-1
+        line=lineno,notes=notes
       }
     end
   end
@@ -47,7 +43,7 @@ local function cell_at(track,line,column)
   return track:line(line).note_columns[column]
 end
 
-function M.generate(source_index,dest_index,division,mode,octaves,gate)
+function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_instrument_index,mute_source)
   local song=renoise.song()
   if not song then return nil,"Open a song first" end
   if source_index==dest_index then
@@ -56,6 +52,18 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate)
   if not valid_track(song,source_index) or not valid_track(song,dest_index) then
     return nil,"Both tracks must be sequencer tracks"
   end
+  -- Renoise instruments are song-global. Resolve the output instrument
+  -- explicitly rather than inheriting any source chord instrument data.
+  dest_instrument_index=dest_instrument_index or song.selected_instrument_index
+  if type(dest_instrument_index)~="number"
+    or dest_instrument_index%1~=0
+    or dest_instrument_index<1
+    or dest_instrument_index>#song.instruments
+    or dest_instrument_index>255 then
+    return nil,"Select a valid destination instrument"
+  end
+  local dest_instrument_value=dest_instrument_index-1
+  local source_track=song.tracks[source_index]
   local pattern=song.selected_pattern
   local length=pattern.number_of_lines
   local target=pattern.tracks[dest_index]
@@ -83,6 +91,11 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate)
   end
   if not plan then return nil,plan_error end
   if #plan==0 then return nil,"No ARP events to generate" end
+  for _,event in ipairs(plan) do
+    if event.kind=="on" then
+      event.instrument=dest_instrument_value
+    end
+  end
   if required_columns>track.max_note_columns then
     return nil,"Selected rate exceeds destination note column capacity"
   end
@@ -166,6 +179,7 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate)
     events={}
   }
   local previous_delay_visible=track.delay_column_visible
+  local previous_source_mute=source_track.mute_state
   song:describe_undo(previous and "ARP: regenerate" or "ARP: generate")
   local ok,err=pcall(function()
     if previous then
@@ -189,6 +203,13 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate)
     else records[#records+1]=record end
     song.tool_data=owned.save(records)
     if needs_delay then track.delay_column_visible=true end
+    -- Mute the entire control track only after successful note writing,
+    -- and only when explicitly requested. Already muted/off states stay
+    -- untouched. A muted source is still readable by the Lua tool.
+    if mute_source
+      and source_track.mute_state==renoise.Track.MUTE_STATE_ACTIVE then
+      source_track:mute()
+    end
   end)
   if not ok then
     local rollback_ok,rollback_err=pcall(function()
@@ -200,6 +221,9 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate)
       end
       song.tool_data=before_data
       track.delay_column_visible=previous_delay_visible
+      if source_track.mute_state~=previous_source_mute then
+        source_track.mute_state=previous_source_mute
+      end
     end)
     if not rollback_ok then
       return nil,"Write and rollback failed: "..tostring(rollback_err)
@@ -208,7 +232,9 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate)
   end
   return {
     action=previous and "Regenerated" or "Generated",
-    notes=note_count,offs=off_count,columns=required_columns
+    notes=note_count,offs=off_count,columns=required_columns,
+    instrument=dest_instrument_value,
+    source_muted=source_track.mute_state~=renoise.Track.MUTE_STATE_ACTIVE
   }
 end
 return M
