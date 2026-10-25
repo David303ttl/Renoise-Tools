@@ -1,22 +1,13 @@
-# ARP.xrnx
+# ARP.xrnx v0.2 (experimental)
 
-Renoise 3.5+ pattern arpeggiator, currently **v0.1 development scaffold**.
+Native Renoise 3.5+ pattern-to-pattern arpeggio generator.
 
-The tool can be opened from **Tools > ARP...** or the Pattern Editor context menu. The window shows a small pure-Lua Up/Down/Up-Down ordering demo and can inspect the selected pattern and track.
+Open **Tools > ARP...**. Select different sequencer tracks as source and destination, choose a rate in pattern lines and Up/Down/Up-Down ordering, then **Generate**.
 
-**No pattern notes are generated or modified in this version.** The note ordering example is not yet driven by pattern chords.
+The source is read from the selected pattern, including chord notes placed in visible note columns on the same line. Each new chord onset restarts the arpeggiator cycle. The latest chord plays until the next chord onset or pattern end. If an instrument number is present on the source chord, it is copied; otherwise the currently selected instrument is used.
 
-Planned flow: source pattern track -> arpeggiator -> separate destination track -> selected Renoise instrument.
+**Write safety:** destination note column 1 must be completely empty throughout the selected pattern. The tool refuses to write if it is occupied, if the source and destination are the same, or if no source notes are found. Other destination note columns, effect columns and tracks are untouched.
 
-## Architecture
+**Known musical limitations:** only note-ons are emitted. Gate lengths, note-offs, deliberate rests, source note releases, hold/retrigger options, swing, delay, automatic regeneration, instrument selection in UI, and crossing pattern boundaries have **not** been implemented. Choose a short pluck or one-shot instrument to hear an arpeggio without sustained notes. Rate units are *Renoise pattern lines*, not note divisions.
 
-- `main.lua`: registers menus
-- `gui.lua`: native ViewBuilder dialog
-- `arp_engine.lua`: currently a pure-Lua note ordering primitive, later to handle timing and arp logic
-- `pattern_writer.lua`: read-only selection inspection, later the safe note writer
-
-## Development installation
-
-Copy/symlink the `com.david303ttl.ARP.xrnx` directory into Renoise's user `Scripts/Tools` folder, then restart Renoise or reload all tools in scripting development mode. Alternatively ZIP the **contents** of this directory, rename the ZIP file to `com.david303ttl.ARP.xrnx`, and install that file in Renoise. The top-level `manifest.xml` must be at the archive root.
-
-Testing instructions: [../tests/README.md](../tests/README.md).
+The code is experimental and has not been executed inside a Renoise instance by the assistant. Test on a disposable song first. The older TB303 scaffold remains unchanged.

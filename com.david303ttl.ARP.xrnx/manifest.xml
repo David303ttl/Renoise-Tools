@@ -2,9 +2,9 @@
 <RenoiseScriptingTool doc_version="0">
   <ApiVersion>6.2</ApiVersion>
   <Id>com.david303ttl.ARP</Id>
-  <Version>0.1</Version>
+  <Version>0.2</Version>
   <Author>David303ttl</Author>
   <Name>ARP</Name>
-  <Category>Sequencing</Category>
-  <Description>Pattern arpeggiator (development scaffold; read-only)</Description>
+  <Category>Sequencer</Category>
+  <Description>Experimental pattern-to-pattern arpeggio generator</Description>
 </RenoiseScriptingTool>
