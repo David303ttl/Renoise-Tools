@@ -87,3 +87,7 @@ chosen destination instrument must contain a playable sample or plugin.
 5. Disable automatic source mute, manually unmute Track 01, and regenerate.
    The tool should leave its mute state unchanged, so source chords
    become audible again.
+
+## Source OFF state
+
+When the source-playback option is enabled, ARP sets the source track to Renoise's explicit OFF state after successful generation. Unlike a mixer MUTE, OFF prevents new note and command triggers even when the instrument is routed to another track. The source chord data remains editable and readable. Disabling the option does not automatically reactivate an OFF track. Previously sounding voices may still need to be stopped.
