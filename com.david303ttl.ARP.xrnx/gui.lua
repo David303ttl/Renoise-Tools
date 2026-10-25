@@ -42,14 +42,26 @@ function M.show()
   local divisions = {"1/4","1/8","1/16","1/32"}
   local modes = {"up","down","up_down"}
   local gate_values = {25,50,75,100}
+  local instrument_labels = {}
+  for i, instrument in ipairs(song.instruments) do
+    local name = instrument.name
+    if name == "" then name = "(unnamed)" end
+    instrument_labels[i] = string.format("%02X: %s", i-1, name)
+  end
+  if #instrument_labels == 0 then
+    renoise.app():show_warning("Song has no instruments.")
+    return
+  end
+  local instrument_choice = math.min(song.selected_instrument_index, #instrument_labels)
+  local mute_source = true
   local rate_choice, mode_choice, octave_choice, gate_choice = 3,1,1,4
   local status = vb:text {
     width=455,
-    text="Gate 100% keeps v0.3 note-on-only behavior; shorter gates add OFFs."
+    text="Sub-line rates work at 100% gate; add note columns if prompted."
   }
   local content = vb:column {
     margin=12, spacing=8,
-    vb:text { text="ARP.xrnx v0.4 - gate + safe regeneration" },
+    vb:text { text="ARP.xrnx v0.5 - instrument routing + sub-line timing" },
     vb:row {
       vb:text {text="Source"},
       vb:popup {width=290,items=labels,value=source_choice,
@@ -59,6 +71,15 @@ function M.show()
       vb:text {text="Destination"},
       vb:popup {width=290,items=labels,value=dest_choice,
         notifier=function(v) dest_choice=v end}
+    },
+    vb:row {
+      vb:text {text="Destination instrument"},
+      vb:popup {width=285,items=instrument_labels,value=instrument_choice,
+        notifier=function(v) instrument_choice=v end}
+    },
+    vb:row {
+      vb:text {text="Mute source track after generation"},
+      vb:checkbox {value=true,notifier=function(v) mute_source=v end}
     },
     vb:row {
       vb:text {text="Rate"},
@@ -75,7 +96,7 @@ function M.show()
       vb:text {text="Gate"},
       vb:popup {width=110,items={"25%","50%","75%","100%"},value=gate_choice,
         notifier=function(v) gate_choice=v end},
-      vb:text {text="Short gates need a separate OFF line."}
+      vb:text {text="Sub-line rates currently require Gate 100%."}
     },
     vb:button {
       text="Generate / Regenerate (verified destination only)",
@@ -88,21 +109,22 @@ function M.show()
           writer.generate,
           indices[source_choice], indices[dest_choice],
           divisions[rate_choice], modes[mode_choice],
-          octave_choice, gate_values[gate_choice]
+          octave_choice, gate_values[gate_choice],
+          instrument_choice, mute_source
         )
         if not ok then
           status.text="ARP error: " .. tostring(result)
-          print("[ARP v0.4] " .. tostring(result))
+          print("[ARP v0.5] " .. tostring(result))
         elseif not result then
           status.text=err or "Generation was refused."
         else
-          status.text=string.format("%s %d notes, %d note-offs.",
-            result.action,result.notes,result.offs)
+          status.text=string.format("%s %d notes, %d note-offs in %d columns.",
+            result.action,result.notes,result.offs,result.columns)
         end
       end
     },
     status,
-    vb:text {text="Ownership is saved with XRNS; edits prevent regeneration."}
+    vb:text {text="Sub-line timing uses multiple note columns and delay values."}
   }
   dialog=renoise.app():show_custom_dialog("ARP",content)
   dialog_generation = opened_generation

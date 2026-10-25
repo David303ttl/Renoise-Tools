@@ -1,119 +1,131 @@
--- Per-song event ownership metadata. Stored in renoise.song().tool_data.
--- A strict snapshot of every occupied first-column cell prevents
--- regeneration from deleting modified output or unrelated user notes.
--- This format is internal, versioned and deliberately rejects corruption.
-local M = {}
-local fields = {
-  "note_value", "instrument_value", "volume_value", "panning_value",
-  "delay_value", "effect_number_value", "effect_amount_value"
+-- ARP v0.5 ownership: snapshots keyed by pattern line AND note column.
+-- Reads ARP04 single-column records and writes ARP05 records. Tool data
+-- is scoped to this XRNX bundle by Renoise (not shared with other tools).
+local M={}
+local fields={
+  "note_value","instrument_value","volume_value","panning_value",
+  "delay_value","effect_number_value","effect_amount_value"
 }
-
+function M.key(line,column)
+  return tostring(line)..":"..tostring(column)
+end
 function M.capture(cell)
-  local values = {}
-  for i, field in ipairs(fields) do values[i] = cell[field] end
+  local values={}
+  for i,name in ipairs(fields) do values[i]=cell[name] end
   return values
 end
-
-function M.matches(cell, expected)
-  if not expected then return cell.is_empty end
-  for i, field in ipairs(fields) do
-    if cell[field] ~= expected[i] then return false end
+function M.matches(cell,expected)
+  if expected==nil then return cell.is_empty end
+  for i,name in ipairs(fields) do
+    if cell[name]~=expected[i] then return false end
   end
   return true
 end
-
-function M.restore(cell, snapshot)
+function M.restore(cell,snapshot)
   cell:clear()
-  for i, field in ipairs(fields) do cell[field] = snapshot[i] end
+  if snapshot then
+    for i,name in ipairs(fields) do cell[name]=snapshot[i] end
+  end
 end
-
-local function encode_name(s)
-  local out = {}
-  for i = 1, #s do out[i] = string.format("%02X", s:byte(i)) end
+function M.encode_name(s)
+  local out={}
+  for i=1,#s do out[i]=string.format("%02X",s:byte(i)) end
   return table.concat(out)
 end
-M.encode_name = encode_name
-
-function M.find(records, pattern_index, destination)
-  for i, record in ipairs(records) do
-    if record.pattern == pattern_index and record.destination == destination then
-      return record, i
-    end
+function M.find(records,pattern,destination)
+  for i,r in ipairs(records) do
+    if r.pattern==pattern and r.destination==destination then return r,i end
   end
 end
-
-local function positive_number(value)
-  local n = tonumber(value)
-  if not n or n % 1 ~= 0 or n < 0 or n > 65535 then return nil end
+local function number(s,min,max)
+  if type(s)~="string" then return nil end
+  local n=tonumber(s)
+  if not n or n%1~=0 or n<min or n>max then return nil end
   return n
 end
-
+local function split(s,sep)
+  local out={}
+  for word in (s..sep):gmatch("(.-)"..sep) do out[#out+1]=word end
+  return out
+end
 function M.load(data)
-  if data == nil or data == "" then return {} end
-  if type(data) ~= "string" or data:sub(1,6) ~= "ARP04\n" then
-    return nil, "Unrecognized ARP song metadata; no pattern was modified"
+  if data==nil or data=="" then return {} end
+  if type(data)~="string" then return nil,"ARP tool data is not text" end
+  local legacy=data:sub(1,6)=="ARP04\n"
+  if not legacy and data:sub(1,6)~="ARP05\n" then
+    return nil,"Unknown ARP ownership format; no changes made"
   end
-  local records = {}
+  local records={}
   for line in data:sub(7):gmatch("([^\n]+)") do
-    local parts = {}
-    for part in (line.."|"):gmatch("(.-)|") do parts[#parts+1] = part end
-    if #parts ~= 9 or parts[1] ~= "R" then
-      return nil, "Corrupt ARP metadata; no pattern was modified"
+    local p=split(line,"|")
+    if p[1]~="R" or #p~=(legacy and 9 or 10) then
+      return nil,"Malformed ARP ownership record"
     end
-    local p, d, s, count = positive_number(parts[2]),
-      positive_number(parts[3]), positive_number(parts[4]),
-      positive_number(parts[5])
-    if not p or p < 1 or not d or d < 1 or not s or s < 1
-      or not count or count < 1 or count > 512
-      or not parts[6]:match("^[0-9A-F]*$")
-      or not parts[7]:match("^[0-9A-F]*$")
-      or not parts[8]:match("^[0-9A-F]*$") then
-      return nil, "Invalid ARP metadata header"
+    local pattern=number(p[2],1,65535)
+    local dest=number(p[3],1,65535)
+    local source=number(p[4],1,65535)
+    local length=number(p[5],1,65535)
+    local columns=legacy and 1 or number(p[9],1,12)
+    if not pattern or not dest or not source or not length or not columns then
+      return nil,"Invalid ARP ownership header"
     end
-    local record = {
-      pattern=p, destination=d, source=s, length=count,
-      pattern_name=parts[6], dest_name=parts[7], source_name=parts[8],
-      events={}
+    for i=6,8 do
+      if not p[i]:match("^[0-9A-F]*$") then
+        return nil,"Invalid ARP name metadata"
+      end
+    end
+    local record={
+      pattern=pattern,destination=dest,source=source,length=length,
+      columns=columns,pattern_name=p[6],dest_name=p[7],
+      source_name=p[8],events={}
     }
-    for item in parts[9]:gmatch("[^;]+") do
-      local nums = {}
-      for part in item:gmatch("[^,]+") do
-        nums[#nums+1] = positive_number(part)
+    local series=legacy and p[9] or p[10]
+    for item in series:gmatch("[^;]+") do
+      local raw=split(item,",")
+      if #raw~=(legacy and 8 or 9) then
+        return nil,"Invalid ARP event record size"
       end
-      if #nums ~= 8 or not nums[1] or nums[1] < 1 or nums[1] > count
-        or record.events[nums[1]] then
-        return nil, "Invalid ARP event ownership metadata"
-      end
+      local lineno=number(raw[1],1,length)
+      local col=legacy and 1 or number(raw[2],1,columns)
+      if not lineno or not col then return nil,"Invalid ARP event address" end
+      local key=M.key(lineno,col)
+      if record.events[key] then return nil,"Duplicate ARP event address" end
+      local offset=legacy and 1 or 2
       local snapshot={}
-      for i=2,8 do
-        if not nums[i] then return nil, "Corrupt ARP event snapshot" end
-        snapshot[i-1]=nums[i]
+      for i=1,7 do
+        local value=number(raw[i+offset],0,65535)
+        if not value then return nil,"Invalid ARP event snapshot" end
+        snapshot[i]=value
       end
-      record.events[nums[1]]=snapshot
+      record.events[key]=snapshot
     end
-    if M.find(records,p,d) then return nil, "Duplicate ARP metadata record" end
+    if M.find(records,pattern,dest) then
+      return nil,"Duplicate ARP output ownership"
+    end
     records[#records+1]=record
   end
   return records
 end
-
 function M.save(records)
-  local output = {"ARP04"}
+  local out={"ARP05"}
   for _,r in ipairs(records) do
-    local snapshots={}
+    local cells={}
     for line=1,r.length do
-      if r.events[line] then
-        local values={line}
-        for _,v in ipairs(r.events[line]) do values[#values+1]=v end
-        snapshots[#snapshots+1]=table.concat(values,",")
+      for col=1,r.columns do
+        local snapshot=r.events[M.key(line,col)]
+        if snapshot then
+          local item={line,col}
+          for _,v in ipairs(snapshot) do item[#item+1]=v end
+          cells[#cells+1]=table.concat(item,",")
+        end
       end
     end
-    output[#output+1]=table.concat({
+    out[#out+1]=table.concat({
       "R",r.pattern,r.destination,r.source,r.length,
-      r.pattern_name,r.dest_name,r.source_name,table.concat(snapshots,";")
+      r.pattern_name,r.dest_name,r.source_name,r.columns,
+      table.concat(cells,";")
     },"|")
   end
-  return table.concat(output,"\n").."\n"
+  return table.concat(out,"\n").."\n"
 end
-
 return M
