@@ -29,7 +29,9 @@ function M.show()
   local song=renoise.song()
   if not song then renoise.app():show_warning("Open a song first.");return end
   local vb=renoise.ViewBuilder()
-  local pattern=phrase_writer.fixture()
+  local pattern=sequencer.new_pattern(16)
+  local setup_confirmed=false
+  local saved_time={}
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
   local updating=false
@@ -48,10 +50,9 @@ function M.show()
   local diagnostic=vb:text{width=820,font="bold",text=""}
   local summary=vb:text{width=820,text=""}
   local map_text=vb:text{width=820,text=""}
-  local length_popup=vb:popup{items={},width=78,value=1}
   local length_items={}
   for n=1,64 do length_items[n]=tostring(n) end
-  length_popup.items=length_items
+  local length_popup=vb:popup{items=length_items,width=78,value=16}
   length_popup.value=pattern.length
   local step_division=vb:text{text="Straight 1/16 (triplet renderer not yet implemented)"}
   local pitch_page_buttons,time_page_buttons={},{}
@@ -94,6 +95,7 @@ function M.show()
       local i=editor.index_on_page(pitch_page,cell)
       local p=pitch_at(i)
       local b=pitch_cells[cell]
+      b.active=setup_confirmed
       b.text=view_label(i,p,projection)
       b.color=i==selected_pitch and colors.selected
         or (projection.used[i] and colors.used or colors.idle)
@@ -102,7 +104,7 @@ function M.show()
       local preview=preview_cells[cell]
       if step<=pattern.length then
         local cmd=pattern.time_events[step]
-        time.active=true
+        time.active=setup_confirmed
         time.text=string.format("%02d  %s",step,
           cmd=="N" and "NOTE" or cmd=="T" and "TIE"
           or cmd=="R" and "REST" or "?")
@@ -117,6 +119,10 @@ function M.show()
         preview.text="";preview.color=colors.idle
       end
     end
+    key_popup.active=setup_confirmed
+    octave_popup.active=setup_confirmed
+    accent.active=setup_confirmed
+    slide.active=setup_confirmed
     local p=pitch_at(selected_pitch)
     local key,octave=sequencer.pitch_controls(p)
     key_popup.value=(key or 0)+1
@@ -161,7 +167,7 @@ function M.show()
     update()
   end
   local function change_pitch()
-    if updating then return end
+    if updating or not setup_confirmed then return end
     fill_to(selected_pitch)
     pattern.pitch_events[selected_pitch]=sequencer.new_pitch(
       key_popup.value-1,octave_popup.value-2,accent.value,slide.value)
@@ -195,7 +201,7 @@ function M.show()
         choose_pitch(editor.index_on_page(pitch_page,cell)) end}
       time_cells[cell]=vb:button{width=98,height=36,text="--",notifier=function()
         local step=editor.index_on_page(time_page,cell)
-        if step<=pattern.length then
+        if setup_confirmed and step<=pattern.length then
           -- Direct editing: repeated clicks cycle NOTE -> TIE -> REST.
           selected_step=step
           local old=pattern.time_events[step]
@@ -218,8 +224,13 @@ function M.show()
   length_popup:add_notifier(function(n)
     if updating then return end
     pattern.length=n
-    for i=#pattern.time_events+1,n do pattern.time_events[i]="R" end
-    for i=n+1,64 do pattern.time_events[i]=nil end
+    if setup_confirmed then
+      for i=1,n do pattern.time_events[i]=saved_time[i] or pattern.time_events[i] or "R" end
+      for i=n+1,64 do
+        if pattern.time_events[i] then saved_time[i]=pattern.time_events[i] end
+        pattern.time_events[i]=nil
+      end
+    end
     if selected_step>n then selected_step=n end
     if editor.page_for(selected_step)~=time_page then
       time_page=editor.page_for(selected_step)
@@ -239,6 +250,18 @@ function M.show()
     vb:text{text="ACID 0.1  |  M1 PITCH / TIME EDITOR",font="big"},
     vb:row{spacing=10,vb:text{text="LAST STEP (1-64)"},length_popup,
       step_division},
+    vb:row{spacing=8,
+      vb:button{text="Create / Reset Pattern",notifier=function()
+        -- Explicit initialization: changing LAST STEP alone never erases memory.
+        pattern=sequencer.new_pattern(length_popup.value)
+        for i=1,pattern.length do pattern.time_events[i]="R" end
+        saved_time={}
+        setup_confirmed=true
+        selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
+        status.text="Pattern initialized. Enter PITCH notes, then program TIME steps."
+        update()
+      end},
+      vb:text{text="Confirm LAST STEP first. Reset discards the current draft."}},
     vb:text{text="64-step extension: four continuous pages of 16. Roland PITCH/TIME semantics remain separate."},
     vb:text{text="PITCH MEMORY | select position, then edit keyboard, octave, accent and slide",font="bold"},
     pitch_pages,pitch_grid,
@@ -253,6 +276,9 @@ function M.show()
       vb:text{text="Audio test"},mode},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
+        if not setup_confirmed then
+          status.text="Set LAST STEP and click Create / Reset Pattern first.";return
+        end
         if opened~=generation then
           status.text="Song changed. Close and reopen ACID.";return
         end
