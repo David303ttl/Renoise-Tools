@@ -57,7 +57,9 @@ local function complete(job, error_message, rendered_events)
         job.instrument:delete_phrase_at(#job.instrument.phrases)
       end
     end)
-    notify(job, "GENERATION FAILED\\n" .. tostring(error_message) .. "\\nPrevious ACID phrase remains unchanged.")
+    notify(job, "GENERATION FAILED\\n" .. tostring(error_message) ..
+      (job.swapped and "\\nPhrase output may have changed; inspect the destination before retrying." or
+        "\\nPrevious ACID phrase remains unchanged."))
     return
   end
   notify(job, string.format(
@@ -160,6 +162,7 @@ local function finalize(job, event_count, skipped)
     end
   end)
   if not safe then complete(job,swap_err);return end
+  job.swapped=true
   local stored,store_err=store.save(job.song,job.snapshot_id,job.pattern,job.mode)
   if not stored then
     -- Phrase audio exists but its source was not saved: do not claim persistence.
