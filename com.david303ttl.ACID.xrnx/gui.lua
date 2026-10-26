@@ -3,6 +3,8 @@ local M = {}
 local sequencer=require("model.sequencer")
 local editor=require("model.editor_state")
 local compiler=require("model.compiler")
+local store=require("model.pattern_store")
+local ownership=require("writers.phrase_ownership")
 local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
@@ -62,6 +64,8 @@ function M.show()
   local accent=vb:checkbox{value=false}
   local slide=vb:checkbox{value=false}
   local adopt=vb:checkbox{value=false}
+  local phrase_choice,phrase_targets
+  local loading=false
   local function default_pitch()
     return sequencer.new_pitch(0,0,false,false)
   end
@@ -267,8 +271,70 @@ function M.show()
       local message,err=inspector.inspect_selection()
       status.text=message or err
     end}
+  local function options_for_instrument()
+    local instrument=song.instruments[selected_instrument]
+    local names,targets={},{}
+    for i,phrase in ipairs(instrument.phrases) do
+      local status=ownership.status(phrase)
+      names[#names+1]=string.format("%02d: %s (%s)",i,
+        phrase.name~="" and phrase.name or "(unnamed)",status)
+      targets[#targets+1]=i
+    end
+    names[#names+1]="NEW PHRASE (append)"
+    targets[#targets+1]=#instrument.phrases+1
+    return names,targets
+  end
+  local function load_target(index)
+    local instrument=song.instruments[selected_instrument]
+    local target=phrase_targets[index]
+    if target and target<=#instrument.phrases then
+      local source,mode_or_err=store.load(song,instrument.phrases[target])
+      if source then
+        pattern=source;setup_confirmed=true
+        saved_time={};selected_pitch=1;selected_step=1
+        pitch_page=1;time_page=1
+        length_popup.value=pattern.length
+        for i,v in ipairs(mode_values) do
+          if v==mode_or_err then mode_choice=i;break end
+        end
+        status.text=string.format("Restored ACID source for phrase %02d.",target)
+      else
+        pattern=sequencer.new_pattern(16);setup_confirmed=false
+        status.text="Source unavailable: "..tostring(mode_or_err)..
+          " | choose NEW PHRASE; existing audio is protected."
+      end
+    else
+      pattern=sequencer.new_pattern(16);setup_confirmed=false
+      status.text="NEW PHRASE selected. Confirm LAST STEP and create pattern."
+    end
+    update()
+  end
+  local phrase_names
+  phrase_names,phrase_targets=options_for_instrument()
+  phrase_choice=vb:popup{width=360,items=phrase_names,
+    value=#phrase_names,notifier=function(n)
+      if not loading then load_target(n) end
+    end}
+  local function select_instrument(n)
+    selected_instrument=n
+    local options
+    options,phrase_targets=options_for_instrument()
+    loading=true
+    phrase_choice.items=options
+    local chosen=#options
+    local instrument=song.instruments[n]
+    local current=instrument.phrase_program
+    if type(current)=="number" and current>=1 and
+      current<=#instrument.phrases and
+      ownership.status(instrument.phrases[current])=="owned" then
+      chosen=current
+    end
+    phrase_choice.value=chosen
+    loading=false
+    load_target(chosen)
+  end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
-    notifier=function(n)selected_instrument=n end}
+    notifier=function(n)select_instrument(n) end}
   local mode=vb:popup{width=210,items={"Baseline","Retrigger + Gate","Selective Slide + Gate"},
     value=mode_choice,notifier=function(n)mode_choice=n end}
   local content=vb:column{margin=12,spacing=7,
@@ -299,6 +365,7 @@ function M.show()
     preview_grid,summary,map_text,diagnostic,
     vb:row{spacing=6,vb:text{text="Target instrument"},target,
       vb:text{text="Audio test"},mode},
+    vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
         if not setup_confirmed then
@@ -318,7 +385,8 @@ function M.show()
         local ok,generated,err=pcall(phrase_writer.generate,
           selected_instrument,function(message)
             if opened==generation then status.text=message end
-          end,mode_values[mode_choice],pattern,adopt.value)
+          end,mode_values[mode_choice],pattern,adopt.value,
+          phrase_targets[phrase_choice.value])
         if not ok then status.text="ACID error: "..tostring(generated)
         elseif not generated then status.text=err or "Generation refused" end
       end},
@@ -327,6 +395,7 @@ function M.show()
         status.text=sampler.describe(song.instruments[selected_instrument])
       end}},
     inspect,status}
+  select_instrument(selected_instrument)
   update()
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)
   dialog_generation=opened
