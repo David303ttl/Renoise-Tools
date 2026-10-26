@@ -46,6 +46,7 @@ lua tests/acid_compiler_spec.lua
 lua tests/acid_pattrns_spec.lua
 lua tests/acid_identity_spec.lua
 lua tests/acid_phrase_spec.lua
+lua tests/acid_phrase_validator_spec.lua
 ```
 
 Other local Lua implementations, including `texlua`, may run the same tests.
@@ -63,3 +64,13 @@ Copy/symlink `com.david303ttl.ACID.xrnx` into Renoise's user `Scripts/Tools`
 folder and reload tools (or restart Renoise). Or ZIP the **contents** of this
 directory and rename the archive to `com.david303ttl.ACID.xrnx`; the archive
 root must contain `manifest.xml`.
+
+## Render event validation
+
+Renoise may report raw script events including time steps without musical
+note output. ACID now verifies the rendered native phrase's 16 lines, the
+four expected pitches, both OFF positions, and empty steps rather than
+requiring the raw callback count to equal six. The user screenshot established
+8 raw events for the expected 6 note/OFF events. Re-run the manual test in a
+new sample instrument with no phrases; the previous failed-test phrase may
+still be present and should be inspected or discarded manually.
