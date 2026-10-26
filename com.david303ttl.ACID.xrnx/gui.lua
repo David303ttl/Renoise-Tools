@@ -45,17 +45,25 @@ function M.show()
     return
   end
   local selected = math.min(song.selected_instrument_index, #labels)
+  local mode_names={"Baseline","Retrigger + Gate","Selective Slide + Gate"}
+  local mode_values={"baseline","retrigger","slide"}
+  local mode_choice=1
   local lengths = {8, 12, 16}
   local content = vb:column {
     margin = 12, spacing = 8,
     vb:text {text = "ACID.xrnx 0.1 - first phrase playback test"},
-    vb:text {text = "Fixed 8-step NOTE / TIE / REST fixture. No slide yet."},
+    vb:text {text = "Fixed 8-step fixture; selective native glide is experimental."},
     vb:row {
       vb:text {text="Target sample instrument"},
       vb:popup {
         width=270, items=labels, value=selected,
         notifier=function(index) selected=index end
       }
+    },
+    vb:row {
+      vb:text {text="Audio experiment"},
+      vb:popup {width=220,items=mode_names,value=1,
+        notifier=function(index)mode_choice=index end}
     },
     vb:button {
       text = "Generate Test Phrase (new phrase only)",
@@ -69,7 +77,7 @@ function M.show()
             if opened_generation == document_generation then
               status.text = message
             end
-          end
+          end, mode_values[mode_choice]
         )
         if not ok then status.text = "ACID error: " .. tostring(generated)
         elseif not generated then status.text = err or "Generation refused" end
