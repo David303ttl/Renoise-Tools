@@ -41,6 +41,7 @@ function M.show()
   local mode_values={"baseline","retrigger","slide"}
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
   local mode_choice=1
+  local mode
   local labels={}
   for i,instrument in ipairs(song.instruments) do
     local name=instrument.name~="" and instrument.name or "(unnamed)"
@@ -295,7 +296,11 @@ function M.show()
         pitch_page=1;time_page=1
         length_popup.value=pattern.length
         for i,v in ipairs(mode_values) do
-          if v==mode_or_err then mode_choice=i;break end
+          if v==mode_or_err then
+            mode_choice=i
+            if mode then mode.value=i end
+            break
+          end
         end
         status.text=string.format("Restored ACID source for phrase %02d.",target)
       else
@@ -335,7 +340,7 @@ function M.show()
   end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)select_instrument(n) end}
-  local mode=vb:popup{width=210,items={"Baseline","Retrigger + Gate","Selective Slide + Gate"},
+  mode=vb:popup{width=210,items={"Baseline","Retrigger + Gate","Selective Slide + Gate"},
     value=mode_choice,notifier=function(n)mode_choice=n end}
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID 0.1  |  M1 PITCH / TIME EDITOR",font="big"},
