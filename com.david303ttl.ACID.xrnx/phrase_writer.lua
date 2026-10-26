@@ -5,6 +5,8 @@ local pattrns = require("pattrns_writer")
 local compiler = require("compiler")
 local validator = require("phrase_validator")
 local articulation = require("articulation")
+local control = require("control_signals")
+local gates = require("gate_writer")
 local M = {}
 
 M.LPB = 8
@@ -87,10 +89,17 @@ local function finalize(job, event_count, skipped)
     return
   end
   if job.mode ~= "baseline" then
-    local articulated, art_error = articulation.apply(
-      job.phrase, job.plan, 2, job.glide_rate, true)
-    if not articulated then complete(job, art_error); return end
-    job.articulation_summary=articulated
+    local timeline, timeline_err=control.compile(job.pattern,{gate_fraction=0.5})
+    if not timeline then complete(job,timeline_err);return end
+    local gate_result,gate_err=gates.apply(job.phrase,timeline)
+    if not gate_result then complete(job,gate_err);return end
+    if job.mode=="slide" or job.mode=="mono" then
+      -- Pure native Gxx comparison; mono instrument configuration remains
+      -- user-owned until we can validate envelope behavior and restore safely.
+      local glide_result,glide_err=articulation.apply(
+        job.phrase,job.plan,2,job.glide_rate,false)
+      if not glide_result then complete(job,glide_err);return end
+    end
   end
   local ok, error_message = pcall(function()
     -- Rendered lines are normal native phrase data (not a running script).
@@ -170,10 +179,10 @@ function M.cancel()
   end
 end
 
-function M.generate(instrument_index, callback, mode)
+function M.generate(instrument_index, callback, mode, custom_pattern)
   if busy then return nil, "ACID is already generating a phrase" end
   mode=mode or "baseline"
-  if mode~="baseline" and mode~="retrigger" and mode~="slide" then
+  if mode~="baseline" and mode~="retrigger" and mode~="slide" and mode~="mono" then
     return nil,"Invalid playback test mode"
   end
   if type(callback) ~= "function" then
@@ -199,19 +208,19 @@ function M.generate(instrument_index, callback, mode)
   if not has_sample_data then
     return nil, "Load a playable sample into the selected instrument first"
   end
-  local fixture=M.fixture()
-  if mode=="slide" then fixture.pitch_events[1].slide=true end
+  local fixture=custom_pattern or M.fixture()
+  if not custom_pattern and (mode=="slide" or mode=="mono") then fixture.pitch_events[1].slide=true end
   local plan, compile_error = compiler.compile(fixture)
   if not plan then return nil, compile_error end
   local source, meta = pattrns.emit(plan)
   if not source then return nil, meta end
-  if meta.slide_intentions ~= 0 and mode ~= "slide" then
+  if meta.slide_intentions ~= 0 and mode ~= "slide" and mode ~= "mono" and custom_pattern==nil then
     return nil, "Prototype must not render selective slides"
   end
   local job = {
     instrument = instrument, instrument_index = instrument_index,
     expected_events = meta.note_count + meta.off_count,
-    plan = plan, mode=mode, glide_rate=0x20,
+    plan = plan, pattern=fixture, mode=mode, glide_rate=0x20,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false
   }
