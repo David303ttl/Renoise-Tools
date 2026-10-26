@@ -63,7 +63,7 @@ function M.show()
   local pitch_note = vb:popup {items=pitch_choices,width=95,value=1}
   local accent = vb:checkbox {value=false}
   local slide = vb:checkbox {value=false}
-  local time_step = vb:valuebox {min=1,max=16,value=1,width=65}
+  local time_step = vb:valuebox {min=1,max=state.length,value=1,width=65}
   local time_kind = vb:popup {items={"NOTE","TIE","REST"},width=90,value=1}
   local updating=false
   local function refresh()
@@ -82,8 +82,8 @@ function M.show()
       "TIME %d/%d: %d NOTE, %d TIE, %d REST | unfilled %d",
       m.length-m.missing_time,m.length,m.notes,m.ties,m.rests,m.missing_time)
     pitch_label.text=string.format(
-      "PITCH %d entries | %d NOTE triggers | next pitch #%d (wraps independently)",
-      m.pitch_count,m.notes,m.next_pitch)
+      "PITCH %d/16 slots | %d NOTE triggers | next pitch #%d | %d free slots",
+      m.pitch_count,m.notes,m.next_pitch,16-m.pitch_count)
     time_label.text="TIME: "..m.time_text.."  |  PITCH: "..m.pitch_text
     updating=false
   end
@@ -113,7 +113,7 @@ function M.show()
   local content = vb:column {
     margin = 12, spacing = 8,
     vb:text {text = "ACID.xrnx 0.1 - first phrase playback test"},
-    vb:text {text = "Eight-step test fixture; selective native glide is experimental."},
+    vb:text {text = "Independent PITCH/TIME memories; slides remain experimental."},
     vb:row {
       vb:text {text="Target sample instrument"},
       vb:popup {
