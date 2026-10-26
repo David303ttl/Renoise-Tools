@@ -27,6 +27,15 @@ function M.project(pattern)
     local step=string.match(err,"step (%d+)")
     if entry then out.error.pitch_index=tonumber(entry) end
     if step then out.error.step=tonumber(step) end
+    if not out.error.step and type(pattern.time_events)=="table" then
+      for i=1,math.min(64,pattern.length or 0) do
+        if pattern.time_events[i]==nil then
+          out.error.step=i
+          out.error.message=string.format("TIME step %02d: missing timing command.",i)
+          break
+        end
+      end
+    end
     return out
   end
   local pitches=#pattern.pitch_events
