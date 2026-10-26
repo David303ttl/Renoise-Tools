@@ -19,7 +19,8 @@ function script:commit() committed:fire() end
 function script:render_to_pattern(opts, cb)
   assert(opts.lpb == 8)
   local target = instrument and instrument.phrases[#instrument.phrases] or phrase
-  local notes = {[1]=36,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
+  local first_note=tonumber(self.paragraphs[1]:match("key = (%d+)"))
+  local notes = {[1]=first_note,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
   for i=1,16 do
     target.cells[i].note_value = notes[i] or 121
   end
@@ -88,12 +89,27 @@ assert(messages[#messages]:find("generated",1,true))
 assert(messages[#messages]:find("4 notes, 2 OFF",1,true))
 -- Sealed ownership permits a second generation to the same phrase.
 local first=instrument.phrases[1]
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end))
+local edited=writer.fixture()
+edited.pitch_events[1].note=38
+assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited))
 idle:fire();idle:fire();idle:fire()
 assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(messages[#messages]:find("generated",1,true))
+assert(first.cells[1].note_value==38)
+assert(require("model.pattern_store").load(song,first).pitch_events[1].note==38)
 -- Manual edits invalidate the seal.
 first.cells[1].note_value=41
 local denied,reason=writer.generate(1,function()end)
-assert(not denied and reason:find("not safely owned",1,true))
+assert(not denied and reason:find("not safely ACID-owned",1,true))
+first.cells[1].note_value=38
+local render=script.render_to_pattern
+function script:render_to_pattern() return false,"renderer unavailable" end
+assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited))
+idle:fire();idle:fire();idle:fire()
+assert(messages[#messages]:find("renderer unavailable",1,true))
+assert(#instrument.phrases==1 and first.cells[1].note_value==38)
+script.render_to_pattern=render
+assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited))
+idle:fire();idle:fire();idle:fire()
+assert(messages[#messages]:find("generated",1,true))
 print("ACID phrase API mock checks passed")

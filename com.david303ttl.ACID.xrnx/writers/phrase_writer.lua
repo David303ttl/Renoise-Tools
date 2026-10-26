@@ -186,7 +186,7 @@ local function render(job)
   end
   notify(job, "ACID: rendering pattrns to native phrase...")
   local ok, error_message = pcall(function()
-    script:render_to_pattern({
+    local started, start_error = script:render_to_pattern({
       lpb = M.LPB,
       max_events = job.plan.length + 8
     }, function(render_error, rendered_events, skipped_events)
@@ -197,6 +197,9 @@ local function render(job)
         finalize(job, rendered_events, skipped_events)
       end
     end)
+    if started == false then
+      complete(job, "Phrase rendering could not start: " .. tostring(start_error or "unknown error"))
+    end
   end)
   if not ok then complete(job, error_message) end
 end

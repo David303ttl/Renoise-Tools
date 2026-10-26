@@ -3,6 +3,7 @@ local M = {}
 local sequencer=require("model.sequencer")
 local editor=require("model.editor_state")
 local compiler=require("model.compiler")
+local live_regen=require("model.live_regen")
 local store=require("model.pattern_store")
 local ownership=require("writers.phrase_ownership")
 local phrase_writer=require("writers.phrase_writer")
@@ -66,7 +67,10 @@ function M.show()
   local slide=vb:checkbox{value=false}
   local adopt=vb:checkbox{value=false}
   local phrase_choice,phrase_targets
+  local live_checkbox
+  local live
   local loading=false
+  local stopping_live=false
   local function default_pitch()
     return sequencer.new_pitch(0,0,false,false)
   end
@@ -191,12 +195,16 @@ function M.show()
     end
     update()
   end
+  local function changed()
+    if live then live:changed() end
+  end
   local function change_pitch()
     if updating or not setup_confirmed then return end
     fill_to(selected_pitch)
     pattern.pitch_events[selected_pitch]=sequencer.new_pitch(
       key_popup.value-1,octave_popup.value-2,accent.value,slide.value)
     update()
+    changed()
   end
   key_popup:add_notifier(change_pitch)
   octave_popup:add_notifier(change_pitch)
@@ -236,6 +244,7 @@ function M.show()
           if step<=pattern.length then
             pattern.time_events[step]=({"N","T","R"})[choice]
             choose_time(step)
+            changed()
           end
         end}
       preview_cells[cell]=vb:button{width=98,height=32,text="--",notifier=function()
@@ -266,6 +275,7 @@ function M.show()
       time_page=editor.page_for(selected_step)
     end
     update()
+    if setup_confirmed then changed() end
   end)
   local inspect=vb:button{text="Inspect selected Renoise pattern (read only)",
     notifier=function()
@@ -286,6 +296,7 @@ function M.show()
     return names,targets
   end
   local function load_target(index)
+    if live then live:stop();if live_checkbox then live_checkbox.value=false end end
     local instrument=song.instruments[selected_instrument]
     local target=phrase_targets[index]
     if target and target<=#instrument.phrases then
@@ -321,6 +332,7 @@ function M.show()
       if not loading then load_target(n) end
     end}
   local function select_instrument(n)
+    if live then live:stop();if live_checkbox then live_checkbox.value=false end end
     selected_instrument=n
     local options
     options,phrase_targets=options_for_instrument()
@@ -341,7 +353,83 @@ function M.show()
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)select_instrument(n) end}
   mode=vb:popup{width=210,items={"Baseline","Retrigger + Gate","Selective Slide + Gate"},
-    value=mode_choice,notifier=function(n)mode_choice=n end}
+    value=mode_choice,notifier=function(n)
+      mode_choice=n
+      changed()
+    end}
+  local function live_target()
+    local instrument=song.instruments[selected_instrument]
+    local index=phrase_targets[phrase_choice.value]
+    if not setup_confirmed or not index or index>#instrument.phrases then
+      return nil,"Live Edit needs an existing ACID phrase. Generate it manually first."
+    end
+    local phrase=instrument.phrases[index]
+    if ownership.status(phrase)~="owned" or not ownership.id(phrase) then
+      return nil,"Live Edit can only overwrite an unchanged ACID-owned phrase."
+    end
+    local source,reason=store.load(song,phrase)
+    if not source then return nil,reason end
+    return index
+  end
+  live=live_regen.new(renoise.tool(),function(done)
+    if opened~=generation or not dialog or not dialog.visible then
+      return nil,"ACID dialog is no longer active"
+    end
+    local target_index,reason=live_target()
+    if not target_index then return nil,reason end
+    local plan,err=compiler.compile(pattern)
+    if not plan then return nil,err end
+    -- Freeze the source for the asynchronous renderer; subsequent UI edits
+    -- are scheduled for another pass and cannot mutate the running job.
+    local copy=sequencer.new_pattern(pattern.length)
+    copy.pitch_events={}
+    for i,p in ipairs(pattern.pitch_events) do
+      local v={}
+      for k,val in pairs(p) do v[k]=val end
+      copy.pitch_events[i]=v
+    end
+    for i,t in ipairs(pattern.time_events) do copy.time_events[i]=t end
+    local mode_now=mode_values[mode_choice]
+    local success,reason=phrase_writer.generate(selected_instrument,
+      function(message)
+        if message:find(" generated (",1,true) then
+          done(true,message)
+        elseif message:find("GENERATION FAILED",1,true) then
+          done(false,message)
+        end
+      end,mode_now,copy,false,target_index)
+    return success,reason
+  end,function(ok,message)
+    if opened~=generation then return end
+    if ok then
+      status.text="LIVE EDIT: "..tostring(message)
+    else
+      status.text="LIVE EDIT stopped: "..tostring(message)
+      live:stop()
+      stopping_live=true
+      live_checkbox.value=false
+      stopping_live=false
+    end
+  end)
+  live_checkbox=vb:checkbox{value=false,notifier=function(value)
+    if value then
+      local index,reason=live_target()
+      if not index then
+        stopping_live=true
+        live_checkbox.value=false
+        stopping_live=false
+        status.text=reason
+        return
+      end
+      live:set_enabled(true)
+      status.text="Live Edit enabled: edits auto-regenerate the selected ACID phrase."
+    else
+      live:stop()
+      if not stopping_live then
+        status.text="Live Edit disabled; manual Generate/Regenerate is available."
+      end
+    end
+  end}
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID 0.1  |  M1 PITCH / TIME EDITOR",font="big"},
     vb:row{spacing=10,vb:text{text="LAST STEP (1-64)"},length_popup,
@@ -356,6 +444,7 @@ function M.show()
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
         status.text="Pattern initialized: all 64 PITCH entries are C; active TIME steps start as NOTE."
         update()
+        changed()
       end},
       vb:text{text="Confirm LAST STEP first. Reset discards the current draft."}},
     vb:text{text="64-step extension: four continuous pages of 16. Roland PITCH/TIME semantics remain separate."},
@@ -371,6 +460,7 @@ function M.show()
     vb:row{spacing=6,vb:text{text="Target instrument"},target,
       vb:text{text="Audio test"},mode},
     vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
+    vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
         if not setup_confirmed then
