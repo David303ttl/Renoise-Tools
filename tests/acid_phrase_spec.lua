@@ -13,6 +13,7 @@ local function observable()
 end
 local idle, committed = observable(), observable()
 local script = {paragraphs={},compile_error="",runtime_error="",committed_observable=committed}
+local phrase
 function script:commit() committed:fire() end
 function script:render_to_pattern(opts, cb)
   assert(opts.lpb == 8)
@@ -22,7 +23,7 @@ function script:render_to_pattern(opts, cb)
   end
   cb(nil, 8, 0)
 end
-local phrase = {script=script,name="", number_of_lines=16,visible_note_columns=1,cells={}}
+phrase = {script=script,name="", number_of_lines=16,visible_note_columns=1,cells={}}
 for i=1,16 do phrase.cells[i] = {note_value=121} end
 function phrase:line(i) return {note_columns={self.cells[i]}} end
 local instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}}}
