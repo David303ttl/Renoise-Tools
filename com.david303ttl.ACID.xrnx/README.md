@@ -3,9 +3,11 @@
 Renoise 3.5+ ACID sequencer, **version 0.1 (unfinished)**.
 
 The tool opens from **Tools > ACID...** or the Pattern Editor context menu.
-The dialog now has a **Generate Test Phrase** command for native-sample
-instruments which have no existing phrases. It writes a NEW test phrase only;
-it does not change song pattern tracks or user-created phrases. The manifest stays at `0.1` until the native-sample sequencer
+The dialog now has **Generate / Regenerate ACID Phrase** for native-sample
+instruments. Initial creation requires no existing phrases. Later generation
+may safely replace the single unmodified ACID-owned phrase, while refusing
+foreign or manually edited phrases. An old unmarked `ACID 0.1 TEST` phrase
+requires explicit one-time adoption. No song pattern tracks are modified. The manifest stays at `0.1` until the native-sample sequencer
 is finished and verified in Renoise.
 
 The implementation now contains a separately testable pitch/time memory model
@@ -38,7 +40,9 @@ sample articulation commands after real playback verification.
 - `model/articulation.lua`, `model/control_signals.lua`: experimental articulation and gate planning
 - `writers/gate_writer.lua`, `writers/phrase_validator.lua`: native gate commands and rendered phrase validation
 - `renoise/sampler_audit.lua`: read-only sampler inspection
-- Future: verified playback, full editor, safe regeneration, persistence
+- `writers/phrase_ownership.lua`: content-sealed ownership and guarded phrase regeneration
+- `model/memory_status.lua`: independent TIME/PITCH usage reporting
+- Future: verified playback, complete editor, persistence
 
 ## Local tests
 
@@ -104,3 +108,18 @@ See [Sampler and control tests](../tests/acid/acid_sampler_control_manual.md).
 Run `lua tests/acid/acid_control_signals_spec.lua` along with all existing
 local specs. **This new GUI/instrument behavior still needs a Renoise
 smoke test** before we consider it validated.
+
+## Regeneration and memory visibility
+
+ACID shows TIME filled/total, NOTE/TIE/REST counts, PITCH entries/16,
+free PITCH slots, next pitch index, and a compact command list. The
+pitch stream wraps independently; it does not need to have as many
+entries as NOTE events. Newly generated phrases are signed in their
+name using a content checksum. Regeneration uses a temporary render,
+checks ownership and manual edits, backs up the old phrase, and then
+replaces its contents in the same phrase slot. Modifying a generated
+phrase invalidates its ownership checksum; regeneration refuses it.
+
+See [manual regeneration QA](../tests/acid/acid_regeneration_manual.md).
+The new implementation still needs the user's in-Renoise verification;
+local specs alone do not prove safe real-world regeneration.
