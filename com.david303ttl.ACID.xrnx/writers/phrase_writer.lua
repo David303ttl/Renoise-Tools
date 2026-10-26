@@ -7,6 +7,7 @@ local validator = require("writers.phrase_validator")
 local articulation = require("model.articulation")
 local control = require("model.control_signals")
 local gates = require("writers.gate_writer")
+local ownership = require("writers.phrase_ownership")
 local M = {}
 
 M.LPB = 8
@@ -50,20 +51,17 @@ local function complete(job, error_message, rendered_events)
   busy = false
   current = nil
   if error_message then
-    -- This prototype only creates a phrase in instruments with NO existing
-    -- phrases. Remove that newly created test phrase on failure.
     pcall(function()
-      if #job.instrument.phrases == 1
-        and job.instrument.phrases[1].name == M.PHRASE_NAME then
-        job.instrument:delete_phrase_at(1)
+      if job.temporary and job.instrument.phrases[#job.instrument.phrases]==job.phrase then
+        job.instrument:delete_phrase_at(#job.instrument.phrases)
       end
     end)
     notify(job, "ACID generation failed: " .. tostring(error_message))
     return
   end
   notify(job, string.format(
-    "Phrase 01 generated (%d notes, %d OFF; %d raw events). Instrument %02X.",
-    rendered_events.notes, rendered_events.offs,
+    "Phrase %02d generated (%d notes, %d OFF; %d raw events). Instrument %02X.",
+    job.target_index, rendered_events.notes, rendered_events.offs,
     rendered_events.raw_events, job.instrument_index - 1) ..
     (job.mode=="baseline" and "" or
      " | "..job.mode.." articulation test applied"))
@@ -118,6 +116,27 @@ local function finalize(job, event_count, skipped)
     complete(job, error_message)
     return
   end
+  local safe, swap_err=pcall(function()
+    if job.replace then
+      local dest=job.instrument.phrases[job.target_index]
+      local status=ownership.status(dest)
+      if status~="owned" and not (status=="legacy" and job.adopt_legacy) then
+        error("Target phrase changed during rendering; not overwritten")
+      end
+      dest:copy_from(job.phrase)
+      local newname,sealerr=ownership.make_name(dest)
+      if not newname then error(sealerr) end
+      dest.name=newname
+      job.instrument:delete_phrase_at(#job.instrument.phrases)
+      job.temporary=false
+    else
+      local newname,sealerr=ownership.make_name(job.phrase)
+      if not newname then error(sealerr) end
+      job.phrase.name=newname
+      job.temporary=false
+    end
+  end)
+  if not safe then complete(job,swap_err);return end
   result.raw_events = event_count
   complete(job, nil, result)
 end
@@ -179,7 +198,7 @@ function M.cancel()
   end
 end
 
-function M.generate(instrument_index, callback, mode, custom_pattern)
+function M.generate(instrument_index, callback, mode, custom_pattern, adopt_legacy)
   if busy then return nil, "ACID is already generating a phrase" end
   mode=mode or "baseline"
   if mode~="baseline" and mode~="retrigger" and mode~="slide" and mode~="mono" then
@@ -195,8 +214,20 @@ function M.generate(instrument_index, callback, mode, custom_pattern)
     return nil, "Choose a valid native sample instrument"
   end
   local instrument = song.instruments[instrument_index]
-  if #instrument.phrases ~= 0 then
-    return nil, "Use a sample instrument with no existing phrases for this test"
+  local replace=false
+  local target_index=1
+  if #instrument.phrases>0 then
+    if #instrument.phrases~=1 then
+      return nil,"Multiple phrases found; ACID 0.1 will not overwrite any of them"
+    end
+    local status=ownership.status(instrument.phrases[1])
+    if status=="owned" or (status=="legacy" and adopt_legacy==true) then
+      replace=true
+    elseif status=="legacy" then
+      return nil,"Legacy ACID test phrase: enable Adopt legacy once, then regenerate"
+    else
+      return nil,"Phrase is not safely owned by ACID (or was manually edited)"
+    end
   end
   local has_sample_data = false
   for _, sample in ipairs(instrument.samples) do
@@ -221,6 +252,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern)
     instrument = instrument, instrument_index = instrument_index,
     expected_events = meta.note_count + meta.off_count,
     plan = plan, pattern=fixture, mode=mode, glide_rate=0x20,
+    replace=replace,adopt_legacy=adopt_legacy==true,target_index=target_index,temporary=true,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false
   }
@@ -228,7 +260,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern)
   local ok, error_message = pcall(function()
     -- First and only phrase in the target instrument. Never overwrite
     -- existing phrase content or any song pattern notes.
-    job.phrase = instrument:insert_phrase_at(1)
+    job.phrase = instrument:insert_phrase_at(#instrument.phrases+1)
     job.phrase.name = M.PHRASE_NAME
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
     local script = job.phrase.script
@@ -261,9 +293,8 @@ function M.generate(instrument_index, callback, mode, custom_pattern)
       complete(job, error_message)
     else
       pcall(function()
-        if job.phrase and #instrument.phrases == 1
-          and instrument.phrases[1].name == M.PHRASE_NAME then
-          instrument:delete_phrase_at(1)
+        if job.phrase and instrument.phrases[#instrument.phrases] == job.phrase then
+          instrument:delete_phrase_at(#instrument.phrases)
         end
       end)
     end
