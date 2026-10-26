@@ -123,3 +123,18 @@ phrase invalidates its ownership checksum; regeneration refuses it.
 See [manual regeneration QA](../tests/acid/acid_regeneration_manual.md).
 The new implementation still needs the user's in-Renoise verification;
 local specs alone do not prove safe real-world regeneration.
+
+## Readability and slide collision diagnostics
+
+The ACID dialog now uses wider headings and separate TIME/PITCH memory
+sections with a multiline, read-only status panel. The generator identifies
+TIME step and Renoise phrase line for glide placement collisions. When the
+gate renderer has placed a native OFF where an optional `0G00` continuation
+would otherwise be written, the OFF wins and ACID omits the continuation,
+reporting the affected step and line instead of rejecting the phrase.
+An actual occupied target note or foreign effect still blocks generation.
+
+Run `lua tests/acid/acid_glide_overlap_spec.lua` as a regression, then
+repeat the 16-step slide/gate sequence in Renoise. The old phrase should be
+left unchanged if another collision prevents regeneration. These changes
+have not yet been tested in a Renoise installation.
