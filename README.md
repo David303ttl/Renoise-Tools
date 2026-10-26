@@ -6,7 +6,7 @@ independently versioned tool; runtime modules stay inside its bundle.
 | Tool | Version / status | Documentation |
 | --- | --- | --- |
 | ARP | 0.7 experimental: pattern generation, delayed gates, guarded regeneration | [ARP](com.david303ttl.ARP.xrnx/README.md) |
-| ACID | 0.1 scaffold: read-only pitch/time model (sequencer work in PR #9) | [ACID](com.david303ttl.ACID.xrnx/README.md) |
+| ACID | 0.1 unfinished: pitch/time editor and experimental native test-phrase generation | [ACID](com.david303ttl.ACID.xrnx/README.md) |
 | DigitaktSampleChain | Existing tool, frozen during this reorganization | [DigitaktSampleChain](com.david303ttl.DigitaktSampleChain.xrnx/README.md) |
 
 ARP and ACID target Renoise 3.5 (Lua API 6.2). Pure-Lua checks do not establish

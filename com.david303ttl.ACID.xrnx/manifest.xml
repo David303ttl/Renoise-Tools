@@ -6,5 +6,5 @@
   <Author>David303ttl</Author>
   <Name>ACID</Name>
   <Category>Sequencing</Category>
-  <Description>ACID pitch/time sequencer (read-only development scaffold)</Description>
+  <Description>ACID pitch/time sequencer with experimental native phrase output</Description>
 </RenoiseScriptingTool>

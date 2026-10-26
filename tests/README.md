@@ -19,7 +19,7 @@ A single spec can also be run directly from the repository root, for example:
 
 ```sh
 lua tests/arp/arp_v04_spec.lua
-lua tests/acid/acid_sequencer_spec.lua
+lua tests/acid/acid_compiler_spec.lua
 ```
 
 `bootstrap.lua` configures module lookup for the selected tool. Specs still run
@@ -32,7 +32,9 @@ and follow the relevant guides:
 
 - [ARP v0.4 gates and regeneration](arp/arp_v04_manual.md)
 - [ARP v0.5 routing and note divisions](arp/arp_v05_manual.md)
-- ACID read-only scaffold: open Tools > ACID and inspect the selected pattern
+- [ACID phrase playback](acid/acid_phrase_manual.md)
+- [ACID articulation modes](acid/acid_slide_manual.md)
+- [ACID sampler and control signals](acid/acid_sampler_control_manual.md)
 
 Keep the existing DigitaktSampleChain tool installed and confirm it still opens
 after reloading tools. Real Renoise integration, playback, undo, and save/reload
