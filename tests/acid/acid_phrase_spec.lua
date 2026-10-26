@@ -28,6 +28,19 @@ end
 phrase = {script=script,name="", number_of_lines=16,visible_note_columns=1,cells={}}
 for i=1,16 do phrase.cells[i] = {note_value=121} end
 function phrase:line(i) return {note_columns={self.cells[i]}} end
+function phrase:copy_from(other)
+  self.number_of_lines=other.number_of_lines
+  self.lpb=other.lpb
+  self.playback_mode=other.playback_mode
+  self.looping=other.looping
+  self.key_tracking=other.key_tracking
+  self.name=other.name
+  self.cells={}
+  for i=1,self.number_of_lines do
+    self.cells[i]={}
+    for k,v in pairs(other.cells[i]) do self.cells[i][k]=v end
+  end
+end
 instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}}}
 function instrument:insert_phrase_at(i)
   assert(i == #self.phrases+1)
