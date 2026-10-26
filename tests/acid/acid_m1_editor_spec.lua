@@ -4,6 +4,19 @@ local editor=require("model.editor_state")
 local compiler=require("model.compiler")
 local pattrns=require("writers.pattrns_writer")
 
+-- A newly initialized 16-step pattern needs no manual PITCH entry.
+local fresh=seq.new_pattern(16)
+assert(#fresh.pitch_events==64)
+for i=1,16 do fresh.time_events[i]="N" end
+local fresh_view=editor.project(fresh)
+assert(not fresh_view.error and fresh_view.note_count==16)
+for i=1,16 do
+  assert(fresh_view.mapping[i].pitch_index==i)
+  assert(fresh_view.mapping[i].note==36)
+  assert(not fresh_view.mapping[i].accent and not fresh_view.mapping[i].slide)
+end
+assert(compiler.compile(fresh).steps[16].note==36)
+
 for _,length in ipairs({1,16,17,32,33,48,49,64}) do
   local p=seq.new_pattern(length)
   assert(p.length==length)
