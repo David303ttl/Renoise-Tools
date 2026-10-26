@@ -1,13 +1,103 @@
 {
   "format": "ACID-LOOP-ORACLE-1",
   "status": "proposed semantics; not executed against a repeating-cycle interpreter",
-  "semantics": "cycle_reset_v1",
+  "cursor_policy": "reset_each_time_cycle",
+  "entry_mode": "extended",
+  "profile_scope": "The cases and boundary_family default to Extended ACID source unless entry_modes lists both modes. These are proposed ACID expectations, not original-hardware traces. Both modes follow Roland: entered leading TIE becomes NOTE; raw leading-TIE source is invalid. entry_cases cover each entry_mode or all listed entry_modes; cutover_cases reject unsupported development data without import or adoption.",
   "cycles": 3,
   "index_base": 1,
   "note_numbering": "Renoise note_value, 0..119",
   "capacity": 64,
   "normalization": "Pad supplied pitches to capacity with valid C defaults; preserve explicit pitch_length. All fixtures start silent. Reset next-consumed PITCH to P01 each TIME cycle; retain voice identity independently.",
   "expectation_order": "Each note_* array follows NOTE commands in TIME order. tie_notes follows TIE commands, null means silent. rest_releases follows REST commands. expected has exactly one record per cycle.",
+  "entry_cases": [
+    {
+      "id": "original_leading_tie_entry_becomes_note",
+      "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
+      "operation": "enter_time",
+      "entry_mode": "original",
+      "length": 3,
+      "pitch_length": 16,
+      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
+      "input_time": ["T", "N", "N"],
+      "expected_time": ["N", "N", "N"],
+      "expected_note_pitch_indices_each_cycle": [1, 2, 3],
+      "expected_note_values_each_cycle": [36, 39, 43],
+      "expected_first_transitions": ["attack", "retrigger", "retrigger"]
+    },
+    {
+      "id": "extended_leading_tie_entry_becomes_note",
+      "operation": "enter_time",
+      "entry_mode": "extended",
+      "length": 3,
+      "pitch_length": 3,
+      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
+      "input_time": ["T", "N", "N"],
+      "expected_time": ["N", "N", "N"],
+      "expected_note_pitch_indices_each_cycle": [1, 2, 3],
+      "expected_note_values_each_cycle": [36, 39, 43],
+      "expected_first_transitions": ["attack", "retrigger", "retrigger"],
+      "cycle_case": "normalized_leading_tie_three_notes"
+    },
+    {
+      "id": "original_length_seventeen_requires_explicit_extended_choice",
+      "operation": "validate_source",
+      "entry_mode": "original",
+      "length": 17,
+      "pitch_length": 16,
+      "expected_error": "original_time_length",
+      "source_unchanged": true
+    },
+    {
+      "id": "original_independent_short_pitch_span_requires_extended",
+      "operation": "validate_source",
+      "entry_mode": "original",
+      "length": 12,
+      "pitch_length": 3,
+      "expected_error": "original_pitch_span",
+      "source_unchanged": true
+    },
+    {
+      "id": "noncanonical_leading_tie_is_rejected_in_both_modes",
+      "operation": "validate_source",
+      "entry_modes": ["original", "extended"],
+      "length": 3,
+      "pitch_length": 16,
+      "input_time": ["T", "N", "N"],
+      "expected_error": "leading_tie",
+      "source_unchanged": true
+    },
+    {
+      "id": "tie_only_entry_becomes_note_then_ties_in_both_modes",
+      "operation": "enter_time",
+      "entry_modes": ["original", "extended"],
+      "length": 3,
+      "pitch_length": 16,
+      "pitches": [{"note": 36}],
+      "input_time": ["T", "T", "T"],
+      "expected_time": ["N", "T", "T"],
+      "expected_note_pitch_indices_each_cycle": [1],
+      "expected_note_values_each_cycle": [36],
+      "expected_first_transitions": ["attack", "retrigger", "retrigger"]
+    }
+  ],
+  "cutover_cases": [
+    {
+      "id": "earlier_development_source_format_is_unsupported",
+      "operation": "load_source",
+      "source_format": "ACID-PITCH-TIME-1",
+      "expected_error": "unsupported_source_format",
+      "imports": 0,
+      "writes_on_read": 0
+    },
+    {
+      "id": "earlier_development_seal_confers_no_ownership",
+      "operation": "check_ownership",
+      "phrase_name": "ACID 0.1 #12 [DEADBEEF]",
+      "expected_status": "foreign",
+      "adoption_allowed": false
+    }
+  ],
   "boundary_family": {
     "id": "page_boundaries_and_acceptance_lengths",
     "source_generator": {
@@ -42,6 +132,47 @@
   },
   "cases": [
     {
+      "id": "outgoing_boundary_slide_connects_different_pitches_in_both_modes",
+      "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
+      "entry_modes": ["original", "extended"],
+      "length": 2,
+      "pitch_length": 16,
+      "pitches": [{"note": 36}, {"note": 43, "slide": true}],
+      "time": ["N", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["slide", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["slide", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 3}
+      ]
+    },
+    {
+      "id": "outgoing_boundary_slide_ties_equal_pitches_in_both_modes",
+      "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
+      "entry_modes": ["original", "extended"],
+      "length": 2,
+      "pitch_length": 16,
+      "pitches": [{"note": 36}, {"note": 36, "slide": true}],
+      "time": ["N", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 36], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 2, "slide": true}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 36], "note_transitions": ["slide", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 2, "slide": true}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 36], "note_transitions": ["slide", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 2, "slide": true}, "exit_next_pitch": 3}
+      ]
+    },
+    {
+      "id": "tie_after_rest_stays_silent_without_consuming_pitch",
+      "entry_modes": ["original", "extended"],
+      "length": 4,
+      "pitch_length": 16,
+      "pitches": [{"note": 36, "slide": true}, {"note": 43}],
+      "time": ["N", "R", "T", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 3}
+      ]
+    },
+    {
       "id": "note_tie_note_reset",
       "length": 3,
       "pitch_length": 3,
@@ -66,27 +197,27 @@
       ]
     },
     {
-      "id": "leading_tie_retains_final_voice_not_p01",
+      "id": "normalized_leading_tie_three_notes",
       "length": 3,
-      "pitch_length": 2,
-      "pitches": [{"note": 36}, {"note": 43}],
-      "time": ["T", "N", "N"],
+      "pitch_length": 3,
+      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
+      "time": ["N", "N", "N"],
       "expected": [
-        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [null], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1},
-        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "retrigger"], "tie_notes": [43], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1},
-        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "retrigger"], "tie_notes": [43], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1}
+        {"note_pitch_indices": [1, 2, 3], "note_values": [36, 39, 43], "note_transitions": ["attack", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 3, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2, 3], "note_values": [36, 39, 43], "note_transitions": ["retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 3, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2, 3], "note_values": [36, 39, 43], "note_transitions": ["retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 3, "slide": false}, "exit_next_pitch": 1}
       ]
     },
     {
-      "id": "leading_tie_after_ending_rest",
+      "id": "leading_note_after_ending_rest",
       "length": 3,
       "pitch_length": 2,
       "pitches": [{"note": 36}, {"note": 43}],
-      "time": ["T", "N", "R"],
+      "time": ["N", "N", "R"],
       "expected": [
-        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 2},
-        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 2},
-        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 2}
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 1}
       ]
     },
     {
@@ -162,15 +293,15 @@
       ]
     },
     {
-      "id": "all_tie_cold_silence",
-      "length": 1,
+      "id": "tie_only_entry_normalized_note_then_ties",
+      "length": 3,
       "pitch_length": 1,
       "pitches": [{"note": 36}],
-      "time": ["T"],
+      "time": ["N", "T", "T"],
       "expected": [
-        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [null], "rest_releases": [], "exit_voice": null, "exit_next_pitch": 1},
-        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [null], "rest_releases": [], "exit_voice": null, "exit_next_pitch": 1},
-        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [null], "rest_releases": [], "exit_voice": null, "exit_next_pitch": 1}
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [36, 36], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["retrigger"], "tie_notes": [36, 36], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["retrigger"], "tie_notes": [36, 36], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": false}, "exit_next_pitch": 1}
       ]
     },
     {
