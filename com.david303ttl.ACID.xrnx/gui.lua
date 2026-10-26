@@ -28,7 +28,9 @@ function M.show()
   end
   local opened_generation = document_generation
   local vb = renoise.ViewBuilder()
-  local state = sequencer.new_pattern(16)
+  local state = phrase_writer.fixture()
+  local cursor = 1
+  local selected_pitch = 1
   local summary = vb:text {
     width = 465, text = assert(sequencer.describe(state))
   }
@@ -49,6 +51,46 @@ function M.show()
   local mode_values={"baseline","retrigger","slide"}
   local mode_choice=1
   local lengths = {8, 12, 16}
+  local pitch_values = {36,37,38,39,40,41,42,43,44,45,46,47,48}
+  local pitch_choices = {"C-3","C#3","D-3","D#3","E-3","F-3","F#3","G-3","G#3","A-3","A#3","B-3","C-4"}
+  local pitch_entry = vb:valuebox {min=1,max=16,value=1,width=65}
+  local pitch_note = vb:popup {items=pitch_choices,width=95,value=1}
+  local accent = vb:checkbox {value=false}
+  local slide = vb:checkbox {value=false}
+  local time_step = vb:valuebox {min=1,max=16,value=1,width=65}
+  local time_kind = vb:popup {items={"NOTE","TIE","REST"},width=90,value=1}
+  local function refresh()
+    local p = state.pitch_events[selected_pitch] or {note=36,accent=false,slide=false}
+    local idx=1
+    for i,n in ipairs(pitch_values) do if n==p.note then idx=i end end
+    pitch_note.value=idx
+    accent.value=p.accent==true
+    slide.value=p.slide==true
+    local t=state.time_events[cursor] or "R"
+    time_kind.value=t=="N" and 1 or t=="T" and 2 or 3
+    summary.text=assert(sequencer.describe(state))
+  end
+  local function edit_pitch()
+    local p=state.pitch_events[selected_pitch] or {note=36}
+    p.note=pitch_values[pitch_note.value]
+    p.accent=accent.value
+    p.slide=slide.value
+    for i=#state.pitch_events+1,selected_pitch do
+      state.pitch_events[i]={note=36,accent=false,slide=false}
+    end
+    state.pitch_events[selected_pitch]=p
+    refresh()
+  end
+  pitch_entry.notifier=function(v)selected_pitch=v;refresh()end
+  pitch_note.notifier=edit_pitch
+  accent.notifier=edit_pitch
+  slide.notifier=edit_pitch
+  time_step.notifier=function(v)cursor=v;refresh()end
+  time_kind.notifier=function(v)
+    state.time_events[cursor]=({"N","T","R"})[v]
+    refresh()
+  end
+  refresh()
   local content = vb:column {
     margin = 12, spacing = 8,
     vb:text {text = "ACID.xrnx 0.1 - first phrase playback test"},
@@ -77,13 +119,17 @@ function M.show()
             if opened_generation == document_generation then
               status.text = message
             end
-          end, mode_values[mode_choice]
+          end, mode_values[mode_choice], state
         )
         if not ok then status.text = "ACID error: " .. tostring(generated)
         elseif not generated then status.text = err or "Generation refused" end
       end
     },
-    vb:text {text = "Draft model inspection (does not write patterns):"},
+    vb:text {text = "PITCH memory (entry / note / accent / slide)"},
+    vb:row {pitch_entry,pitch_note,accent,slide},
+    vb:text {text = "TIME memory (step / instruction)"},
+    vb:row {time_step,time_kind},
+    vb:text {text = "Pattern inspection:"},
     vb:row {
       vb:text {text = "Timing steps"},
       vb:popup {
@@ -91,8 +137,15 @@ function M.show()
         items = {"8", "12", "16"},
         value = 3,
         notifier = function(index)
-          state = sequencer.new_pattern(lengths[index])
-          summary.text = assert(sequencer.describe(state))
+          local n=lengths[index]
+          state.length=n
+          for i=1,n do
+            if not state.time_events[i] then state.time_events[i]="R" end
+          end
+          for i=n+1,16 do state.time_events[i]=nil end
+          time_step.max=n
+          if cursor>n then cursor=n;time_step.value=n end
+          refresh()
         end
       }
     },
