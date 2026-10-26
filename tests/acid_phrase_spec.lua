@@ -16,9 +16,15 @@ local script = {paragraphs={},compile_error="",runtime_error="",committed_observ
 function script:commit() committed:fire() end
 function script:render_to_pattern(opts, cb)
   assert(opts.lpb == 8)
-  cb(nil, 6, 0)
+  local notes = {[1]=36,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
+  for i=1,16 do
+    phrase.cells[i].note_value = notes[i] or 121
+  end
+  cb(nil, 8, 0)
 end
-local phrase = {script=script,name=""}
+local phrase = {script=script,name="", number_of_lines=16,visible_note_columns=1,cells={}}
+for i=1,16 do phrase.cells[i] = {note_value=121} end
+function phrase:line(i) return {note_columns={self.cells[i]}} end
 local instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}}}
 function instrument:insert_phrase_at(i)
   assert(i==1)
@@ -47,5 +53,6 @@ assert(phrase.playback_mode==1 and phrase.lpb==8)
 assert(phrase.number_of_lines==16 and phrase.looping==false)
 assert(instrument.phrase_program==1)
 assert(messages[#messages]:find("generated",1,true))
+assert(messages[#messages]:find("4 notes, 2 OFF",1,true))
 assert(not writer.generate(1,function()end))
 print("ACID phrase API mock checks passed")
