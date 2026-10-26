@@ -31,10 +31,12 @@ function M.plan(plan, lines_per_step, rate)
       -- This only proves local effect placement; subsequent lines and TPL
       -- need real Renoise experimentation before production integration.
       commands[#commands+1] = {
-        line=target_line, note=event.note, command="0G", amount=rate
+        line=target_line, note=event.note, command="0G", amount=rate,
+        step=step, pitch_index=event.pitch_index, kind="glide"
       }
       commands[#commands+1] = {
-        line=target_line+1, note=nil, command="0G", amount=0
+        line=target_line+1, note=nil, command="0G", amount=0,
+        step=step, pitch_index=event.pitch_index, kind="continuation"
       }
     end
   end
@@ -50,7 +52,7 @@ function M.apply(phrase, plan, lines_per_step, rate, early_release)
       if ev.kind=="note" then
         if active and ev.transition~="slide" then
           commands[#commands+1]={line=(step-1)*lines_per_step,
-            new_note=120,kind="release"}
+            new_note=120,kind="release",step=step-1}
         end
         active=true
       elseif ev.kind=="rest" then active=false end
@@ -62,24 +64,44 @@ function M.apply(phrase, plan, lines_per_step, rate, early_release)
       return nil,"gate/glide collision"
     end
   end
-  -- Preflight all destinations before modifying anything.
+  -- Preflight every write. Gate-off has priority over optional G00
+  -- continuation: a released voice must not be prolonged for glide.
   local targets = {}
+  local skipped = {}
   for _, command in ipairs(commands) do
+    local display_line = command.line - 1 -- Renoise line labels are zero-based
+    local location = string.format("TIME step %02d, phrase line %02X",
+      command.step or (math.floor(display_line / lines_per_step) + 1),
+      display_line)
     local line = phrase:line(command.line)
     local cell = line and line.note_columns and line.note_columns[1]
     if not cell then
-      return nil, "missing local effect column at line " .. command.line-1
+      return nil, location .. ": missing note column"
     end
     if command.note ~= nil and cell.note_value ~= command.note then
-      return nil, "glide target pitch mismatch at line " .. command.line-1
+      return nil, string.format("%s: glide target expects note %d; found %s",
+        location, command.note, tostring(cell.note_value))
     end
     if command.note == nil and cell.note_value ~= 121 then
-      return nil, "glide continuation must have empty note cell"
+      if command.kind == "continuation" and cell.note_value == 120 then
+        skipped[#skipped + 1] = {
+          step=command.step, line=display_line,
+          reason="0G00 omitted because the gate releases here (OFF)"
+        }
+      else
+        return nil, string.format(
+          "%s: glide continuation needs an empty note cell; found %s. " ..
+          "Check gate releases and adjacent notes.",
+          location, tostring(cell.note_value))
+      end
+    else
+      if (cell.effect_number_value or 0) ~= 0
+        or (cell.effect_amount_value or 0) ~= 0 then
+        return nil, location ..
+          ": existing note-column FX would be overwritten by 0Gxx"
+      end
+      targets[#targets + 1] = {cell=cell, command=command}
     end
-    if cell.effect_number_value and cell.effect_number_value ~= 0 then
-      return nil, "glide would overwrite existing local effect"
-    end
-    targets[#targets+1] = {cell=cell, command=command}
   end
 
   local backups = {}
@@ -115,8 +137,11 @@ function M.apply(phrase, plan, lines_per_step, rate, early_release)
   for _,op in ipairs(commands) do
     if op.kind=="release" then releases=releases+1 end
   end
-  return {slide_count=(#commands-releases)/2,
-    early_releases=releases,commands=#commands,rate=rate}
+  return {
+    slide_count=(#commands-releases)/2,
+    early_releases=releases, commands=#targets, rate=rate,
+    skipped_continuations=skipped
+  }
 end
 
 return M
