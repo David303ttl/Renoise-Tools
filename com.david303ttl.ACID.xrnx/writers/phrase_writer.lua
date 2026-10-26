@@ -123,10 +123,27 @@ local function finalize(job, event_count, skipped)
       if status~="owned" and not (status=="legacy" and job.adopt_legacy) then
         error("Target phrase changed during rendering; not overwritten")
       end
-      dest:copy_from(job.phrase)
-      local newname,sealerr=ownership.make_name(dest)
-      if not newname then error(sealerr) end
-      dest.name=newname
+      -- Keep a temporary phrase backup before touching the existing slot.
+      local backup=job.instrument:insert_phrase_at(#job.instrument.phrases+1)
+      local original_ok,original_err=pcall(function()
+        backup:copy_from(dest)
+      end)
+      if not original_ok then
+        job.instrument:delete_phrase_at(#job.instrument.phrases)
+        error("Could not back up ACID phrase: "..tostring(original_err))
+      end
+      local replaced,replace_err=pcall(function()
+        dest:copy_from(job.phrase)
+        local newname,sealerr=ownership.make_name(dest)
+        if not newname then error(sealerr) end
+        dest.name=newname
+      end)
+      if not replaced then
+        pcall(function() dest:copy_from(backup) end)
+        job.instrument:delete_phrase_at(#job.instrument.phrases)
+        error("Regeneration rolled back: "..tostring(replace_err))
+      end
+      job.instrument:delete_phrase_at(#job.instrument.phrases)
       job.instrument:delete_phrase_at(#job.instrument.phrases)
       job.temporary=false
     else
