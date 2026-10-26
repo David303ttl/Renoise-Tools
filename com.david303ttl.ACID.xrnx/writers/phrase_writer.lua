@@ -8,6 +8,7 @@ local articulation = require("model.articulation")
 local control = require("model.control_signals")
 local gates = require("writers.gate_writer")
 local ownership = require("writers.phrase_ownership")
+local store = require("model.pattern_store")
 local M = {}
 
 M.LPB = 8
@@ -114,7 +115,7 @@ local function finalize(job, event_count, skipped)
     job.phrase.looping = false
     job.instrument.phrase_playback_mode =
       renoise.Instrument.PHRASES_PLAY_SELECTIVE
-    job.instrument.phrase_program = 1
+    job.instrument.phrase_program = job.target_index
     job.instrument.phrase_editor_visible = true
   end)
   if not ok then
@@ -139,7 +140,7 @@ local function finalize(job, event_count, skipped)
       end
       local replaced,replace_err=pcall(function()
         dest:copy_from(job.phrase)
-        local newname,sealerr=ownership.make_name(dest)
+        local newname,sealerr=ownership.make_name(dest,job.snapshot_id)
         if not newname then error(sealerr) end
         dest.name=newname
       end)
@@ -152,13 +153,19 @@ local function finalize(job, event_count, skipped)
       job.instrument:delete_phrase_at(#job.instrument.phrases)
       job.temporary=false
     else
-      local newname,sealerr=ownership.make_name(job.phrase)
+      local newname,sealerr=ownership.make_name(job.phrase,job.snapshot_id)
       if not newname then error(sealerr) end
       job.phrase.name=newname
       job.temporary=false
     end
   end)
   if not safe then complete(job,swap_err);return end
+  local stored,store_err=store.save(job.song,job.snapshot_id,job.pattern,job.mode)
+  if not stored then
+    -- Phrase audio exists but its source was not saved: do not claim persistence.
+    complete(job,"Phrase rendered but PITCH/TIME snapshot could not be saved: "..tostring(store_err))
+    return
+  end
   result.raw_events = event_count
   complete(job, nil, result)
 end
@@ -220,7 +227,7 @@ function M.cancel()
   end
 end
 
-function M.generate(instrument_index, callback, mode, custom_pattern, adopt_legacy)
+function M.generate(instrument_index, callback, mode, custom_pattern, adopt_legacy, target_index)
   if busy then return nil, "ACID is already generating a phrase" end
   mode=mode or "baseline"
   if mode~="baseline" and mode~="retrigger" and mode~="slide" and mode~="mono" then
@@ -237,19 +244,34 @@ function M.generate(instrument_index, callback, mode, custom_pattern, adopt_lega
   end
   local instrument = song.instruments[instrument_index]
   local replace=false
-  local target_index=1
-  if #instrument.phrases>0 then
-    if #instrument.phrases~=1 then
-      return nil,"Multiple phrases found; ACID 0.1 will not overwrite any of them"
-    end
-    local status=ownership.status(instrument.phrases[1])
-    if status=="owned" or (status=="legacy" and adopt_legacy==true) then
+  target_index=target_index or (#instrument.phrases>0 and 1 or #instrument.phrases+1)
+  if type(target_index)~="number" or target_index%1~=0 or
+      target_index<1 or target_index>#instrument.phrases+1 then
+    return nil,"Choose a valid existing phrase or New Phrase"
+  end
+  local snapshot_id
+  if target_index<=#instrument.phrases then
+    local target=instrument.phrases[target_index]
+    local status=ownership.status(target)
+    if status=="owned" then
       replace=true
-    elseif status=="legacy" then
-      return nil,"Legacy ACID test phrase: enable Adopt legacy once, then regenerate"
+      snapshot_id=ownership.id(target)
+    elseif status=="legacy" and adopt_legacy==true then
+      replace=true
     else
-      return nil,"Phrase is not safely owned by ACID (or was manually edited)"
+      return nil,"Selected phrase is not safely ACID-owned (or was manually edited)"
     end
+  end
+  if not snapshot_id then
+    local id,err=store.allocate(song)
+    if not id then return nil,err end
+    snapshot_id=id
+  end
+  local records,record_err=store.read(song)
+  if not records then return nil,record_err end
+  if replace and ownership.id(instrument.phrases[target_index]) and
+      not records[snapshot_id] then
+    return nil,"Selected ACID phrase has no saved source; cannot safely regenerate"
   end
   local has_sample_data = false
   for _, sample in ipairs(instrument.samples) do
@@ -271,7 +293,8 @@ function M.generate(instrument_index, callback, mode, custom_pattern, adopt_lega
     return nil, "Prototype must not render selective slides"
   end
   local job = {
-    instrument = instrument, instrument_index = instrument_index,
+    instrument = instrument, instrument_index = instrument_index, song=song,
+    snapshot_id=snapshot_id,
     expected_events = meta.note_count + meta.off_count,
     plan = plan, pattern=fixture, mode=mode, glide_rate=0x20,
     replace=replace,adopt_legacy=adopt_legacy==true,target_index=target_index,temporary=true,
@@ -280,8 +303,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern, adopt_lega
   }
 
   local ok, error_message = pcall(function()
-    -- First and only phrase in the target instrument. Never overwrite
-    -- existing phrase content or any song pattern notes.
+    -- Render into an append-only temporary phrase, never a user phrase.
     job.phrase = instrument:insert_phrase_at(#instrument.phrases+1)
     job.phrase.name = M.PHRASE_NAME
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
