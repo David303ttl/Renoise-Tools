@@ -4,6 +4,7 @@ local sequencer = require("model.sequencer")
 local writer = require("renoise.selection_context")
 local phrase_writer = require("writers.phrase_writer")
 local sampler_audit = require("renoise.sampler_audit")
+local memory_status = require("model.memory_status")
 local dialog
 local document_generation = 0
 local dialog_generation = -1
@@ -52,6 +53,10 @@ function M.show()
   local mode_values={"baseline","retrigger","slide"}
   local mode_choice=1
   local lengths = {8, 12, 16}
+  local adopt=vb:checkbox {value=false}
+  local memory_label=vb:text {width=465,text=""}
+  local pitch_label=vb:text {width=465,text=""}
+  local time_label=vb:text {width=465,text=""}
   local pitch_values = {36,37,38,39,40,41,42,43,44,45,46,47,48}
   local pitch_choices = {"C-3","C#3","D-3","D#3","E-3","F-3","F#3","G-3","G#3","A-3","A#3","B-3","C-4"}
   local pitch_entry = vb:valuebox {min=1,max=16,value=1,width=65}
@@ -72,6 +77,14 @@ function M.show()
     local t=state.time_events[cursor] or "R"
     time_kind.value=t=="N" and 1 or t=="T" and 2 or 3
     summary.text=assert(sequencer.describe(state))
+    local m=memory_status.inspect(state)
+    memory_label.text=string.format(
+      "TIME %d/%d: %d NOTE, %d TIE, %d REST | unfilled %d",
+      m.length-m.missing_time,m.length,m.notes,m.ties,m.rests,m.missing_time)
+    pitch_label.text=string.format(
+      "PITCH %d entries | %d NOTE triggers | next pitch #%d (wraps independently)",
+      m.pitch_count,m.notes,m.next_pitch)
+    time_label.text="TIME: "..m.time_text.."  |  PITCH: "..m.pitch_text
     updating=false
   end
   local function edit_pitch()
@@ -120,7 +133,7 @@ function M.show()
         notifier=function(index)mode_choice=index end}
     },
     vb:button {
-      text = "Generate Test Phrase (new phrase only)",
+      text = "Generate / Regenerate ACID Phrase",
       notifier = function()
         if opened_generation ~= document_generation then
           status.text = "Song changed. Close and reopen ACID."
@@ -131,12 +144,13 @@ function M.show()
             if opened_generation == document_generation then
               status.text = message
             end
-          end, mode_values[mode_choice], state
+          end, mode_values[mode_choice], state, adopt.value
         )
         if not ok then status.text = "ACID error: " .. tostring(generated)
         elseif not generated then status.text = err or "Generation refused" end
       end
     },
+    vb:row {vb:text {text="Adopt legacy ACID 0.1 TEST once"},adopt},
     vb:text {text = "PITCH memory (entry / note / accent / slide)"},
     vb:row {pitch_entry,pitch_note,accent,slide},
     vb:text {text = "TIME memory (step / instruction)"},
@@ -162,6 +176,9 @@ function M.show()
       }
     },
     summary,
+    memory_label,
+    pitch_label,
+    time_label,
     vb:button {
       text = "Inspect selected pattern (read only)",
       notifier = function()
