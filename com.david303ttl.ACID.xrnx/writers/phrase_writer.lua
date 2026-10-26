@@ -64,7 +64,9 @@ local function complete(job, error_message, rendered_events)
     job.target_index, rendered_events.notes, rendered_events.offs,
     rendered_events.raw_events, job.instrument_index - 1) ..
     (job.mode=="baseline" and "" or
-     " | "..job.mode.." articulation test applied"))
+     " | "..job.mode.." articulation test applied") ..
+    (job.glide_warnings and #job.glide_warnings>0 and
+      string.format(" | %d glide continuation(s) omitted at gate OFF",#job.glide_warnings) or ""))
 end
 
 local function finalize(job, event_count, skipped)
@@ -97,6 +99,7 @@ local function finalize(job, event_count, skipped)
       local glide_result,glide_err=articulation.apply(
         job.phrase,job.plan,2,job.glide_rate,false)
       if not glide_result then complete(job,glide_err);return end
+      job.glide_warnings=glide_result.skipped_continuations
     end
   end
   local ok, error_message = pcall(function()
