@@ -19,8 +19,10 @@ boundaries, TIE and REST, and exact-step errors.
 
 1. Install the ACID tool from this branch. Open an instrument with a playable
    sample and no foreign phrase content. Open Tools > ACID.
-2. Confirm LAST STEP=16, choose Create / Reset Pattern. PITCH and TIME grids
-   become active. Verify creation is mandatory before editing.
+2. Confirm LAST STEP=16, choose Create / Reset Pattern. All 64 PITCH positions
+   should show C, normal octave, ACCENT and SLIDE off. The sixteen active
+   TIME steps should all be NOTE. Confirm the decoded preview is C for every
+   step without editing any pitches.
 3. Edit P01 keyboard C, octave DOWN, ACCENT on, SLIDE on. Edit P02 D#, octave
    UP. Verify the two controls independently alter the decoded MIDI pitches.
 4. Set TIME step 01 to NOTE, step 02 to TIE, and step 03 to NOTE using
@@ -32,8 +34,8 @@ boundaries, TIE and REST, and exact-step errors.
    17, 32, 33, 48, 49, 64; ensure state persists when switching pages.
 7. Shrink LAST STEP to 16, then enlarge again. Time values outside the active
    range should be restored in this open draft.
-8. Select a NOTE with no PITCH memory initialized in a fresh draft. Verify the
-   warning reports the exact TIME step and PITCH P01 and refuses generation.
+8. Check that untouched C entries count as stored but can be unused by the TIME
+   stream. The editor must not report a missing-pitch error for those entries.
 9. Generate an ACID phrase using an initialized pattern with valid NOTE
    pitches. Check the phrase line count equals two times LAST STEP and the
    decoded preview matches events. Regression-check phrase ownership,
