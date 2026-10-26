@@ -1,5 +1,4 @@
--- ACID 0.1: read-only sampler configuration audit.
--- Do NOT change existing sample instruments/modulation/effect chains.
+-- Inspect sampler configuration without changing instruments or effect chains.
 local M={}
 function M.describe(instrument)
   if not instrument then return nil,"No instrument selected" end

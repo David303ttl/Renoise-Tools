@@ -30,6 +30,22 @@
 - Keep modules private to each tool. ACID uses qualified module names such as
   `model.compiler` and `writers.phrase_writer`.
 
+## Code naming, comments and documentation
+
+- Name code files, modules, symbols, tests and fixture formats by behavior or
+  responsibility. Do not embed roadmap, blueprint, milestone, phase or work-step
+  labels such as `M1` or `M2` in names, comments, generated code, diagnostics or
+  UI text. Keep planning labels and implementation history in documentation.
+- Keep comments concise and technical: describe behavior, invariants, constraints
+  or the reason for a non-obvious decision. Do not add task narratives, progress
+  reports, future-work prose or version-history commentary to code.
+- Preserve meaningful domain terms such as sequencer steps and signal phase.
+  Preserve manifest versions, persisted schema identifiers and compatibility
+  markers; do not rename them as cosmetic cleanup.
+- Keep documentation paths portable. Use repository-relative paths, pinned
+  upstream links or sanitized placeholders for external checkouts. Never commit
+  machine-specific absolute paths, usernames or local workspace locations.
+
 ## Renoise API references
 
 - Run `./scripts/setup_sdk.ps1` to obtain the pinned API 6.2 starter pack.

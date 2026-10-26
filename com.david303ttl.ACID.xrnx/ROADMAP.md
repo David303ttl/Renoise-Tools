@@ -66,6 +66,8 @@ Implemented on `develop`:
 
 **Priority:** highest. **Recommended implementation:** small feature branch from `develop`, separate commits for each subtask. **Avoid treating `looping = true` alone as completion.**
 
+**Detailed implementation proposal:** [M2 blueprint](M2_BLUEPRINT.md), grounded in the pinned OS-303 firmware checkout and the current ACID code. It defines proposed cursor/voice rules, logical PITCH span, compatible snapshot migration, native-loop experiments, safety work and acceptance fixtures. It is a planning contract, not a completed milestone or a claim of verified hardware fidelity.
+
 ### M2.0 — Define the conformance oracle
 
 **Work**

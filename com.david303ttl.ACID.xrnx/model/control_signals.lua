@@ -1,6 +1,5 @@
--- ACID 0.1 experimental control-signal timeline, independent of Renoise.
--- Units: 256 subdivisions per sixteenth step. Gate fraction is a test
--- parameter, NOT a claim about original hardware timing.
+-- Control-signal timeline in 256 subdivisions per sixteenth step.
+-- Gate fraction controls release placement independently of Renoise.
 local compiler=require("model.compiler")
 local M={}
 
@@ -69,12 +68,11 @@ function M.compile(pattern,options)
   }
 end
 
--- Output positions for a two-lines-per-step Renoise phrase. Exact
--- fractional placement is intentionally not approximated: reject until
--- note-delay gate scheduling is supported.
+-- Output release positions for a two-lines-per-step Renoise phrase.
+-- Fractional placements outside this grid are rejected.
 function M.release_lines(timeline,lines_per_step)
   if lines_per_step~=2 or timeline.gate_fraction~=0.5 then
-    return nil,"only 2 lines per step and 50% gate supported for test output"
+    return nil,"gate output requires 2 lines per step and 50% gate"
   end
   local lines={}
   for _,ev in ipairs(timeline.events) do

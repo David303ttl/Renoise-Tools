@@ -1,6 +1,4 @@
--- ACID 0.1: native sample glide placement experiment.
--- This deliberately tests Renoise's 0Gxx command; it is NOT an
--- accuracy-calibrated acid slide renderer (TPL, gate and loops unresolved).
+-- Place note-column glide effects; sample voice continuity is not guaranteed.
 local M = {}
 
 function M.plan(plan, lines_per_step, rate)
@@ -27,9 +25,7 @@ function M.plan(plan, lines_per_step, rate)
         return nil, "slide requires explicit source and target"
       end
       local target_line = (step-1) * lines_per_step + 1
-      -- Apply Gxx at target pitch, repeat using G00 on the next line.
-      -- This only proves local effect placement; subsequent lines and TPL
-      -- need real Renoise experimentation before production integration.
+      -- Apply Gxx at the target pitch and G00 on the following line.
       commands[#commands+1] = {
         line=target_line, note=event.note, command="0G", amount=rate,
         step=step, pitch_index=event.pitch_index, kind="glide"

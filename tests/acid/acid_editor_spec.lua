@@ -80,4 +80,4 @@ off.pitch_events={seq.new_pitch(0,0),seq.new_pitch(7,0)}
 for i=1,64 do off.time_events[i]=(i==1 or i==64) and "N" or "R" end
 local plan=assert(compiler.compile(off))
 assert(plan.steps[64].pitch_index==2 and plan.note_count==2)
-print("ACID M1: 64-step editor, paging, octave, preview and diagnostics passed")
+print("ACID editor, paging, octave, preview and diagnostic checks passed")

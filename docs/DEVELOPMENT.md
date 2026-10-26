@@ -38,6 +38,26 @@ Open `sdk/renoise-api-6.2/docs/index.html` for the offline book. Search
 `sdk/renoise-api-6.2/definitions/` for a specific method or property before using
 it. Keep example tools as references; install them separately only when needed.
 
+## Code naming, comments and documentation
+
+Use behavior and responsibility to name code files, modules, symbols, tests and
+fixture formats. Keep roadmap, blueprint, milestone, phase and work-step labels
+such as `M1` and `M2` out of these names, code comments, generated code,
+diagnostics and UI text. Planning labels and implementation history belong in
+documentation.
+
+Comments should briefly explain behavior, invariants, constraints or the reason
+for a non-obvious decision. Avoid task narratives, progress reports, future-work
+prose and version-history commentary. Meaningful domain terms such as sequencer
+steps and signal phase remain appropriate. Manifest versions, persisted schema
+identifiers and compatibility markers must retain their functional meaning;
+do not rename them as cosmetic cleanup.
+
+Documentation must use portable paths: repository-relative paths for local
+files, pinned upstream links for reference sources, or sanitized placeholders
+for external checkouts. Never commit machine-specific absolute paths, usernames
+or local workspace locations.
+
 ## Development loop
 
 1. Check the relevant API definitions and documentation.

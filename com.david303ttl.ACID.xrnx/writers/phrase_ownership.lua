@@ -1,4 +1,4 @@
--- ACID 0.1: detect tool-generated phrase and subsequent manual edits.
+-- Detect generated phrases and subsequent manual edits.
 -- A content seal prevents accidental overwrites; it is not a security token.
 local M={}
 local PREFIX="ACID 0.1 ["

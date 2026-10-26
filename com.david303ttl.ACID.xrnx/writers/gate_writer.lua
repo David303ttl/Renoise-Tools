@@ -1,5 +1,4 @@
--- ACID 0.1: render control-signal gate edges into a fresh phrase.
--- Writes only test-owned empty cells; rejects collisions.
+-- Write control-signal gate edges into empty phrase cells; reject collisions.
 local control=require("model.control_signals")
 local M={}
 function M.apply(phrase,timeline)

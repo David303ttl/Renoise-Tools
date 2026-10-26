@@ -123,7 +123,7 @@ Rate 1/32, Gate 50% combination is refused without pattern changes.
 Rename a source track after successful generation and verify a later
 regeneration refuses to overwrite output.
 
-Run the regression spec directly: `lua tests/arp/arp_v04_spec.lua`.
+Run the regression spec directly: `lua tests/arp/arp_writer_spec.lua`.
 
 ### End-of-pattern release check
 

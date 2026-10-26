@@ -1,4 +1,4 @@
--- ACID 0.1: verify *musical* phrase contents, not pattrns raw pulse count.
+-- Verify phrase note and OFF cells against the semantic event plan.
 -- Native Renoise note_value: 0..119 = notes, 120 = OFF, 121 = empty.
 local M = {}
 local EMPTY, OFF = 121, 120

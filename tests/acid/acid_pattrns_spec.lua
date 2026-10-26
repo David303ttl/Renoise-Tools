@@ -1,5 +1,4 @@
 dofile('tests/bootstrap.lua')('acid')
--- Run from repository root: lua tests/acid/acid_pattrns_spec.lua
 local emitter = require('writers.pattrns_writer')
 
 local function compile_script(source)

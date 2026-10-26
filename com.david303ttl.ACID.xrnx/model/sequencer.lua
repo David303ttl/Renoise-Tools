@@ -1,5 +1,5 @@
 -- ACID pitch/time memory. Drafts can be partially entered.
--- Roland semantics are unchanged; 64 slots are an explicit software extension.
+-- Pitch and time memories have independent contents and 64-slot capacity.
 local M = {}
 M.MAX_STEPS = 64
 M.PAGE_SIZE = 16

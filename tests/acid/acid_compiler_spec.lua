@@ -1,5 +1,4 @@
 dofile('tests/bootstrap.lua')('acid')
--- Run from repo root: texlua tests/acid/acid_compiler_spec.lua
 local sequencer = require("model.sequencer")
 local compiler = require("model.compiler")
 

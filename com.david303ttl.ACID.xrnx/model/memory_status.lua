@@ -1,4 +1,4 @@
--- Readable independent pitch/time memory usage for ACID 0.1.
+-- Summarize independent pitch/time memory usage.
 local M={}
 function M.inspect(pattern)
   local length=pattern.length

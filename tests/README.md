@@ -18,7 +18,7 @@ If Lua is installed under a different command name, pass it explicitly:
 A single spec can also be run directly from the repository root, for example:
 
 ```sh
-lua tests/arp/arp_v04_spec.lua
+lua tests/arp/arp_writer_spec.lua
 lua tests/acid/acid_compiler_spec.lua
 ```
 

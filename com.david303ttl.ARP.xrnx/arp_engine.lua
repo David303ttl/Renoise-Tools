@@ -1,4 +1,4 @@
--- ARP v0.4: pure-Lua note ordering and timing planner.
+-- Pure-Lua note ordering and timing planner.
 local M = {}
 
 function M.order_notes(input, mode)
@@ -74,7 +74,7 @@ end
 -- Gate <100%: explicit OFF in the same note column, with sub-line delay
 -- when required. Renoise has one event per note column per line: if ON
 -- and OFF need the same line, reject instead of approximating silently.
--- Gate 100% maintains v0.3 legato/retrigger semantics (no OFF events).
+-- Gate 100% emits note onsets without OFF events.
 -- All events use 1-based lines and 0..255 delay units.
 function M.plan(chords, length, rate, mode, octaves, gate)
   gate = gate or 100
@@ -140,8 +140,7 @@ end
 -- Schedule non-integer-line note-ons. Every event on a shared line gets
 -- its own note column, ordered from left to right by delay.
 -- At 100% gate no OFFs are emitted, matching the legacy note-on mode.
--- Short gates with fractional rates are intentionally not implemented:
--- a voice cannot receive ON and OFF on the same line/column.
+-- Short gates are rejected when ON and OFF need the same line and column.
 function M.plan_subline(chords, length, units, mode, octaves, gate)
   if gate~=100 then
     return nil,"Sub-line rate currently supports Gate 100% only"

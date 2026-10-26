@@ -1,5 +1,4 @@
 dofile('tests/bootstrap.lua')('acid')
--- Run from repository root: lua tests/acid/acid_phrase_validator_spec.lua
 local verifier = require("writers.phrase_validator")
 local compiler = require("model.compiler")
 local fixture = {

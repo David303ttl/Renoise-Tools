@@ -1,6 +1,5 @@
 dofile('tests/bootstrap.lua')('arp')
 -- Regression test for Song __eq crash in ARP GUI.
--- Run from repository root: lua tests/arp/arp_gui_spec.lua
 local calls=0
 local button_callback, status, new_document
 package.loaded.pattern_writer={

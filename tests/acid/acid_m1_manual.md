@@ -11,7 +11,7 @@ Run from the repository root in VS Code:
 pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID
 ```
 
-The new `tests/acid/acid_m1_editor_spec.lua` covers 1/16/17/32/33/48/49/64
+The `tests/acid/acid_editor_spec.lua` covers 1/16/17/32/33/48/49/64
 steps, independent NOTE consumption, pitch wrap, octave transposition, page
 boundaries, TIE and REST, and exact-step errors.
 

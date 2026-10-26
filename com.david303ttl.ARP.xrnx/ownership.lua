@@ -1,4 +1,4 @@
--- ARP v0.5 ownership: snapshots keyed by pattern line AND note column.
+-- Ownership snapshots keyed by pattern line and note column.
 -- Reads ARP04 single-column records and writes ARP05 records. Tool data
 -- is scoped to this XRNX bundle by Renoise (not shared with other tools).
 local M={}

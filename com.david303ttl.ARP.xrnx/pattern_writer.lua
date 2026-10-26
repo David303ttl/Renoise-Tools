@@ -1,4 +1,4 @@
--- ARP v0.5: sub-line scheduling with protected multi-column regeneration.
+-- Sub-line scheduling with protected multi-column regeneration.
 local M={}
 local engine=require("arp_engine")
 local owned=require("ownership")
@@ -99,7 +99,7 @@ function M.generate(source_index,dest_index,division,mode,octaves,gate,dest_inst
 
   local plan,plan_error,note_count,off_count,required_columns
   if units%256==0 then
-    -- Preserve v0.4 same-column gate behavior for integral-line rates.
+    -- Integral-line rates keep note releases in the same column as their onset.
     plan,plan_error,note_count,off_count=engine.plan(
       chords,length,units/256,mode,octaves,gate)
     required_columns=1

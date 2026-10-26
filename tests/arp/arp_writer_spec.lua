@@ -1,6 +1,4 @@
 dofile('tests/bootstrap.lua')('arp')
--- Run: luatex --luaonly tests/arp/arp_v04_spec.lua
--- Or: lua tests/arp/arp_v04_spec.lua
 local engine=require("arp_engine")
 local owned=require("ownership")
 local writer=require("pattern_writer")
@@ -164,7 +162,7 @@ assert(not declined and decline_err:find("changed"))
 assert(dst:line(1).note_columns[1].note_value==72)
 
 
--- v0.5 fractional-rate scheduling, including multiple columns per line.
+-- Fractional-rate scheduling can use multiple columns per line.
 assert(engine.rate_subunits(4,"1/32")==128)
 assert(engine.rate_subunits(1,"1/32")==32)
 assert(engine.rate_subunits(3,"1/8")==384)
@@ -229,7 +227,7 @@ local missing_cols,columns_err=writer.generate(1,2,"1/32","up",1,100)
 assert(not missing_cols and columns_err:find("2 visible"))
 assert(current_song.selected_pattern.tracks[2]:line(1).note_columns[1].is_empty)
 
--- Legacy v0.4 ownership loads into v0.5 keyed snapshot records.
+-- Single-column ownership records migrate to keyed snapshot records.
 local old="ARP04\nR|1|2|1|16|41|42|43|1,60,0,255,255,0,0,0\n"
 local migrated,migration_error=owned.load(old)
 assert(migrated,migration_error)
@@ -258,7 +256,7 @@ local invalid,invalid_err=writer.generate(1,2,"1/4","up",1,100,99,true)
 assert(not invalid and invalid_err:find("valid destination instrument"))
 
 
--- Tick-cut planner validation (not yet part of the Renoise renderer).
+-- Tick-cut planning validates exact tick placement.
 local cut_plan=assert(engine.plan_subline(
   {{line=1,notes={60},instrument=0}},4,128,"up",1,100))
 local cut,cut_error=engine.attach_tick_cuts(cut_plan,128,50,12)
@@ -289,7 +287,7 @@ assert(not rejected_off)
 assert(current_song.tracks[1].mute_state==renoise.Track.MUTE_STATE_ACTIVE)
 
 
--- v0.7 fractional release events: exactly representable 1/32 at LPB 4,
+-- Fractional release events: exactly representable 1/32 at LPB 4,
 -- Gate 50% needs a same-line OFF and must reject. A fractional 1/8
 -- at LPB 3 and Gate 75% can create a delayed next-line OFF.
 local fractional_ok,fe,n_on,n_off,ncols=engine.plan_fractional_release(

@@ -1,6 +1,4 @@
--- Read-only song context helper for scaffold.
--- TODO: compile validated ACID events and render Renoise notes, delays,
--- gates, accents and slides without silently overwriting existing content.
+-- Describe the selected pattern and track without modifying the song.
 local M = {}
 
 function M.inspect_selection()

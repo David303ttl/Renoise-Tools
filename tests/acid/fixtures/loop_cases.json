@@ -1,0 +1,189 @@
+{
+  "format": "ACID-LOOP-ORACLE-1",
+  "status": "proposed semantics; not executed against a repeating-cycle interpreter",
+  "semantics": "cycle_reset_v1",
+  "cycles": 3,
+  "index_base": 1,
+  "note_numbering": "Renoise note_value, 0..119",
+  "capacity": 64,
+  "normalization": "Pad supplied pitches to capacity with valid C defaults; preserve explicit pitch_length. All fixtures start silent. Reset next-consumed PITCH to P01 each TIME cycle; retain voice identity independently.",
+  "expectation_order": "Each note_* array follows NOTE commands in TIME order. tie_notes follows TIE commands, null means silent. rest_releases follows REST commands. expected has exactly one record per cycle.",
+  "boundary_family": {
+    "id": "page_boundaries_and_acceptance_lengths",
+    "source_generator": {
+      "pitch_length": 64,
+      "pitch_indices": "1..64 inclusive",
+      "note_formula": "note = 24 + pitch_index",
+      "slide_pitch_indices": [15, 30, 45, 60],
+      "time_default": "N",
+      "time_overrides": {"16": "T", "32": "R", "48": "T", "64": "T"},
+      "length_rule": "For each length_case use exactly the first length TIME commands; retain all 64 PITCH entries. Start silent and run three cycles."
+    },
+    "expected_checkpoint_each_cycle": [
+      {"step": 16, "kind": "tie", "voice_pitch_index": 15, "voice_note": 39, "holds": true, "hold_intent": true},
+      {"step": 17, "kind": "note", "pitch_index": 16, "note": 40, "transition": "slide"},
+      {"step": 32, "kind": "rest", "releases": true, "released_note": 54, "hold_intent": false},
+      {"step": 33, "kind": "note", "pitch_index": 31, "note": 55, "transition": "attack"},
+      {"step": 48, "kind": "tie", "voice_pitch_index": 45, "voice_note": 69, "holds": true, "hold_intent": true},
+      {"step": 49, "kind": "note", "pitch_index": 46, "note": 70, "transition": "slide"},
+      {"step": 64, "kind": "tie", "voice_pitch_index": 60, "voice_note": 84, "holds": true, "hold_intent": true}
+    ],
+    "checkpoint_rule": "Assert only checkpoints with step <= length. These apply in every cycle; origins are ignored. Every cycle consumes P01..P(note_count) without a page reset. First NOTE is P01/note25; use the per-length first transitions below. Exit cursor is before the next cycle reset.",
+    "length_cases": [
+      {"length": 1, "note_count": 1, "first_transitions": ["attack", "retrigger", "retrigger"], "exit_voice": {"note": 25, "pitch_index": 1, "slide": false}, "exit_next_pitch": 2},
+      {"length": 16, "note_count": 15, "first_transitions": ["attack", "slide", "slide"], "exit_voice": {"note": 39, "pitch_index": 15, "slide": true}, "exit_next_pitch": 16},
+      {"length": 17, "note_count": 16, "first_transitions": ["attack", "retrigger", "retrigger"], "exit_voice": {"note": 40, "pitch_index": 16, "slide": false}, "exit_next_pitch": 17},
+      {"length": 32, "note_count": 30, "first_transitions": ["attack", "attack", "attack"], "exit_voice": null, "exit_next_pitch": 31},
+      {"length": 33, "note_count": 31, "first_transitions": ["attack", "retrigger", "retrigger"], "exit_voice": {"note": 55, "pitch_index": 31, "slide": false}, "exit_next_pitch": 32},
+      {"length": 48, "note_count": 45, "first_transitions": ["attack", "slide", "slide"], "exit_voice": {"note": 69, "pitch_index": 45, "slide": true}, "exit_next_pitch": 46},
+      {"length": 49, "note_count": 46, "first_transitions": ["attack", "retrigger", "retrigger"], "exit_voice": {"note": 70, "pitch_index": 46, "slide": false}, "exit_next_pitch": 47},
+      {"length": 64, "note_count": 60, "first_transitions": ["attack", "slide", "slide"], "exit_voice": {"note": 84, "pitch_index": 60, "slide": true}, "exit_next_pitch": 61}
+    ]
+  },
+  "cases": [
+    {
+      "id": "note_tie_note_reset",
+      "length": 3,
+      "pitch_length": 3,
+      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
+      "time": ["N", "T", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 39], "note_transitions": ["attack", "retrigger"], "tie_notes": [36], "rest_releases": [], "exit_voice": {"note": 39, "pitch_index": 2, "slide": false}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 39], "note_transitions": ["retrigger", "retrigger"], "tie_notes": [36], "rest_releases": [], "exit_voice": {"note": 39, "pitch_index": 2, "slide": false}, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 39], "note_transitions": ["retrigger", "retrigger"], "tie_notes": [36], "rest_releases": [], "exit_voice": {"note": 39, "pitch_index": 2, "slide": false}, "exit_next_pitch": 3}
+      ]
+    },
+    {
+      "id": "note_rest_note",
+      "length": 3,
+      "pitch_length": 2,
+      "pitches": [{"note": 36}, {"note": 43}],
+      "time": ["N", "R", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "attack"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "attack"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "attack"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "leading_tie_retains_final_voice_not_p01",
+      "length": 3,
+      "pitch_length": 2,
+      "pitches": [{"note": 36}, {"note": 43}],
+      "time": ["T", "N", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [null], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "retrigger"], "tie_notes": [43], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["retrigger", "retrigger"], "tie_notes": [43], "rest_releases": [], "exit_voice": {"note": 43, "pitch_index": 2, "slide": false}, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "leading_tie_after_ending_rest",
+      "length": 3,
+      "pitch_length": 2,
+      "pitches": [{"note": 36}, {"note": 43}],
+      "time": ["T", "N", "R"],
+      "expected": [
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 2},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 2},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [null], "rest_releases": [true], "exit_voice": null, "exit_next_pitch": 2}
+      ]
+    },
+    {
+      "id": "leading_rest_releases_only_on_repeat",
+      "length": 3,
+      "pitch_length": 2,
+      "pitches": [{"note": 36}, {"note": 43, "slide": true}],
+      "time": ["R", "N", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [false], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "retrigger"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "same_pitch_boundary_slide_length_one",
+      "length": 1,
+      "pitch_length": 1,
+      "pitches": [{"note": 36, "slide": true}],
+      "time": ["N"],
+      "expected": [
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["slide"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["slide"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": true}, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "outgoing_boundary_slide_rest_inside_cycle",
+      "length": 3,
+      "pitch_length": 2,
+      "pitches": [{"note": 36}, {"note": 43, "slide": true}],
+      "time": ["N", "R", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["attack", "attack"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["slide", "attack"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1, 2], "note_values": [36, 43], "note_transitions": ["slide", "attack"], "tie_notes": [], "rest_releases": [true], "exit_voice": {"note": 43, "pitch_index": 2, "slide": true}, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "five_triggers_three_pitches_twelve_time_steps",
+      "length": 12,
+      "pitch_length": 3,
+      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
+      "time": ["N", "N", "N", "N", "N", "R", "R", "R", "R", "R", "R", "R"],
+      "expected": [
+        {"note_pitch_indices": [1, 2, 3, 1, 2], "note_values": [36, 39, 43, 36, 39], "note_transitions": ["attack", "retrigger", "retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [true, false, false, false, false, false, false], "exit_voice": null, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2, 3, 1, 2], "note_values": [36, 39, 43, 36, 39], "note_transitions": ["attack", "retrigger", "retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [true, false, false, false, false, false, false], "exit_voice": null, "exit_next_pitch": 3},
+        {"note_pitch_indices": [1, 2, 3, 1, 2], "note_values": [36, 39, 43, 36, 39], "note_transitions": ["attack", "retrigger", "retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [true, false, false, false, false, false, false], "exit_voice": null, "exit_next_pitch": 3}
+      ]
+    },
+    {
+      "id": "more_pitches_than_triggers_do_not_carry",
+      "length": 3,
+      "pitch_length": 5,
+      "pitches": [{"note": 36}, {"note": 38}, {"note": 40}, {"note": 43}, {"note": 46}],
+      "time": ["N", "N", "N"],
+      "expected": [
+        {"note_pitch_indices": [1, 2, 3], "note_values": [36, 38, 40], "note_transitions": ["attack", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 40, "pitch_index": 3, "slide": false}, "exit_next_pitch": 4},
+        {"note_pitch_indices": [1, 2, 3], "note_values": [36, 38, 40], "note_transitions": ["retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 40, "pitch_index": 3, "slide": false}, "exit_next_pitch": 4},
+        {"note_pitch_indices": [1, 2, 3], "note_values": [36, 38, 40], "note_transitions": ["retrigger", "retrigger", "retrigger"], "tie_notes": [], "rest_releases": [], "exit_voice": {"note": 40, "pitch_index": 3, "slide": false}, "exit_next_pitch": 4}
+      ]
+    },
+    {
+      "id": "all_rest",
+      "length": 1,
+      "pitch_length": 1,
+      "pitches": [{"note": 36}],
+      "time": ["R"],
+      "expected": [
+        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [], "rest_releases": [false], "exit_voice": null, "exit_next_pitch": 1},
+        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [], "rest_releases": [false], "exit_voice": null, "exit_next_pitch": 1},
+        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [], "rest_releases": [false], "exit_voice": null, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "all_tie_cold_silence",
+      "length": 1,
+      "pitch_length": 1,
+      "pitches": [{"note": 36}],
+      "time": ["T"],
+      "expected": [
+        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [null], "rest_releases": [], "exit_voice": null, "exit_next_pitch": 1},
+        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [null], "rest_releases": [], "exit_voice": null, "exit_next_pitch": 1},
+        {"note_pitch_indices": [], "note_values": [], "note_transitions": [], "tie_notes": [null], "rest_releases": [], "exit_voice": null, "exit_next_pitch": 1}
+      ]
+    },
+    {
+      "id": "trailing_tie_preserves_outgoing_slide",
+      "length": 2,
+      "pitch_length": 1,
+      "pitches": [{"note": 36, "slide": true}],
+      "time": ["N", "T"],
+      "expected": [
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["attack"], "tie_notes": [36], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["slide"], "tie_notes": [36], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": true}, "exit_next_pitch": 1},
+        {"note_pitch_indices": [1], "note_values": [36], "note_transitions": ["slide"], "tie_notes": [36], "rest_releases": [], "exit_voice": {"note": 36, "pitch_index": 1, "slide": true}, "exit_next_pitch": 1}
+      ]
+    }
+  ]
+}

@@ -1,5 +1,4 @@
 dofile('tests/bootstrap.lua')('acid')
--- From repo root: lua tests/acid/acid_articulation_spec.lua
 local compiler=require("model.compiler")
 local articulation=require("model.articulation")
 local pattern={

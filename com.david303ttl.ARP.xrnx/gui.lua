@@ -1,5 +1,4 @@
--- ARP v0.4 Renoise GUI. Never compare Renoise Song objects with == or ~=:
--- they do not implement Lua's __eq operator.
+-- Renoise GUI. Song objects do not support Lua's __eq operator.
 local M = {}
 local writer = require("pattern_writer")
 local dialog
@@ -61,7 +60,7 @@ function M.show()
   }
   local content = vb:column {
     margin=12, spacing=8,
-    vb:text { text="ARP.xrnx v0.7 - guarded release timing" },
+    vb:text { text="ARP - guarded release timing" },
     vb:row {
       vb:text {text="Source"},
       vb:popup {width=290,items=labels,value=source_choice,
@@ -114,7 +113,7 @@ function M.show()
         )
         if not ok then
           status.text="ARP error: " .. tostring(result)
-          print("[ARP v0.5] " .. tostring(result))
+          print("[ARP] " .. tostring(result))
         elseif not result then
           status.text=err or "Generation was refused."
         else

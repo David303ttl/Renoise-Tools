@@ -1,4 +1,4 @@
--- ACID M1 native ViewBuilder PITCH/TIME grid.
+-- Native ViewBuilder PITCH/TIME editor.
 local M = {}
 local sequencer=require("model.sequencer")
 local editor=require("model.editor_state")
@@ -431,7 +431,7 @@ function M.show()
     end
   end}
   local content=vb:column{margin=12,spacing=7,
-    vb:text{text="ACID 0.1  |  M1 PITCH / TIME EDITOR",font="big"},
+    vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
     vb:row{spacing=10,vb:text{text="LAST STEP (1-64)"},length_popup,
       step_division},
     vb:row{spacing=8,

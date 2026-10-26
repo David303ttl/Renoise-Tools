@@ -1,5 +1,4 @@
 dofile('tests/bootstrap.lua')('acid')
--- Run locally from repository root: texlua tests/acid/acid_articulation_modes_spec.lua
 local engine=require("model.compiler")
 local art=require("model.articulation")
 local p={length=8,

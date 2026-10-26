@@ -1,5 +1,4 @@
--- ACID 0.1: first native Renoise phrase integration proof.
--- No changes to pattern tracks, no slides, no automatic regeneration.
+-- Render native phrases with guarded replacement and source persistence.
 local sequencer = require("model.sequencer")
 local pattrns = require("writers.pattrns_writer")
 local compiler = require("model.compiler")
@@ -67,7 +66,7 @@ local function complete(job, error_message, rendered_events)
     job.target_index, rendered_events.notes, rendered_events.offs,
     rendered_events.raw_events, job.instrument_index - 1) ..
     (job.mode=="baseline" and "" or
-     " | "..job.mode.." articulation test applied") ..
+     " | "..job.mode.." articulation applied") ..
     (job.glide_warnings and #job.glide_warnings>0 and
       string.format(
         "\\nGlide note: TIME step %02d, phrase line %02X: 0G00 omitted; gate OFF takes priority.",
@@ -99,8 +98,7 @@ local function finalize(job, event_count, skipped)
     local gate_result,gate_err=gates.apply(job.phrase,timeline)
     if not gate_result then complete(job,gate_err);return end
     if job.mode=="slide" or job.mode=="mono" then
-      -- Pure native Gxx comparison; mono instrument configuration remains
-      -- user-owned until we can validate envelope behavior and restore safely.
+      -- Apply phrase-local glide without changing instrument configuration.
       local glide_result,glide_err=articulation.apply(
         job.phrase,job.plan,2,job.glide_rate,false)
       if not glide_result then complete(job,glide_err);return end
@@ -237,7 +235,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern, adopt_lega
   if busy then return nil, "ACID is already generating a phrase" end
   mode=mode or "baseline"
   if mode~="baseline" and mode~="retrigger" and mode~="slide" and mode~="mono" then
-    return nil,"Invalid playback test mode"
+    return nil,"Invalid playback mode"
   end
   if type(callback) ~= "function" then
     return nil, "Status callback required"
@@ -296,7 +294,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern, adopt_lega
   local source, meta = pattrns.emit(plan)
   if not source then return nil, meta end
   if meta.slide_intentions ~= 0 and mode ~= "slide" and mode ~= "mono" and custom_pattern==nil then
-    return nil, "Prototype must not render selective slides"
+    return nil, "Selective slides require slide or mono playback mode"
   end
   local job = {
     instrument = instrument, instrument_index = instrument_index, song=song,
@@ -350,7 +348,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern, adopt_lega
     end
     return nil, tostring(error_message)
   end
-  notify(job, "ACID: compiling test phrase...")
+  notify(job, "ACID: compiling phrase...")
   return true
 end
 
