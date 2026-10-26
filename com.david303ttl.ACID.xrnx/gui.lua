@@ -3,6 +3,7 @@ local M = {}
 local sequencer = require("sequencer")
 local writer = require("pattern_writer")
 local phrase_writer = require("phrase_writer")
+local sampler_audit = require("sampler_audit")
 local dialog
 local document_generation = 0
 local dialog_generation = -1
@@ -106,6 +107,12 @@ function M.show()
         width=270, items=labels, value=selected,
         notifier=function(index) selected=index end
       }
+    },
+    vb:button {
+      text="Inspect Sampler / Modulation / Effects (read only)",
+      notifier=function()
+        status.text=sampler_audit.describe(song.instruments[selected])
+      end
     },
     vb:row {
       vb:text {text="Audio experiment"},
