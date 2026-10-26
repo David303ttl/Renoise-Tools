@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
 Runs the standalone Lua specs for one or all Renoise tools.
@@ -52,8 +54,7 @@ $failed = [System.Collections.Generic.List[string]]::new()
 try {
     Set-Location $repoRoot
     foreach ($spec in $specs) {
-        # Substring works on Windows PowerShell 5.1 / .NET Framework too.
-        $relativePath = $spec.FullName.Substring($repoRoot.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+        $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $spec.FullName).Replace('\', '/')
         Write-Host "==> $relativePath"
         & $lua.Source $relativePath
         if ($LASTEXITCODE -ne 0) {

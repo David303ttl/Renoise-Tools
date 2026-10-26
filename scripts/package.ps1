@@ -1,3 +1,5 @@
+#Requires -Version 7.0
+
 <#
 .SYNOPSIS
 Packages Renoise tool directories as installable .xrnx archives.

@@ -3,6 +3,12 @@
 .history/
 *.code-workspace
 
+# Local environments and secrets
+.env
+.env.*
+!.env.example
+env/
+
 # Logs and temporary files
 logs/
 *.log
@@ -15,6 +21,9 @@ logs/
 build/
 dist/
 tmp/
+
+# Downloaded Renoise development SDK (scripts/setup_sdk.ps1)
+/sdk/
 
 # Python bytecode
 __pycache__/
