@@ -30,8 +30,14 @@ for _,octave in ipairs({-1,0,1}) do
     local k,o=seq.pitch_controls(p)
     assert(k==key and o==octave)
     assert(p.note==36+key+12*octave)
+    assert(seq.validate({length=1,pitch_events={p},time_events={"N"}}))
   end
 end
+local mismatched=seq.new_pitch(0,0)
+mismatched.note=37
+local valid,diagnostic=seq.validate({length=1,pitch_events={mismatched},time_events={"N"}})
+assert(not valid)
+assert(diagnostic=="pitch keyboard/octave does not match MIDI note at pitch entry 1")
 local bad=seq.new_pattern(17)
 bad.pitch_events={seq.new_pitch(0,0),seq.new_pitch(3,1)}
 for i=1,17 do bad.time_events[i]="R" end

@@ -72,8 +72,10 @@ function M.validate(pattern)
       return false, "invalid pitch at entry " .. i
     end
     if p.key ~= nil or p.octave ~= nil then
-      local _, why = M.pitch_controls(p)
-      if why then return false, why .. " at pitch entry " .. i end
+      local key, octave_or_error = M.pitch_controls(p)
+      if key == nil then
+        return false, octave_or_error .. " at pitch entry " .. i
+      end
     end
     if p.accent ~= nil and type(p.accent) ~= "boolean" then
       return false, "accent must be boolean at entry " .. i
