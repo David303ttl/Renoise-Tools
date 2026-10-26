@@ -87,3 +87,17 @@ Run the manual comparison in [tests/acid_slide_manual.md](../../tests/acid_slide
 Run `texlua tests/acid_articulation_modes_spec.lua` locally in VS Code.
 This stage is not verified in real Renoise, and the glide speed and
 sample-envelope behavior are not yet calibrated.
+
+## Editable control-signal prototype (0.1)
+
+The dialog now includes an initial PITCH entry editor (C-3..C-4,
+ACCENT, SLIDE), a separate TIME step editor (NOTE/TIE/REST), and a
+read-only Sampler/Modulation/Effects inspection command. These controls
+feed the native phrase generator. A pure-Lua control-signal timeline
+separates note gate edges, pitch targets, ties and rests; the 50% gate
+is an experiment, not historical calibration.
+
+See [Sampler and control tests](../../tests/acid_sampler_control_manual.md).
+Run `lua tests/acid_control_signals_spec.lua` along with all existing
+local specs. **This new GUI/instrument behavior still needs a Renoise
+smoke test** before we consider it validated.
