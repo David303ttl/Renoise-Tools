@@ -74,3 +74,16 @@ requiring the raw callback count to equal six. The user screenshot established
 8 raw events for the expected 6 note/OFF events. Re-run the manual test in a
 new sample instrument with no phrases; the previous failed-test phrase may
 still be present and should be inspected or discarded manually.
+
+## Native articulation experiments (still 0.1)
+
+The ACID dialog has three separate modes: Baseline, Retrigger + Gate,
+and Selective Slide + Gate. Experimental native note-column `0Gxx`
+commands and pre-retrigger OFF cells are added only after rendering and
+validating a new phrase. Existing instrument phrases are never replaced.
+These modes use the same fixed 8-step test sequence, not the draft editor.
+
+Run the manual comparison in [tests/acid_slide_manual.md](../../tests/acid_slide_manual.md).
+Run `texlua tests/acid_articulation_modes_spec.lua` locally in VS Code.
+This stage is not verified in real Renoise, and the glide speed and
+sample-envelope behavior are not yet calibrated.
