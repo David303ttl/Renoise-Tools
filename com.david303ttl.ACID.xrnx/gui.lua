@@ -34,10 +34,10 @@ function M.show()
   local cursor = 1
   local selected_pitch = 1
   local summary = vb:text {
-    width = 465, text = assert(sequencer.describe(state))
+    width = 650, font="bold", text = assert(sequencer.describe(state))
   }
   local status = vb:text {
-    width = 465, text = "Use a sample instrument with no existing phrases."
+    width = 650, font="bold", text = "Ready. Generate an ACID phrase."
   }
   local labels = {}
   for i, instrument in ipairs(song.instruments) do
@@ -54,9 +54,9 @@ function M.show()
   local mode_choice=1
   local lengths = {8, 12, 16}
   local adopt=vb:checkbox {value=false}
-  local memory_label=vb:text {width=465,text=""}
-  local pitch_label=vb:text {width=465,text=""}
-  local time_label=vb:text {width=465,text=""}
+  local memory_label=vb:text {width=650,font="bold",text=""}
+  local pitch_label=vb:text {width=650,font="bold",text=""}
+  local time_label=vb:text {width=650,font="mono",text=""}
   local pitch_values = {36,37,38,39,40,41,42,43,44,45,46,47,48}
   local pitch_choices = {"C-3","C#3","D-3","D#3","E-3","F-3","F#3","G-3","G#3","A-3","A#3","B-3","C-4"}
   local pitch_entry = vb:valuebox {min=1,max=16,value=1,width=65}
@@ -84,7 +84,7 @@ function M.show()
     pitch_label.text=string.format(
       "PITCH %d/16 slots | %d NOTE triggers | next pitch #%d | %d free slots",
       m.pitch_count,m.notes,m.next_pitch,16-m.pitch_count)
-    time_label.text="TIME: "..m.time_text.."  |  PITCH: "..m.pitch_text
+    time_label.text="TIME steps: "..m.time_text
     updating=false
   end
   local function edit_pitch()
@@ -111,8 +111,8 @@ function M.show()
   end)
   refresh()
   local content = vb:column {
-    margin = 12, spacing = 8,
-    vb:text {text = "ACID.xrnx 0.1 - first phrase playback test"},
+    margin = 16, spacing = 12,
+    vb:text {text = "ACID 0.1  |  PITCH / TIME SEQUENCER",font="big"},
     vb:text {text = "Independent PITCH/TIME memories; slides remain experimental."},
     vb:row {
       vb:text {text="Target sample instrument"},
@@ -151,11 +151,16 @@ function M.show()
       end
     },
     vb:row {vb:text {text="Adopt legacy ACID 0.1 TEST once"},adopt},
-    vb:text {text = "PITCH memory (entry / note / accent / slide)"},
-    vb:row {pitch_entry,pitch_note,accent,slide},
-    vb:text {text = "TIME memory (step / instruction)"},
-    vb:row {time_step,time_kind},
-    vb:text {text = "Pattern inspection:"},
+    vb:text {text = "PITCH MEMORY",font="big"},
+    vb:row {spacing=12,
+      vb:text {text="Entry"},pitch_entry,
+      vb:text {text="Note"},pitch_note,
+      vb:text {text="Accent"},accent,
+      vb:text {text="Slide"},slide},
+    vb:text {text = "TIME MEMORY",font="big"},
+    vb:row {spacing=12,vb:text {text="Step"},time_step,
+      vb:text {text="Action"},time_kind},
+    vb:text {text = "MEMORY OVERVIEW",font="big"},
     vb:row {
       vb:text {text = "Timing steps"},
       vb:popup {
@@ -179,6 +184,10 @@ function M.show()
     memory_label,
     pitch_label,
     time_label,
+    vb:text {text="PITCH ENTRIES (index : MIDI pitch; ! accent, ~ slide)",font="bold"},
+    vb:multiline_textfield {width=650,height=60,active=false,font="mono",
+      text=(function()return "" end)()},
+    vb:text {text="GENERATION STATUS",font="big"},
     vb:button {
       text = "Inspect selected pattern (read only)",
       notifier = function()
