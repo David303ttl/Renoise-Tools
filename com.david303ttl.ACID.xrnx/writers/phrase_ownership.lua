@@ -48,16 +48,26 @@ local function hash(phrase)
   return string.format("%08X",acc)
 end
 
-function M.make_name(phrase)
+function M.id(phrase)
+  local id=(phrase.name or ""):match("^ACID 0%.1 #(%d+) %[%x%x%x%x%x%x%x%x%]$")
+  return id and tonumber(id) or nil
+end
+
+function M.make_name(phrase,id)
   local seal,err=hash(phrase)
   if not seal then return nil,err end
+  if id~=nil then
+    assert(type(id)=="number" and id%1==0 and id>=1)
+    return string.format("ACID 0.1 #%d [%s]",id,seal)
+  end
   return PREFIX..seal.."]"
 end
 
 function M.status(phrase)
   local name=phrase.name or ""
   if name==LEGACY then return "legacy" end
-  local old=name:match("^ACID 0%.1 %[(%x%x%x%x%x%x%x%x)%]$")
+  local old=name:match("^ACID 0%.1 %[(%x%x%x%x%x%x%x%x)%]$") or
+    name:match("^ACID 0%.1 #%d+ %[(%x%x%x%x%x%x%x%x)%]$")
   if not old then return "foreign" end
   local actual,err=hash(phrase)
   if not actual then return "modified",err end
