@@ -26,7 +26,7 @@ function M.emit(plan, options)
   if type(options) ~= 'table' then return nil, 'options must be a table' end
   if type(plan) ~= 'table' or type(plan.steps) ~= 'table'
     or type(plan.length) ~= 'number' or plan.length % 1 ~= 0
-    or plan.length < 1 or plan.length > 16 then
+    or plan.length < 1 or plan.length > 64 then
     return nil, 'invalid compiled ACID plan'
   end
   local unit = options.unit or '1/16'
