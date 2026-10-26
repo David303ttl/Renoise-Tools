@@ -25,9 +25,12 @@ assert(cells[3].effect_number_string=="0G")
 cells[4].note_value=40
 cells[3].effect_number_value=0
 cells[3].effect_number_string=nil
+cells[3].effect_amount_value=0
 local blocked,diagnostic=articulation.apply(phrase,plan,2,0x20,false)
 assert(not blocked)
 assert(diagnostic:find("TIME step 02",1,true),diagnostic)
 assert(diagnostic:find("phrase line 03",1,true),diagnostic)
 assert(cells[3].effect_number_value==0)
+assert(cells[3].effect_number_string==nil)
+assert(cells[3].effect_amount_value==0)
 print("ACID slide/gate overlap diagnostic checks passed")
