@@ -6,7 +6,7 @@ assert(pattern.length == 16)
 assert(#pattern.pitch_events == 0 and #pattern.time_events == 0)
 assert(sequencer.validate(pattern))
 assert(sequencer.new_pattern(8).length == 8)
-assert(not sequencer.validate({length = 17, pitch_events = {}, time_events = {}}))
+assert(sequencer.validate({length = 17, pitch_events = {}, time_events = {}}))\nassert(not sequencer.validate({length = 65, pitch_events = {}, time_events = {}}))
 assert(not sequencer.validate({length = 16, pitch_events = {}}))
 assert(sequencer.describe(pattern) == "Draft state: 16 time slots, 0 pitch entries, 0 time events")
 
