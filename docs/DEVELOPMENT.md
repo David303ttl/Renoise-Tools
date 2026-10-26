@@ -1,0 +1,62 @@
+# Renoise development setup
+
+ARP and ACID target Renoise 3.5 / scripting API 6.2. The existing frozen
+DigitaktSampleChain tool retains its API 6.1 manifest.
+
+## Install the API reference
+
+Use PowerShell 7 (`pwsh`) for all repository scripts. From the repository root:
+
+```powershell
+pwsh -NoProfile -File ./scripts/setup_sdk.ps1
+```
+
+The script downloads the official
+[API 6.2 starter pack](https://github.com/renoise/xrnx/releases/tag/API-6.2),
+checks its pinned SHA-256, and installs it into `sdk/renoise-api-6.2/`.
+The SDK is ignored by Git and excluded from tool packages. It includes API
+definitions, the offline scripting book, and example tools.
+
+Rerunning the installer checks installed file hashes. Incomplete or modified SDK
+contents are replaced from the verified release; keep development changes in
+your own tool directories.
+
+## Editor support
+
+Install the [Lua extension by LuaLS](https://marketplace.visualstudio.com/items?itemName=sumneko.lua)
+in VS Code, then open the repository folder. The committed `.luarc.json` selects
+Lua 5.1 and points to the SDK definitions and Renoise's LuaLS plugin. Reload the
+editor after the first SDK installation if its completion list has not updated.
+
+The configuration follows the
+[official API 6.2 editor settings](https://github.com/renoise/xrnx/blob/API-6.2/.vscode/settings.json).
+It configures editor analysis; it does not install a Lua interpreter or Renoise.
+The different tool bundles have overlapping module names, so their runtime
+search paths are not merged into a single global editor path.
+
+Open `sdk/renoise-api-6.2/docs/index.html` for the offline book. Search
+`sdk/renoise-api-6.2/definitions/` for a specific method or property before using
+it. Keep example tools as references; install them separately only when needed.
+
+## Development loop
+
+1. Check the relevant API definitions and documentation.
+2. Edit one tool inside its `.xrnx` directory, preserving self-contained imports.
+3. Run the pure-Lua specs with a separately installed Lua 5.1-compatible interpreter:
+
+   ```powershell
+   pwsh -NoProfile -File ./scripts/run_tests.ps1
+   ```
+
+4. Build an installable archive:
+
+   ```powershell
+   pwsh -NoProfile -File ./scripts/package.ps1 -Tool ACID
+   ```
+
+5. Install the archive from `dist/` into Renoise, or use the tool's documented
+   development installation. Perform the relevant [manual checks](../tests/README.md)
+   in a disposable song.
+
+Plain-Lua tests verify model logic and mocked API interactions. Actual playback,
+native phrase rendering, GUI behavior, undo, and save/reload require Renoise.

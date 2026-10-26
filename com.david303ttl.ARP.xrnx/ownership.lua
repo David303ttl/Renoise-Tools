@@ -7,7 +7,7 @@ local fields={
   "delay_value","effect_number_value","effect_amount_value"
 }
 function M.key(line,column)
-  return tostring(line)..":"..tostring(column)
+  return string.format("%d:%d",line,column)
 end
 function M.capture(cell)
   local values={}
