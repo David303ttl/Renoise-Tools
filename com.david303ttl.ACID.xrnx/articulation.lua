@@ -41,9 +41,27 @@ function M.plan(plan, lines_per_step, rate)
   return commands
 end
 
-function M.apply(phrase, plan, lines_per_step, rate)
+function M.apply(phrase, plan, lines_per_step, rate, early_release)
   local commands, err = M.plan(plan, lines_per_step, rate)
   if not commands then return nil, err end
+  if early_release then
+    local active=false
+    for step,ev in ipairs(plan.steps) do
+      if ev.kind=="note" then
+        if active and ev.transition~="slide" then
+          commands[#commands+1]={line=(step-1)*lines_per_step,
+            new_note=120,kind="release"}
+        end
+        active=true
+      elseif ev.kind=="rest" then active=false end
+    end
+  end
+  table.sort(commands,function(a,b)return a.line<b.line end)
+  for i=2,#commands do
+    if commands[i].line==commands[i-1].line then
+      return nil,"gate/glide collision"
+    end
+  end
   -- Preflight all destinations before modifying anything.
   local targets = {}
   for _, command in ipairs(commands) do
@@ -68,26 +86,37 @@ function M.apply(phrase, plan, lines_per_step, rate)
   for _, entry in ipairs(targets) do
     backups[#backups+1] = {
       cell=entry.cell,
+      note=entry.cell.note_value,
       number=entry.cell.effect_number_value,
       amount=entry.cell.effect_amount_value
     }
   end
   local ok, write_error = pcall(function()
     for _, entry in ipairs(targets) do
-      entry.cell.effect_number_string = entry.command.command
-      entry.cell.effect_amount_value = entry.command.amount
+      if entry.command.kind=="release" then
+        entry.cell.note_value=120
+      else
+        entry.cell.effect_number_string=entry.command.command
+        entry.cell.effect_amount_value=entry.command.amount
+      end
     end
   end)
   if not ok then
     for _, item in ipairs(backups) do
       pcall(function()
+        item.cell.note_value=item.note
         item.cell.effect_number_value = item.number or 0
         item.cell.effect_amount_value = item.amount or 0
       end)
     end
     return nil, "failed to apply glide: " .. tostring(write_error)
   end
-  return {slide_count=#commands/2, commands=#commands, rate=rate}
+  local releases=0
+  for _,op in ipairs(commands) do
+    if op.kind=="release" then releases=releases+1 end
+  end
+  return {slide_count=(#commands-releases)/2,
+    early_releases=releases,commands=#commands,rate=rate}
 end
 
 return M
