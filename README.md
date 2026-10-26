@@ -1,22 +1,28 @@
 # Renoise Tools
 
-Native Lua/XRNX tools for Renoise.
+Standalone Lua/XRNX tools for Renoise. Each root `.xrnx` directory is a complete,
+independently versioned tool; runtime modules stay inside its bundle.
 
-## Tools
-
-| Tool | Status | Source |
+| Tool | Version / status | Documentation |
 | --- | --- | --- |
-| DigitaktSampleChain | Existing tool (unchanged) | [DigitaktSampleChain](com.david303ttl.DigitaktSampleChain.xrnx/) |
-| ARP | 0.4 experimental: pattern generation, gates, and ownership-verified regeneration | [ARP](com.david303ttl.ARP.xrnx/) |
-| TB303 | 0.1 scaffold: working menu/dialog + separate pitch/time model; **does not write patterns** | [TB303](com.david303ttl.TB303.xrnx/) |
+| ARP | 0.7 experimental: pattern generation, delayed gates, guarded regeneration | [ARP](com.david303ttl.ARP.xrnx/README.md) |
+| ACID | 0.1 scaffold: read-only pitch/time model (sequencer work in PR #9) | [ACID](com.david303ttl.ACID.xrnx/README.md) |
+| DigitaktSampleChain | Existing tool, frozen during this reorganization | [DigitaktSampleChain](com.david303ttl.DigitaktSampleChain.xrnx/README.md) |
 
-Each `.xrnx` directory is a standalone Renoise tool. Package and version them independently; internal Lua modules ship with their respective tool.
+ARP and ACID target Renoise 3.5 (Lua API 6.2). Pure-Lua checks do not establish
+correct Renoise playback, undo, or save/reload behavior; see [tests](tests/README.md)
+for automated checks and manual smoke tests.
 
-These new tools target Renoise 3.5 (Lua API 6.2).
+Use PowerShell 7 (`pwsh`) for repository scripts. Run all specs with `./scripts/run_tests.ps1`. Build installable archives with
+`./scripts/package.ps1`; release files are written to ignored `dist/`.
+Both scripts also support selecting a tool; see their `Get-Help` output.
 
-Development status:
-1. ARP has a pure-Lua planner and guarded pattern writer; see its README and manual test guide for current behavior and limitations.
-2. TB303 remains a read-only scaffold. Its sequencer model and Renoise event mapping are still in development.
-3. Renoise integration and save/reload behavior still need manual validation in a real Renoise instance.
+For API documentation and editor completion, run `./scripts/setup_sdk.ps1` to
+install the pinned Renoise API 6.2 starter pack. See [development setup](docs/DEVELOPMENT.md).
 
-See [manual smoke tests](tests/README.md).
+Use independent release tags such as `arp/v0.7` and `acid/v0.1`, matching the
+released tool's `manifest.xml`. Modules are private to each bundle; shared code
+should only be introduced when a deliberate build step can keep installed tools
+self-contained.
+
+New commits follow [Conventional Commits](docs/COMMIT_MESSAGES.md).

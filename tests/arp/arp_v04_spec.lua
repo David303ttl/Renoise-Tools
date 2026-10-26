@@ -1,6 +1,6 @@
--- Run: luatex --luaonly tests/arp_v04_spec.lua
--- Or: lua tests/arp_v04_spec.lua
-package.path="com.david303ttl.ARP.xrnx/?.lua;"..package.path
+dofile('tests/bootstrap.lua')('arp')
+-- Run: luatex --luaonly tests/arp/arp_v04_spec.lua
+-- Or: lua tests/arp/arp_v04_spec.lua
 local engine=require("arp_engine")
 local owned=require("ownership")
 local writer=require("pattern_writer")

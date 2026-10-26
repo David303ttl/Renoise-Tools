@@ -1,6 +1,6 @@
--- Pure Lua TB303 state-model scaffold.
+-- Pure Lua ACID state-model scaffold.
 -- Separate pitch and timing domains are intentional. This does not yet
--- implement original TB-303 timing, rests, ties, slide or accent semantics.
+-- implement original acid-style timing, rests, ties, slide or accent semantics.
 local M = {}
 
 function M.new_pattern(length)
