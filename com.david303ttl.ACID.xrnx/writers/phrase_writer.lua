@@ -56,7 +56,7 @@ local function complete(job, error_message, rendered_events)
         job.instrument:delete_phrase_at(#job.instrument.phrases)
       end
     end)
-    notify(job, "ACID generation failed: " .. tostring(error_message))
+    notify(job, "GENERATION FAILED\\n" .. tostring(error_message) .. "\\nPrevious ACID phrase remains unchanged.")
     return
   end
   notify(job, string.format(
@@ -66,7 +66,9 @@ local function complete(job, error_message, rendered_events)
     (job.mode=="baseline" and "" or
      " | "..job.mode.." articulation test applied") ..
     (job.glide_warnings and #job.glide_warnings>0 and
-      string.format(" | %d glide continuation(s) omitted at gate OFF",#job.glide_warnings) or ""))
+      string.format(
+        "\\nGlide note: TIME step %02d, phrase line %02X: 0G00 omitted; gate OFF takes priority.",
+        job.glide_warnings[1].step,job.glide_warnings[1].line) or ""))
 end
 
 local function finalize(job, event_count, skipped)
