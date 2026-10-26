@@ -2,9 +2,10 @@
 
 Renoise 3.5+ ACID sequencer, **version 0.1 (unfinished)**.
 
-The tool can be opened from **Tools > ACID...** or the Pattern Editor context
-menu. The dialog is still a read-only scaffold; **no notes are generated or
-modified** yet. The manifest stays at `0.1` until the native-sample sequencer
+The tool opens from **Tools > ACID...** or the Pattern Editor context menu.
+The dialog now has a **Generate Test Phrase** command for native-sample
+instruments which have no existing phrases. It writes a NEW test phrase only;
+it does not change song pattern tracks or user-created phrases. The manifest stays at `0.1` until the native-sample sequencer
 is finished and verified in Renoise.
 
 The implementation now contains a separately testable pitch/time memory model
@@ -15,8 +16,9 @@ phrase source from semantic events. It handles NOTE, TIE (no new event), REST
 
 The pattrns output is **not the finished playable ACID sequence**. Native
 selective slide, correct gate duration, phrase looping and cross-boundary
-articulation still require a verified native phrase renderer. The current GUI
-remains read-only. These modules do not claim playback correctness.
+articulation still require a verified native phrase renderer. The main pitch/time editor
+remains a draft: only a fixed eight-step audio fixture can be generated.
+Renoise playback correctness has not yet been verified.
 
 See [DESIGN.md](DESIGN.md) for the architecture, semantics, unresolved hardware
 and playback cases, and milestone plan. The proposed output is a rendered
@@ -31,7 +33,8 @@ sample articulation commands after real playback verification.
 - `compiler.lua`: pure Lua semantic pitch/time state machine
 - `pattern_writer.lua`: read-only selection inspection (legacy scaffold)
 - `pattrns_writer.lua`: deterministic one-pass scripted phrase source emitter
-- Future: Renoise script-phrase API bridge, native phrase writer, safe regeneration, persistence
+- `phrase_writer.lua`: asynchronous Renoise script commit and native phrase render
+- Future: full editor, selective glide, safe regeneration, persistence
 
 ## Local tests
 
@@ -42,11 +45,14 @@ lua tests/acid_sequencer_spec.lua
 lua tests/acid_compiler_spec.lua
 lua tests/acid_pattrns_spec.lua
 lua tests/acid_identity_spec.lua
+lua tests/acid_phrase_spec.lua
 ```
 
 Other local Lua implementations, including `texlua`, may run the same tests.
-No workflows are needed. These tests do not replace real Renoise playback
-validation.
+No workflows are needed. These tests do not replace real Renoise playback validation.
+
+See [first native phrase playback test](../../tests/acid_phrase_manual.md)
+for the current in-Renoise test procedure.
 
 When installing ACID, remove the previous development tool package from
 Renoise's `Scripts/Tools` directory to avoid duplicated menu entries.
