@@ -70,6 +70,7 @@ function M.show()
   local live_checkbox
   local live
   local loading=false
+  local stopping_live=false
   local function default_pitch()
     return sequencer.new_pitch(0,0,false,false)
   end
@@ -405,14 +406,18 @@ function M.show()
     else
       status.text="LIVE EDIT stopped: "..tostring(message)
       live:stop()
+      stopping_live=true
       live_checkbox.value=false
+      stopping_live=false
     end
   end)
   live_checkbox=vb:checkbox{value=false,notifier=function(value)
     if value then
       local index,reason=live_target()
       if not index then
+        stopping_live=true
         live_checkbox.value=false
+        stopping_live=false
         status.text=reason
         return
       end
@@ -420,7 +425,9 @@ function M.show()
       status.text="Live Edit enabled: edits auto-regenerate the selected ACID phrase."
     else
       live:stop()
-      status.text="Live Edit disabled; manual Generate/Regenerate is available."
+      if not stopping_live then
+        status.text="Live Edit disabled; manual Generate/Regenerate is available."
+      end
     end
   end}
   local content=vb:column{margin=12,spacing=7,
