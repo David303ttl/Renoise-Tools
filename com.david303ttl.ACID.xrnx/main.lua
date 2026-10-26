@@ -1,4 +1,4 @@
--- TB303.xrnx entry point. No sequence rendering actions are registered yet.
+-- ACID.xrnx entry point. No sequence rendering actions are registered yet.
 local gui = require("gui")
 
 local function show_tool()
@@ -6,11 +6,11 @@ local function show_tool()
 end
 
 renoise.tool():add_menu_entry {
-  name = "Main Menu:Tools:TB303...",
+  name = "Main Menu:Tools:ACID...",
   invoke = show_tool
 }
 
 renoise.tool():add_menu_entry {
-  name = "Pattern Editor:TB303...",
+  name = "Pattern Editor:ACID...",
   invoke = show_tool
 }

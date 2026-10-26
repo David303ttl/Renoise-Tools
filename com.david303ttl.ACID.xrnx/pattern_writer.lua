@@ -1,5 +1,5 @@
 -- Read-only song context helper for scaffold.
--- TODO: compile validated TB303 events and render Renoise notes, delays,
+-- TODO: compile validated ACID events and render Renoise notes, delays,
 -- gates, accents and slides without silently overwriting existing content.
 local M = {}
 

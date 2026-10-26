@@ -1,4 +1,4 @@
--- Read-only TB303 tool scaffold with independent pitch/timing state.
+-- Read-only ACID tool scaffold with independent pitch/timing state.
 local M = {}
 local sequencer = require("sequencer")
 local pattern_writer = require("pattern_writer")
@@ -22,7 +22,7 @@ function M.show()
   local content = vb:column {
     margin = 12,
     spacing = 8,
-    vb:text { text = "TB303.xrnx 0.1 - development scaffold" },
+    vb:text { text = "ACID.xrnx 0.1 - development scaffold" },
     vb:text { text = "Original pitch/time entry and accent/slide: pending." },
     vb:row {
       spacing = 8,
@@ -48,7 +48,7 @@ function M.show()
     status
   }
 
-  dialog = renoise.app():show_custom_dialog("TB303", content)
+  dialog = renoise.app():show_custom_dialog("ACID", content)
 end
 
 return M
