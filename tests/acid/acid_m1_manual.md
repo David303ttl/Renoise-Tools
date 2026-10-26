@@ -23,8 +23,8 @@ boundaries, TIE and REST, and exact-step errors.
    become active. Verify creation is mandatory before editing.
 3. Edit P01 keyboard C, octave DOWN, ACCENT on, SLIDE on. Edit P02 D#, octave
    UP. Verify the two controls independently alter the decoded MIDI pitches.
-4. Click TIME step 01 once to switch REST to NOTE, click step 02 twice for TIE,
-   click step 03 once for NOTE. Preview: step 1 P01, step 2 holds P01,
+4. Set TIME step 01 to NOTE, step 02 to TIE, and step 03 to NOTE using
+   the per-step dropdown selectors. Click the step header to inspect it. Preview: step 1 P01, step 2 holds P01,
    step 3 P02. P03 onwards should be marked unused.
 5. Set LAST STEP=17, select TIME page 17-32 and set step 17 to NOTE. Verify it
    maps to the next pitch position, not automatically to P17.
