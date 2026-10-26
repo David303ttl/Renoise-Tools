@@ -389,7 +389,12 @@ function M.show()
         end
         local ok,generated,err=pcall(phrase_writer.generate,
           selected_instrument,function(message)
-            if opened==generation then status.text=message end
+            if opened==generation then
+              if message:find(" generated (",1,true) then
+                select_instrument(selected_instrument)
+              end
+              status.text=message
+            end
           end,mode_values[mode_choice],pattern,adopt.value,
           phrase_targets[phrase_choice.value])
         if not ok then status.text="ACID error: "..tostring(generated)
