@@ -105,7 +105,7 @@ local function finalize(job, event_count, skipped)
     -- Rendered lines are normal native phrase data (not a running script).
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
     job.phrase.lpb = M.LPB
-    job.phrase.number_of_lines = M.STEPS * 2
+    job.phrase.number_of_lines = job.plan.length * 2
     job.phrase.name = M.PHRASE_NAME
     job.phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
     job.phrase.looping = false
@@ -137,7 +137,7 @@ local function render(job)
   local ok, error_message = pcall(function()
     script:render_to_pattern({
       lpb = M.LPB,
-      max_events = M.STEPS + 8
+      max_events = job.plan.length + 8
     }, function(render_error, rendered_events, skipped_events)
       if current ~= job then return end
       if render_error and render_error ~= "" then
