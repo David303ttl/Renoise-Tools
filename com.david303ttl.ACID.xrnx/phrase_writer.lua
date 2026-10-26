@@ -2,6 +2,8 @@
 -- No changes to pattern tracks, no slides, no automatic regeneration.
 local sequencer = require("sequencer")
 local pattrns = require("pattrns_writer")
+local compiler = require("compiler")
+local validator = require("phrase_validator")
 local M = {}
 
 M.LPB = 8
@@ -57,8 +59,9 @@ local function complete(job, error_message, rendered_events)
     return
   end
   notify(job, string.format(
-    "Phrase 01 generated (%d events). Trigger a note with instrument %02X.",
-    rendered_events, job.instrument_index - 1))
+    "Phrase 01 generated (%d notes, %d OFF; %d raw events). Instrument %02X.",
+    rendered_events.notes, rendered_events.offs,
+    rendered_events.raw_events, job.instrument_index - 1))
 end
 
 local function finalize(job, event_count, skipped)
@@ -67,10 +70,17 @@ local function finalize(job, event_count, skipped)
     complete(job, "Renoise skipped " .. tostring(skipped) .. " event(s)")
     return
   end
-  if event_count ~= job.expected_events then
+  -- Pattrns may count no-output pulses among its raw rendered events.
+  -- Inspect the *actual phrase cells* to validate musical note/off events.
+  if type(event_count) ~= "number" or event_count < job.expected_events then
     complete(job, string.format(
-      "Expected %d rendered events, received %s",
+      "Too few raw events: expected at least %d, received %s",
       job.expected_events, tostring(event_count)))
+    return
+  end
+  local result, validation_error = validator.verify(job.phrase, job.plan, 2)
+  if not result then
+    complete(job, validation_error)
     return
   end
   local ok, error_message = pcall(function()
@@ -78,6 +88,7 @@ local function finalize(job, event_count, skipped)
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
     job.phrase.lpb = M.LPB
     job.phrase.number_of_lines = M.STEPS * 2
+    job.phrase.name = M.PHRASE_NAME
     job.phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
     job.phrase.looping = false
     job.instrument.phrase_playback_mode =
@@ -89,7 +100,8 @@ local function finalize(job, event_count, skipped)
     complete(job, error_message)
     return
   end
-  complete(job, nil, event_count)
+  result.raw_events = event_count
+  complete(job, nil, result)
 end
 
 local function render(job)
@@ -174,7 +186,9 @@ function M.generate(instrument_index, callback)
   if not has_sample_data then
     return nil, "Load a playable sample into the selected instrument first"
   end
-  local source, meta = pattrns.generate(M.fixture())
+  local plan, compile_error = compiler.compile(M.fixture())
+  if not plan then return nil, compile_error end
+  local source, meta = pattrns.emit(plan)
   if not source then return nil, meta end
   if meta.slide_intentions ~= 0 then
     return nil, "Prototype must not render selective slides"
@@ -182,6 +196,7 @@ function M.generate(instrument_index, callback)
   local job = {
     instrument = instrument, instrument_index = instrument_index,
     expected_events = meta.note_count + meta.off_count,
+    plan = plan,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false
   }
