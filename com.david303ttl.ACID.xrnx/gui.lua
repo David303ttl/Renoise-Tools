@@ -45,18 +45,18 @@ function M.show()
     labels[i]=string.format("%02X: %s",i-1,name)
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
-  local status=vb:multiline_textfield{width=820,height=88,active=false,
+  local status=vb:multiline_textfield{width=820,height=60,active=false,
     font="bold",text="Set LAST STEP, then edit PITCH and TIME memories."}
   local diagnostic=vb:text{width=820,font="bold",text=""}
-  local summary=vb:text{width=820,text=""}
-  local map_text=vb:text{width=820,text=""}
+  local summary=vb:text{width=820,font="bold",text=""}
+  local map_text=vb:text{width=820,font="bold",text=""}
   local length_items={}
   for n=1,64 do length_items[n]=tostring(n) end
   local length_popup=vb:popup{items=length_items,width=78,value=16}
   length_popup.value=pattern.length
   local step_division=vb:text{text="Straight 1/16 (triplet renderer not yet implemented)"}
   local pitch_page_buttons,time_page_buttons={},{}
-  local pitch_cells,time_cells,preview_cells={}, {}, {}
+  local pitch_cells,time_cells,time_headers,preview_cells={}, {}, {}, {}
   local key_popup=vb:popup{items=keys,width=95,value=1}
   local octave_popup=vb:popup{items=octave_names,width=135,value=2}
   local accent=vb:checkbox{value=false}
@@ -101,22 +101,29 @@ function M.show()
         or (projection.used[i] and colors.used or colors.idle)
       local step=editor.index_on_page(time_page,cell)
       local time=time_cells[cell]
+      local time_header=time_headers[cell]
       local preview=preview_cells[cell]
       if step<=pattern.length then
         local cmd=pattern.time_events[step]
         time.active=setup_confirmed
-        time.text=string.format("%02d  %s",step,
-          cmd=="N" and "NOTE" or cmd=="T" and "TIE"
-          or cmd=="R" and "REST" or "?")
-        time.color=projection.error and projection.error.step==step
+        time.value=cmd=="N" and 1 or cmd=="T" and 2 or 3
+        time_header.active=setup_confirmed
+        time_header.text=string.format("STEP %02d",step)
+        time_header.color=projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
           or (cmd=="N" and colors.note or cmd=="T" and colors.tie or colors.rest)
         preview.text=string.format("%02d %s",step,editor.step_text(projection,step))
         preview.color=projection.error and projection.error.step==step
-          and colors.warning or colors.idle
+          and colors.warning or (step==selected_step and colors.selected)
+          or colors.idle
       else
-        time.active=false;time.text="--";time.color=colors.idle
-        preview.text="";preview.color=colors.idle
+        time.active=false
+        time.value=3
+        time_header.active=false
+        time_header.text="--"
+        time_header.color=colors.idle
+        preview.text=""
+        preview.color=colors.idle
       end
     end
     key_popup.active=setup_confirmed
@@ -131,12 +138,14 @@ function M.show()
     slide.value=p.slide==true
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
-    summary.text=string.format("LAST STEP %02d / 64   |   %d NOTE events   |   %d PITCH positions stored   |   %d used   |   %d unused",
+    summary.text=string.format(
+      "STEPS %d/64   |   NOTE triggers %d   |   PITCH stored %d, used %d, unused %d",
       pattern.length,projection.note_count,#pattern.pitch_events,count,
       #pattern.pitch_events-count)
-    local mapping=projection.mapping[selected_step]
-    map_text.text=string.format("Selected TIME %02d -> %s   |   Selected PITCH P%02d",
-      selected_step,editor.step_text(projection,selected_step),selected_pitch)
+    local pitch_usage=projection.used[selected_pitch] and "USED" or "UNUSED"
+    map_text.text=string.format("TIME %02d: %s   |   PITCH P%02d: %s",
+      selected_step,editor.step_text(projection,selected_step),
+      selected_pitch,pitch_usage)
     local plan,err=compiler.compile(pattern)
     local error_info=projection.error
     if error_info then
@@ -153,6 +162,17 @@ function M.show()
   local function choose_pitch(index)
     selected_pitch=index
     pitch_page=editor.page_for(index)
+    local projection=editor.project(pattern)
+    -- Highlight the earliest NOTE that consumes this pitch position;
+    -- TIE holds do not consume another pitch.
+    for step=1,pattern.length do
+      local mapping=projection.mapping[step]
+      if mapping and mapping.kind=="note" and mapping.pitch_index==index then
+        selected_step=step
+        time_page=editor.page_for(step)
+        break
+      end
+    end
     update()
   end
   local function choose_time(index)
@@ -199,22 +219,27 @@ function M.show()
       local cell=(row-1)*8+col
       pitch_cells[cell]=vb:button{width=98,height=38,text="--",notifier=function()
         choose_pitch(editor.index_on_page(pitch_page,cell)) end}
-      time_cells[cell]=vb:button{width=98,height=36,text="--",notifier=function()
-        local step=editor.index_on_page(time_page,cell)
-        if setup_confirmed and step<=pattern.length then
-          -- Direct editing: repeated clicks cycle NOTE -> TIE -> REST.
-          selected_step=step
-          local old=pattern.time_events[step]
-          pattern.time_events[step]=old=="N" and "T" or old=="T" and "R" or "N"
-          choose_time(step)
-        end
-      end}
+      time_headers[cell]=vb:button{width=98,height=22,text="--",
+        notifier=function()
+          local step=editor.index_on_page(time_page,cell)
+          if setup_confirmed and step<=pattern.length then choose_time(step) end
+        end}
+      time_cells[cell]=vb:popup{width=98,
+        items={"NOTE","TIE","REST"},value=3,notifier=function(choice)
+          if updating or not setup_confirmed then return end
+          local step=editor.index_on_page(time_page,cell)
+          if step<=pattern.length then
+            pattern.time_events[step]=({"N","T","R"})[choice]
+            choose_time(step)
+          end
+        end}
       preview_cells[cell]=vb:button{width=98,height=32,text="--",notifier=function()
         local step=editor.index_on_page(time_page,cell)
         if step<=pattern.length then choose_time(step) end
       end}
       p_row:add_child(pitch_cells[cell])
-      t_row:add_child(time_cells[cell])
+      t_row:add_child(vb:column{spacing=2,
+        time_headers[cell],time_cells[cell]})
       v_row:add_child(preview_cells[cell])
     end
     pitch_grid:add_child(p_row)
@@ -268,7 +293,7 @@ function M.show()
     vb:row{spacing=10,vb:text{text="Keyboard"},key_popup,
       vb:text{text="Octave"},octave_popup,
       vb:text{text="ACCENT"},accent,vb:text{text="SLIDE"},slide},
-    vb:text{text="TIME MEMORY | click step to cycle NOTE -> TIE -> REST",font="bold"},
+    vb:text{text="TIME MEMORY | select NOTE, TIE or REST directly for each step",font="bold"},
     time_pages,time_grid,
     vb:text{text="DECODED SEQUENCE | click a cell to inspect its pitch",font="bold"},
     preview_grid,summary,map_text,diagnostic,
