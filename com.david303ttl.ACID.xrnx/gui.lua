@@ -59,7 +59,9 @@ function M.show()
   local slide = vb:checkbox {value=false}
   local time_step = vb:valuebox {min=1,max=16,value=1,width=65}
   local time_kind = vb:popup {items={"NOTE","TIE","REST"},width=90,value=1}
+  local updating=false
   local function refresh()
+    updating=true
     local p = state.pitch_events[selected_pitch] or {note=36,accent=false,slide=false}
     local idx=1
     for i,n in ipairs(pitch_values) do if n==p.note then idx=i end end
@@ -69,8 +71,10 @@ function M.show()
     local t=state.time_events[cursor] or "R"
     time_kind.value=t=="N" and 1 or t=="T" and 2 or 3
     summary.text=assert(sequencer.describe(state))
+    updating=false
   end
   local function edit_pitch()
+    if updating then return end
     local p=state.pitch_events[selected_pitch] or {note=36}
     p.note=pitch_values[pitch_note.value]
     p.accent=accent.value
@@ -81,15 +85,16 @@ function M.show()
     state.pitch_events[selected_pitch]=p
     refresh()
   end
-  pitch_entry.notifier=function(v)selected_pitch=v;refresh()end
-  pitch_note.notifier=edit_pitch
-  accent.notifier=edit_pitch
-  slide.notifier=edit_pitch
-  time_step.notifier=function(v)cursor=v;refresh()end
-  time_kind.notifier=function(v)
+  pitch_entry:add_notifier(function(v)if not updating then selected_pitch=v;refresh() end end)
+  pitch_note:add_notifier(edit_pitch)
+  accent:add_notifier(edit_pitch)
+  slide:add_notifier(edit_pitch)
+  time_step:add_notifier(function(v)if not updating then cursor=v;refresh()end end)
+  time_kind:add_notifier(function(v)
+    if updating then return end
     state.time_events[cursor]=({"N","T","R"})[v]
     refresh()
-  end
+  end)
   refresh()
   local content = vb:column {
     margin = 12, spacing = 8,
@@ -135,7 +140,7 @@ function M.show()
       vb:popup {
         width = 100,
         items = {"8", "12", "16"},
-        value = 3,
+        value = 1,
         notifier = function(index)
           local n=lengths[index]
           state.length=n
