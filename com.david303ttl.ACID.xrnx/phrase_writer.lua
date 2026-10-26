@@ -4,6 +4,7 @@ local sequencer = require("sequencer")
 local pattrns = require("pattrns_writer")
 local compiler = require("compiler")
 local validator = require("phrase_validator")
+local articulation = require("articulation")
 local M = {}
 
 M.LPB = 8
@@ -61,7 +62,9 @@ local function complete(job, error_message, rendered_events)
   notify(job, string.format(
     "Phrase 01 generated (%d notes, %d OFF; %d raw events). Instrument %02X.",
     rendered_events.notes, rendered_events.offs,
-    rendered_events.raw_events, job.instrument_index - 1))
+    rendered_events.raw_events, job.instrument_index - 1) ..
+    (job.mode=="baseline" and "" or
+     " | "..job.mode.." articulation test applied"))
 end
 
 local function finalize(job, event_count, skipped)
@@ -82,6 +85,12 @@ local function finalize(job, event_count, skipped)
   if not result then
     complete(job, validation_error)
     return
+  end
+  if job.mode ~= "baseline" then
+    local articulated, art_error = articulation.apply(
+      job.phrase, job.plan, 2, job.glide_rate, true)
+    if not articulated then complete(job, art_error); return end
+    job.articulation_summary=articulated
   end
   local ok, error_message = pcall(function()
     -- Rendered lines are normal native phrase data (not a running script).
@@ -161,8 +170,12 @@ function M.cancel()
   end
 end
 
-function M.generate(instrument_index, callback)
+function M.generate(instrument_index, callback, mode)
   if busy then return nil, "ACID is already generating a phrase" end
+  mode=mode or "baseline"
+  if mode~="baseline" and mode~="retrigger" and mode~="slide" then
+    return nil,"Invalid playback test mode"
+  end
   if type(callback) ~= "function" then
     return nil, "Status callback required"
   end
@@ -186,17 +199,19 @@ function M.generate(instrument_index, callback)
   if not has_sample_data then
     return nil, "Load a playable sample into the selected instrument first"
   end
-  local plan, compile_error = compiler.compile(M.fixture())
+  local fixture=M.fixture()
+  if mode=="slide" then fixture.pitch_events[1].slide=true end
+  local plan, compile_error = compiler.compile(fixture)
   if not plan then return nil, compile_error end
   local source, meta = pattrns.emit(plan)
   if not source then return nil, meta end
-  if meta.slide_intentions ~= 0 then
+  if meta.slide_intentions ~= 0 and mode ~= "slide" then
     return nil, "Prototype must not render selective slides"
   end
   local job = {
     instrument = instrument, instrument_index = instrument_index,
     expected_events = meta.note_count + meta.off_count,
-    plan = plan,
+    plan = plan, mode=mode, glide_rate=0x20,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false
   }
