@@ -250,7 +250,7 @@ function M.show()
     if updating then return end
     pattern.length=n
     if setup_confirmed then
-      for i=1,n do pattern.time_events[i]=saved_time[i] or pattern.time_events[i] or "R" end
+      for i=1,n do pattern.time_events[i]=saved_time[i] or pattern.time_events[i] or "N" end
       for i=n+1,64 do
         if pattern.time_events[i] then saved_time[i]=pattern.time_events[i] end
         pattern.time_events[i]=nil
@@ -279,11 +279,11 @@ function M.show()
       vb:button{text="Create / Reset Pattern",notifier=function()
         -- Explicit initialization: changing LAST STEP alone never erases memory.
         pattern=sequencer.new_pattern(length_popup.value)
-        for i=1,pattern.length do pattern.time_events[i]="R" end
+        for i=1,pattern.length do pattern.time_events[i]="N" end
         saved_time={}
         setup_confirmed=true
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
-        status.text="Pattern initialized. Enter PITCH notes, then program TIME steps."
+        status.text="Pattern initialized: all 64 PITCH entries are C; active TIME steps start as NOTE."
         update()
       end},
       vb:text{text="Confirm LAST STEP first. Reset discards the current draft."}},
