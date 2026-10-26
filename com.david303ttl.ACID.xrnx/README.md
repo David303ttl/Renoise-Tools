@@ -23,6 +23,9 @@ remains a draft: the test generator starts with an eight-step fixture and
 accepts the dialog's edited pitch/time state.
 Renoise playback correctness has not yet been verified.
 
+For the current development priorities, milestone dependencies, acceptance gates,
+and local verification plan, see [ROADMAP.md](ROADMAP.md).
+
 See [DESIGN.md](DESIGN.md) for the architecture, semantics, unresolved hardware
 and playback cases, and milestone plan. The proposed output is a rendered
 native instrument phrase, produced via pattrns and finalized with native
