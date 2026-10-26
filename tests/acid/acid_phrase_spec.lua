@@ -95,5 +95,5 @@ assert(messages[#messages]:find("generated",1,true))
 -- Manual edits invalidate the seal.
 first.cells[1].note_value=41
 local denied,reason=writer.generate(1,function()end)
-assert(not denied and reason:find("not safely owned",1,true))
+assert(not denied and reason:find("not safely ACID-owned",1,true))
 print("ACID phrase API mock checks passed")
