@@ -24,7 +24,14 @@ end
 function M.new_pattern(length)
   length = length or 16
   assert(integer_between(length, 1, M.MAX_STEPS), "length must be 1..64")
-  return {length=length, pitch_events={}, time_events={}}
+  -- All PITCH memory positions are initialized, not blank. Untouched
+  -- positions play C in the normal octave with no ACCENT or SLIDE.
+  -- TIME remains independent and is set during pattern initialization.
+  local pitches = {}
+  for i=1,M.MAX_STEPS do
+    pitches[i] = M.new_pitch(0,0,false,false)
+  end
+  return {length=length, pitch_events=pitches, time_events={}}
 end
 
 -- Original 13-key pitch keyboard, combined with octave DOWN/NORMAL/UP.
