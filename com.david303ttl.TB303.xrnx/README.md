@@ -1,22 +1,46 @@
 # TB303.xrnx
 
-Renoise 3.5+ TB-303 sequencer, currently **v0.1 development scaffold**.
+Renoise 3.5+ TB-303 sequencer, **version 0.1 (unfinished)**.
 
-The tool can be opened from **Tools > TB303...** or the Pattern Editor context menu. Its dialog allows changing a draft pattern length (8, 12 or 16 timing steps) and inspecting the selected pattern.
+The tool can be opened from **Tools > TB303...** or the Pattern Editor context
+menu. The dialog is still a read-only scaffold; **no notes are generated or
+modified** yet. The manifest stays at `0.1` until the native-sample sequencer
+is finished and verified in Renoise.
 
-**No original TB-303 sequencing behavior is implemented yet. No notes are generated or modified.** The draft state intentionally stores pitch and timing events in separate arrays to avoid committing prematurely to ordinary tracker-step semantics.
+The implementation now contains a separately testable pitch/time memory model
+(`sequencer.lua`) and a semantic NOTE/TIE/REST/slide compiler (`compiler.lua`).
+Neither module requires Renoise. They do not claim playback correctness.
 
-Future milestones: original pitch/time entry workflow and step transitions; correct note/rest/tie/accent/slide and pattern-wrap event compilation; Renoise pattern rendering; instrument-specific accent/slide mapping; song-state persistence.
+See [DESIGN.md](DESIGN.md) for the architecture, semantics, unresolved hardware
+and playback cases, and milestone plan. The proposed output is a rendered
+native instrument phrase, produced via pattrns and finalized with native
+sample articulation commands after real playback verification.
 
 ## Architecture
 
 - `main.lua`: registers menus
-- `gui.lua`: native ViewBuilder dialog
-- `sequencer.lua`: draft pitch/time data schema
-- `pattern_writer.lua`: read-only selection inspection, later the event renderer
+- `gui.lua`: existing native read-only ViewBuilder dialog
+- `sequencer.lua`: draft pitch/time state, validation
+- `compiler.lua`: pure Lua semantic pitch/time state machine
+- `pattern_writer.lua`: read-only selection inspection (legacy scaffold)
+- Future: pattrns adapter, phrase writer, safe regeneration, persistence
+
+## Local tests
+
+From the repository root using Lua (e.g. VS Code terminal):
+
+```sh
+lua tests/tb303_sequencer_spec.lua
+lua tests/tb303_compiler_spec.lua
+```
+
+Other local Lua implementations, including `texlua`, may run the same tests.
+No workflows are needed. These tests do not replace real Renoise playback
+validation.
 
 ## Development installation
 
-Copy/symlink `com.david303ttl.TB303.xrnx` into Renoise's user `Scripts/Tools` folder and reload tools (or restart Renoise). Or ZIP the **contents** of this directory and rename the archive to `com.david303ttl.TB303.xrnx`; the archive root must contain `manifest.xml`.
-
-See [../tests/README.md](../tests/README.md).
+Copy/symlink `com.david303ttl.TB303.xrnx` into Renoise's user `Scripts/Tools`
+folder and reload tools (or restart Renoise). Or ZIP the **contents** of this
+directory and rename the archive to `com.david303ttl.TB303.xrnx`; the archive
+root must contain `manifest.xml`.
