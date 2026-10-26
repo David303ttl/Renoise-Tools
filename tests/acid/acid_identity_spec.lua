@@ -1,4 +1,5 @@
--- Run from repository root: lua tests/acid_identity_spec.lua
+dofile('tests/bootstrap.lua')('acid')
+-- Run from repository root: lua tests/acid/acid_identity_spec.lua
 local function read(path)
   local file = assert(io.open(path, "rb"))
   local value = assert(file:read("*a"))

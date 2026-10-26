@@ -62,13 +62,13 @@ settings, inspect attack transients and note-off positions.
 From the repository root, in VS Code with Lua 5.4:
 
 ```sh
-lua tests/acid_control_signals_spec.lua
-lua tests/acid_articulation_modes_spec.lua
-lua tests/acid_phrase_validator_spec.lua
-lua tests/acid_phrase_spec.lua
+lua tests/acid/acid_control_signals_spec.lua
+lua tests/acid/acid_articulation_modes_spec.lua
+lua tests/acid/acid_phrase_validator_spec.lua
+lua tests/acid/acid_phrase_spec.lua
 ```
 
-Run all existing `tests/*_spec.lua` scripts as regressions.
+Run all existing `tests/arp/*_spec.lua and tests/acid/*_spec.lua` scripts as regressions.
 No GitHub Actions. Don't merge until Renoise manual verification passes.
 
 ## Known unresolved items

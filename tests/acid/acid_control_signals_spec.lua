@@ -1,5 +1,5 @@
-package.path="com.david303ttl.ACID.xrnx/?.lua;"..package.path
-local signals=require("control_signals")
+dofile('tests/bootstrap.lua')('acid')
+local signals=require("model.control_signals")
 local p={length=8,pitch_events={{note=36,slide=true},{note=39,accent=true},{note=43},{note=41}},time_events={"N","T","N","R","N","N","T","R"}}
 local tl=assert(signals.compile(p,{gate_fraction=0.5}))
 local events=tl.events
@@ -21,7 +21,7 @@ local lines=assert(signals.release_lines(tl,2))
 assert(#lines==1 and lines[1]==10)
 assert(not signals.compile(p,{gate_fraction=0}))
 assert(not signals.release_lines(tl,1))
-local gate_writer=require("gate_writer")
+local gate_writer=require("writers.gate_writer")
 local cells={}
 for i=1,16 do cells[i]={note_value=121} end
 local phrase={}

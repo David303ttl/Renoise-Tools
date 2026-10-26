@@ -1,4 +1,4 @@
-package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
+dofile('tests/bootstrap.lua')('acid')
 local function observable()
   local handlers = {}
   return {
@@ -43,7 +43,7 @@ _G.renoise={
   song=function()return song end,
   tool=function()return {app_idle_observable=idle} end
 }
-local writer=require("phrase_writer")
+local writer=require("writers.phrase_writer")
 local messages={}
 local ok,err=writer.generate(1,function(msg)messages[#messages+1]=msg end)
 assert(ok,err)

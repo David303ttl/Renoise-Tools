@@ -1,7 +1,7 @@
--- Run from repo root: texlua tests/acid_compiler_spec.lua
-package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
-local sequencer = require("sequencer")
-local compiler = require("compiler")
+dofile('tests/bootstrap.lua')('acid')
+-- Run from repo root: texlua tests/acid/acid_compiler_spec.lua
+local sequencer = require("model.sequencer")
+local compiler = require("model.compiler")
 
 local function pattern(time, pitches)
   local p = sequencer.new_pattern(#time)

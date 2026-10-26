@@ -1,7 +1,7 @@
 -- ACID 0.1: pure Lua pattrns script emitter.
 -- This is a rhythmic/note-event scaffold, NOT a playable slide renderer.
 -- Selective native sample glides and release gates belong to phrase rendering.
-local compiler = require('compiler')
+local compiler = require('model.compiler')
 local M = {}
 
 local function valid_unit(value)

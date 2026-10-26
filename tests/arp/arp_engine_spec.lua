@@ -1,4 +1,5 @@
-local engine = dofile("com.david303ttl.ARP.xrnx/arp_engine.lua")
+dofile('tests/bootstrap.lua')('arp')
+local engine = require("arp_engine")
 local function joined(mode)
   return table.concat(engine.order_notes({67,60,64}, mode), ",")
 end

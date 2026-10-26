@@ -23,15 +23,20 @@ References:
 - Pattrns event interface: https://renoise.github.io/pattrns/guide/event.html
 - Renoise phrases: https://tutorials.renoise.com/wiki/Phrase_Editor
 
-## Four layers (keep separate)
+## Runtime layers (keep separate)
 
-1. `sequencer.lua`: serializable ACID pattern state and validation.
-2. `compiler.lua`: deterministic pitch/time interpreter. Returns *semantic*
+1. `model/sequencer.lua`: serializable ACID pattern state and validation.
+2. `model/compiler.lua`: deterministic pitch/time interpreter. Returns *semantic*
    NOTE, TIE, REST, and continuity/slide intentions, not Renoise note commands.
-3. **Planned** pattrns adapter: translates musical events into an instrument
-   scripted phrase and renders it into a regular phrase.
-4. **Planned** native-phrase articulation adapter: applies exact note releases,
-   accents, and selective sample glide (`0Gxx`) *after* rendering.
+3. `writers/pattrns_writer.lua` and `writers/phrase_writer.lua`: translate
+   musical events into a scripted phrase and render it into a regular phrase.
+4. `model/articulation.lua` and `writers/gate_writer.lua`: describe and apply
+   experimental native-phrase articulation such as note releases, accents,
+   and selective sample glide (`0Gxx`) *after* rendering.
+
+`renoise/selection_context.lua` and `renoise/sampler_audit.lua` isolate Renoise
+song and instrument inspection from the pure Lua model and writers. `gui.lua`
+remains the root UI entry and `main.lua` remains the tool entry point.
 
 The rendered regular phrase is the main playback target. A script-only phrase
 must not be considered equivalent until note-off/slide support is proven.

@@ -1,9 +1,9 @@
 -- ACID 0.1: native phrase integration test UI.
 local M = {}
-local sequencer = require("sequencer")
-local writer = require("pattern_writer")
-local phrase_writer = require("phrase_writer")
-local sampler_audit = require("sampler_audit")
+local sequencer = require("model.sequencer")
+local writer = require("renoise.selection_context")
+local phrase_writer = require("writers.phrase_writer")
+local sampler_audit = require("renoise.sampler_audit")
 local dialog
 local document_generation = 0
 local dialog_generation = -1
@@ -100,7 +100,7 @@ function M.show()
   local content = vb:column {
     margin = 12, spacing = 8,
     vb:text {text = "ACID.xrnx 0.1 - first phrase playback test"},
-    vb:text {text = "Fixed 8-step fixture; selective native glide is experimental."},
+    vb:text {text = "Eight-step test fixture; selective native glide is experimental."},
     vb:row {
       vb:text {text="Target sample instrument"},
       vb:popup {

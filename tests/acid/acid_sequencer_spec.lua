@@ -1,6 +1,6 @@
--- Run from repo root: texlua tests/acid_sequencer_spec.lua
-local sequencer = dofile("com.david303ttl.ACID.xrnx/sequencer.lua")
-
+dofile('tests/bootstrap.lua')('acid')
+-- Run from repo root: texlua tests/acid/acid_sequencer_spec.lua
+local sequencer = require("model.sequencer")
 local pattern = sequencer.new_pattern()
 assert(pattern.length == 16)
 assert(#pattern.pitch_events == 0 and #pattern.time_events == 0)

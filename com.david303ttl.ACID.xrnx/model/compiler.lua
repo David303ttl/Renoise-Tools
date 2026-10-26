@@ -1,6 +1,6 @@
 -- Semantic ACID event compiler. Does not write Renoise notes/effects.
 -- Events describe intended articulation, not assumptions about 0Gxx.
-local sequencer = require("sequencer")
+local sequencer = require("model.sequencer")
 local M = {}
 
 local function upcoming_loop_transition(end_pitch, has_rest)

@@ -1,7 +1,7 @@
--- Run locally from repository root: texlua tests/acid_articulation_modes_spec.lua
-package.path="com.david303ttl.ACID.xrnx/?.lua;"..package.path
-local engine=require("compiler")
-local art=require("articulation")
+dofile('tests/bootstrap.lua')('acid')
+-- Run locally from repository root: texlua tests/acid/acid_articulation_modes_spec.lua
+local engine=require("model.compiler")
+local art=require("model.articulation")
 local p={length=8,
  pitch_events={{note=36,slide=true},{note=43},{note=39},{note=41}},
  time_events={"N","T","N","R","N","N","T","R"}}

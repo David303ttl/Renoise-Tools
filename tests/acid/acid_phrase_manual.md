@@ -16,4 +16,4 @@ Report the ACID status text, scripting console errors, rendered phrase contents,
 and whether the audio plays. A pass proves basic phrase rendering only;
 selective slide and accurate original gate semantics still need implementation.
 
-Local test: lua tests/acid_phrase_spec.lua. No GitHub Actions.
+Local test: lua tests/acid/acid_phrase_spec.lua. No GitHub Actions.

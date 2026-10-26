@@ -34,6 +34,6 @@ phrase effects, not yet exact historical acid envelope/glide behavior.
   silence, wrong direction, or no perceptible pitch movement.
 - Any Renoise Lua errors.
 
-Local checks (VS Code): `texlua tests/acid_articulation_modes_spec.lua`.
+Local checks (VS Code): `texlua tests/acid/acid_articulation_modes_spec.lua`.
 No GitHub Actions. Keep ACID at 0.1. This test does not prove
 phrase-loop boundary slides or authentic gate percentages.

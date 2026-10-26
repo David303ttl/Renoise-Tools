@@ -1,7 +1,7 @@
--- Run from repository root: lua tests/acid_phrase_validator_spec.lua
-package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
-local verifier = require("phrase_validator")
-local compiler = require("compiler")
+dofile('tests/bootstrap.lua')('acid')
+-- Run from repository root: lua tests/acid/acid_phrase_validator_spec.lua
+local verifier = require("writers.phrase_validator")
+local compiler = require("model.compiler")
 local fixture = {
   length=8,
   pitch_events={{note=36},{note=39,accent=true},{note=43},{note=41}},

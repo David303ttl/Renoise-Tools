@@ -1,7 +1,7 @@
--- From repo root: lua tests/acid_articulation_spec.lua
-package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
-local compiler=require("compiler")
-local articulation=require("articulation")
+dofile('tests/bootstrap.lua')('acid')
+-- From repo root: lua tests/acid/acid_articulation_spec.lua
+local compiler=require("model.compiler")
+local articulation=require("model.articulation")
 local pattern={
   length=8,
   pitch_events={{note=36,slide=true},{note=43},{note=39}},

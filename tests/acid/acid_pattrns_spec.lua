@@ -1,6 +1,6 @@
--- Run from repository root: lua tests/acid_pattrns_spec.lua
-package.path = 'com.david303ttl.ACID.xrnx/?.lua;' .. package.path
-local emitter = require('pattrns_writer')
+dofile('tests/bootstrap.lua')('acid')
+-- Run from repository root: lua tests/acid/acid_pattrns_spec.lua
+local emitter = require('writers.pattrns_writer')
 
 local function compile_script(source)
   -- Mock the pattrns "pattern" constructor; validate emitted Lua source

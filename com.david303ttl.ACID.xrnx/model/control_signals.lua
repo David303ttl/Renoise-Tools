@@ -1,7 +1,7 @@
 -- ACID 0.1 experimental control-signal timeline, independent of Renoise.
 -- Units: 256 subdivisions per sixteenth step. Gate fraction is a test
 -- parameter, NOT a claim about original hardware timing.
-local compiler=require("compiler")
+local compiler=require("model.compiler")
 local M={}
 
 local function add(out,at,kind,more)

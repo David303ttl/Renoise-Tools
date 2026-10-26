@@ -1,4 +1,4 @@
--- ACID.xrnx entry point. No sequence rendering actions are registered yet.
+-- ACID.xrnx entry point. Register the ACID tools menus.
 local gui = require("gui")
 
 local function show_tool()

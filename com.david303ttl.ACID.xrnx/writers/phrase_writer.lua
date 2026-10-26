@@ -1,12 +1,12 @@
 -- ACID 0.1: first native Renoise phrase integration proof.
 -- No changes to pattern tracks, no slides, no automatic regeneration.
-local sequencer = require("sequencer")
-local pattrns = require("pattrns_writer")
-local compiler = require("compiler")
-local validator = require("phrase_validator")
-local articulation = require("articulation")
-local control = require("control_signals")
-local gates = require("gate_writer")
+local sequencer = require("model.sequencer")
+local pattrns = require("writers.pattrns_writer")
+local compiler = require("model.compiler")
+local validator = require("writers.phrase_validator")
+local articulation = require("model.articulation")
+local control = require("model.control_signals")
+local gates = require("writers.gate_writer")
 local M = {}
 
 M.LPB = 8
