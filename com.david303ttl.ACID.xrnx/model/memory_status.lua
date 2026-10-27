@@ -13,7 +13,8 @@ function M.inspect(pattern)
     time[i]=t or "?"
   end
   local pitch_count=#pattern.pitch_events
-  local next_pitch= pitch_count>0 and ((notes%pitch_count)+1) or 1
+  local active=pattern.pitch_length
+  local next_pitch=(notes%active)+1
   for i,p in ipairs(pattern.pitch_events) do
     local name=string.format("%02d:%d%s%s",i,p.note,p.accent and "!" or "",
       p.slide and "~" or "")
@@ -21,7 +22,8 @@ function M.inspect(pattern)
   end
   return {
     notes=notes,ties=ties,rests=rests,length=length,
-    pitch_count=pitch_count,next_pitch=next_pitch,
+    pitch_count=pitch_count,pitch_length=active,
+    referenced_count=math.min(notes,active),next_pitch=next_pitch,
     missing_time=length-#pattern.time_events,
     pitch_text=table.concat(used,"  "),
     time_text=table.concat(time," ")

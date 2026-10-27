@@ -2,7 +2,7 @@
 local M = {}
 local sequencer=require("model.sequencer")
 local editor=require("model.editor_state")
-local compiler=require("model.compiler")
+local interpreter=require("model.cycle_interpreter")
 local live_regen=require("model.live_regen")
 local store=require("model.pattern_store")
 local ownership=require("writers.phrase_ownership")
@@ -12,8 +12,26 @@ local sampler=require("renoise.sampler_audit")
 local dialog
 local generation=0
 local dialog_generation=-1
+local active_live
+local active_live_checkbox
+local idle_observable
+local idle_notifier
+local function detach_dialog_watch()
+  if idle_observable and idle_notifier then
+    pcall(function() idle_observable:remove_notifier(idle_notifier) end)
+  end
+  idle_observable,idle_notifier=nil,nil
+end
+local function stop_live_context()
+  local live,checkbox=active_live,active_live_checkbox
+  active_live,active_live_checkbox=nil,nil
+  if live then live:stop() end
+  if checkbox then checkbox.value=false end
+end
 renoise.tool().app_new_document_observable:add_notifier(function()
   generation=generation+1
+  detach_dialog_watch()
+  stop_live_context()
   phrase_writer.cancel()
 end)
 
@@ -27,7 +45,13 @@ local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
 function M.show()
   if dialog and dialog.visible then
     if dialog_generation==generation then dialog:show();return end
+    detach_dialog_watch()
+    stop_live_context()
     dialog:close(); dialog=nil
+  elseif dialog then
+    detach_dialog_watch()
+    stop_live_context()
+    dialog=nil
   end
   local song=renoise.song()
   if not song then renoise.app():show_warning("Open a song first.");return end
@@ -38,6 +62,8 @@ function M.show()
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
   local updating=false
+  local preview_mode=1
+  local update
   local opened=generation
   local mode_values={"baseline","retrigger","slide"}
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
@@ -58,6 +84,16 @@ function M.show()
   for n=1,64 do length_items[n]=tostring(n) end
   local length_popup=vb:popup{items=length_items,width=78,value=16}
   length_popup.value=pattern.length
+  local length_items_mode="extended"
+  local entry_mode_popup=vb:popup{items={"Original","Extended"},width=105,value=1}
+  local pitch_length_popup=vb:popup{items=length_items,width=78,value=16}
+  local playback_popup=vb:popup{items={"One-shot","Repeat"},width=105,value=1}
+  local preview_popup=vb:popup{items={"Start","Repeating"},width=105,value=1,
+    notifier=function(value)
+      if updating then return end
+      preview_mode=value
+      update()
+    end}
   local step_division=vb:text{text="Straight 1/16 (triplet renderer not yet implemented)"}
   local pitch_page_buttons,time_page_buttons={},{}
   local pitch_cells,time_cells,time_headers,preview_cells={}, {}, {}, {}
@@ -65,7 +101,6 @@ function M.show()
   local octave_popup=vb:popup{items=octave_names,width=135,value=2}
   local accent=vb:checkbox{value=false}
   local slide=vb:checkbox{value=false}
-  local adopt=vb:checkbox{value=false}
   local phrase_choice,phrase_targets
   local live_checkbox
   local live
@@ -85,12 +120,26 @@ function M.show()
     local key,octave=sequencer.pitch_controls(p)
     local suffix=key and string.format("%s %s",keys[key+1],
       ({"-1"," 0","+1"})[octave+2]) or tostring(p.note)
-    return string.format("P%02d %s%s%s",index,suffix,
+    return string.format("P%02d %s%s%s%s",index,suffix,
+      index>pattern.pitch_length and " [inactive]" or "",
       p.accent and " A" or "",p.slide and " S" or "")
   end
-  local function update()
+  update=function()
     updating=true
     local projection=editor.project(pattern)
+    entry_mode_popup.value=pattern.entry_mode=="extended" and 2 or 1
+    pitch_length_popup.value=pattern.pitch_length or 16
+    pitch_length_popup.active=setup_confirmed and pattern.entry_mode=="extended"
+    playback_popup.value=pattern.playback=="loop" and 2 or 1
+    playback_popup.active=setup_confirmed
+    preview_popup.value=preview_mode
+    preview_popup.active=setup_confirmed
+    if length_items_mode~=pattern.entry_mode then
+      length_popup.items=pattern.entry_mode=="original" and
+        {"1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16"} or length_items
+      length_items_mode=pattern.entry_mode
+    end
+    length_popup.value=pattern.length
     for page=1,4 do
       local first=(page-1)*16+1
       local last=math.min(page*16,pattern.length)
@@ -121,7 +170,7 @@ function M.show()
         time_header.color=projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
           or (cmd=="N" and colors.note or cmd=="T" and colors.tie or colors.rest)
-        preview.text=string.format("%02d %s",step,editor.step_text(projection,step))
+        preview.text=string.format("%02d %s",step,editor.step_text(projection,step,preview_mode))
         preview.color=projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
           or colors.idle
@@ -148,14 +197,14 @@ function M.show()
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
     summary.text=string.format(
-      "STEPS %d/64   |   NOTE triggers %d   |   PITCH stored %d, used %d, unused %d",
-      pattern.length,projection.note_count,#pattern.pitch_events,count,
-      #pattern.pitch_events-count)
+      "STEPS %d/64   |   NOTE triggers %d   |   PITCH active %d, stored %d, used %d",
+      pattern.length,projection.note_count,pattern.pitch_length,#pattern.pitch_events,count)
     local pitch_usage=projection.used[selected_pitch] and "USED" or "UNUSED"
-    map_text.text=string.format("TIME %02d: %s   |   PITCH P%02d: %s",
-      selected_step,editor.step_text(projection,selected_step),
+    map_text.text=string.format("TIME %02d Start: %s  |  Repeating: %s  |  PITCH P%02d: %s",
+      selected_step,editor.step_text(projection,selected_step,1),
+      editor.step_text(projection,selected_step,2),
       selected_pitch,pitch_usage)
-    local plan,err=compiler.compile(pattern)
+    local plan,err=interpreter.compile_cycle(pattern)
     local error_info=projection.error
     if error_info then
       diagnostic.text="ERROR: "..error_info.message..
@@ -164,7 +213,7 @@ function M.show()
     elseif not plan then
       diagnostic.text="NOT READY: "..tostring(err)
     else
-      diagnostic.text="VALID: "..plan.note_count.." NOTE triggers; separate PITCH/TIME memories intact."
+      diagnostic.text="VALID: "..plan.note_count.." NOTE triggers; Start and Repeating previews resolved."
     end
     updating=false
   end
@@ -172,11 +221,12 @@ function M.show()
     selected_pitch=index
     pitch_page=editor.page_for(index)
     local projection=editor.project(pattern)
+    local mapping=preview_mode==2 and projection.repeat_mapping or projection.mapping
     -- Highlight the earliest NOTE that consumes this pitch position;
     -- TIE holds do not consume another pitch.
     for step=1,pattern.length do
-      local mapping=projection.mapping[step]
-      if mapping and mapping.kind=="note" and mapping.pitch_index==index then
+      local event=mapping[step]
+      if event and event.kind=="note" and event.pitch_index==index then
         selected_step=step
         time_page=editor.page_for(step)
         break
@@ -188,9 +238,10 @@ function M.show()
     selected_step=index
     time_page=editor.page_for(index)
     local projection=editor.project(pattern)
-    local mapping=projection.mapping[index]
-    if mapping and mapping.pitch_index then
-      selected_pitch=mapping.pitch_index
+    local mapping=preview_mode==2 and projection.repeat_mapping or projection.mapping
+    local event=mapping[index]
+    if event and event.pitch_index then
+      selected_pitch=event.pitch_index
       pitch_page=editor.page_for(selected_pitch)
     end
     update()
@@ -198,6 +249,17 @@ function M.show()
   local function changed()
     if live then live:changed() end
   end
+  playback_popup:add_notifier(function(value)
+    if updating or not setup_confirmed then return end
+    pattern.playback=value==2 and "loop" or "one_shot"
+    if pattern.playback=="loop" then
+      status.text="Repeat selected: baseline NOTE/TIE/REST is supported; slide continuity and advanced audio modes are refused."
+    else
+      status.text="One-shot playback selected."
+    end
+    update()
+    changed()
+  end)
   local function change_pitch()
     if updating or not setup_confirmed then return end
     fill_to(selected_pitch)
@@ -242,7 +304,8 @@ function M.show()
           if updating or not setup_confirmed then return end
           local step=editor.index_on_page(time_page,cell)
           if step<=pattern.length then
-            pattern.time_events[step]=({"N","T","R"})[choice]
+            local command,reason=sequencer.set_time(pattern,step,( {"N","T","R"})[choice])
+            if not command then status.text=reason end
             choose_time(step)
             changed()
           end
@@ -262,6 +325,12 @@ function M.show()
   end
   length_popup:add_notifier(function(n)
     if updating then return end
+    n=tonumber(n)
+    if pattern.entry_mode=="original" and n>16 then
+      status.text="Original entry is limited to 16 straight TIME steps; select Extended first."
+      update()
+      return
+    end
     pattern.length=n
     if setup_confirmed then
       for i=1,n do pattern.time_events[i]=saved_time[i] or pattern.time_events[i] or "N" end
@@ -276,6 +345,28 @@ function M.show()
     end
     update()
     if setup_confirmed then changed() end
+  end)
+  entry_mode_popup:add_notifier(function(value)
+    if updating then return end
+    local requested=value==1 and "original" or "extended"
+    local ok,reason=sequencer.set_entry_mode(pattern,requested)
+    if not ok then
+      status.text="Entry mode unchanged: "..reason
+      update()
+      return
+    end
+    status.text=requested=="original" and
+      "Original entry selected: straight TIME 1-16, PITCH span 16." or
+      "Extended entry selected: TIME and active PITCH span can be set independently."
+    update()
+    if setup_confirmed then changed() end
+  end)
+  pitch_length_popup:add_notifier(function(value)
+    if updating or pattern.entry_mode~="extended" then return end
+    local ok,reason=sequencer.set_pitch_length(pattern,tonumber(value))
+    if not ok then status.text=reason end
+    update()
+    if setup_confirmed and ok then changed() end
   end)
   local inspect=vb:button{text="Inspect selected Renoise pattern (read only)",
     notifier=function()
@@ -305,7 +396,6 @@ function M.show()
         pattern=source;setup_confirmed=true
         saved_time={};selected_pitch=1;selected_step=1
         pitch_page=1;time_page=1
-        length_popup.value=pattern.length
         for i,v in ipairs(mode_values) do
           if v==mode_or_err then
             mode_choice=i
@@ -371,17 +461,17 @@ function M.show()
     if not source then return nil,reason end
     return index
   end
-  live=live_regen.new(renoise.tool(),function(done)
+  live=live_regen.new(renoise.tool(),function(done,token)
     if opened~=generation or not dialog or not dialog.visible then
       return nil,"ACID dialog is no longer active"
     end
     local target_index,reason=live_target()
     if not target_index then return nil,reason end
-    local plan,err=compiler.compile(pattern)
-    if not plan then return nil,err end
     -- Freeze the source for the asynchronous renderer; subsequent UI edits
     -- are scheduled for another pass and cannot mutate the running job.
-    local copy=sequencer.new_pattern(pattern.length)
+    local copy=sequencer.new_pattern(pattern.length,pattern.entry_mode)
+    copy.pitch_length=pattern.pitch_length
+    copy.playback=pattern.playback
     copy.pitch_events={}
     for i,p in ipairs(pattern.pitch_events) do
       local v={}
@@ -392,12 +482,16 @@ function M.show()
     local mode_now=mode_values[mode_choice]
     local success,reason=phrase_writer.generate(selected_instrument,
       function(message)
+        if token and not token:is_current() then
+          done(false,"Live Edit generation was invalidated")
+          return
+        end
         if message:find(" generated (",1,true) then
           done(true,message)
         elseif message:find("GENERATION FAILED",1,true) then
           done(false,message)
         end
-      end,mode_now,copy,false,target_index)
+      end,mode_now,copy,target_index,{token=token,playback=copy.playback})
     return success,reason
   end,function(ok,message)
     if opened~=generation then return end
@@ -410,7 +504,10 @@ function M.show()
       live_checkbox.value=false
       stopping_live=false
     end
+  end,nil,function(token,reason)
+    return phrase_writer.cancel(token,reason)
   end)
+  active_live=live
   live_checkbox=vb:checkbox{value=false,notifier=function(value)
     if value then
       local index,reason=live_target()
@@ -430,14 +527,22 @@ function M.show()
       end
     end
   end}
+  active_live_checkbox=live_checkbox
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
-    vb:row{spacing=10,vb:text{text="LAST STEP (1-64)"},length_popup,
+    vb:row{spacing=10,vb:text{text="LAST STEP"},length_popup,
       step_division},
+    vb:row{spacing=8,vb:text{text="Entry mode"},entry_mode_popup,
+      vb:text{text="Active PITCH span"},pitch_length_popup,
+      vb:text{text="Extended: independent TIME/PITCH lengths."}},
+    vb:row{spacing=8,vb:text{text="Playback"},playback_popup,
+      vb:text{text="Preview"},preview_popup,
+      vb:text{text="Repeat supports baseline NOTE/TIE/REST; slide continuity and advanced audio modes are unsupported."}},
     vb:row{spacing=8,
       vb:button{text="Create / Reset Pattern",notifier=function()
         -- Explicit initialization: changing LAST STEP alone never erases memory.
-        pattern=sequencer.new_pattern(length_popup.value)
+        pattern=sequencer.new_pattern(length_popup.value,
+          entry_mode_popup.value==2 and "extended" or "original")
         for i=1,pattern.length do pattern.time_events[i]="N" end
         saved_time={}
         setup_confirmed=true
@@ -455,7 +560,7 @@ function M.show()
       vb:text{text="ACCENT"},accent,vb:text{text="SLIDE"},slide},
     vb:text{text="TIME MEMORY | select NOTE, TIE or REST directly for each step",font="bold"},
     time_pages,time_grid,
-    vb:text{text="DECODED SEQUENCE | click a cell to inspect its pitch",font="bold"},
+    vb:text{text="DECODED SEQUENCE | compare Start and Repeating transitions",font="bold"},
     preview_grid,summary,map_text,diagnostic,
     vb:row{spacing=6,vb:text{text="Target instrument"},target,
       vb:text{text="Audio test"},mode},
@@ -485,12 +590,11 @@ function M.show()
               end
               status.text=message
             end
-          end,mode_values[mode_choice],pattern,adopt.value,
-          phrase_targets[phrase_choice.value])
+          end,mode_values[mode_choice],pattern,
+          phrase_targets[phrase_choice.value],{playback=pattern.playback})
         if not ok then status.text="ACID error: "..tostring(generated)
         elseif not generated then status.text=err or "Generation refused" end
       end},
-      vb:text{text="Adopt legacy once"},adopt,
       vb:button{text="Sampler audit",notifier=function()
         status.text=sampler.describe(song.instruments[selected_instrument])
       end}},
@@ -499,5 +603,34 @@ function M.show()
   update()
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)
   dialog_generation=opened
+  local observed_dialog=dialog
+  local observed_live=live
+  local observed_checkbox=live_checkbox
+  idle_observable=renoise.tool().app_idle_observable
+  local observed_idle_observable=idle_observable
+  local observed_notifier
+  observed_notifier=function()
+    local function detach_this_watch()
+      pcall(function() observed_idle_observable:remove_notifier(observed_notifier) end)
+    if rawequal(idle_observable,observed_idle_observable) and
+        rawequal(idle_notifier,observed_notifier) then
+        idle_observable,idle_notifier=nil,nil
+      end
+    end
+    if not rawequal(dialog,observed_dialog) then
+      detach_this_watch()
+      return
+    end
+    if observed_dialog.visible then return end
+    detach_this_watch()
+    observed_live:stop()
+    observed_checkbox.value=false
+    if active_live==observed_live then active_live=nil end
+    if rawequal(active_live_checkbox,observed_checkbox) then active_live_checkbox=nil end
+    dialog=nil
+    dialog_generation=-1
+  end
+  idle_notifier=observed_notifier
+  observed_idle_observable:add_notifier(observed_notifier)
 end
 return M

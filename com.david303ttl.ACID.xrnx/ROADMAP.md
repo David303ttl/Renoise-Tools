@@ -63,18 +63,18 @@ Implemented on `develop`:
 | Live Edit | Opt-in debounced (350 ms), serialized automatic regeneration; manual Generate/Regenerate retained |
 | Verification | User-confirmed local Lua regressions and in-Renoise testing for M1, phrase selection/persistence, and Live Edit |
 
-**Do not infer from the above** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. The current phrase writer sets `phrase.looping = false`, the semantic compiler describes an initial one-pass traversal, and `0Gxx` with 50% gate is still experimental.
+**Do not infer from the M1 baseline** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. M2 now provides baseline Repeat phrase generation; its actual writer-generated audio still needs Renoise verification. `0Gxx` and gate behavior remain experimental.
 
 ### Important model debt to address in M2
 
-`sequencer.new_pattern` initializes **64 valid C pitches**, and `compiler.compile` currently uses `#pattern.pitch_events` as the playback wrap length. This is a storage default, **not proof that every pattern must cycle through 64 pitches**. Define and test the intended cursor/span rule, then replace the development source format directly. Earlier array-size behavior does not constrain the new implementation.
+The current source stores **64 valid C pitches** and carries an independent active span; a new pattern defaults to a 16-entry span in Original mode. This is a storage default, **not proof that every pattern cycles through 64 pitches**. The M2 interpreter resets pitch consumption at each TIME cycle; this is an ACID rule, not measured original CPU behavior.
 
 ## 3. Priorities and dependency map
 
 | Order | Milestone | User-visible result | Dependency |
 | --- | --- | --- | --- |
 | Completed | M1 — Editable source, phrase output and Live Edit | Edit ACID patterns and regenerate native phrases | — |
-| Next | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
+| In progress | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
 | Next | **M3 — Articulation and native sample fidelity** | Predictable gate, selective slide and accent behavior | M2 semantic contracts |
 | Next | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M2 + gate-placement decisions |
 | Required for fidelity | **M5 — Source programming and Renoise workflow** | Separate step-entry/check workflow, source management and scoped Extended editing | M2; stable persistence |
@@ -86,11 +86,11 @@ Implemented on `develop`:
 
 ## 4. M2 — Continuous playback and loop correctness
 
-**Goal:** a phrase can repeat predictably over successive cycles, including PITCH consumption and release/slide intent at the last-to-first boundary. Make loop behavior correct in the semantic model *before* teaching the writer to emit it.
+**Goal:** a phrase repeats predictably over successive cycles, including PITCH consumption and NOTE/TIE/REST behavior at the last-to-first boundary. Baseline Repeat output is implemented; remaining work verifies actual writer output and protects unsupported slide/audio-mode cases.
 
 **Priority:** highest. **Recommended implementation:** small feature branch from `develop`, separate commits for each subtask. **Avoid treating `looping = true` alone as completion.**
 
-**Detailed implementation proposal:** [M2 blueprint](M2_BLUEPRINT.md), checked against original Roland documentation, the pinned OS-303 firmware and current ACID code. It defines proposed Original/Extended entry, one cursor/voice contract, logical PITCH span, clean source/seal cutover, native-loop experiments, safety work and acceptance fixtures. It is a planning contract, not a completed milestone or a claim of verified hardware fidelity.
+**Implementation and verification record:** [M2 blueprint](M2_BLUEPRINT.md), checked against original Roland documentation, the pinned OS-303 firmware and current ACID code. It defines Original/Extended entry, the cursor/voice contract, logical PITCH span, source/seal cutover, native-loop experiments, safety work and acceptance fixtures. M2 remains incomplete until ACID writer-generated audio and lifecycle behavior pass the remaining checks; no hardware fidelity is implied.
 
 ### M2.0 — Define the conformance oracle
 
@@ -104,6 +104,11 @@ Implemented on `develop`:
 **Deliverable:** `docs`/design decision notes or a focused M2 semantics document, plus machine-readable fixture descriptions.
 
 **Gate:** each ambiguous rule has a documented chosen behavior and test expectation; any claim of hardware fidelity is supported or marked unresolved.
+
+The conformance decisions are recorded in [M2_SEMANTICS.md](M2_SEMANTICS.md),
+with three-cycle expectations in [loop_cases.json](../tests/acid/fixtures/loop_cases.json).
+The pure cycle interpreter is covered against those expectations. Native phrase
+playback is documented separately and remains subject to its manual gates.
 
 ### M2.1 — Model deterministic repeating TIME/PITCH cycles
 
@@ -119,6 +124,10 @@ Implemented on `develop`:
 
 **Acceptance tests:** explicit 1, 16, 17, 32, 33, 48, 49, and 64-step patterns; NOTE-TIE-NOTE; NOTE-REST-NOTE; all-rest; all-note; leading-TIE entry normalized to NOTE in both modes; loop ending in REST and loop ending in held note. Assert events for at least **three cycles**, including pitch indices and transitions.
 
+The pure cycle interpreter and three-cycle fixture tests are implemented and
+integrated with the current source/editor. Phrase generation and playback
+verification are tracked under M2.3–M2.5.
+
 ### M2.2 — Separate logical pitch length from 64 stored defaults
 
 **Work**
@@ -133,6 +142,11 @@ Implemented on `develop`:
 
 **Acceptance tests:** entered T01 becomes NOTE and consumes P01 in both modes; raw leading-TIE source is rejected in both; fewer/more PITCH entries than NOTE triggers in Extended; full-C and inactive storage roundtrip in the current format; earlier development formats unsupported; stable preview and explicit entry-mode changes.
 
+The current source, editor and persistence use these fields and the shared
+cycle interpreter. Old development source formats and seals are refused. One
+current-format Extended source/seal save/reopen case passed; broader field and
+GUI coverage remains in the manual checklist.
+
 ### M2.3 — Resolve loop-boundary TIE, REST and SLIDE
 
 **Work**
@@ -146,11 +160,15 @@ Implemented on `develop`:
 
 **Deliverable:** fully specified semantic boundary state plus diagnostics if the selected phrase representation cannot render the requested transition faithfully.
 
+The semantic interpreter and baseline Repeat planner implement cold/repeated
+NOTE/TIE/REST boundaries. Repeat slide transitions are currently refused;
+native slide continuity remains unverified.
+
 ### M2.4 — Native looping phrase output
 
 **Work**
 
-- Replace one-shot-only output with a **verified loop-capable** native phrase strategy.
+- Keep the baseline Repeat path loop-capable and guarded; refuse unsupported cases rather than substituting articulation.
 - Confirm phrase looping, LPB, note-off placement, early release, and Renoise's treatment of a note sustained over the phrase boundary.
 - Test sustained selective phrase triggering separately from fresh trigger, note release, stop/start and seek. Phrase mappings have separate loop/key-tracking properties; keymapped playback requires its own evidence before support is claimed.
 - If Renoise cannot preserve the required held voice or selective glide at a native phrase restart, do not silently fake it: isolate a documented fallback/limitation, or render a verified repeated segment when musically equivalent.
@@ -159,11 +177,30 @@ Implemented on `develop`:
 
 **Likely modules:** `writers/phrase_writer.lua`, `writers/pattrns_writer.lua`, `writers/phrase_validator.lua` and articulation boundary handling.
 
-**Acceptance in Renoise:** phrases of 1/16/17/32/33/48/49/64 steps audibly repeat and match the expected grid for multiple cycles. 16-to-17, 32-to-33 and 48-to-49 are page boundaries, **not musical resets**.
+**Recorded partial acceptance:** the ACID writer's baseline output for lengths 1/16/17/32/33/48/49/64 matched the sampled pitch/silence grid over three cycles. 16-to-17, 32-to-33 and 48-to-49 are page boundaries, **not musical resets**. Sample-release, transport and other lifecycle checks remain open.
+
+The Renoise 3.5.4 WAV probe verified loop endpoint behavior and grid/pitch
+markers at all eight required lengths for the recorded test instrument. Two
+hand-built native mixed-event phrases also passed recorded pitch/silence
+checkpoints over four steady periods. ACID's writer-generated Repeat phrases
+then passed 780 sampled mid-step pitch/silence checkpoints across three cycles
+at lengths 1, 16, 17, 32, 33, 48, 49 and 64, with source save/load and loop
+metadata checks. Sample release/cut tail, voice continuity, slide, stop/start,
+seek and undo remain acceptance gates. A 64-step all-REST source also produced
+the expected empty 257-line phrase and passed source/ownership checks. The GUI
+opened an existing 64-step Extended/span-3 Repeat source and regenerated its
+owned phrase. One Live Edit change on a 16-step Extended/span-3 Repeat phrase
+also regenerated TIME02 TIE→REST and passed saved-source, cold/repeating OFF,
+and ownership checks. Rapid/in-flight edits, disable/close races and
+dialog/notifier lifecycle remain untested. A fresh trigger after host NOTE OFF
+matched the first six TIME events on one 16-step Repeat source. Transport
+stop/start and seek are still untested. See the
+[repeat record](../tests/acid/acid_loop_manual.md) and
+[regeneration record](../tests/acid/acid_regeneration_manual.md).
 
 ### M2.5 — Regressions and merge gate
 
-Create `tests/acid/acid_loop_*_spec.lua` and `tests/acid/acid_loop_manual.md`. Test:
+Maintain `tests/acid/acid_loop_*_spec.lua` and `tests/acid/acid_loop_manual.md`. Test:
 
 - Triple-cycle event equality/continuity under the chosen cursor policy.
 - Long patterns with TIE/REST and slide at steps 16/17, 32/33, 48/49, 64/1.

@@ -28,11 +28,13 @@ function M.plan(plan, lines_per_step, rate)
       -- Apply Gxx at the target pitch and G00 on the following line.
       commands[#commands+1] = {
         line=target_line, note=event.note, command="0G", amount=rate,
-        step=step, pitch_index=event.pitch_index, kind="glide"
+        step=step, time_step=event.source_step or event.step or step,
+        cycle=event.cycle, pitch_index=event.pitch_index, kind="glide"
       }
       commands[#commands+1] = {
         line=target_line+1, note=nil, command="0G", amount=0,
-        step=step, pitch_index=event.pitch_index, kind="continuation"
+        step=step, time_step=event.source_step or event.step or step,
+        cycle=event.cycle, pitch_index=event.pitch_index, kind="continuation"
       }
     end
   end
@@ -66,9 +68,9 @@ function M.apply(phrase, plan, lines_per_step, rate, early_release)
   local skipped = {}
   for _, command in ipairs(commands) do
     local display_line = command.line - 1 -- Renoise line labels are zero-based
-    local location = string.format("TIME step %02d, phrase line %02X",
-      command.step or (math.floor(display_line / lines_per_step) + 1),
-      display_line)
+    local location = string.format("%sTIME step %02d, phrase line %02X",
+      command.cycle and (command.cycle==1 and "Initial cycle, " or "Repeating cycle, ") or "",
+      command.time_step or command.step or (math.floor(display_line / lines_per_step) + 1),display_line)
     local line = phrase:line(command.line)
     local cell = line and line.note_columns and line.note_columns[1]
     if not cell then

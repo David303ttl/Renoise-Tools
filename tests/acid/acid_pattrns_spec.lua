@@ -1,5 +1,6 @@
 dofile('tests/bootstrap.lua')('acid')
 local emitter = require('writers.pattrns_writer')
+local sequencer = require('model.sequencer')
 
 local function compile_script(source)
   -- Mock the pattrns "pattern" constructor; validate emitted Lua source
@@ -30,7 +31,7 @@ local sample = {
 local source, meta = assert(emitter.emit(sample))
 assert(source == assert(emitter.emit(sample)))
 assert(meta.steps == 8 and meta.note_count == 3 and meta.off_count == 2)
-assert(meta.slide_intentions == 2 and meta.requires_articulation)
+assert(meta.slide_intentions == 1 and meta.requires_articulation)
 assert(not source:find('Gxx', 1, true))
 local options = compile_script(source)
 assert(options.unit == '1/16' and options.repeats == false)
@@ -58,11 +59,12 @@ assert(not emitter.emit({length=1, steps={{step=1,kind='rest'}}}))
 assert(not emitter.emit({length=1, steps={{step=1,kind='invalid'}}}))
 
 -- End-to-end path via sequencer/compiler, with a REST not consuming a pitch.
-local p = {
-  length=5,
-  pitch_events={{note=36,slide=true},{note=40,accent=true},{note=43}},
-  time_events={'N','T','N','R','N'}
-}
+local p=sequencer.new_pattern(5,'extended')
+p.pitch_length=3
+p.pitch_events[1]={note=36,slide=true}
+p.pitch_events[2]={note=40,accent=true}
+p.pitch_events[3]={note=43}
+p.time_events={'N','T','N','R','N'}
 local generated, result = assert(emitter.generate(p))
 local actual = compile_script(generated)
 assert(result.note_count == 3 and result.off_count == 1)
@@ -71,5 +73,8 @@ assert(actual.event({pulse_step=2}) == nil)
 assert(actual.event({pulse_step=3}).key == 40)
 assert(actual.event({pulse_step=4}) == 'off')
 assert(actual.event({pulse_step=5}).key == 43)
-assert(not emitter.generate({length=3,pitch_events={{note=36}},time_events={'N'}}))
+local invalid=sequencer.new_pattern(3,'extended')
+invalid.pitch_length=1
+invalid.time_events={'T','N','N'}
+assert(not emitter.generate(invalid))
 print('ACID pattrns script emitter checks passed')

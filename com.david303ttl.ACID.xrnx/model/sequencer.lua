@@ -21,9 +21,14 @@ local function array_size(a)
   return n
 end
 
-function M.new_pattern(length)
+function M.new_pattern(length, entry_mode)
   length = length or 16
+  entry_mode = entry_mode or "original"
+  assert(entry_mode == "original" or entry_mode == "extended",
+    "entry mode must be original or extended")
   assert(integer_between(length, 1, M.MAX_STEPS), "length must be 1..64")
+  assert(entry_mode ~= "original" or length <= 16,
+    "original TIME length must be 1..16")
   -- All PITCH memory positions are initialized, not blank. Untouched
   -- positions play C in the normal octave with no ACCENT or SLIDE.
   -- TIME remains independent and is set during pattern initialization.
@@ -31,7 +36,50 @@ function M.new_pattern(length)
   for i=1,M.MAX_STEPS do
     pitches[i] = M.new_pitch(0,0,false,false)
   end
-  return {length=length, pitch_events=pitches, time_events={}}
+  return {length=length, pitch_length=entry_mode == "original" and 16 or 64,
+    entry_mode=entry_mode, playback="loop", pitch_events=pitches,
+    time_events={}}
+end
+
+function M.set_entry_mode(pattern, entry_mode)
+  if type(pattern) ~= "table" then return false, "pattern must be a table" end
+  if entry_mode ~= "original" and entry_mode ~= "extended" then
+    return false, "entry mode must be original or extended"
+  end
+  if entry_mode == "original" then
+    if pattern.length > 16 then return false, "original TIME length must be 1..16" end
+    if pattern.pitch_length ~= 16 then return false, "original PITCH span must be 16" end
+  end
+  pattern.entry_mode = entry_mode
+  return true
+end
+
+function M.set_pitch_length(pattern, pitch_length)
+  if type(pattern) ~= "table" or
+      not integer_between(pitch_length, 1, M.MAX_STEPS) then
+    return false, "pitch length must be 1..64"
+  end
+  if pattern.entry_mode == "original" and pitch_length ~= 16 then
+    return false, "original PITCH span must be 16"
+  end
+  pattern.pitch_length = pitch_length
+  return true
+end
+
+function M.set_time(pattern, step, command)
+  if type(pattern) ~= "table" or not integer_between(pattern.length, 1, M.MAX_STEPS) then
+    return nil, "invalid pattern"
+  end
+  local maximum = pattern.entry_mode == "original" and 16 or M.MAX_STEPS
+  if not integer_between(step, 1, math.min(pattern.length, maximum)) then
+    return nil, "invalid time step"
+  end
+  if command ~= "N" and command ~= "T" and command ~= "R" then
+    return nil, "invalid timing command"
+  end
+  if step == 1 and command == "T" then command = "N" end
+  pattern.time_events[step] = command
+  return command
 end
 
 -- Original 13-key pitch keyboard, combined with octave DOWN/NORMAL/UP.
@@ -69,6 +117,24 @@ function M.validate(pattern)
   if not integer_between(pattern.length, 1, M.MAX_STEPS) then
     return false, "pattern length must be 1..64"
   end
+  if pattern.entry_mode ~= "original" and pattern.entry_mode ~= "extended" then
+    return false, "entry mode must be original or extended"
+  end
+  if not integer_between(pattern.pitch_length, 1, M.MAX_STEPS) then
+    return false, "pitch length must be 1..64"
+  end
+  if pattern.entry_mode == "original" and pattern.length > 16 then
+    return false, "original TIME length must be 1..16"
+  end
+  if pattern.entry_mode == "original" and pattern.pitch_length ~= 16 then
+    return false, "original PITCH span must be 16"
+  end
+  if pattern.playback ~= "loop" and pattern.playback ~= "one_shot" then
+    return false, "playback must be loop or one_shot"
+  end
+  if array_size(pattern.pitch_events) ~= M.MAX_STEPS then
+    return false, "PITCH memory must contain exactly 64 entries"
+  end
   local np, nt = array_size(pattern.pitch_events), array_size(pattern.time_events)
   if np == nil or nt == nil then
     return false, "pitch_events and time_events must be dense arrays (maximum 64 entries)"
@@ -96,13 +162,18 @@ function M.validate(pattern)
       return false, "invalid timing command at step " .. i
     end
   end
+  if pattern.time_events[1] == "T" then
+    return false, "leading TIE must be entered as NOTE"
+  end
   return true
 end
 
 function M.describe(pattern)
   local ok, err = M.validate(pattern)
   if not ok then return nil, err end
-  return string.format("Draft state: %d time slots, %d pitch entries, %d time events",
-    pattern.length, #pattern.pitch_events, #pattern.time_events)
+  return string.format("Draft state: %d %s time slots, %d active pitch entries, %d stored pitch entries, %d time events",
+    pattern.length, pattern.entry_mode,
+    pattern.pitch_length or #pattern.pitch_events, #pattern.pitch_events,
+    #pattern.time_events)
 end
 return M

@@ -1,6 +1,6 @@
 -- Control-signal timeline in 256 subdivisions per sixteenth step.
 -- Gate fraction controls release placement independently of Renoise.
-local compiler=require("model.compiler")
+local compiler=require("model.cycle_interpreter")
 local M={}
 
 local function add(out,at,kind,more)
@@ -16,7 +16,8 @@ function M.compile(pattern,options)
     or fraction~=fraction then
     return nil,"gate_fraction must be between 0 and 1"
   end
-  local plan,err=compiler.compile(pattern)
+  local plan,err=options.plan,nil
+  if not plan then plan,err=compiler.compile_cycle(pattern) end
   if not plan then return nil,err end
   local events={}
   local gate=false
