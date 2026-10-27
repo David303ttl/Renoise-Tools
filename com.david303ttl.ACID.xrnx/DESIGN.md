@@ -7,12 +7,31 @@ ACID tool directory. The manifest remains version 0.1.
 
 ## Source and interpretation
 
-The canonical source holds 64 valid PITCH entries, a TIME length and complete
-TIME commands, an explicit active PITCH span, entry mode and playback setting.
-Original entry permits 1–16 straight TIME steps with a 16-entry active span;
-Extended permits 1–64 steps and an independently selected span of 1–64.
+The M3.5 canonical source contract holds 64 valid PITCH entries, a TIME length
+1–64 and complete TIME commands, an independently selected active PITCH span
+1–64, articulation flags and musical timing mode. It contains **no editor
+view, one-shot/repeat switch, renderer mode or instrument-profile whitelist**.
 Inactive stored pitches remain part of the source. Entry of TIE at TIME 01
 stores NOTE; a noncanonical stored leading TIE is refused.
+
+**Editor:** Program (Roland-style PITCH/TIME) and Grid are two views of the
+same source. View changes never reset, reinterpret or validate musical length.
+New patterns are editable immediately with C pitch defaults. Destructive Reset
+is explicit and undoable. Roland hardware conformance is a separate diagnostic,
+not an Original-versus-Extended admission rule.
+
+**Semantic interpreter:** cold and repeated cycles are derived for any valid
+source. Output policy does not change NOTE/TIE/REST consumption or SLIDE/ACCENT
+intent. Repeat is the default owned-phrase output policy; Play Once is an
+optional phrase-specific rendering setting, never a canonical source field.
+Both leave instrument-wide phrase triggering, transport and routing unchanged.
+
+**Articulation:** no musician-facing Baseline/Retrigger/Selective Slide switch.
+NOTE/REST/TIE/SLIDE/ACCENT determine the desired transitions; the renderer
+chooses native sample, plugin, MIDI or hybrid strategies automatically. A
+capability limitation is a visible nonfatal approximation, not a reason to
+reject valid source. Empty instrument slots can own silent, inspectable phrases.
+See ROADMAP.md M3.5.0.1 and M3.5.1–M3.5.6 for implementation gates.
 
 `model/cycle_interpreter.lua` resolves NOTE, TIE and REST for cold and repeated
 cycles. Only NOTE consumes pitch. The next-consumed PITCH cursor resets to P01
@@ -24,8 +43,9 @@ octave and hold intent; they do not assert a particular numerical gate or
 sample-envelope behavior. No 16-step editor page is a playback boundary.
 
 These decisions and their evidence are recorded in [M2_SEMANTICS.md](M2_SEMANTICS.md).
-The original TB-303's CPU cursor behavior has not been measured. Original entry
-is a supported programming subset, not a hardware-fidelity certification.
+The original TB-303's CPU cursor behavior has not been measured. Roland-style
+Program view does not certify hardware fidelity; deviations are reported by a
+separate conformance diagnostic.
 
 ## Editor, phrase output and protection
 
@@ -37,14 +57,14 @@ jobs when the editing context changes.
 
 `writers/pattrns_writer.lua` emits finite staging data, and
 `writers/phrase_writer.lua` validates and commits a regular native phrase.
-Baseline Repeat now emits a cold intro followed by a steady loop using the
-exclusive-end sentinel layout. New drafts default to Repeat. Renoise 3.5.4 WAV
-checks of ACID-generated output passed sampled pitch/silence and metadata checks
-for lengths 1, 16, 17, 32, 33, 48, 49 and 64. Repeat accepts baseline
-NOTE/TIE/REST only; slide transitions and non-baseline audio modes are refused.
-One-shot remains available as an explicit choice. Sample release/cut tail,
-voice continuity and transport behavior remain unverified. See [the Renoise
-loop protocol](../tests/acid/acid_loop_manual.md).
+The current M3 writer uses a cold intro and steady loop with an exclusive-end
+sentinel. The M3 sample-only playback-mode and exact-profile admission gates
+are **implementation limitations to remove in M3.5**, not future design rules.
+The replacement writer always accepts valid semantic input, uses an instrument-
+capability-aware strategy, and commits a native phrase for samples, plugins,
+MIDI or silent empty targets. Repeat and optional Play Once control the owned
+phrase output layout only. Source edits never require choosing a separate
+renderer or switching an Entry mode. See ROADMAP.md M3.5.0.1.
 
 `model/control_signals.lua` derives physical gate edges separately from
 semantic voice intent, in 256 units per TIME step. It uses an explicit successor
@@ -82,8 +102,7 @@ evidence. Identical exports establish deterministic offline output, not
 independent soundcard captures. A fresh packaged-tool GUI check covered
 Generate, Live Edit 8→9→8 resizing, ownership and save/reopen for one moving
 Repeat case. Manual transport stop/start and seek, Live Edit during playback,
-runtime keymapped triggering and rapid UI races remain unverified. Accent changes on connected slide chains
-are explicitly refused before phrase mutation.
+runtime keymapped triggering and rapid UI races remain unverified. M3 currently refuses accents on connected slide chains; M3.5 must remove this source-level prohibition, render the best target-compatible articulation, and mark fidelity separately.
 An earlier Renoise Demo session inspected writer-generated NOTE/TIE/REST cells
 and ownership but could not render audio; its limitations are historical and
 are superseded only for the named offline-render cases above. Undo, broad
