@@ -214,3 +214,25 @@ Three actual unchanged Repeat NOTE/REST writer captures pass at120BPM: four atta
 | `writer_repeat_rest_1.wav` | pass | `27339e4aaf5c8d00468e4ce559bc7edf54cb4e6691217e1968213616f40242d1` |
 | `writer_repeat_rest_2.wav` | pass | `c82b431d2097e3483c22fc5481db2c80dae721674e5e7a42b427ad3e6741abd4` |
 | `writer_repeat_rest_3.wav` | pass | `f68bc8b509d3fa5fda0347ccb8e9bcd51a4123b4ab7ad8837cf312b889ccea80` |
+
+## Single-instance glide and same-pitch Repeat checks — 2026-10-27
+
+An earlier hidden disposable Renoise process remained alive alongside the visible capture instance. It was stopped; exactly one instance was confirmed before the fresh calibration below. This is a plausible cause of intermittent mixed/extra-onset takes, not proof of the cause of every earlier invalid recording. Historical invalid files remain invalid and were not trimmed. The single-instance route passes all68 calibration onset/pitch/silence windows at48kHz stereo PCM24.
+
+Three fresh actual fixed20 four-semitone one-shot writer captures (`writer_connected_four_4`–`6`) pass target52, continuity, no extra attack and release. The authored source is NOTE/TIE/NOTE/TIE/REST with outgoing SLIDE on pitch48 into52. An independent protocol and synthetic pitch/retrigger failures cover this source. Earlier take2 exceeds the peak ceiling and remains invalid.
+
+Three actual 16-step same-pitch Repeat writer captures pass one cold attack, stable pitch across four passes, no new attack at cold-to-steady or either steady seam, continuity at all three seams, and final host release. The source has one NOTE and fifteen TIEs with outgoing SLIDE. The dedicated host holds64TIME steps and releases after cold plus three steady cycles. Connected Repeat must not have a scheduler midpoint OFF; its oracle was corrected to measure host OFF at4*source length, with origin explicitly recorded. Other lengths remain planned. Synthetic continuity-gap rejection passes.
+
+Runtime eligibility admits same-pitch Repeat slide only in slide mode on the exact diagnostic reference at120BPM/selective/LPB8/TPL12/no groove. Moving Repeat slides remain refused. Profile/transport eligibility is checked again before commit; tests cover matching-path generation, changed/mismatched profiles, unsupported tempos, moving-slide refusal and sentinel preservation. A separate connected-accent diagnostic profile can be recognized read-only but is not enabled by these results.
+
+| Artifact stem under `tmp/acid-articulation/` | Result | WAV SHA-256 | Report SHA-256 |
+| --- | --- | --- | --- |
+| `single_instance_calibration` | pass | `d37f1e9786ca0d155548329e7c49d0e953f29c954f6a22b308e6914a9a27a8ca` | `16e708360af6bc6e0c68052cda930989fa358b120c9f0e29bec7d45c0ec44525` |
+| `writer_connected_four_4` | pass | `27c8a05410d73acd6e8a55c4e10a6833ffa012d2dce1d87e30522ae3c3666bb5` | `557cf48e3de316fd385012c892357808de5cd9a3111eb09cd5b576ecdc1c2de3` |
+| `writer_connected_four_5` | pass | `b237e60401de3ad21de1c2424532422d0c2879c753523a81dac3d314c226a13a` | `695df2d810fb5c8d38bd8d51e99d9cb81c6647ad1578f02b2c01594f9d47a03f` |
+| `writer_connected_four_6` | pass | `7a2589e0919505a9668738aae4de9fb325417e97b26cbd7fb6ca33d63269df5c` | `73d611ac6a879bccc02917f6ab5cf275aef2c1bb4ab7ba4f3687e6b4d3593e1c` |
+| `writer_repeat_same_1` | pass | `8b29db4e0d51410f90ba4eb12f7a2c299eac72e89d86d9d05198bfa57883b8dc` | `bc94ef8e0daee381e91acf83bae48fd4fec6c0209937ad8faf151ff856814518` |
+| `writer_repeat_same_2` | pass | `de052dea043c2e72486e7bdce7e1c168550cf98c2ec8b0ac6fec5bbfa18dd54a` | `4af67fa8d4e85807d4d9390193558bc89de7476e1e807d2535b5f6e13a8ed487` |
+| `writer_repeat_same_3` | pass | `98bf90a954a9d04ebe6863b405f5ca6da0f2fb7cc32e79c9f7829211d7f200b5` | `f1edba6b0b6f4323f08e16721c4cdcecb86933954e3b9aefb55e6512d5f9d219` |
+
+Stopped at user request after this capture set. Full M3 remains open: broader Repeat moving glide, connected/consecutive accent, remaining lengths/tempo/profile cases and normal Generate/Live Edit/ownership/save-reopen lifecycle verification are not claimed complete.

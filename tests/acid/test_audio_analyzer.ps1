@@ -341,6 +341,11 @@ try {
     }
   }
   Invoke-SyntheticCase 'slide_rate_20' 'positive_glide' -ExpectPass $true
+  Invoke-SyntheticCase 'repeat_slide_seam_length_16' 'positive_repeat_same_pitch' -ExpectPass $true
+  Invoke-SyntheticCase 'repeat_slide_seam_length_16' 'negative_repeat_same_pitch_gap' -GapOffsetStep 15.95 -GapDurationMs 18 -ExpectPass $false
+  Invoke-SyntheticCase 'one_shot_four_semitone_slide' 'positive_writer_glide' -ExpectPass $true
+  Invoke-SyntheticCase 'one_shot_four_semitone_slide' 'negative_writer_glide_retrigger' -AddGlideRetrigger -ExpectPass $false
+  Invoke-SyntheticCase 'one_shot_four_semitone_slide' 'negative_writer_glide_pitch' -PitchOffsetCents 75 -ExpectPass $false
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_pitch' -PitchOffsetCents 70 -ExpectPass $false
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_drift' -DriftMsPerEvent 0.15 -ExpectPass $false
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_missing_onset' -OmitLastOnset -ExpectPass $false

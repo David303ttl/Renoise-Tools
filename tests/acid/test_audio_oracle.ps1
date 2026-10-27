@@ -76,8 +76,8 @@ try {
     if (@($case.expected.onsets).Count -ne 1 -or
         @($case.expected.continuity_windows).Count -ne 3 -or
         @($case.expected.no_attack_windows).Count -lt 3 -or
-        $case.qualification.protocol_status -cne 'blocked') {
-      throw "Slide seam length $length needs one cold attack, three explicit connections and qualification blockers"
+        $case.qualification.protocol_status -cnotin @('blocked','ready')) {
+      throw "Slide seam length $length needs one cold attack, three explicit connections and qualification status"
     }
   }
   foreach ($mutation in $mutations) {

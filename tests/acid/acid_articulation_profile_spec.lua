@@ -39,6 +39,11 @@ assert(not checker.check(instrument,"reference_diagnostic",{fade_amount=765.765}
 instrument.samples[1].modulation_set_index=1
 assert(checker.check(instrument,"reference_diagnostic",{fade_amount=765.765}))
 assert(not checker.check(instrument,"reference_diagnostic"))
+assert(not checker.check(instrument,"reference_connected_accent",{fade_amount=765.765}))
+instrument.samples[1].sample_mapping.map_velocity_to_volume=true
+assert(checker.check(instrument,"reference_connected_accent",{fade_amount=765.765}))
+assert(not checker.check(instrument,"reference_diagnostic",{fade_amount=765.765}))
+instrument.samples[1].sample_mapping.map_velocity_to_volume=false
 local changes={
  {function(i)i.trigger_options.tuning={1} end,"custom tuning"},
  {function(i)i.trigger_options.scale_mode="Major" end,"scale_mode"},

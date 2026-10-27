@@ -238,6 +238,21 @@ local gated=instrument.phrases[target]
 assert(gated and ownership.status(gated)=='owned' and gated.looping)
 assert(gated.cells[3].note_value==120 and gated.cells[7].note_value==120)
 assert(gated.cells[9].note_value==121 and profile_checks==2)
+local connected=source(4)
+connected.pitch_length=1
+connected.pitch_events[1]={note=48,accent=false,slide=true}
+local connected_target=#instrument.phrases+1
+assert(writer.generate(1,function(message)messages[#messages+1]=message end,
+ 'slide',connected,connected_target))
+for _=1,6 do idle:fire() end
+local connected_phrase=instrument.phrases[connected_target]
+assert(connected_phrase and ownership.status(connected_phrase)=='owned')
+assert(connected_phrase.cells[3].effect_number_string=='0G')
+assert(connected_phrase.cells[17].note_value==121)
+local moving=source(4);moving.pitch_length=2
+moving.pitch_events[1]={note=48,accent=false,slide=true}
+moving.pitch_events[2]={note=52,accent=false,slide=true}
+assert(not writer.generate(1,function()end,'slide',moving,#instrument.phrases+1))
 for _,tempo in ipairs({90,150}) do
  song.transport.bpm=tempo
  local count=#instrument.phrases

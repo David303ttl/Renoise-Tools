@@ -11,7 +11,7 @@ local function fields(object,values,path)
   for key,value in pairs(values) do expect(object[key],value,path.."."..key) end
 end
 local function inspect(instrument,profile,options)
-  if profile~="reference_flat" and profile~="reference_diagnostic" and profile~="reference_accent" then
+  if profile~="reference_flat" and profile~="reference_diagnostic" and profile~="reference_accent" and profile~="reference_connected_accent" then
     error("unknown reference profile",0)
   end
   local api=renoise
@@ -35,7 +35,7 @@ local function inspect(instrument,profile,options)
   expect(#sample.slice_markers,0,"sample slice marker count")
   local mapping=sample.sample_mapping
   fields(mapping,{base_note=48,map_key_to_pitch=true,
-    map_velocity_to_volume=profile=="reference_accent"},"mapping")
+    map_velocity_to_volume=profile=="reference_accent" or profile=="reference_connected_accent"},"mapping")
   expect(mapping.note_range[1],0,"mapping.note_range start")
   expect(mapping.note_range[2],119,"mapping.note_range end")
   expect(mapping.velocity_range[1],0,"mapping.velocity_range start")
@@ -47,7 +47,7 @@ local function inspect(instrument,profile,options)
     expect(buffer:sample_data(1,frame),0.35*(2*((frame-1)/168)-1),
       "sample waveform frame "..frame,0.0000001)
   end
-  if profile~="reference_diagnostic" then
+  if profile~="reference_diagnostic" and profile~="reference_connected_accent" then
     expect(sample.modulation_set_index,0,"sample.modulation_set_index")
   else
     expect(sample.modulation_set_index,1,"sample.modulation_set_index")

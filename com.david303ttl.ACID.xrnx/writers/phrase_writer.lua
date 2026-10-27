@@ -61,11 +61,21 @@ local function repeat_location(plan, predicate)
   return nil
 end
 
+local function reference_gate_context(instrument,transport)
+  if not transport or transport.bpm~=120 or transport.lpb~=8 or transport.tpl~=12
+    or transport.groove_enabled~=false
+    or instrument.phrase_playback_mode~=renoise.Instrument.PHRASES_PLAY_SELECTIVE then return false end
+  return profiles.check(instrument,"reference_diagnostic",{fade_amount=765.76501464844})~=nil
+end
 local function repeat_preflight(plan, mode, instrument, transport)
   local step,cycle,line=repeat_location(plan,function(event)
     return event.transition=="slide"
   end)
   if step then
+    local moving=repeat_location(plan,function(event)
+      return event.transition=="slide" and event.from_note~=event.note
+    end)
+    if mode=="slide" and not moving and reference_gate_context(instrument,transport) then return true end
     return nil,string.format(
       "Repeat slide continuity is unverified at TIME step %02d, cycle %d, phrase line 0x%02X",
       step,cycle,line)
@@ -75,12 +85,8 @@ local function repeat_preflight(plan, mode, instrument, transport)
       return event.kind=="note"
     end)
     if not step then step,cycle,line=1,1,0 end
-    if mode=="retrigger" and transport and transport.bpm==120 and transport.lpb==8
-      and transport.tpl==12 and transport.groove_enabled==false
-      and instrument.phrase_playback_mode==renoise.Instrument.PHRASES_PLAY_SELECTIVE then
-      local profile=profiles.check(instrument,"reference_diagnostic",{fade_amount=765.76501464844})
-      if profile then return true end
-    end
+    if mode=="retrigger" and reference_gate_context(instrument,transport) then return true end
+
     return nil,string.format(
       "Repeat audio mode '%s' is unverified at TIME step %02d, cycle %d, phrase line 0x%02X",
       mode,step,cycle,line)
@@ -233,7 +239,8 @@ local function complete(job, error_message, rendered_events)
      " | "..job.mode.." articulation applied") ..
     (job.layout.looping and (job.mode=="baseline" and
       "\nRepeat uses baseline NOTE/TIE/REST; selective slide and other audio modes are unsupported." or
-      "\nRepeat gate uses the reference diagnostic profile at 120 BPM; selective slide is unsupported.") or "") ..
+      (job.mode=="slide" and "\nRepeat same-pitch connections use the reference diagnostic profile at 120 BPM; moving slides are unsupported." or
+      "\nRepeat gate uses the reference diagnostic profile at 120 BPM; moving slides are unsupported.")) or "") ..
     (job.cleanup_warning and "\n"..job.cleanup_warning or ""))
 end
 

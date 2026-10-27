@@ -170,7 +170,7 @@ foreach ($case in $oracle.cases) {
   }
 }
 if (-not $ids.Contains($calibrationId)) { throw "Calibration case '$calibrationId' is missing" }
-if (@($oracle.cases | Where-Object { $_.expected.glide_window }).Count -ne 3) { throw 'Expected the three authored 0G08/0G20/0G40 glide experiments' }
+if (@($oracle.cases | Where-Object { $_.expected.glide_window -and $_.playback.renderer -eq 'independent-native-control' }).Count -ne 3) { throw 'Expected the three authored 0G08/0G20/0G40 glide experiments' }
 if (@($oracle.cases | Where-Object { $_.expected.release }).Count -lt 3) { throw 'Expected release, retrigger and REST controls' }
 foreach ($required in @('isolated_note', 'note_tie', 'note_tie_tie', 'adjacent_equal_notes',
     'adjacent_different_notes', 'all_rest', 'ending_rest', 'trailing_tie_fresh_note',
