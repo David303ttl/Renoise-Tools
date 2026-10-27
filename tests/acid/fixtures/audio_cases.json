@@ -5085,7 +5085,7 @@
         "looping": true
       },
       "id": "repeat_slide_seam_length_17",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -5237,11 +5237,10 @@
       },
       "qualification": {
         "blockers": [
-          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
-          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+          "Three unchanged actual writer renders at 120 BPM remain pending for this same-pitch Repeat length."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "blocked"
+        "protocol_status": "ready"
       },
       "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
     },
@@ -5265,7 +5264,7 @@
         "looping": true
       },
       "id": "repeat_slide_seam_length_32",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -5432,11 +5431,10 @@
       },
       "qualification": {
         "blockers": [
-          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
-          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+          "Three unchanged actual writer renders at 120 BPM remain pending for this same-pitch Repeat length."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "blocked"
+        "protocol_status": "ready"
       },
       "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
     },
@@ -5460,7 +5458,7 @@
         "looping": true
       },
       "id": "repeat_slide_seam_length_33",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -5628,11 +5626,10 @@
       },
       "qualification": {
         "blockers": [
-          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
-          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+          "Three unchanged actual writer renders at 120 BPM remain pending for this same-pitch Repeat length."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "blocked"
+        "protocol_status": "ready"
       },
       "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
     },
@@ -5656,7 +5653,7 @@
         "looping": true
       },
       "id": "repeat_slide_seam_length_48",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -5839,11 +5836,10 @@
       },
       "qualification": {
         "blockers": [
-          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
-          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+          "Three unchanged actual writer renders at 120 BPM remain pending for this same-pitch Repeat length."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "blocked"
+        "protocol_status": "ready"
       },
       "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
     },
@@ -5867,7 +5863,7 @@
         "looping": true
       },
       "id": "repeat_slide_seam_length_49",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -6051,11 +6047,10 @@
       },
       "qualification": {
         "blockers": [
-          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
-          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+          "Three unchanged actual writer renders at 120 BPM remain pending for this same-pitch Repeat length."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "blocked"
+        "protocol_status": "ready"
       },
       "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
     },
@@ -6079,7 +6074,7 @@
         "looping": true
       },
       "id": "repeat_slide_seam_length_64",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -6278,11 +6273,10 @@
       },
       "qualification": {
         "blockers": [
-          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
-          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+          "Three unchanged actual writer renders at 120 BPM remain pending for this same-pitch Repeat length."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "blocked"
+        "protocol_status": "ready"
       },
       "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
     },
@@ -7880,7 +7874,7 @@
         "looping": false
       },
       "id": "tie_before_fresh_note_bpm_90",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -7890,7 +7884,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -7994,10 +7988,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -8020,7 +8014,7 @@
         "looping": false
       },
       "id": "tie_before_fresh_note_bpm_120",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -8030,7 +8024,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -8134,10 +8128,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -8160,7 +8154,7 @@
         "looping": false
       },
       "id": "tie_before_fresh_note_bpm_150",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -8170,7 +8164,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -8274,10 +8268,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -8300,7 +8294,7 @@
         "looping": false
       },
       "id": "two_ties_before_fresh_note_bpm_90",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -8310,7 +8304,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -8424,10 +8418,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -8450,7 +8444,7 @@
         "looping": false
       },
       "id": "two_ties_before_fresh_note_bpm_120",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -8460,7 +8454,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -8574,10 +8568,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -8600,7 +8594,7 @@
         "looping": false
       },
       "id": "two_ties_before_fresh_note_bpm_150",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -8610,7 +8604,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -8724,10 +8718,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -8750,7 +8744,7 @@
         "looping": true
       },
       "id": "repeat_note_rest_seam_bpm_90",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -8760,7 +8754,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -8891,10 +8885,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -9084,7 +9078,7 @@
         "looping": true
       },
       "id": "repeat_note_rest_seam_bpm_150",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -9094,7 +9088,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -9225,10 +9219,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -9251,7 +9245,7 @@
         "looping": true
       },
       "id": "repeat_tie_rest_seam_bpm_90",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -9261,7 +9255,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -9430,10 +9424,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -9456,7 +9450,7 @@
         "looping": true
       },
       "id": "repeat_tie_rest_seam_bpm_120",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -9466,7 +9460,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -9635,10 +9629,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -9661,7 +9655,7 @@
         "looping": true
       },
       "id": "repeat_tie_rest_seam_bpm_150",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -9671,7 +9665,7 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "unverified_requirements": "Analyzer protocol readiness covers the authored timing and gate expectations only; acoustic acceptance requires a matching Renoise writer render.",
       "purpose": "successor-aware gate acceptance",
       "expected": {
         "release": {
@@ -9840,10 +9834,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "No matching Renoise writer render has been analyzed for this tempo and successor shape."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {
@@ -9988,5 +9982,5 @@
       "unverified_requirements": "Qualified glide-analysis algorithm; this source tests fixed20 command coverage independently of native probes."
     }
   ],
-  "expectation_scope": "The ready cases reproduce independent native probe controls. Planned cases freeze acoustic requirements for downstream writer work; they are unsupported until their profile, trigger and emitted cells are captured. Expectations are authored without runtime scheduling."
+  "expectation_scope": "Ready denotes an executable analyzer protocol with authored timing and gate expectations. Synthetic controls verify analyzer sensitivity only; they do not establish acoustic acceptance. Acoustic status remains unverified until a matching Renoise render is analyzed. Planned or blocked cases retain explicit protocol blockers."
 }

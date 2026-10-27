@@ -2,6 +2,19 @@
 
 This probe measures Renoise playback through Windows WASAPI loopback. The result describes the observed Renoise build, sample profile and capture route; it does not identify Renoise's internal voice allocation.
 
+## Current desktop evidence and route boundary
+
+The current implementation results were captured by Renoise 3.5.4 licensed
+offline WAV rendering, with Audacity used for waveform inspection. They are
+reported in [audio_capture_evidence.md](audio_capture_evidence.md), including
+the 90/150 BPM calibration, gate tails, Repeat glide, accents and packaged GUI
+check. This desktop uses a different soundcard from the earlier WASAPI setup;
+the 97% Audacity Recording Level below belongs only to that earlier endpoint.
+No current-desktop WASAPI loopback calibration or hardware capture is claimed.
+Use the offline render helper when reproducing the listed results. Treat the
+loopback steps below as the separate endpoint-specific protocol, and recalibrate
+from the beginning before making any claim about a new audio route.
+
 ## Prepare the disposable song
 
 1. From the repository root in PowerShell 7, create the ignored sample-output folder with `New-Item -ItemType Directory -Force tmp/acid-articulation`. Use exactly one running Renoise instance and open a disposable Renoise song copy. In PowerShell, check `Get-Process Renoise | Select-Object Id, MainWindowTitle, MainWindowHandle`; a hidden earlier instance can still play audio or consume development capture commands. Stop only known disposable instances before calibration. In the Renoise Scripting Terminal, run `tests/acid/renoise_articulation_probe.lua` once. The script adds one named sample instrument and seven named phrases. It refuses to reuse an existing probe instrument.
@@ -55,9 +68,9 @@ The start helper validates the unique named instrument, pattern and track, selec
 
 ## Current qualification and pending work
 
-The oracle contains63 cases, including seven native protocols and executable writer protocols for measured gate/glide families. Protocol readiness is distinct from acoustic acceptance. Three fresh four-semitone writer glide captures and three16-step same-pitch Repeat seam captures pass after a single-instance calibration. Repeat gate and same-pitch slide generation require the exact read-only diagnostic profile at120BPM/selective/LPB8/TPL12 with groove disabled; moving Repeat slides remain refused. Other lengths, tempos, connected accents and lifecycle checks remain open. See the evidence record for exact passing and invalid sets.
+The oracle contains authored native and writer protocols for measured gate/glide families; protocol readiness is distinct from acoustic acceptance. Current licensed Renoise offline-render results include all21 gate protocols at90/120/150BPM, moving Repeat four-semitone/octave layouts at8/9 steps across those tempos, same-pitch Repeat length16 at90/120/150BPM, and other same-pitch measured lengths at120BPM. Native REST cancellation and explicit OFF before a fresh NOTE pass; the ungated post-glide fresh NOTE misses its attack and is retained as a failure. A freshly packaged tool passed Generate, Live Edit8→9→8, ownership and save/reopen. Flat mapped NOTE/TIE accent response passes; accent changes on connected slide chains are explicitly refused. Manual transport stop/start, seek and Live Edit during audio playback remain unverified. See the [evidence record](audio_capture_evidence.md) for exact passing and invalid sets. Offline renders do not validate the current desktop's soundcard route.
 
-For accent comparisons, run `renoise_articulation_accent_control.lua` on the disposable probe: it bypasses modulation and enables velocity-to-volume mapping. With mapping disabled, the actual writer's normal/accent cells produce equal level on this reference. Three exploratory mapped flat captures measure about3.09dB accent gain. Recalibrate this separate profile before acceptance. The standard flat and diagnostic helpers restore mappingfalse. Runtime generation must never change the user's mapping or envelopes. Connected accent, repeated native and writer glide, tempo/Repeat matrices and lifecycle checks remain open. See [audio capture evidence](audio_capture_evidence.md) for exact results, hashes and invalid captures.
+For accent comparisons, run `renoise_articulation_accent_control.lua` on the disposable probe: it bypasses modulation and enables velocity-to-volume mapping. With mapping disabled, the actual writer's normal/accent cells produce equal level on this reference. Three deterministic offline renders each pass alternating and consecutive mapped flat NOTE accents at +3.088dB versus +3.156dB predicted from emitted cells. The standard flat and diagnostic helpers restore mappingfalse. Runtime generation must never change the user's mapping or envelopes. This evidence does not cover connected accent or TIE retention. See [audio capture evidence](audio_capture_evidence.md) and [accent procedure](renoise_articulation_accent_manual.md) for exact results, hashes and invalid captures.
 
 The [articulation manual](acid_articulation_manual.md) records the support matrix, actual analyzer algorithms, commands, exact case-completeness blockers and native decision. Runtime gate/glide/accent support is not enabled automatically by these scripts or records.
 

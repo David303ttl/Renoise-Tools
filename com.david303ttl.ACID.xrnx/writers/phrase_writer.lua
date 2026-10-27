@@ -61,11 +61,91 @@ local function repeat_location(plan, predicate)
   return nil
 end
 
-local function reference_gate_context(instrument,transport)
-  if not transport or transport.bpm~=120 or transport.lpb~=8 or transport.tpl~=12
+local function reference_gate_context(instrument,transport,repeat_tempo_extension)
+  local tempo_ok=transport and (transport.bpm==120 or
+    (repeat_tempo_extension and (transport.bpm==90 or transport.bpm==150)))
+  if not tempo_ok or transport.lpb~=8 or transport.tpl~=12
     or transport.groove_enabled~=false
     or instrument.phrase_playback_mode~=renoise.Instrument.PHRASES_PLAY_SELECTIVE then return false end
   return profiles.check(instrument,"reference_diagnostic",{fade_amount=765.76501464844})~=nil
+end
+local function eligible_repeat_slide_layout(plan)
+  local source_length=plan.source_length
+  if plan.pitch_length~=2 or (source_length~=8 and source_length~=9)
+    or not plan.loop or not plan.loop.cold or not plan.loop.steady then return false end
+  local cold,steady=plan.loop.cold.steps,plan.loop.steady.steps
+  if #cold~=source_length or #steady~=source_length then return false end
+  local expected={"note","tie","tie","tie","note","tie","tie","tie","tie"}
+  for step=1,source_length do
+    if cold[step].kind~=expected[step] or steady[step].kind~=expected[step] then return false end
+    if cold[step].kind=="note" and (cold[step].accent or steady[step].accent) then return false end
+  end
+  local first,second=steady[1],steady[5]
+  local interval=second.note-first.note
+  if first.note~=48 or (second.note~=52 and second.note~=60)
+    or (interval~=4 and interval~=12)
+    or cold[1].transition~="attack" or cold[5].transition~="slide"
+    or first.transition~="slide" or second.transition~="slide" then return false end
+  return true
+end
+local function eligible_repeat_same_pitch_tempo(plan)
+  if plan.source_length~=16 or plan.pitch_length~=1
+    or not plan.loop or not plan.loop.cold or not plan.loop.steady then return false end
+  local cold,steady=plan.loop.cold.steps,plan.loop.steady.steps
+  if #cold~=16 or #steady~=16 or cold[1].kind~="note"
+    or cold[1].note~=48 or cold[1].transition~="attack"
+    or steady[1].kind~="note" or steady[1].note~=48
+    or steady[1].transition~="slide" then return false end
+  for step=1,16 do
+    local expected=step==1 and "note" or "tie"
+    if cold[step].kind~=expected or steady[step].kind~=expected
+      or cold[step].accent or steady[step].accent then return false end
+  end
+  return true
+end
+local function repeat_slide_settle_error(plan,commands,transport)
+  local last_command={}
+  for _,command in ipairs(commands) do
+    if command.kind=="glide" or command.kind=="continuation" then
+      last_command[command.step]=command.line
+    end
+  end
+  local line_ms=7500/transport.bpm
+  for step,last_line in pairs(last_command) do
+    local next_boundary
+    for index=step+1,#plan.steps do
+      local event=plan.steps[index]
+      if event.kind=="note" or event.kind=="rest" then
+        next_boundary=(index-1)*2+1
+        break
+      end
+    end
+    local wraps=false
+    if not next_boundary and plan.loop and plan.loop.steady then
+      for index,event in ipairs(plan.loop.steady.steps) do
+        if event.kind=="note" or event.kind=="rest" then
+          next_boundary=(plan.source_length+index-1)*2+1
+          wraps=true
+          break
+        end
+      end
+    end
+    if next_boundary then
+      local available=next_boundary-last_line-1
+      if wraps then
+        local loop_start=plan.source_length*2+1
+        local loop_end=plan.length*2+1
+        available=loop_end-last_line-1+(next_boundary-loop_start)
+      end
+      if available*line_ms<40 then
+        local event=plan.steps[step]
+        return string.format(
+          "TIME step %02d, cycle %d, phrase line 0x%02X: fixed 0G20 glide has only %.1f ms to settle; 40 ms is required",
+          event.source_step or event.step,event.cycle or 1,last_line-1,available*line_ms)
+      end
+    end
+  end
+  return nil
 end
 local function repeat_preflight(plan, mode, instrument, transport)
   local step,cycle,line=repeat_location(plan,function(event)
@@ -75,7 +155,41 @@ local function repeat_preflight(plan, mode, instrument, transport)
     local moving=repeat_location(plan,function(event)
       return event.transition=="slide" and event.from_note~=event.note
     end)
-    if mode=="slide" and not moving and reference_gate_context(instrument,transport) then return true end
+    local tempo_extension=moving~=nil or eligible_repeat_same_pitch_tempo(plan)
+    if mode=="slide" and reference_gate_context(instrument,transport,tempo_extension) then
+      if not moving then return true end
+      local unsupported
+      for index,event in ipairs(plan.steps) do
+        if event.kind=="note" and event.accent then
+          unsupported={event.source_step or event.step,event.cycle or 1,(index-1)*2,
+            "accented notes are outside the moving-slide profile"}
+          break
+        end
+        if event.kind=="note" and event.transition=="slide" then
+          local interval=event.note-event.from_note
+          local magnitude=math.abs(interval)
+          if magnitude~=0 and magnitude~=4 and magnitude~=12 then
+            unsupported={event.source_step or event.step,event.cycle or 1,(index-1)*2,
+              "moving interval "..tostring(interval).." semitones is outside the tested 0/±4/±12 set"}
+            break
+          end
+        end
+      end
+      if unsupported then
+        return nil,string.format("Repeat slide at TIME step %02d, cycle %d, phrase line 0x%02X: %s",
+          unsupported[1],unsupported[2],unsupported[3],unsupported[4])
+      end
+      if not eligible_repeat_slide_layout(plan) then
+        return nil,string.format(
+          "Repeat moving slide at TIME step %02d, cycle %d, phrase line 0x%02X: only the tested 8-step N-T-T-T-N-T-T-T layout or its 9-step trailing-TIE extension with PITCH span 2 and pitches 48 to 52/60 is eligible",
+          step,cycle,line)
+      end
+      local commands,command_error=articulation.plan(plan,2,0x20)
+      if not commands then return nil,command_error end
+      local settle_error=repeat_slide_settle_error(plan,commands,transport)
+      if settle_error then return nil,settle_error end
+      return true
+    end
     return nil,string.format(
       "Repeat slide continuity is unverified at TIME step %02d, cycle %d, phrase line 0x%02X",
       step,cycle,line)
@@ -85,13 +199,32 @@ local function repeat_preflight(plan, mode, instrument, transport)
       return event.kind=="note"
     end)
     if not step then step,cycle,line=1,1,0 end
-    if mode=="retrigger" and reference_gate_context(instrument,transport) then return true end
+    if mode=="retrigger" and reference_gate_context(instrument,transport,true) then return true end
 
     return nil,string.format(
       "Repeat audio mode '%s' is unverified at TIME step %02d, cycle %d, phrase line 0x%02X",
       mode,step,cycle,line)
   end
   return true
+end
+local function connected_accent_error(plan,mode)
+  if mode~="slide" and mode~="mono" then return nil end
+  for index,event in ipairs(plan.steps) do
+    if event.kind=="note" and event.transition=="slide" then
+      local previous
+      for cursor=index-1,1,-1 do
+        local candidate=plan.steps[cursor]
+        if candidate.kind=="rest" then break end
+        if candidate.kind=="note" then previous=candidate;break end
+      end
+      if event.accent or (previous and previous.accent) then
+        return string.format(
+          "TIME step %02d, cycle %d, phrase line 0x%02X: connected accent volume changes are unverified",
+          event.source_step or event.step,event.cycle or 1,(index-1)*2)
+      end
+    end
+  end
+  return nil
 end
 
 local function copy_pattern(pattern)
@@ -238,9 +371,9 @@ local function complete(job, error_message, rendered_events)
     (job.mode=="baseline" and "" or
      " | "..job.mode.." articulation applied") ..
     (job.layout.looping and (job.mode=="baseline" and
-      "\nRepeat uses baseline NOTE/TIE/REST; selective slide and other audio modes are unsupported." or
-      (job.mode=="slide" and "\nRepeat same-pitch connections use the reference diagnostic profile at 120 BPM; moving slides are unsupported." or
-      "\nRepeat gate uses the reference diagnostic profile at 120 BPM; moving slides are unsupported.")) or "") ..
+      "\nRepeat baseline renders NOTE/TIE/REST. Select an eligible audio mode for gate or slide behavior." or
+     (job.mode=="slide" and "\nRepeat Slide + Gate uses the checked selective profile. Moving slides use the tested 8/9-step layouts, PITCH span 2 and 48 to 52/60 at 90, 120 or 150 BPM. Same-pitch slides use 16 steps at all three tempos; other lengths remain at 120 BPM. Glides use fixed 0G20 with a 40 ms settle span; connected accents are refused." or
+      "\nRepeat Retrigger + Gate uses the checked selective profile at 90, 120 or 150 BPM; slides are refused.")) or "") ..
     (job.cleanup_warning and "\n"..job.cleanup_warning or ""))
 end
 
@@ -616,6 +749,8 @@ function M.generate(instrument_index, callback, mode, custom_pattern, target_ind
   if meta.slide_intentions ~= 0 and mode ~= "slide" and mode ~= "mono" then
     return nil, "Selective slides require slide or mono playback mode"
   end
+  local accent_error=connected_accent_error(plan,mode)
+  if accent_error then return nil,accent_error end
   local operations
   if mode~="baseline" then
     local timeline,timeline_error=control.compile(fixture,{gate_fraction=0.5,plan=plan,

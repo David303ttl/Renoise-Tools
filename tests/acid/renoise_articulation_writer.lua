@@ -9,8 +9,18 @@ assert(type(renoise.tool) == "function" and renoise.tool()
 local script_source = debug.getinfo(1, "S").source:gsub("\\", "/")
 local root = assert(script_source:match("^@(.*)/tests/acid/renoise_articulation_writer.lua$"),
   "Load this helper from its repository file path")
-local oracle = dofile(root .. "/tests/acid/fixture_json.lua").read(
-  root .. "/tests/acid/fixtures/audio_cases.json")
+local provenance = dofile(root .. "/tests/acid/capture_provenance.lua")
+local oracle_relative = rawget(_G, "ACID_ARTICULATION_ORACLE_PATH") or
+  "tests/acid/fixtures/audio_cases.json"
+assert(type(oracle_relative) == "string" and oracle_relative ~= ""
+  and oracle_relative:sub(1,1) ~= "/" and oracle_relative:sub(1,1) ~= "\\"
+  and not oracle_relative:find("[\r\n]"), "Oracle path must be repository-relative")
+oracle_relative = oracle_relative:gsub("\\", "/")
+for segment in oracle_relative:gmatch("[^/]+") do
+  assert(segment ~= "..", "Oracle path cannot leave the repository")
+end
+local oracle_path = root .. "/" .. oracle_relative
+local oracle = dofile(root .. "/tests/acid/fixture_json.lua").read(oracle_path)
 local selected
 for _, case in ipairs(oracle.cases) do
   if case.id == case_id then
@@ -45,12 +55,8 @@ local loaded, writer, sequencer = pcall(function()
 end)
 package.path = old_path
 assert(loaded, writer)
-assert(debug.getinfo(writer.generate, "S").source:gsub("\\", "/"):find(
-  "com.david303ttl.ACID.xrnx/writers/phrase_writer.lua", 1, true),
-  "Choose ACID's scripting terminal context; another tool's modules are loaded")
-assert(debug.getinfo(sequencer.new_pattern, "S").source:gsub("\\", "/"):find(
-  "com.david303ttl.ACID.xrnx/model/sequencer.lua", 1, true),
-  "Choose ACID's scripting terminal context; another tool's sequencer module is loaded")
+local writer_provenance = provenance.describe(root, writer.generate, "writers/phrase_writer.lua")
+local sequencer_provenance = provenance.describe(root, sequencer.new_pattern, "model/sequencer.lua")
 local source = selected.source
 local pattern = sequencer.new_pattern(source.length, source.entry_mode)
 pattern.pitch_length = source.pitch_length
@@ -77,8 +83,10 @@ local function record(key, value)
 end
 record("format", "ACID-WRITER-CAPTURE-1")
 record("case_id", case_id)
-record("oracle", "tests/acid/fixtures/audio_cases.json")
+record("oracle", oracle_relative)
 record("writer_mode", mode)
+record("loaded_writer_source", writer_provenance)
+record("loaded_sequencer_source", sequencer_provenance)
 record("playback", pattern.playback)
 record("capture_status", "not captured; generation metadata only")
 local sample = instrument.samples[1]

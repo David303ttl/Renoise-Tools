@@ -1,0 +1,6242 @@
+{
+  "format": "ACID-AUDIO-ORACLE-1",
+  "profile": {
+    "sample_rate": 44100,
+    "root_note": 48,
+    "envelope": {
+      "sustain": 0.65,
+      "decay_ms": 20,
+      "release_ms": 5,
+      "attack_ms": 10
+    },
+    "sample_fundamental_hz": 262.5,
+    "id": "acid-reference-168-frame-saw",
+    "sample_frames": 168
+  },
+  "analysis_defaults": {
+    "onset_tolerance_ms": 5,
+    "release_tail_tolerance_ms": 5,
+    "pitch_tolerance_cents": 15,
+    "silence_rms_dbfs": -60
+  },
+  "status": "Independent semantic windows cover the fixed diagnostic reference profile at 90, 120, and 150 BPM; non-120 BPM settling windows begin at least 40 ms after the final glide command line. Analyzer readiness is not acoustic acceptance.",
+  "index_base": 0,
+  "step_unit": "one straight TIME sixteenth; 1 step = 2 phrase lines at phrase LPB 8",
+  "capture_requirements": {
+    "allowed_channels": [
+      1,
+      2
+    ],
+    "sample_rate": 48000,
+    "calibration_case": "grid_calibration_all_note_pitch_span_16",
+    "peak_ceiling_dbfs": -6,
+    "align_once_to_first_onset": true,
+    "preferred_pcm_bits": 24,
+    "no_per_cycle_realign": true,
+    "allowed_pcm_bits": [
+      16,
+      24,
+      32
+    ],
+    "preferred_channels": 1
+  },
+  "cases": [
+    {
+      "id": "native_repeat_glide_four_semitones",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Independent bidirectional moving Repeat glide native_repeat_glide_four_semitones",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 5.25,
+            "end_step": 5.65,
+            "note": 52
+          },
+          {
+            "start_step": 9.25,
+            "end_step": 9.65,
+            "note": 48
+          },
+          {
+            "start_step": 13.25,
+            "end_step": 13.65,
+            "note": 52
+          },
+          {
+            "start_step": 17.25,
+            "end_step": 17.65,
+            "note": 48
+          },
+          {
+            "start_step": 21.25,
+            "end_step": 21.65,
+            "note": 52
+          },
+          {
+            "start_step": 25.25,
+            "end_step": 25.65,
+            "note": 48
+          },
+          {
+            "start_step": 29.25,
+            "end_step": 29.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.25,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "No native or actual writer capture acceptance is implied by protocol readiness."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52"
+        }
+      ]
+    },
+    {
+      "id": "native_repeat_glide_octave",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Independent bidirectional moving Repeat glide native_repeat_glide_octave",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 11.25,
+            "end_step": 11.65,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 60
+          },
+          {
+            "start_step": 19.25,
+            "end_step": 19.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 60
+          },
+          {
+            "start_step": 27.25,
+            "end_step": 27.65,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.25,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "No native or actual writer capture acceptance is implied by protocol readiness."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_four_semitones",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide writer_repeat_glide_four_semitones",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 5.25,
+            "end_step": 5.65,
+            "note": 52
+          },
+          {
+            "start_step": 9.25,
+            "end_step": 9.65,
+            "note": 48
+          },
+          {
+            "start_step": 13.25,
+            "end_step": 13.65,
+            "note": 52
+          },
+          {
+            "start_step": 17.25,
+            "end_step": 17.65,
+            "note": 48
+          },
+          {
+            "start_step": 21.25,
+            "end_step": 21.65,
+            "note": 52
+          },
+          {
+            "start_step": 25.25,
+            "end_step": 25.65,
+            "note": 48
+          },
+          {
+            "start_step": 29.25,
+            "end_step": 29.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.25,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Actual writer behavior is separate from the independent native probe; three unchanged writer renders must pass."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_octave",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide writer_repeat_glide_octave",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 11.25,
+            "end_step": 11.65,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 60
+          },
+          {
+            "start_step": 19.25,
+            "end_step": 19.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 60
+          },
+          {
+            "start_step": 27.25,
+            "end_step": 27.65,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.25,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Actual writer behavior is separate from the independent native probe; three unchanged writer renders must pass."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_four_semitones_tail_hold",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 9,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide with trailing tie writer_repeat_glide_four_semitones_tail_hold",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 36,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 9-step phrase passes; the final step is a TIE.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 36.08,
+          "off_at_step": 36
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 5.25,
+            "end_step": 5.65,
+            "note": 52
+          },
+          {
+            "start_step": 10.25,
+            "end_step": 10.65,
+            "note": 48
+          },
+          {
+            "start_step": 14.25,
+            "end_step": 14.65,
+            "note": 52
+          },
+          {
+            "start_step": 19.25,
+            "end_step": 19.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 52
+          },
+          {
+            "start_step": 28.25,
+            "end_step": 28.65,
+            "note": 48
+          },
+          {
+            "start_step": 32.25,
+            "end_step": 32.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 8.84,
+            "baseline_end_step": 8.7,
+            "baseline_start_step": 8.3,
+            "end_step": 9.16
+          },
+          {
+            "start_step": 12.84,
+            "baseline_end_step": 12.7,
+            "baseline_start_step": 12.3,
+            "end_step": 13.16
+          },
+          {
+            "start_step": 17.84,
+            "baseline_end_step": 17.7,
+            "baseline_start_step": 17.3,
+            "end_step": 18.16
+          },
+          {
+            "start_step": 21.84,
+            "baseline_end_step": 21.7,
+            "baseline_start_step": 21.3,
+            "end_step": 22.16
+          },
+          {
+            "start_step": 26.84,
+            "baseline_end_step": 26.7,
+            "baseline_start_step": 26.3,
+            "end_step": 27.16
+          },
+          {
+            "start_step": 30.84,
+            "baseline_end_step": 30.7,
+            "baseline_start_step": 30.3,
+            "end_step": 31.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 36.4,
+            "start_step": 36.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.25,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 9.16,
+            "start_step": 8.84
+          },
+          {
+            "end_step": 13.16,
+            "start_step": 12.84
+          },
+          {
+            "end_step": 18.16,
+            "start_step": 17.84
+          },
+          {
+            "end_step": 22.16,
+            "start_step": 21.84
+          },
+          {
+            "end_step": 27.16,
+            "start_step": 26.84
+          },
+          {
+            "end_step": 31.16,
+            "start_step": 30.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 36.08,
+            "off_at_step": 36
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "actual-writer-repeat-glide-trailing-tie",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Three actual writer renders are required before accepting the trailing-tie phrase variant."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_octave_tail_hold",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 9,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide with trailing tie writer_repeat_glide_octave_tail_hold",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 36,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 9-step phrase passes; the final step is a TIE.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 36.08,
+          "off_at_step": 36
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 12.25,
+            "end_step": 12.65,
+            "note": 48
+          },
+          {
+            "start_step": 16.25,
+            "end_step": 16.65,
+            "note": 60
+          },
+          {
+            "start_step": 21.25,
+            "end_step": 21.65,
+            "note": 48
+          },
+          {
+            "start_step": 25.25,
+            "end_step": 25.65,
+            "note": 60
+          },
+          {
+            "start_step": 30.25,
+            "end_step": 30.65,
+            "note": 48
+          },
+          {
+            "start_step": 34.25,
+            "end_step": 34.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 8.84,
+            "baseline_end_step": 8.7,
+            "baseline_start_step": 8.3,
+            "end_step": 9.16
+          },
+          {
+            "start_step": 12.84,
+            "baseline_end_step": 12.7,
+            "baseline_start_step": 12.3,
+            "end_step": 13.16
+          },
+          {
+            "start_step": 17.84,
+            "baseline_end_step": 17.7,
+            "baseline_start_step": 17.3,
+            "end_step": 18.16
+          },
+          {
+            "start_step": 21.84,
+            "baseline_end_step": 21.7,
+            "baseline_start_step": 21.3,
+            "end_step": 22.16
+          },
+          {
+            "start_step": 26.84,
+            "baseline_end_step": 26.7,
+            "baseline_start_step": 26.3,
+            "end_step": 27.16
+          },
+          {
+            "start_step": 30.84,
+            "baseline_end_step": 30.7,
+            "baseline_start_step": 30.3,
+            "end_step": 31.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 36.4,
+            "start_step": 36.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.25,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 9.16,
+            "start_step": 8.84
+          },
+          {
+            "end_step": 13.16,
+            "start_step": 12.84
+          },
+          {
+            "end_step": 18.16,
+            "start_step": 17.84
+          },
+          {
+            "end_step": 22.16,
+            "start_step": 21.84
+          },
+          {
+            "end_step": 27.16,
+            "start_step": 26.84
+          },
+          {
+            "end_step": 31.16,
+            "start_step": 30.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 36.08,
+            "off_at_step": 36
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "actual-writer-repeat-glide-trailing-tie",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Three actual writer renders are required before accepting the trailing-tie phrase variant."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60"
+        }
+      ]
+    },
+    {
+      "id": "native_repeat_hold_pitch_48",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 48",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 48
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_hold_pitch_52",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          52
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 52",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 52
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 52
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 52
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 52
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 52,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_hold_pitch_60",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          60
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 60",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 120
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 60
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 60
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 60
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 60,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_glide_four_semitones_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Independent bidirectional moving Repeat glide native_repeat_glide_four_semitones_bpm_90",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 5.25,
+            "end_step": 5.65,
+            "note": 52
+          },
+          {
+            "start_step": 9.25,
+            "end_step": 9.65,
+            "note": 48
+          },
+          {
+            "start_step": 13.25,
+            "end_step": 13.65,
+            "note": 52
+          },
+          {
+            "start_step": 17.25,
+            "end_step": 17.65,
+            "note": 48
+          },
+          {
+            "start_step": 21.25,
+            "end_step": 21.65,
+            "note": 52
+          },
+          {
+            "start_step": 25.25,
+            "end_step": 25.65,
+            "note": 48
+          },
+          {
+            "start_step": 29.25,
+            "end_step": 29.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.25,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "No native or actual writer capture acceptance is implied by protocol readiness."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52_bpm_90"
+        }
+      ]
+    },
+    {
+      "id": "native_repeat_glide_octave_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Independent bidirectional moving Repeat glide native_repeat_glide_octave_bpm_90",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 11.25,
+            "end_step": 11.65,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 60
+          },
+          {
+            "start_step": 19.25,
+            "end_step": 19.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 60
+          },
+          {
+            "start_step": 27.25,
+            "end_step": 27.65,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.25,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "No native or actual writer capture acceptance is implied by protocol readiness."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60_bpm_90"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_four_semitones_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide writer_repeat_glide_four_semitones_bpm_90",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 5.25,
+            "end_step": 5.65,
+            "note": 52
+          },
+          {
+            "start_step": 9.25,
+            "end_step": 9.65,
+            "note": 48
+          },
+          {
+            "start_step": 13.25,
+            "end_step": 13.65,
+            "note": 52
+          },
+          {
+            "start_step": 17.25,
+            "end_step": 17.65,
+            "note": 48
+          },
+          {
+            "start_step": 21.25,
+            "end_step": 21.65,
+            "note": 52
+          },
+          {
+            "start_step": 25.25,
+            "end_step": 25.65,
+            "note": 48
+          },
+          {
+            "start_step": 29.25,
+            "end_step": 29.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.25,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Actual writer behavior is separate from the independent native probe; three unchanged writer renders must pass."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52_bpm_90"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_octave_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide writer_repeat_glide_octave_bpm_90",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 11.25,
+            "end_step": 11.65,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 60
+          },
+          {
+            "start_step": 19.25,
+            "end_step": 19.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 60
+          },
+          {
+            "start_step": 27.25,
+            "end_step": 27.65,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.25,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Actual writer behavior is separate from the independent native probe; three unchanged writer renders must pass."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60_bpm_90"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_four_semitones_tail_hold_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 9,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide with trailing tie writer_repeat_glide_four_semitones_tail_hold_bpm_90",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 36,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 9-step phrase passes; the final step is a TIE.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 36.08,
+          "off_at_step": 36
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 5.25,
+            "end_step": 5.65,
+            "note": 52
+          },
+          {
+            "start_step": 10.25,
+            "end_step": 10.65,
+            "note": 48
+          },
+          {
+            "start_step": 14.25,
+            "end_step": 14.65,
+            "note": 52
+          },
+          {
+            "start_step": 19.25,
+            "end_step": 19.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 52
+          },
+          {
+            "start_step": 28.25,
+            "end_step": 28.65,
+            "note": 48
+          },
+          {
+            "start_step": 32.25,
+            "end_step": 32.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 8.84,
+            "baseline_end_step": 8.7,
+            "baseline_start_step": 8.3,
+            "end_step": 9.16
+          },
+          {
+            "start_step": 12.84,
+            "baseline_end_step": 12.7,
+            "baseline_start_step": 12.3,
+            "end_step": 13.16
+          },
+          {
+            "start_step": 17.84,
+            "baseline_end_step": 17.7,
+            "baseline_start_step": 17.3,
+            "end_step": 18.16
+          },
+          {
+            "start_step": 21.84,
+            "baseline_end_step": 21.7,
+            "baseline_start_step": 21.3,
+            "end_step": 22.16
+          },
+          {
+            "start_step": 26.84,
+            "baseline_end_step": 26.7,
+            "baseline_start_step": 26.3,
+            "end_step": 27.16
+          },
+          {
+            "start_step": 30.84,
+            "baseline_end_step": 30.7,
+            "baseline_start_step": 30.3,
+            "end_step": 31.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 36.4,
+            "start_step": 36.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.25,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 9.16,
+            "start_step": 8.84
+          },
+          {
+            "end_step": 13.16,
+            "start_step": 12.84
+          },
+          {
+            "end_step": 18.16,
+            "start_step": 17.84
+          },
+          {
+            "end_step": 22.16,
+            "start_step": 21.84
+          },
+          {
+            "end_step": 27.16,
+            "start_step": 26.84
+          },
+          {
+            "end_step": 31.16,
+            "start_step": 30.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 36.08,
+            "off_at_step": 36
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "actual-writer-repeat-glide-trailing-tie",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Three actual writer renders are required before accepting the trailing-tie phrase variant."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52_bpm_90"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_octave_tail_hold_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 9,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide with trailing tie writer_repeat_glide_octave_tail_hold_bpm_90",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 36,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 9-step phrase passes; the final step is a TIE.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 36.08,
+          "off_at_step": 36
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 12.25,
+            "end_step": 12.65,
+            "note": 48
+          },
+          {
+            "start_step": 16.25,
+            "end_step": 16.65,
+            "note": 60
+          },
+          {
+            "start_step": 21.25,
+            "end_step": 21.65,
+            "note": 48
+          },
+          {
+            "start_step": 25.25,
+            "end_step": 25.65,
+            "note": 60
+          },
+          {
+            "start_step": 30.25,
+            "end_step": 30.65,
+            "note": 48
+          },
+          {
+            "start_step": 34.25,
+            "end_step": 34.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 8.84,
+            "baseline_end_step": 8.7,
+            "baseline_start_step": 8.3,
+            "end_step": 9.16
+          },
+          {
+            "start_step": 12.84,
+            "baseline_end_step": 12.7,
+            "baseline_start_step": 12.3,
+            "end_step": 13.16
+          },
+          {
+            "start_step": 17.84,
+            "baseline_end_step": 17.7,
+            "baseline_start_step": 17.3,
+            "end_step": 18.16
+          },
+          {
+            "start_step": 21.84,
+            "baseline_end_step": 21.7,
+            "baseline_start_step": 21.3,
+            "end_step": 22.16
+          },
+          {
+            "start_step": 26.84,
+            "baseline_end_step": 26.7,
+            "baseline_start_step": 26.3,
+            "end_step": 27.16
+          },
+          {
+            "start_step": 30.84,
+            "baseline_end_step": 30.7,
+            "baseline_start_step": 30.3,
+            "end_step": 31.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 36.4,
+            "start_step": 36.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.25,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 9.16,
+            "start_step": 8.84
+          },
+          {
+            "end_step": 13.16,
+            "start_step": 12.84
+          },
+          {
+            "end_step": 18.16,
+            "start_step": 17.84
+          },
+          {
+            "end_step": 22.16,
+            "start_step": 21.84
+          },
+          {
+            "end_step": 27.16,
+            "start_step": 26.84
+          },
+          {
+            "end_step": 31.16,
+            "start_step": 30.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 36.08,
+            "off_at_step": 36
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "actual-writer-repeat-glide-trailing-tie",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Three actual writer renders are required before accepting the trailing-tie phrase variant."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60_bpm_90"
+        }
+      ]
+    },
+    {
+      "id": "native_repeat_hold_pitch_48_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 48",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 48
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_hold_pitch_52_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          52
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 52",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 52
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 52
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 52
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 52
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 52,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_hold_pitch_60_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          60
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 60",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 90
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.65,
+            "note": 60
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.65,
+            "note": 60
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.65,
+            "note": 60
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.65,
+            "note": 60
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.65,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 60,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_glide_four_semitones_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Independent bidirectional moving Repeat glide native_repeat_glide_four_semitones_bpm_150",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 5.41,
+            "end_step": 5.91,
+            "note": 52
+          },
+          {
+            "start_step": 9.41,
+            "end_step": 9.91,
+            "note": 48
+          },
+          {
+            "start_step": 13.41,
+            "end_step": 13.91,
+            "note": 52
+          },
+          {
+            "start_step": 17.41,
+            "end_step": 17.91,
+            "note": 48
+          },
+          {
+            "start_step": 21.41,
+            "end_step": 21.91,
+            "note": 52
+          },
+          {
+            "start_step": 25.41,
+            "end_step": 25.91,
+            "note": 48
+          },
+          {
+            "start_step": 29.41,
+            "end_step": 29.91,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.41,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "No native or actual writer capture acceptance is implied by protocol readiness."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52_bpm_150"
+        }
+      ]
+    },
+    {
+      "id": "native_repeat_glide_octave_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Independent bidirectional moving Repeat glide native_repeat_glide_octave_bpm_150",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 7.41,
+            "end_step": 7.91,
+            "note": 60
+          },
+          {
+            "start_step": 11.41,
+            "end_step": 11.91,
+            "note": 48
+          },
+          {
+            "start_step": 15.41,
+            "end_step": 15.91,
+            "note": 60
+          },
+          {
+            "start_step": 19.41,
+            "end_step": 19.91,
+            "note": 48
+          },
+          {
+            "start_step": 23.41,
+            "end_step": 23.91,
+            "note": 60
+          },
+          {
+            "start_step": 27.41,
+            "end_step": 27.91,
+            "note": 48
+          },
+          {
+            "start_step": 31.41,
+            "end_step": 31.91,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.41,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "No native or actual writer capture acceptance is implied by protocol readiness."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60_bpm_150"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_four_semitones_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide writer_repeat_glide_four_semitones_bpm_150",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 5.41,
+            "end_step": 5.91,
+            "note": 52
+          },
+          {
+            "start_step": 9.41,
+            "end_step": 9.91,
+            "note": 48
+          },
+          {
+            "start_step": 13.41,
+            "end_step": 13.91,
+            "note": 52
+          },
+          {
+            "start_step": 17.41,
+            "end_step": 17.91,
+            "note": 48
+          },
+          {
+            "start_step": 21.41,
+            "end_step": 21.91,
+            "note": 52
+          },
+          {
+            "start_step": 25.41,
+            "end_step": 25.91,
+            "note": 48
+          },
+          {
+            "start_step": 29.41,
+            "end_step": 29.91,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.41,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Actual writer behavior is separate from the independent native probe; three unchanged writer renders must pass."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52_bpm_150"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_octave_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide writer_repeat_glide_octave_bpm_150",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step phrase passes.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 7.41,
+            "end_step": 7.91,
+            "note": 60
+          },
+          {
+            "start_step": 11.41,
+            "end_step": 11.91,
+            "note": 48
+          },
+          {
+            "start_step": 15.41,
+            "end_step": 15.91,
+            "note": 60
+          },
+          {
+            "start_step": 19.41,
+            "end_step": 19.91,
+            "note": 48
+          },
+          {
+            "start_step": 23.41,
+            "end_step": 23.91,
+            "note": 60
+          },
+          {
+            "start_step": 27.41,
+            "end_step": 27.91,
+            "note": 48
+          },
+          {
+            "start_step": 31.41,
+            "end_step": 31.91,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 11.84,
+            "baseline_end_step": 11.7,
+            "baseline_start_step": 11.3,
+            "end_step": 12.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 19.84,
+            "baseline_end_step": 19.7,
+            "baseline_start_step": 19.3,
+            "end_step": 20.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          },
+          {
+            "start_step": 27.84,
+            "baseline_end_step": 27.7,
+            "baseline_start_step": 27.3,
+            "end_step": 28.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.41,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 12.16,
+            "start_step": 11.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 20.16,
+            "start_step": 19.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          },
+          {
+            "end_step": 28.16,
+            "start_step": 27.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "independent-native-repeat-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Actual writer behavior is separate from the independent native probe; three unchanged writer renders must pass."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60_bpm_150"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_four_semitones_tail_hold_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 9,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide with trailing tie writer_repeat_glide_four_semitones_tail_hold_bpm_150",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 36,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 9-step phrase passes; the final step is a TIE.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 36.08,
+          "off_at_step": 36
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 5.41,
+            "end_step": 5.91,
+            "note": 52
+          },
+          {
+            "start_step": 10.41,
+            "end_step": 10.91,
+            "note": 48
+          },
+          {
+            "start_step": 14.41,
+            "end_step": 14.91,
+            "note": 52
+          },
+          {
+            "start_step": 19.41,
+            "end_step": 19.91,
+            "note": 48
+          },
+          {
+            "start_step": 23.41,
+            "end_step": 23.91,
+            "note": 52
+          },
+          {
+            "start_step": 28.41,
+            "end_step": 28.91,
+            "note": 48
+          },
+          {
+            "start_step": 32.41,
+            "end_step": 32.91,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 8.84,
+            "baseline_end_step": 8.7,
+            "baseline_start_step": 8.3,
+            "end_step": 9.16
+          },
+          {
+            "start_step": 12.84,
+            "baseline_end_step": 12.7,
+            "baseline_start_step": 12.3,
+            "end_step": 13.16
+          },
+          {
+            "start_step": 17.84,
+            "baseline_end_step": 17.7,
+            "baseline_start_step": 17.3,
+            "end_step": 18.16
+          },
+          {
+            "start_step": 21.84,
+            "baseline_end_step": 21.7,
+            "baseline_start_step": 21.3,
+            "end_step": 22.16
+          },
+          {
+            "start_step": 26.84,
+            "baseline_end_step": 26.7,
+            "baseline_start_step": 26.3,
+            "end_step": 27.16
+          },
+          {
+            "start_step": 30.84,
+            "baseline_end_step": 30.7,
+            "baseline_start_step": 30.3,
+            "end_step": 31.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 52,
+          "end_step": 5.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.12
+        },
+        "silence_windows": [
+          {
+            "end_step": 36.4,
+            "start_step": 36.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 5.41,
+          "note": 52,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 9.16,
+            "start_step": 8.84
+          },
+          {
+            "end_step": 13.16,
+            "start_step": 12.84
+          },
+          {
+            "end_step": 18.16,
+            "start_step": 17.84
+          },
+          {
+            "end_step": 22.16,
+            "start_step": 21.84
+          },
+          {
+            "end_step": 27.16,
+            "start_step": 26.84
+          },
+          {
+            "end_step": 31.16,
+            "start_step": 30.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 36.08,
+            "off_at_step": 36
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "actual-writer-repeat-glide-trailing-tie",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Three actual writer renders are required before accepting the trailing-tie phrase variant."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at connected target pitch",
+          "id": "native_repeat_hold_pitch_52_bpm_150"
+        }
+      ]
+    },
+    {
+      "id": "writer_repeat_glide_octave_tail_hold_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 9,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "pitch_length": 2,
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          60
+        ]
+      },
+      "phrase": "Actual ACID writer bidirectional moving Repeat glide with trailing tie writer_repeat_glide_octave_tail_hold_bpm_150",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 36,
+        "trigger_mode": "selective",
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 9-step phrase passes; the final step is a TIE.",
+      "expected": {
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 36.08,
+          "off_at_step": 36
+        },
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 7.41,
+            "end_step": 7.91,
+            "note": 60
+          },
+          {
+            "start_step": 12.41,
+            "end_step": 12.91,
+            "note": 48
+          },
+          {
+            "start_step": 16.41,
+            "end_step": 16.91,
+            "note": 60
+          },
+          {
+            "start_step": 21.41,
+            "end_step": 21.91,
+            "note": 48
+          },
+          {
+            "start_step": 25.41,
+            "end_step": 25.91,
+            "note": 60
+          },
+          {
+            "start_step": 30.41,
+            "end_step": 30.91,
+            "note": 48
+          },
+          {
+            "start_step": 34.41,
+            "end_step": 34.91,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 3.84,
+            "baseline_end_step": 3.7,
+            "baseline_start_step": 3.3,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 8.84,
+            "baseline_end_step": 8.7,
+            "baseline_start_step": 8.3,
+            "end_step": 9.16
+          },
+          {
+            "start_step": 12.84,
+            "baseline_end_step": 12.7,
+            "baseline_start_step": 12.3,
+            "end_step": 13.16
+          },
+          {
+            "start_step": 17.84,
+            "baseline_end_step": 17.7,
+            "baseline_start_step": 17.3,
+            "end_step": 18.16
+          },
+          {
+            "start_step": 21.84,
+            "baseline_end_step": 21.7,
+            "baseline_start_step": 21.3,
+            "end_step": 22.16
+          },
+          {
+            "start_step": 26.84,
+            "baseline_end_step": 26.7,
+            "baseline_start_step": 26.3,
+            "end_step": 27.16
+          },
+          {
+            "start_step": 30.84,
+            "baseline_end_step": 30.7,
+            "baseline_start_step": 30.3,
+            "end_step": 31.16
+          }
+        ],
+        "glide_window": {
+          "interpretation": "first upward transition in a four-pass bidirectional Repeat phrase",
+          "from_note": 48,
+          "maximum_intermediate_progress": 0.95,
+          "to_note": 60,
+          "end_step": 7.0,
+          "analysis_window_steps": 0.24,
+          "rate": 32,
+          "start_step": 4,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08
+        },
+        "silence_windows": [
+          {
+            "end_step": 36.4,
+            "start_step": 36.08
+          }
+        ],
+        "settled_window": {
+          "start_step": 7.41,
+          "note": 60,
+          "duration_ms": 40
+        },
+        "no_attack_windows": [
+          {
+            "end_step": 4.16,
+            "start_step": 3.84
+          },
+          {
+            "end_step": 9.16,
+            "start_step": 8.84
+          },
+          {
+            "end_step": 13.16,
+            "start_step": 12.84
+          },
+          {
+            "end_step": 18.16,
+            "start_step": 17.84
+          },
+          {
+            "end_step": 22.16,
+            "start_step": 21.84
+          },
+          {
+            "end_step": 27.16,
+            "start_step": 26.84
+          },
+          {
+            "end_step": 31.16,
+            "start_step": 30.84
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 36.08,
+            "off_at_step": 36
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "actual-writer-repeat-glide-trailing-tie",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Three actual writer renders are required before accepting the trailing-tie phrase variant."
+        ],
+        "acoustic_status": "unverified"
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE at source pitch",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        },
+        {
+          "measurement": "pitch-matched held NOTE at octave target pitch",
+          "id": "native_repeat_hold_pitch_60_bpm_150"
+        }
+      ]
+    },
+    {
+      "id": "native_repeat_hold_pitch_48_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 48",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 48
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.75,
+            "note": 48
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.75,
+            "note": 48
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.75,
+            "note": 48
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.75,
+            "note": 48
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_hold_pitch_52_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          52
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 52",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 52
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.75,
+            "note": 52
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.75,
+            "note": 52
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.75,
+            "note": 52
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.75,
+            "note": 52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 52,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "native_repeat_hold_pitch_60_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "accent_pitch_indices": [],
+        "length": 8,
+        "slide_pitch_indices": [],
+        "pitch_length": 1,
+        "entry_mode": "extended",
+        "pitches": [
+          60
+        ]
+      },
+      "phrase": "Pitch-matched held NOTE control 60",
+      "capture": {
+        "sample_rate": 48000,
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "sample_format": "PCM24",
+        "minimum_tail_ms": 500,
+        "bpm": 150
+      },
+      "analysis": {
+        "maximum_continuity_dip_ms": 4,
+        "onset_refractory_ms": 90,
+        "minimum_pitch_window_ms": 40,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "maximum_continuity_dip_db": 6,
+        "onset_tolerance_ms": 5,
+        "pitch_tolerance_cents": 15
+      },
+      "playback": {
+        "note_off_step": 32,
+        "trigger_mode": "selective",
+        "renderer": "native-probe",
+        "phrase_lpb": 8,
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": true,
+        "steady_cycles": 3
+      },
+      "trigger": "Single host NOTE at step zero and host OFF after four 8-step passes; phrase NOTE is followed by a TIE-only loop.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "end_step": 8.16,
+            "start_step": 7.84
+          },
+          {
+            "end_step": 16.16,
+            "start_step": 15.84
+          },
+          {
+            "end_step": 24.16,
+            "start_step": 23.84
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.25,
+            "end_step": 0.75,
+            "note": 60
+          },
+          {
+            "start_step": 7.25,
+            "end_step": 7.75,
+            "note": 60
+          },
+          {
+            "start_step": 15.25,
+            "end_step": 15.75,
+            "note": 60
+          },
+          {
+            "start_step": 23.25,
+            "end_step": 23.75,
+            "note": 60
+          },
+          {
+            "start_step": 31.25,
+            "end_step": 31.75,
+            "note": 60
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 7.84,
+            "baseline_end_step": 7.7,
+            "baseline_start_step": 7.3,
+            "end_step": 8.16
+          },
+          {
+            "start_step": 15.84,
+            "baseline_end_step": 15.7,
+            "baseline_start_step": 15.3,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 23.84,
+            "baseline_end_step": 23.7,
+            "baseline_start_step": 23.3,
+            "end_step": 24.16
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 32.4,
+            "start_step": 32.08
+          }
+        ],
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 32.08,
+          "off_at_step": 32
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 60,
+            "at_step": 0
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 32.08,
+            "off_at_step": 32
+          }
+        ]
+      },
+      "profile": {
+        "sample_rate": 44100,
+        "base_frequency_hz": 262.5,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "root_note": 48,
+        "id": "acid-reference-168-frame-saw",
+        "sample_frames": 168
+      },
+      "purpose": "pitch-matched-native-repeat-control",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "Pitch-matched native hold captures are required before glide continuity interpretation."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_16_bpm_90",
+      "status": "ready",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Connected Repeat holds through every seam; release is the dedicated host OFF after cold plus three steady cycles, not a scheduler midpoint OFF.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.30000000000000004,
+            "end_step": 0.6200000000000001,
+            "note": 48
+          },
+          {
+            "start_step": 16.3,
+            "end_step": 16.62,
+            "note": 48
+          },
+          {
+            "start_step": 32.3,
+            "end_step": 32.62,
+            "note": 48
+          },
+          {
+            "start_step": 48.3,
+            "end_step": 48.62,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 15.84,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 31.84,
+            "end_step": 32.16
+          },
+          {
+            "start_step": 47.84,
+            "end_step": 48.16
+          },
+          {
+            "start_step": 48.5,
+            "end_step": 63.92
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 64,
+            "silence_starts_at_step": 64.12,
+            "maximum_tail_ms": 10,
+            "origin": "host_off"
+          }
+        ],
+        "release": {
+          "off_at_step": 64,
+          "silence_starts_at_step": 64.12,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 64.12,
+            "end_step": 64.52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 15.84,
+            "end_step": 16.16,
+            "baseline_start_step": 15.4,
+            "baseline_end_step": 15.8
+          },
+          {
+            "start_step": 31.84,
+            "end_step": 32.16,
+            "baseline_start_step": 31.4,
+            "baseline_end_step": 31.8
+          },
+          {
+            "start_step": 47.84,
+            "end_step": 48.16,
+            "baseline_start_step": 47.4,
+            "baseline_end_step": 47.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE across same-pitch Repeat seams",
+          "id": "native_repeat_hold_pitch_48_bpm_90"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 16
+      },
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "No actual ACID writer capture is recorded for this same-pitch seam case at 90 BPM."
+        ]
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "phrase": "Actual ACID writer same-pitch Repeat seam repeat_slide_seam_length_16_bpm_90"
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_16_bpm_150",
+      "status": "ready",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Connected Repeat holds through every seam; release is the dedicated host OFF after cold plus three steady cycles, not a scheduler midpoint OFF.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.0,
+            "note": 48
+          },
+          {
+            "start_step": 16.5,
+            "end_step": 17.0,
+            "note": 48
+          },
+          {
+            "start_step": 32.5,
+            "end_step": 33.0,
+            "note": 48
+          },
+          {
+            "start_step": 48.5,
+            "end_step": 49.0,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 15.84,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 31.84,
+            "end_step": 32.16
+          },
+          {
+            "start_step": 47.84,
+            "end_step": 48.16
+          },
+          {
+            "start_step": 48.5,
+            "end_step": 63.92
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 64,
+            "silence_starts_at_step": 64.12,
+            "maximum_tail_ms": 10,
+            "origin": "host_off"
+          }
+        ],
+        "release": {
+          "off_at_step": 64,
+          "silence_starts_at_step": 64.12,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 64.12,
+            "end_step": 64.52
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 15.84,
+            "end_step": 16.16,
+            "baseline_start_step": 15.4,
+            "baseline_end_step": 15.8
+          },
+          {
+            "start_step": 31.84,
+            "end_step": 32.16,
+            "baseline_start_step": 31.4,
+            "baseline_end_step": 31.8
+          },
+          {
+            "start_step": 47.84,
+            "end_step": 48.16,
+            "baseline_start_step": 47.4,
+            "baseline_end_step": 47.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "pitch-matched held NOTE across same-pitch Repeat seams",
+          "id": "native_repeat_hold_pitch_48_bpm_150"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 16
+      },
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "No actual ACID writer capture is recorded for this same-pitch seam case at 150 BPM."
+        ]
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "phrase": "Actual ACID writer same-pitch Repeat seam repeat_slide_seam_length_16_bpm_150"
+    }
+  ]
+}

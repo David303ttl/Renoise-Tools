@@ -60,8 +60,9 @@ the musical region, including the exclusive-end sentinel. The final phrase
 validator checks merged note/OFF/effect expectations and rejects unexpected
 delay, instrument, panning and cut-command data before committing the phrase
 and source. Required glide cancellation is never silently discarded for OFF.
-Repeat gate mode remains refused until its calibrated capture matrix passes;
-the pure cyclic scheduler does not confer acoustic support. See the
+Repeat NOTE/REST gate seams pass offline renders on the checked profile, but
+the full successor and tempo matrix is still open; the pure cyclic scheduler
+does not confer broader acoustic support. See the
 [gate verification procedure](../tests/acid/acid_gate_manual.md).
 
 `model/pattern_store.lua` persists only the current song-scoped source format.
@@ -75,16 +76,19 @@ seals are unsupported; they are not imported or adopted.
 ## Verification boundaries
 
 Pure Lua checks cover cycle semantics, source roundtrips and mocked integration.
-Renoise 3.5.4 endpoint, hand-built mixed-event and ACID writer probes validate
-their recorded pitch/grid checkpoints. A 2026-10-27 Renoise 3.5.4 Demo session
-also inspected writer-generated NOTE/TIE/REST cells at all three 16-step page
-seams, checked Live Edit line resizing with Live Edit on and off, verified an
-Original-mode source/seal save/reopen, and confirmed loop/effect ownership
-refusal and stale-song invalidation. The Demo disabled WAV rendering, so the
-new session did not establish sample release/cut tail, repeated voice
-continuity, or cold-versus-steady articulation. Transport stop/start and seek,
-keymapped triggering, undo, broad field/mode roundtrips, and failure-injection
-behavior remain unverified. The pinned SDK under
+Renoise 3.5.4 offline renders pass the authored gate matrix, bounded Repeat
+glide classes, and mapped NOTE/TIE accent cases listed in the articulation
+evidence. Identical exports establish deterministic offline output, not
+independent soundcard captures. A fresh packaged-tool GUI check covered
+Generate, Live Edit 8→9→8 resizing, ownership and save/reopen for one moving
+Repeat case. Manual transport stop/start and seek, Live Edit during playback,
+runtime keymapped triggering and rapid UI races remain unverified. Accent changes on connected slide chains
+are explicitly refused before phrase mutation.
+An earlier Renoise Demo session inspected writer-generated NOTE/TIE/REST cells
+and ownership but could not render audio; its limitations are historical and
+are superseded only for the named offline-render cases above. Undo, broad
+field/mode roundtrips and failure-injection behavior remain unverified. The
+pinned SDK under
 `sdk/renoise-api-6.2` is a development reference and is not a runtime
 dependency. Remaining gates and unresolved playback/hardware questions are in
 [ROADMAP.md](ROADMAP.md) and [M2_BLUEPRINT.md](M2_BLUEPRINT.md).

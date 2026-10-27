@@ -3,6 +3,19 @@
 **Experimental; do not use a valuable song.** This tests native Renoise
 phrase effects, not yet exact historical acid envelope/glide behavior.
 
+**Current status:** this early procedure documents the initial experimental
+workflow and is not the current Repeat support matrix. The fixed-rate 0G20
+writer path now passes one-shot four-semitone renders, same-pitch Repeat length
+16, and moving Repeat four-semitone/octave renders at the verified 8/9-step
+layouts on the checked 120 BPM profile. A fresh packaged-tool GUI check passed
+Generate, Live Edit 8→9→8, ownership and save/reopen for one moving case.
+Other layouts, pitches, intervals, tempos and profiles remain refused; REST
+interruption and effect-cancellation cases remain open. See the current
+[articulation matrix](acid_articulation_manual.md),
+[moving Repeat procedure](renoise_moving_repeat_glide_probe_manual.md), and
+[evidence record](audio_capture_evidence.md). These are deterministic Renoise
+offline renders, not independent soundcard captures.
+
 ## Preparation
 
 1. Pull the latest `feature/acid-0.1-core` branch and reload tools.

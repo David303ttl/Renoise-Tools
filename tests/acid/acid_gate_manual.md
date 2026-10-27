@@ -2,20 +2,21 @@
 
 Automated scheduling and mocked cell validation do not establish sample-envelope
 behavior. Use a disposable song and the [capture preparation](renoise_articulation_probe_manual.md).
-No native gate capture was performed during this implementation: neither Renoise
-nor Audacity was running, and document-control discovery returned no sessions.
-Both applications and ignored desktop scripting helpers are present locally;
-application availability does not resolve the existing failed normalized controls.
+Current results use licensed Renoise 3.5.4 offline rendering on the current
+desktop. All 21 authored one-shot NOTE/TIE/TIE-TIE tail, fresh-successor and
+Repeat NOTE/REST and TIE/REST protocols pass at90/120/150BPM on the exact
+diagnostic profile. The latest fresh batch contains36 checked WAV files: 12
+unique case renders and 24 byte-identical copies; all pass, with no invalid
+captures. These are deterministic offline results, not Audacity loopback or
+independent soundcard captures. The older Demo/normalized-loopback observations
+below remain historical; fresh passing two-TIE cases supersede earlier invalid
+high-peak takes for current acceptance.
 
-The [evidence record](audio_capture_evidence.md) remains authoritative. The
-corrected normalized grid failed 67 of 68 silence windows. Gain-compensated
-retrigger analysis measures the authored 250 ms interval with zero onset error,
-but the native controls and attack detector remain unqualified. The 97% held
-capture contains three extra onsets and cannot qualify the realized release.
-Resolve those independent profile/detector controls, then recalibrate before
-interpreting writer output. Keep Repeat gate support refused until its declared
-trigger/profile/tempo matrix has passing acoustic evidence. Keep connected-slide
-refusals independently of gate results.
+The [evidence record](audio_capture_evidence.md) is authoritative for hashes,
+invalid takes, current boundaries and the separately qualified offline families.
+Repeat retrigger generation is profile-scoped at 90/120/150 BPM. Keep connected
+slide behavior separate from gate results and follow the measured glide support
+matrix.
 
 ## Authored sources and deadlines
 

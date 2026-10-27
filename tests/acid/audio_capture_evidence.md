@@ -1,5 +1,21 @@
 # Articulation audio capture evidence
 
+## Current evidence status — 2026-10-27
+
+The current desktop has licensed Renoise 3.5.4 and uses offline WAV rendering;
+it has a different soundcard from the earlier Audacity WASAPI loopback setup.
+Renoise 3.5.4 offline renders pass all 21 authored gate protocols across
+90/120/150 BPM, tested moving/same-pitch Repeat glide classes, flat NOTE/TIE
+accent response and native/writer effect-edge cases. The packaged-tool GUI
+Generate/Live Edit/save-reopen case is also recorded below. Identical offline
+exports are deterministic render repetitions, not independent soundcard
+captures. No current-desktop WASAPI loopback calibration is claimed. Mapped
+NOTE accents retain their level across TIEs; accent changes on connected slide
+chains remain explicitly refused. Manual transport stop/start, seek and Live
+Edit during playback are still unverified, so M3 is not complete. Earlier entries retain
+the dated findings from the prior Demo/loopback setup; later sections identify
+which conclusions they supersede.
+
 ## Desktop grid calibration — 2026-10-27
 
 **PASS** for `grid_calibration_all_note_pitch_span_16` through Renoise to Audacity WASAPI loopback. Windows system volume was left unchanged. This validates the authored timing/pitch markers on this route; it does not establish native glide continuity, runtime gate widths, accent behavior or hardware fidelity.
@@ -236,3 +252,213 @@ Runtime eligibility admits same-pitch Repeat slide only in slide mode on the exa
 | `writer_repeat_same_3` | pass | `98bf90a954a9d04ebe6863b405f5ca6da0f2fb7cc32e79c9f7829211d7f200b5` | `f1edba6b0b6f4323f08e16721c4cdcecb86933954e3b9aefb55e6512d5f9d219` |
 
 Stopped at user request after this capture set. Full M3 remains open: broader Repeat moving glide, connected/consecutive accent, remaining lengths/tempo/profile cases and normal Generate/Live Edit/ownership/save-reopen lifecycle verification are not claimed complete.
+
+## Fresh desktop Renoise offline renders — 2026-10-27
+
+The fresh licensed desktop ran Renoise 3.5.4. Audacity 3.7.4 was used to import and inspect the calibration waveform. The WAVs in this section came from Renoise's offline `Song:render` API at 48 kHz stereo PCM24 with precise interpolation; Audacity was not used for loopback recording, and no listening or hardware-route result is claimed. The master pre-fader setting was 0.94 for the documented render set.
+
+The first calibration render began at the trigger and failed the first-onset alignment. Including two seconds of silent pre-roll fixed the file-boundary alignment. The retained fixed calibration passes all 68 expected events, with no missing or extra onset; its measured peak is -6.36 dBFS and the stereo difference is -300 dB. WAV SHA-256: `70d1dd07a28bb2277888b418a5c1b1b03b48475123e28cfb65cde92a335c562f`; analyzer report SHA-256: `e54532aee1bf3d817c57830a1b1090763ca259225054fa86689de73382982a4a`. The portable artifacts are `tmp/acid-articulation/session/offline_calibration_fixed.wav` and `tmp/acid-articulation/session/offline_calibration_fixed_report.json`.
+
+Native control and actual-writer analyses are summarized in `tmp/acid-articulation/session/native_control_analysis_summary.json` (SHA-256 `dcbd77b6d24d948f3f03029ef97bf0960266c07de626aabf5c25e954f2a6eb72`) and `writer_analysis_summary.json` (SHA-256 `aa2071102c7efed6f65aaa5aa9b1293991073c240efebd1a13d6eae26f68bc68`). Each row below represents three completed offline renders and analyses with one unique WAV hash. The byte-identical outputs establish deterministic render repeatability; they are not independent soundcard captures.
+
+| Rendered protocol | Analysis result | WAV SHA-256 |
+| --- | --- | --- |
+| Native held-note control | pass | `7aed5cd04c9a48892ae3a604a339d6c242672e528acaa8332cae3499abd8520a` |
+| Native same-pitch retrigger control | pass | `9b262c7c9d64a70c208772d036ac6a56e51d24fec610444ab12c4ffba26c2655` |
+| Native REST-release control | pass | `44fec9f6a58571a36e450fdfe0976633422bc0adf5dd48d9c5c6c195f694a77b` |
+| Native 0G08 control | fail: insufficient glide and target settling | `eadd7fde3b48d6674e831d80243a6022edba2313ab0be0b539248282a95f6bed` |
+| Native 0G20 control | fail: target settling | `724eddd19f9e53316b07a0cb5decbe16f023d35c51adac892398dc3ad4fae44b` |
+| Native 0G40 control | pass for its authored one-shot control | `ecc6073dafc7a36ac61d270c378ed34a0776b38785983f4f32d23adcdac7ab08` |
+| Writer isolated NOTE | pass | `86534ea07c7207184ad9faab01d09c79114e1d9555da773fde0aaf58e461039f` |
+| Writer one-shot four-semitone slide | pass | `546de3e11e9d38838b5f756d8b77134a5b6125219abb5175030212bd56f19c7f` |
+| Writer one-shot NOTE tail | pass | `637054e80f36d2b545e5163537d3666309ece7f1e98c168beb86cf7aaafa492e` |
+| Writer one-TIE tail | pass | `0b4d3a566c3722dc16b701d8c704b874f595fdd2863aefe260aae5dee68d8cca` |
+| Writer two-TIE tail | pass in this deterministic export set | `bdf4ea324562bffa2e91c4d0b92f7f016ea91c3b30d70ff9a569ce93990619bf` |
+| Writer Repeat NOTE/REST seam | pass | `e64012b1eda4cc24fc88815f8310aa7f0756382b96ff3096db5ca0592e8dd9de` |
+| Writer 16-step same-pitch Repeat slide | pass | `911dad2c04bd5353375ff2dc2b7eeeaae5c576f47b1886ae89b5c2d13cd0b0ae` |
+
+The offline two-TIE result does not replace the earlier actual capture set, which still contains one invalid high-peak take and remains open for acceptance.
+
+The separate moving Repeat probe's four-semitone case (`native_repeat_glide_four_semitones_1.wav` through `_3.wav`) passed three analyses of the same WAV bytes (SHA-256 `292eeaccd5e3b305364ec6aac7d7ad11f9921c8cbf2b416e5fcb53473689de37`); the octave case (`native_repeat_glide_octave_1.wav` through `_3.wav`) failed pitch and trajectory windows in three analyses of its same WAV (SHA-256 `42e17cb391986c6f2c8d8f6f6da057ea56ef62437f6abef57877300fd4712961`). The files and `moving_repeat_glide_summary.json` are under `tmp/acid-articulation/session/`; summary SHA-256: `0077bd628e858357a1138e761ad639887699366a335800ffecd39831626b424f`. These are native instrument probes, not ACID writer evidence. Moving Repeat writer support remains refused. Accent renders are present, but their formal response analysis is still pending; no accent support claim follows from these exports.
+
+Tempo qualification remains open. The first two 90 BPM calibration exports carry 90 BPM in their render metadata, but each WAV is 14.625 seconds long, equal to 234 pattern lines at 120 BPM; the selected section should take 19.5 seconds at 90 BPM. They are invalid for 90 BPM, and their sidecars do not prove the engine rendered at the requested tempo. The third calibration passed at 90 BPM after tempo was changed in a separate command and allowed to settle. The render helper now compares actual WAV frame duration with the selected section and captured transport; future tempo evidence requires `duration_check=passed`. The 90/150 BPM control and writer matrices remain open, with no change to the current eligibility boundary.
+
+The Renoise lifecycle helper completed both requested modes. `tmp/acid-articulation/lifecycle_retrigger_1793116392.txt` reports Generate, Live Edit regeneration, ownership seal, and XRNS save/reopen as PASS; its record SHA-256 is `b6c1d467471d9e16b72c579b5389bc195a3a8ed7889775116ed0a3f5e51a8ba1` and paired XRNS SHA-256 is `89bd315a32b07d885be85afa6ef4bae436fd38db45b0730eb4fec24907dd6fca`. `lifecycle_slide_1793116418.txt` also reports PASS; record SHA-256 is `08cd76ed1809147e7de511c5a1d129a6588cb4dd7bada80b24c36bcc851bea959` and paired XRNS SHA-256 is `e0921047516eddbff75a43e30e57b7705152a7a51505b370e18663032b9a1c26`.
+
+A separate GUI check (`tmp/acid-articulation/session/gui_same_pitch_edit.txt`) exercised the same-pitch slide checkbox, keyboard note selection, Generate button and save/reopen in Renoise. The record reports that the live edit emitted note 50 from initial note 49, while a subsequent keyboard change did not alter the current phrase until Generate emitted note 52. Record SHA-256: `3ae9109d725b6603120217ebf1e8e7f2df326ae5ffbf21efa712a4ab99bbcef2`; saved XRNS `gui_same_pitch_edit.xrns` SHA-256: `b62769005dbdca7b0f93ccb138e80fba8e882122d808e497caaa0c1b8ab64aa4`. This check does not cover rapid repeated edits or playback behavior.
+
+These offline results add local render and persistence evidence. Deterministic exports do not replace independent playback captures, and the remaining moving glide, accent and tempo work stays open.
+
+## Updated Repeat, accent and tempo renders — 2026-10-27
+
+The following measurements use fresh Renoise 3.5.4 offline WAVs at 48 kHz stereo PCM24. They establish the named instrument and writer cases only; they are not soundcard or loopback captures. Repeated identical file hashes show deterministic render output, not independent device variation.
+
+The fixed-bound tempo calibration passes all 68 expected events in three analyses at both 90 and 150 BPM. The earlier 90 BPM exports whose duration matched 120 BPM remain invalid and unchanged; these are new settled-tempo files. Held-note, same-pitch retrigger and REST-release controls also pass three times at each tempo.
+
+| Calibration | Analyses | Duration | Max onset error | WAV SHA-256 |
+| --- | --- | --- | --- | --- |
+| 90 BPM | 3 pass | 20,000 ms | 0.667 ms | `83326e25d92e33484f04150b30d8e0d4910e0225423e9b20b114f7ebe766c468` |
+| 150 BPM | 3 pass | 14,400 ms | 0 ms | `1121bd78da91c65800ba5b169db4d2ea0af1bfc3a0d124e594194923820b2a3f` |
+
+The three one-shot writer tail families also pass three times at both 90 and 150 BPM. Each triplet has one unique WAV hash, so each result establishes repeatable offline output rather than independent captures. The latest files use `writer_one_shot_<family>_tail_bpm_<tempo>_verified_1.wav` through `_3.wav`; every sidecar records `duration_check=passed`, two channels, and zero duration error. Their hashes match the analyzed files summarized below.
+
+| Writer protocol | BPM | Result | WAV SHA-256 |
+| --- | ---: | --- | --- |
+| NOTE tail | 90 | 3 pass | `076fbdb801b8c3f5488c45f3752c4e018b13c27c855ef1a6299dc96de0bc3865` |
+| TIE tail | 90 | 3 pass | `849cf8938fae0e53dbb25e0e5d9ff39000967e6c65cc6795db46525655e64793` |
+| two-TIE tail | 90 | 3 pass | `f17faf3b32c3db52b2048e6c04393da8a224abc396ef5319a2d512d147df940d` |
+| NOTE tail | 150 | 3 pass | `bfa5359e7be2830c3ac3655f150a508c20f0efc4e78211d4f6a87304cdc6f4f1` |
+| TIE tail | 150 | 3 pass | `fd7439fdfc77537a5dbb28e3c2eafcd856fc73ceff17bdc372f60d75951861e4` |
+| two-TIE tail | 150 | 3 pass | `d1fe3cd2c4b3e9efaa53b7b1c1e3b66bec480dae220ba4829513e5fb2e09aad5` |
+
+The six moving Repeat writer analyses pass for four-semitone and octave destinations, three each. Pitch-matched held controls at 48, 52 and 60 also pass three analyses each. The analyzer summary records one WAV hash per triplet; the results apply to the tested four-pass phrase and exact diagnostic profile. They do not establish other Repeat lengths or general instrument support. Summary SHA-256: `c3c3f582e8dfdd72959ec6ce9cab6e5110a9ec6f126f1323233aff5c846d018d`.
+
+Four flat mapped-velocity accent families pass: native alternating, native consecutive, actual-writer alternating and actual-writer consecutive. Their measured normal-to-full velocity change is +3.088274 dB against +3.156 dB predicted from emitted note volumes, a -0.068 dB difference; each three-export family is byte-identical. WAV hashes and procedure are in [the accent manual](renoise_articulation_accent_manual.md). These results cover NOTE velocity on the flat mapped reference only. Connected accent changes remain unverified and refused.
+
+The analysis summaries are retained under `tmp/acid-articulation/session/`: `calibration_fixed_bounds_analysis_summary.json` (SHA-256 `014d6a8ea44be891a5bb5d5c5a49b5641c15b580030d66fd02312e379768eefc`), `writer_tail_tempo_analysis_summary.json` (SHA-256 `2d7bd0672670ebfa309a601371053db677226507987814bb9f9d6cb33b2aa748`), and `moving_repeat_glide_summary.json` (SHA-256 above). Accent response summary hashes: native alternating `c1611e9e288426f91f3c138b0c9fd1f6234905a9691c04f6cec722a91ea26fbe`; native consecutive `0e60f77a26670173a5c42de2d9482b66579fadaf9ae18018aa6674f58ac0d7ab`; writer alternating `25c9038a1cb033a0b917b92261ccdff9eb5753f804d67b9aeb920ee49657aebf`; writer consecutive `619e6d0cb7ac2fda8c99dda30b6a81b6a334992956368fa3c47370befbab2d21`.
+
+Earlier copies retain sidecars from a helper build that reported `actual_channels=nil`; they were left unchanged. The verified files above are separate new renders from the corrected helper, whose regression spec asserts channel metadata and consumes the optional context after one render to prevent stale case labels.
+
+These updates supersede the earlier statement that all moving Repeat glide, accent and tempo work remained open. Remaining M3 work still includes untested Repeat lengths and gate families, connected accent behavior, and the remaining eligibility and lifecycle cases. No broad runtime support or hardware-fidelity claim follows from these offline renders.
+
+## Fresh packaged-tool and 8/9-step Repeat checks — 2026-10-27
+
+The moving Repeat writer coverage now includes the supported 8-step
+`N T T T N T T T` and 9-step `N T T T N T T T T` layouts. At the exact
+diagnostic profile (120 BPM, selective, LPB8/TPL12, no groove), three actual
+writer exports each pass for four-semitone and octave movement with the
+pitch-matched hold comparisons. The three exports in each family have one
+shared WAV hash, so they show deterministic offline output, not three
+independent playback captures.
+
+| Writer case | Analyses | WAV SHA-256 |
+| --- | --- | --- |
+| 8-step four-semitone glide | 3 pass | `292eeaccd5e3b305364ec6aac7d7ad11f9921c8cbf2b416e5fcb53473689de37` |
+| 8-step octave glide | 3 pass | `42e17cb391986c6f2c8d8f6f6da057ea56ef62437f6abef57877300fd4712961` |
+| 9-step four-semitone glide with trailing TIE | 3 pass | `586d7fd142065a52031907166482fb7e53993df82c5aa759902fadacb619fa06` |
+| 9-step octave glide with trailing TIE | 3 pass | `e9a447d726bf7476bc42ed1517f40796fdb9f188440a61c18239ed6a54e6b679` |
+
+The 9-step WAV and sidecar triplets are under
+`tmp/acid-articulation/session/`; all six sidecars report completed duration
+checks. The 8-step writer WAV hashes match the separately authored native
+controls. These results support only the recorded source layouts, pitches and
+profile. Other moving intervals, pitches, layouts, tempos and profiles remain
+refused.
+
+The fresh ACID package was installed in Renoise and its runtime GUI was checked
+on phrase 30. Generate produced the 9-step source, Live Edit remained enabled
+while LAST STEP changed 9→8→9, the phrase resized without changing ownership,
+and save/reopen restored the exact source and slide mode. The capture record is
+`tmp/acid-articulation/session/packaged_gui_moving_repeat.txt` (SHA-256
+`a01942791f7676977a47ed6968f1aaef6368e13f19fb93ad7f4c5088aab87f46`), paired
+with `packaged_gui_moving_repeat.xrns` (SHA-256
+`e951e729c5edbd04f9eba6d35580405482f37539b8c13a3b672e312d5c5886ee`). The
+existing production-controller lifecycle record also passes 8→9→8. This covers
+normal Generate/Live Edit/save-reopen for this case; it does not cover rapid
+edit races or playback through an audio device.
+
+Current audio evidence in this section and the preceding tempo/accent section
+comes from licensed Renoise offline rendering on this desktop. The soundcard is
+different from the earlier loopback setup, and no current-desktop Audacity
+loopback calibration or independent hardware capture is claimed.
+
+## Final gate, glide and lifecycle render matrix — 2026-10-27
+
+The full 21-protocol gate matrix now passes across 90/120/150 BPM on the exact
+diagnostic profile (selective, LPB8/TPL12, groove off): nine one-shot NOTE,
+TIE and TIE-TIE tail cases plus twelve TIE-before-fresh-NOTE,
+two-TIE-before-fresh-NOTE, Repeat NOTE/REST and Repeat TIE/REST cases. The
+latest twelve-case batch has 36 checked files, 12 unique PCM hashes and 24
+byte-identical copies; all protocols pass, with no invalid captures. Earlier
+two-TIE high-peak WAVs remain retained as invalid historical takes; the newer
+three-tempo set passes and supersedes that result for the current matrix.
+
+| Evidence batch | Result | Summary SHA-256 |
+| --- | --- | --- |
+| Gate fresh-successor/Repeat REST, 12 protocols × 3 BPM × 3 files | all pass; 36 files, 12 unique WAVs, 24 identical copies | `c33fa0aa0fffcfb26c672b4e8f0750c36db5a622c78a7e3c2c3afc73fd40d8a1` (`writer_record_hashes.json`); batch report `d8c257e6bb4b5826e28654241f42b112f89f192c38507ce27c82ab9a1a218028` |
+| Native moving glide/holds, 90 and 150 BPM | 10/10 protocols pass | `992efa2dcde47adbb9e0928c0990637e676d8f15e74a30f4fddfdab156444c8` |
+| Actual writer moving glide/holds, 90 and 150 BPM | 10/10 protocols pass | `94c2559b22254d1e692147f144fd45ec9843b3b68e6895edafe6d24b79f8cd55` |
+| Native effect-edge controls | 21/24 captures pass; ungated fresh NOTE fails in three identical files; no invalid files | `8c61634708d04e92bc10b3848e49842f0c18887375192134caa65f37709ffa10` |
+| Native host OFF, retrigger and keymapped phrase controls | 9/9 files pass; 2 unique PCM hashes | `97b43e676638aacb4505b02637d2036459326ccb997111cadd9a4e9503734024` |
+| Packaged GUI screenshot | 874×918; both help lines visible with no overflow | `ba7112dd792b2fffdd4b9b8f0ba0d5321a8eff287860baaf83f1357fff6e81cf` |
+
+The 90/150 glide matrix covers native 8-step controls and actual writer cases
+for four-semitone/octave movement in both 8/9-step layouts (the 9-step writer
+source includes a trailing TIE), pitch-matched holds at48/52/60, and same-pitch
+Repeat length16. At120BPM, the corresponding 8/9-step moving cases pass, as do
+same-pitch Repeat lengths16/17/32/33/48/49/64. These are byte-identical render
+repetitions within each triplet, not independent playback captures. No other
+moving layouts/pitches/intervals are enabled.
+
+Effect-edge results distinguish a required failure from its explicit
+cancellation path. Native 0G08 followed by an ungated fresh NOTE misses the
+second attack in all three renders (`ad11fcf60ccb648301fa63907a5ba8ba38e71f93c7087540d0116aa94b3b2cab`);
+the target attack is not audible. A REST cancels the native glide, and an
+explicit OFF before the following NOTE passes for native 0G08 and actual writer
+0G20 cases. The gated writer family hash is
+`a2aa3a541cd4f5cfde76cb7d792633f9ee0c7fb52a6dac2f24d59da0bb232bd0`. Do not
+remove the OFF or treat the failed ungated case as support.
+
+The host lifecycle suite passes native host OFF, fresh retrigger and keymapped
+trigger controls. These do not enable keymapped triggering in ACID's runtime.
+Manual transport stop/start and seek remain unverified. The final packaged GUI
+is visually confirmed at 874×918 with the two help lines visible; the screenshot
+is retained under `tmp/acid-articulation/session/final-packaged-gui.png`.
+
+### Accent retention across TIE
+
+Three native and three actual-writer offline renders pass the flat mapped
+accent/TIE protocol. The normal-to-accent NOTE delta is +3.088274 dB versus
++3.156 dB predicted from emitted cells; spread is 0 dB. Each TIE level is within
+0.085888 dB of its preceding NOTE level in the early 15–50 ms window. All six
+WAVs share hash
+`ab1082dfd06cf12555c6225b53448e6a74ea87fcee84c421e7a2507d542f059a`.
+Native response report SHA-256:
+`9523618033e3ea91ab92610f5bdd1ce85c152a8bf34a5ef54574083c0782ea51`; actual
+writer response report SHA-256:
+`df25e5f4755c1d9cbf59bbbf31898d61acc58ed146a40501679ebc81287cb137`. This
+qualifies mapped level and retention through unaccented TIEs on the declared
+flat profile. Accent changes on connected slide chains remain refused; no
+slide-chain accent waveform or instrument-wide accent claim is made.
+
+M3 implementation evidence now closes the authored gate matrix and named glide
+classes, plus NOTE/TIE accent response and the explicit fresh-NOTE cancellation
+rule. Connected slide-chain accents remain refused with pre-mutation diagnostics.
+Manual transport stop/start, seek and Live Edit during playback remain
+unverified. All these results use Renoise offline rendering; current-desktop
+soundcard-loopback behavior remains unclaimed.
+
+## Final regression, package and installed-tool verification — 2026-10-27
+
+Final verification completed after the runtime and GUI updates:
+
+- All 24 ACID Lua specs pass.
+- All 11 formal PowerShell analyzer/fixture checks pass; 13 PowerShell parse
+  checks and 14 Lua syntax checks pass.
+- The ACID package contains 19 runtime files. Every installed runtime file's
+  SHA-256 matches the repository file.
+- The installed package is `dist/com.david303ttl.ACID_0.1.xrnx`, SHA-256
+  `cbcc932189134e1827398fe87fbb5399fa2d97ca3d75ce33e22e742b82be49f7`.
+- The final packaged GUI is 874×918 and shows both help lines without overflow.
+
+Receipt files are retained under ignored `tmp/` paths:
+
+| Receipt | SHA-256 |
+| --- | --- |
+| `tmp/acid-articulation/session/final_verification_receipt.json` | `9ff488160eabecfa344c6aec1350ba6992d77818abbbc6973543ec1a996fd775f` |
+| `tmp/m3_final_verification_20261027_174820_010/receipt.json` | `0c13252b62ec63ddf9eba2e775029987c2a024d668ecff1f11df8d0a6ab4d02e` |
+| `tmp/acid-articulation/session/final-packaged-gui.png` | `ba7112dd792b2fffdd4b9b8f0ba0d5321a8eff287860baaf83f1357fff6e81cf` |
+
+A live transport/loopback closeout was attempted, but no live audio export was
+produced. Audacity exited before a loopback connection was available; no cause
+is inferred. Renoise was restored to the original ASIO Hammerfall DSP setup
+(48 kHz, 256 samples, dithering enabled); the preferences screenshot is
+`tmp/acid-articulation/session/restored-asio-preferences.png`, SHA-256
+`fe8c26c430c1ab15964990b8cc9f84cd125e2ff917a68cfedc7d58b0dbf9dc59`.
+
+The final offline evidence and installed GUI therefore verify the declared
+profile's renderer and Generate/Live Edit/save-reopen workflow. They do not
+verify transport stop/start, seek or Live Edit during audio playback; those
+remain the selective in-app M3 manual acceptance checks. Current-desktop
+soundcard-loopback behavior is separately unclaimed. Implementation and final
+regression/package verification are complete.

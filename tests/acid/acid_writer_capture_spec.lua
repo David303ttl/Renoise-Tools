@@ -1,5 +1,14 @@
 -- Verify fixture selection, writer delegation and metadata without audio claims.
 dofile("tests/bootstrap.lua")("acid")
+local provenance = dofile("tests/acid/capture_provenance.lua")
+local repo_fn = assert((loadstring or load)("return function() end",
+  "@workspace/com.david303ttl.ACID.xrnx/writers/phrase_writer.lua"))()
+local installed_fn = assert((loadstring or load)("return function() end",
+  "@portable-install/Tools/com.david303ttl.ACID.xrnx/writers/phrase_writer.lua"))()
+assert(provenance.describe("workspace", repo_fn, "writers/phrase_writer.lua")
+  == "repository/com.david303ttl.ACID.xrnx/writers/phrase_writer.lua")
+assert(provenance.describe("workspace", installed_fn, "writers/phrase_writer.lua")
+  == "installed/com.david303ttl.ACID.xrnx/writers/phrase_writer.lua")
 local sample = { sample_buffer = { has_sample_data = true }, modulation_set_index = 0,
   sample_mapping = { note_range = {0,119}, velocity_range = {0,127} } }
 local instrument = { name = "ACID ARTICULATION PROBE", samples = { sample },
@@ -25,7 +34,7 @@ local mock = assert((loadstring or load)([[
   return function(index, callback, mode, source, target)
     return ACID_CAPTURE_WRITER_TEST(index, callback, mode, source, target)
   end
-]], "@com.david303ttl.ACID.xrnx/writers/phrase_writer.lua"))()
+]], "@./com.david303ttl.ACID.xrnx/writers/phrase_writer.lua"))()
 ACID_CAPTURE_WRITER_TEST = function(index, cb, mode, source, target)
   received = { index = index, mode = mode, source = source, target = target }
   callback = cb
@@ -88,6 +97,9 @@ callback("Phrase 08 generated (1 notes, 0 OFF; 1 raw events). Instrument 00.")
 assert(closed and instrument.phrase_program == 8)
 assert(output:find("phrase.line.1=48,255,89,255,0,0,0", 1, true),
   "Readback did not retain native quantized volume")
+assert(output:find("loaded_writer_source=repository/com.david303ttl.ACID.xrnx/writers/phrase_writer.lua", 1, true)
+  and output:find("loaded_sequencer_source=repository/com.david303ttl.ACID.xrnx/model/sequencer.lua", 1, true),
+  "Capture metadata did not classify the loaded ACID modules")
 assert(not output:find("C:/", 1, true), "Metadata exposed a machine path")
 assert(not pcall(run, "grid_calibration_all_note_pitch_span_16"),
   "Independent-native case was silently converted to writer acceptance")

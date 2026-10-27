@@ -9,6 +9,7 @@ local ownership=require("writers.phrase_ownership")
 local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
+local REPEAT_HELP="Repeat: selective Retrigger + Gate at 90/120/150 BPM.\nSlides: moving 8/9-step + same-pitch 16 at 90/120/150; other same-pitch lengths 120."
 local dialog
 local generation=0
 local dialog_generation=-1
@@ -253,7 +254,7 @@ function M.show()
     if updating or not setup_confirmed then return end
     pattern.playback=value==2 and "loop" or "one_shot"
     if pattern.playback=="loop" then
-      status.text="Repeat selected: baseline NOTE/TIE/REST is supported; slide continuity and advanced audio modes are refused."
+      status.text="Repeat selected. Retrigger + Gate at 90/120/150 BPM; moving 8/9-step and same-pitch 16-step slides at these tempos; other same-pitch lengths at 120 BPM."
     else
       status.text="One-shot playback selected."
     end
@@ -536,8 +537,8 @@ function M.show()
       vb:text{text="Active PITCH span"},pitch_length_popup,
       vb:text{text="Extended: independent TIME/PITCH lengths."}},
     vb:row{spacing=8,vb:text{text="Playback"},playback_popup,
-      vb:text{text="Preview"},preview_popup,
-      vb:text{text="Repeat supports baseline NOTE/TIE/REST; slide continuity and advanced audio modes are unsupported."}},
+      vb:text{text="Preview"},preview_popup},
+    vb:row{vb:multiline_text{text=REPEAT_HELP,width=720,height=44}},
     vb:row{spacing=8,
       vb:button{text="Create / Reset Pattern",notifier=function()
         -- Explicit initialization: changing LAST STEP alone never erases memory.
