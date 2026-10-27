@@ -245,7 +245,7 @@ establish TB-303 sound fidelity; M3–M5 requirements remain.
 
 **Goal:** translate semantic articulation into predictable native-sample playback. Pitch movement alone does not establish envelope continuity. M2's source traversal, outgoing SLIDE, REST interruption, cold/steady distinction and exclusive loop-end sentinel remain authoritative.
 
-**Status:** planning only; no new audio acceptance is claimed. M2 implementation remains closed. Its deferred release, continuity and trigger checks become explicit M3 prerequisites where relevant; undo and lifecycle work outside this scope remains tracked for M6. Historical gate duration and analog accent response remain unverified.
+**Status:** implementation in progress. Harness and successor-aware gates are implemented; glide command coverage and independent native accent validation are implemented. Full acoustic acceptance remains open. M2 implementation remains closed. Its deferred release, continuity and trigger checks become explicit M3 prerequisites where relevant; undo and lifecycle work outside this scope remains tracked for M6. Historical gate duration and analog accent response remain unverified.
 
 ### M3.0 — Decisions, boundaries and blockers
 
@@ -276,6 +276,31 @@ grid calibration passed again; held/retrigger/0G20 controls were recorded, with
 raw control analyses invalid. User-authorized normalized-copy recalibration
 exposes failed silence windows, so downstream native acceptance remains blocked.
 No renderer support or manifest version changed.
+
+**Measurement audit (2026-10-27):** the original 6 ms retrigger miss used an
+unadjusted -60 dBFS onset floor on a +44.58268 dB normalized copy. The analyzer
+now shifts that source-relative floor by the receipt gain; a retained-waveform
+rerun measures the authored 250 ms interval with zero onset error. The 5 ms
+release plus 5 ms tolerance now determines the calibration silence-window start.
+The corrected normalized grid still fails 67 of 68 windows, and the held-note
+release result changes from +10 ms to -5 ms after the same onset correction.
+The realized envelope is unresolved. The probe now reads the current device's
+runtime `fade_amount` maximum for its shortest-release candidate; Renoise 3.5.4
+reports 765.765 while the API definition lists 0–4095. Rebuild/read-back/audio
+measurement must verify this control before calibration. No new gate-writer capture or three-run
+acceptance has passed; M3-B/M3-C support remains blocked on acoustic evidence.
+
+**Capture-level follow-up (2026-10-27):** Renoise's track meter was about
+-5.6 dBFS peak while the raw loopback WAV was -50.68 dBFS peak. Audacity's
+Recording Level was set to 97% (its separate Playback Level stayed at 76%;
+Windows system playback volume was not changed). An exploratory held capture
+then measured -6.25 dBFS peak and -81 dB stereo difference. It ran long enough
+to include three extra phrase repeats, so it is invalid for acceptance; its
++9 ms release crossing and inconclusive attack signature do not settle the
+envelope. The [capture manual](../tests/acid/renoise_articulation_probe_manual.md)
+now records this route-specific level setting and the stop-before-wrap rule.
+Repeat grid calibration, held/retrigger controls and writer captures at this
+setting before interpreting envelope or scheduler behavior.
 
 **Development deliverables** (outside the installable tool):
 
@@ -506,6 +531,9 @@ Record evidence and the final decision *before* declaring hardware fidelity:
 For every such decision, supply **reference + decision + test fixture + manual playback observation + documented limitation**. If a decision is provisional, indicate that in GUI text and documentation.
 
 ## 11. Immediate next work package
+
+**Latest native findings (2026-10-27):** the fresh-song probe's envelope time-base bug is fixed: use `tempo_synced=false` before assigning points on the measured Renoise 3.5.4 build. Corrected-profile calibration passes all 68 markers, held attack matches with a 6 ms release, and REST passes once. Retrigger detection still misses its second attack. `G00` continues the previous glide rate; the earlier two-line 20 trial reaching note 52 does not prove native glide unavailable. Qualify a sufficient glide command span and repeat the native controls before writer acceptance. See the [fresh-song evidence](../tests/acid/audio_capture_evidence.md). Full M3 remains open.
+
 
 **Continue M3-A acceptance:** the development harness and automated checks are
 implemented. Complete the remaining authored protocols and resolve the

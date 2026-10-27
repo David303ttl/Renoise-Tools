@@ -106,7 +106,7 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
         local fields_ok,fields_error=verify_fields(cell,wanted<OFF,line_number,column)
         if not fields_ok then return nil,fields_error end
         if volumes[line_number] and volumes[line_number][column]~=(cell.volume_value or 255) then
-          return nil,string.format("Phrase volume changed at line 0x%02X column %d",line_number-1,column)
+          return nil,string.format("Phrase volume mismatch at line 0x%02X column %d",line_number-1,column)
         end
         local effect=effects[line_number]
         if column==1 and effect then
@@ -147,7 +147,7 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
         local fields_ok,fields_error=verify_fields(cell,false,line_number,column)
         if not fields_ok then return nil,fields_error end
         if volumes[line_number] and volumes[line_number][column]~=(cell.volume_value or 255) then
-          return nil,string.format("Phrase volume changed at line 0x%02X column %d",line_number-1,column)
+          return nil,string.format("Phrase volume mismatch at line 0x%02X column %d",line_number-1,column)
         end
       end
       for column=1,(phrase.visible_effect_columns or 0) do

@@ -270,6 +270,49 @@ try {
     }
   }
   Write-Output 'Held saw onset controls: PASS (20 pitches)'
+  # Envelope resets must be distinguishable from carrier beating and smooth glide.
+  foreach ($note in 36, 43, 48, 55) {
+    foreach ($gain in 0.03, 0.2) {
+      $attackMs = 10.0
+      foreach ($reset in $false, $true) {
+        $signal = [double[]]::new(28800)
+        $phase = 0.0
+        for ($frame = 4800; $frame -lt $signal.Length; $frame++) {
+          $time = $frame / 48.0
+          $age = if ($reset -and $time -ge 350) { $time - 350 } else { $time - 100 }
+          $envelope = if ($age -lt $attackMs) { $age / $attackMs } elseif ($age -lt ($attackMs + 20)) { 1 - 0.35 * ($age - $attackMs) / 20 } else { 0.65 }
+          $pitch = $note + $(if (-not $reset) { 7 * [Math]::Min(1, [Math]::Max(0, ($time - 300) / 100)) } else { 0 })
+          $frequency = 262.5 * [Math]::Pow(2, ($pitch - 48) / 12)
+          $phase += $frequency / 48000
+          $signal[$frame] = $gain * $envelope * (2 * ($phase % 1) - 1)
+        }
+        $attacks = Find-AudioOnsets $signal 48000 -60
+        $count = if ($reset) { 2 } else { 1 }
+        if ($attacks.Count -ne $count) { throw "Envelope reset/glide note $note gain $gain reset $reset detected $($attacks -join ', ')" }
+        if ($reset -and [Math]::Abs(($attacks[1] - $attacks[0]) - 250) -gt 10) { throw "Envelope reset timing note $note attacks $($attacks -join ', ')" }
+      }
+    }
+  }
+  Write-Output 'Envelope reset and continuous glide controls: PASS (four pitches, two gains)'
+  $scaledSignal = [double[]]::new(48000)
+  for ($frame = 0; $frame -lt $scaledSignal.Length; $frame++) {
+    $timeMs = 1000.0 * $frame / 48000.0
+    $eventStartMs = if ($timeMs -lt 450.0) { 100.0 } else { 450.0 }
+    if ($timeMs -lt 100.0 -or $timeMs -ge 850.0) { continue }
+    $ageMs = $timeMs - $eventStartMs
+    $envelope = if ($ageMs -lt 10.0) { $ageMs / 10.0 } elseif ($ageMs -lt 30.0) { 1.0 - 0.35 * ($ageMs - 10.0) / 20.0 } else { 0.65 }
+    $scaledSignal[$frame] = 0.05 * $envelope * [Math]::Sin(2.0 * [Math]::PI * 220.0 * $ageMs / 1000.0)
+  }
+  $gain = 4.0
+  $gainDb = 20.0 * [Math]::Log10($gain)
+  $scaledSignalCopy = [double[]]@($scaledSignal | ForEach-Object { $_ * $gain })
+  $sourceAttacks = [double[]](Find-AudioOnsets $scaledSignal 48000 -60.0 10 40.0)
+  $copyAttacks = [double[]](Find-AudioOnsets $scaledSignalCopy 48000 (-60.0 + $gainDb) 10 40.0)
+  if ($sourceAttacks.Count -ne 2 -or $copyAttacks.Count -ne $sourceAttacks.Count) { throw 'Gain-scaled retrigger control changed the detected attack count' }
+  for ($index = 0; $index -lt $sourceAttacks.Count; $index++) {
+    if ([Math]::Abs($sourceAttacks[$index] - $copyAttacks[$index]) -gt 1.0) { throw 'Gain-compensated onset floor changed a detected attack time' }
+  }
+  Write-Output 'Normalization-aware onset controls: PASS (attack and retrigger scale invariance)'
   foreach ($shape in 'attack_decay','flat','attack_only','truncated') {
     $signal = [double[]]::new($(if ($shape -eq 'truncated') { 2000 } else { 4800 }))
     for ($frame=0; $frame -lt $signal.Length; $frame++) {
@@ -286,6 +329,17 @@ try {
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'positive_pcm16' -BitDepth 16 -ExpectPass $true
   Invoke-SyntheticCase 'same_pitch_retrigger_control' 'positive_retrigger_control' -ExpectPass $true
   Invoke-SyntheticCase 'held_note_reference' 'positive_release' -ExpectPass $true
+  Invoke-SyntheticCase 'one_shot_note_tail_bpm_120' 'positive_writer_tail' -ExpectPass $true
+  Invoke-SyntheticCase 'one_shot_note_tail_bpm_120' 'negative_writer_tail_late' -ReleaseOffsetMs 25 -ExpectPass $false
+  Invoke-SyntheticCase 'one_shot_note_tail_bpm_120' 'negative_writer_tail_early' -ReleaseOffsetMs -25 -ExpectPass $false
+  foreach ($family in 'note','tie','two_ties') {
+    foreach ($bpm in 90,120,150) {
+      $id="one_shot_${family}_tail_bpm_$bpm"
+      Invoke-SyntheticCase $id "positive_$id" -ExpectPass $true
+      Invoke-SyntheticCase $id "negative_late_$id" -ReleaseOffsetMs 25 -ExpectPass $false
+      Invoke-SyntheticCase $id "negative_early_$id" -ReleaseOffsetMs -25 -ExpectPass $false
+    }
+  }
   Invoke-SyntheticCase 'slide_rate_20' 'positive_glide' -ExpectPass $true
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_pitch' -PitchOffsetCents 70 -ExpectPass $false
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_drift' -DriftMsPerEvent 0.15 -ExpectPass $false
@@ -300,6 +354,36 @@ try {
   foreach ($jumpOffset in @(20, 35, 50)) {
     Invoke-SyntheticCase 'slide_rate_20' "negative_delayed_jump_$jumpOffset" -InstantGlide -InstantGlideOffsetMs $jumpOffset -ExpectPass $false
   }
+  # Author two independent releases so a later valid edge cannot hide an earlier failure.
+  foreach ($fault in 'none','first_early','first_late','second_early','second_late','first_silent') {
+    $case = (Get-Case 'held_note_reference') | ConvertTo-Json -Depth 50 | ConvertFrom-Json -AsHashtable
+    $case.expected.onsets = @(@{at_step=0;note=48;tolerance_ms=5},@{at_step=4;note=48;tolerance_ms=5})
+    $case.expected.pitch_windows = @()
+    $case.expected.silence_windows = @()
+    $case.expected.release_edges = @(@{off_at_step=2;maximum_tail_ms=10},@{off_at_step=6;maximum_tail_ms=10})
+    $samples = [double[]]::new(96000)
+    for ($frame=0; $frame -lt $samples.Length; $frame++) {
+      $ms=$frame/48.0
+      $voice=if ($ms -lt 1500) {0} else {1}
+      $start=1000.0+500*$voice
+      $off=$start+250
+      if (($fault -eq 'first_early' -and $voice -eq 0) -or ($fault -eq 'second_early' -and $voice -eq 1)) {$off-=30}
+      if (($fault -eq 'first_late' -and $voice -eq 0) -or ($fault -eq 'second_late' -and $voice -eq 1)) {$off+=30}
+      $age=$ms-$start
+      $env=if ($age -lt 0) {0} elseif ($ms -ge $off) {[Math]::Max(0,1-($ms-$off)/5)} else {[Math]::Min(1,$age/10)}
+      if ($fault -eq 'first_silent' -and $voice -eq 0) {$env=0}
+      $samples[$frame]=0.2*$env*[Math]::Sin(2*[Math]::PI*262.5*$age/1000)
+    }
+    $audio=[pscustomobject]@{Left=$samples;SampleRate=48000;Channels=1;BitsPerSample=24;PeakDbfs=-13;StereoDifferenceDb=$null;DurationMs=2000;Sha256='synthetic independent release edges'}
+    $result=Measure-ArticulationCase $audio $case
+    if ($fault -eq 'none') {
+      if ($result.Status -ne 'pass' -or $result.Measurements.release_edges.Count -ne 2) {throw "Independent releases should pass: $($result.Issues -join '; ')"}
+    } else {
+      $index=if ($fault.StartsWith('second')) {1} else {0}
+      if ($result.Status -eq 'pass' -or ($fault -ne 'first_silent' -and $result.Measurements.release_edges[$index].passed)) {throw "Independent release fault escaped: $fault"}
+    }
+  }
+  Write-Output 'Independent release edges: PASS (two edges; early, late and silent faults)'
   $goodBytes = [System.IO.File]::ReadAllBytes((Join-Path $testDirectory 'positive_pcm16.wav'))
   foreach ($corruption in 'riff_size','zero_sample_rate','byte_rate','incomplete_fmt') {
     $badBytes = [byte[]]$goodBytes.Clone()
@@ -316,7 +400,7 @@ try {
     if (-not $rejected) { throw "Malformed WAV $corruption was accepted" }
   }
   Write-Output 'Malformed WAV controls: PASS (4 headers)'
-  Write-Output 'Audio analyzer synthetic acceptance passed: 5 positive controls, 20 held pitches, and 13 seeded failures.'
+  Write-Output 'Audio analyzer synthetic acceptance passed: native-reference discrimination, writer tail controls, independent release edges and seeded failures.'
 } finally {
   $resolvedTestDirectory = [System.IO.Path]::GetFullPath($testDirectory)
   $tempPrefix = $tempRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar,[System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar

@@ -252,21 +252,17 @@ local function finalize(job, event_count, skipped)
     job.phrase.loop_start=job.layout.loop_start
   end)
   if not layout_ok then complete(job,layout_error);return end
-  local result, validation_error = validator.verify(job.phrase, job.plan, 2,job.layout)
+  local volumes, volume_error = pattrns.expected_volumes(job.plan, 2,
+    job.layout.number_of_lines, job.phrase.visible_note_columns or 1)
+  if not volumes then complete(job, volume_error);return end
+  local result, validation_error = validator.verify(job.phrase, job.plan, 2,job.layout,
+    {volumes=volumes})
   if not result then
     complete(job, validation_error)
     return
   end
   local expected_articulation=job.operations or {effects={},release_lines={}}
-  -- Preserve validated native volumes; accent quantization needs audio evidence.
-  expected_articulation.volumes={}
-  for line_number=1,job.layout.number_of_lines do
-    local row={}
-    for column=1,(job.phrase.visible_note_columns or 1) do
-      row[column]=job.phrase:line(line_number).note_columns[column].volume_value or 255
-    end
-    expected_articulation.volumes[line_number]=row
-  end
+  expected_articulation.volumes=volumes
   if job.operations then
     local applied,apply_error=gates.apply_plan(job.phrase,job.operations)
     if not applied then complete(job,apply_error);return end

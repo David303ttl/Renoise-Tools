@@ -9,6 +9,7 @@ $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) ('acid-oracle-' + [
 $mutations = @(
   @{ name = 'missing qualification'; change = { param($o) ($o.cases | Where-Object id -eq 'up_slide').Remove('qualification') }; error = 'explicit qualification blockers' },
   @{ name = 'silence across attack'; change = { param($o) $o.cases[0].expected.silence_windows[0].start_step = 0 }; error = 'silence window overlaps expected onset' },
+  @{ name = 'premature calibration silence'; change = { param($o) ($o.cases | Where-Object id -eq $o.capture_requirements.calibration_case).expected.silence_windows[0].start_step = 0.54 }; error = 'start silence after the release-tail deadline' },
   @{ name = 'invalid TIME'; change = { param($o) $o.cases[0].source.time[0] = 'X' }; error = 'invalid TIME command' },
   @{ name = 'profile mismatch'; change = { param($o) $o.cases[0].profile.id = 'wrong' }; error = 'reference profile mismatch' },
   @{ name = 'missing window coordinate'; change = { param($o) $o.cases[0].expected.pitch_windows[0].Remove('start_step') }; error = 'finite nonnegative number' },
@@ -32,7 +33,7 @@ try {
       $id = "$($definition.name)_bpm_$bpm"
       $case = $authored.cases | Where-Object id -eq $id
       if ($null -eq $case -or $case.capture.bpm -ne $bpm -or
-          $case.status -cne 'planned' -or $case.qualification.protocol_status -cne 'authored' -or
+          $case.status -cnotin @('planned','ready') -or $case.qualification.acoustic_status -cne 'unverified' -or
           @($case.expected.onsets).Count -ne $definition.on.Count -or
           @($case.expected.release_edges).Count -ne $definition.off.Count) {
         throw "$id must retain independently authored attacks, successor OFF edges and unverified status"

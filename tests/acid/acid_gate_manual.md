@@ -8,8 +8,10 @@ Both applications and ignored desktop scripting helpers are present locally;
 application availability does not resolve the existing failed normalized controls.
 
 The [evidence record](audio_capture_evidence.md) remains authoritative. The
-normalized grid failed all 68 silence windows, the retrigger control missed its
-timing limit, and the realized release differs from the nominal 5 ms profile.
+corrected normalized grid failed 67 of 68 silence windows. Gain-compensated
+retrigger analysis measures the authored 250 ms interval with zero onset error,
+but the native controls and attack detector remain unqualified. The 97% held
+capture contains three extra onsets and cannot qualify the realized release.
 Resolve those independent profile/detector controls, then recalibrate before
 interpreting writer output. Keep Repeat gate support refused until its declared
 trigger/profile/tempo matrix has passing acoustic evidence. Keep connected-slide

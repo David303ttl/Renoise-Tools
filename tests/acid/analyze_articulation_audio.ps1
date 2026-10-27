@@ -15,6 +15,8 @@ $oracle = Get-Content -LiteralPath $OraclePath -Raw | ConvertFrom-Json -AsHashta
 if ($oracle.format -cne 'ACID-AUDIO-ORACLE-1') { throw "Unsupported audio oracle format '$($oracle.format)'" }
 $case = @($oracle.cases | Where-Object { $_.id -ceq $CaseId }) | Select-Object -First 1
 if ($null -eq $case) { throw "Unknown audio case '$CaseId'" }
+$analysisFloorSourceDbfs = [double]$case.analysis.onset_floor_dbfs
+$normalizationGainDb = 0.0
 if ($case.ContainsKey('status') -and $case.status -ne 'ready') {
   $unsupported = [ordered]@{ format='ACID-AUDIO-RESULT-1'; case_id=$CaseId; status='unsupported'; issues=@('case is planned and has no qualified analyzer protocol'); audio=@{path=$WavPath} }
   if ($OutputPath) {
@@ -35,6 +37,12 @@ try {
     $provenanceDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $NormalizationProvenancePath).Path
     $originalPath = Join-Path $provenanceDirectory $normalization.source.path
     if ((Get-FileHash -LiteralPath $originalPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $normalization.source.sha256) { throw 'Original WAV SHA-256 differs from normalization provenance' }
+    if ($null -eq $normalization.gain_db -or -not [double]::IsFinite([double]$normalization.gain_db) -or
+        $null -eq $normalization.gain_linear -or -not [double]::IsFinite([double]$normalization.gain_linear) -or
+        [double]$normalization.gain_linear -le 0) { throw 'Normalization provenance has an invalid gain' }
+    $normalizationGainDb = [double]$normalization.gain_db
+    $gainDbFromLinear = 20.0 * [Math]::Log10([double]$normalization.gain_linear)
+    if ([Math]::Abs($gainDbFromLinear - $normalizationGainDb) -gt 0.001) { throw 'Normalization provenance gain fields disagree' }
   }
 } catch {
   $invalid = [ordered]@{
@@ -51,6 +59,10 @@ try {
   if ($Json) { ConvertTo-Json -InputObject $invalid -Depth 30 } else { Write-Error "INVALID: $($_.Exception.Message)" }
   exit 2
 }
+
+$analysisFloorUsedDbfs = $analysisFloorSourceDbfs + $normalizationGainDb
+if ($analysisFloorUsedDbfs -ge 0) { throw 'Gain-compensated onset floor must remain below 0 dBFS' }
+$case.analysis.onset_floor_dbfs = $analysisFloorUsedDbfs
 
 $minimumTailMs = if ($case.capture.minimum_tail_ms) { [double]$case.capture.minimum_tail_ms } else { 500.0 }
 $expectedEndStep = 0.0
@@ -71,7 +83,7 @@ if ($case.expected.release) {
 }
 $onsetWindowMs = if ($case.analysis.onset_window_ms) { [int]$case.analysis.onset_window_ms } else { 10 }
 $onsetRefractoryMs = if ($case.analysis.onset_refractory_ms) { [double]$case.analysis.onset_refractory_ms } else { 40.0 }
-$detectedOnsets = [double[]](Find-AudioOnsets $audio.Left $audio.SampleRate ([double]$case.analysis.onset_floor_dbfs) $onsetWindowMs $onsetRefractoryMs)
+$detectedOnsets = [double[]](Find-AudioOnsets $audio.Left $audio.SampleRate $analysisFloorUsedDbfs $onsetWindowMs $onsetRefractoryMs)
 $firstExpected = @($case.expected.onsets | Sort-Object { [double]$_.at_step } | Select-Object -First 1)
 $originGuess = if ($firstExpected.Count -gt 0 -and $detectedOnsets.Count -gt 0) {
   [double]$detectedOnsets[0] - [double]$firstExpected[0].at_step * $stepMs
@@ -112,6 +124,11 @@ $report = [ordered]@{
   issues=@($result.Issues)
   measurements=$result.Measurements
   audio=$result.Audio
+  analysis=@{
+    onset_floor_dbfs_source=$analysisFloorSourceDbfs
+    onset_floor_dbfs_used=$analysisFloorUsedDbfs
+    normalization_gain_compensation_db=$normalizationGainDb
+  }
   capture=@{ bpm=[double]$case.capture.bpm; song_lpb=[int]$case.capture.song_lpb; tpl=[int]$case.capture.tpl; profile_id=[string]$case.profile.id }
   normalization=$normalization
 }
@@ -126,6 +143,7 @@ if ($Json) {
 } else {
   $peakText = '{0:N2} dBFS' -f $audio.PeakDbfs
   Write-Output ("{0}: {1} — {2} Hz, {3} ch, peak {4}" -f $CaseId,$result.Status.ToUpperInvariant(),$audio.SampleRate,$audio.Channels,$peakText)
+  Write-Output ("  Onset floor: {0:N2} dBFS source, {1:N2} dBFS used (gain compensation {2:N2} dB)" -f $analysisFloorSourceDbfs,$analysisFloorUsedDbfs,$normalizationGainDb)
   foreach ($issue in $result.Issues) { Write-Output "  FAIL: $issue" }
   Write-Output ("  Onsets: {0}; pitch windows: {1}; silence windows: {2}; continuity windows: {3}" -f @($result.Measurements.onsets).Count,@($result.Measurements.pitch_windows).Count,@($result.Measurements.silence_windows).Count,@($result.Measurements.continuity_windows).Count)
   foreach ($kind in 'onsets','pitch_windows','silence_windows','no_attack_windows','continuity_windows') {

@@ -78,7 +78,28 @@ assert(verifier.verify(phrase,plan,2))
 assert(verifier.verify(phrase,plan,2,nil,{volumes={[1]={[1]=89,[2]=255}}}))
 assert(not verifier.verify(phrase,plan,2,nil,{volumes={[1]={[1]=90,[2]=255}}}),
   "a changed validated native volume was accepted")
-cells[1].volume_value=nil
+local volumes=assert(require("writers.pattrns_writer").expected_volumes(plan,2,16,2))
+for line=1,16 do cells[line].volume_value=volumes[line][1] end
+assert(cells[1].volume_value==89 and cells[5].volume_value==255)
+assert(cells[3].volume_value==255 and cells[7].volume_value==255)
+assert(verifier.verify(phrase,plan,2,nil,{volumes=volumes}))
+for _,line in ipairs({1,5,9,11}) do
+  local expected=cells[line].volume_value
+  for _,wrong in ipairs({0,64,90,127,128,255}) do
+    if wrong~=expected then
+      cells[line].volume_value=wrong
+      assert(not verifier.verify(phrase,plan,2,nil,{volumes=volumes}),
+        "incorrect native accent volume accepted")
+    end
+  end
+  cells[line].volume_value=expected
+end
+extra_cells[1].volume_value=89
+assert(not verifier.verify(phrase,plan,2,nil,{volumes=volumes}))
+extra_cells[1].volume_value=255
+cells[2].volume_value=89
+assert(not verifier.verify(phrase,plan,2,nil,{volumes=volumes}))
+cells[2].volume_value=255
 phrase.number_of_lines=15
 assert(not verifier.verify(phrase,plan,2))
 print("ACID native phrase content validation passed")

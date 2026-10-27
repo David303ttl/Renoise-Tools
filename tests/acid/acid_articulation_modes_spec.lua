@@ -4,7 +4,7 @@ local art=require("model.articulation")
 local seq=require("model.sequencer")
 local p=seq.new_pattern(8,"extended")
 p.pitch_length=4
-p.pitch_events[1]={note=36,slide=true};p.pitch_events[2]={note=43}
+p.pitch_events[1]={note=36,slide=true};p.pitch_events[2]={note=39}
 p.pitch_events[3]={note=39};p.pitch_events[4]={note=41}
 p.time_events={"N","T","N","R","N","N","T","R"}
 local plan=assert(engine.compile_cycle(p))
@@ -12,7 +12,7 @@ local commands=assert(art.plan(plan,2,0x20))
 assert(#commands==2 and commands[1].line==5 and commands[2].line==6)
 local cells={}
 for i=1,16 do cells[i]={note_value=121,effect_number_value=0,effect_amount_value=0} end
-for i,v in pairs({[1]=36,[5]=43,[7]=120,[9]=39,[11]=41,[15]=120}) do
+for i,v in pairs({[1]=36,[5]=39,[7]=120,[9]=39,[11]=41,[15]=120}) do
  cells[i].note_value=v
 end
 local phrase={number_of_lines=16}

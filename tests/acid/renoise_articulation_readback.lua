@@ -12,14 +12,22 @@ for _, instrument in ipairs(song.instruments) do
 end
 assert(probe and #probe.samples == 1, "Create the requested articulation probe first")
 local sample = probe.samples[1]
-local set = probe.sample_modulation_sets[sample.modulation_set_index]
-assert(set, "Diagnostic modulation set is not attached")
+local modulation_index = sample.modulation_set_index
 print("Profile=" .. name .. ", monophonic=" .. tostring(probe.trigger_options.monophonic)
   .. ", native_glide=" .. tostring(probe.trigger_options.monophonic_glide)
   .. ", sample_gain=" .. tostring(sample.volume) .. ", autofade=" .. tostring(sample.autofade)
-  .. ", loop_release=" .. tostring(sample.loop_release))
+  .. ", loop_release=" .. tostring(sample.loop_release)
+  .. ", modulation_set_index=" .. tostring(modulation_index))
+if modulation_index == 0 then
+  print("Flat profile: no sample modulation set is attached; stored envelopes do not shape this sample.")
+  return
+end
+local set = assert(probe.sample_modulation_sets[modulation_index],
+  "Attached sample modulation set is missing")
+print("Attached modulation set=" .. tostring(set.name))
 for index, device in ipairs(set.devices) do
   print("Modulation device " .. tostring(index) .. ": " .. tostring(device.name)
+    .. ", is_active=" .. tostring(device.is_active)
     .. ", fade_amount=" .. tostring(device.fade_amount)
     .. ", tempo_synced=" .. tostring(device.tempo_synced)
     .. ", sustain=" .. tostring(device.sustain_position))

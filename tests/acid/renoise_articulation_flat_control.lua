@@ -14,6 +14,7 @@ assert(#probe.sample_modulation_sets >= 1
   and probe.sample_modulation_sets[1].name == "ACID diagnostic volume envelope",
   "Probe diagnostic envelope is missing")
 
+probe.samples[1].sample_mapping.map_velocity_to_volume = false
 probe.samples[1].modulation_set_index = 0
 assert(probe.samples[1].modulation_set_index == 0, "Could not bypass the diagnostic envelope")
 print("Flat control enabled: the probe sample has no modulation set attached.")

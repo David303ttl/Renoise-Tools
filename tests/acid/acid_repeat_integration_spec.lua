@@ -25,6 +25,10 @@ function script:render_to_pattern(options,callback)
   local phrase=instrument.phrases[#instrument.phrases]
   local total_steps,notes,offs=0,0,0
   for token in (values..','):gmatch('(.-),') do
+    local volume=tonumber(token:match('volume = ([%d.]+)'))
+    if volume then
+      phrase.cells[(total_steps-1)*2+1].volume_value=volume==1 and 255 or 89
+    end
     local note=token:match('key = (%d+)')
     if note then
       total_steps=total_steps+1;notes=notes+1

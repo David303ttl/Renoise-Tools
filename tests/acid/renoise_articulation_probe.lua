@@ -65,7 +65,7 @@ local function make_phrase(name, steps, notes, looping, loop_start, loop_end)
       cell.effect_number_string = event.effect
       cell.effect_amount_value = event.amount
     end
-    if event.stop_glide then
+    if event.continue_glide then
       local cell = phrase:line(event.step * 2 + 2).note_columns[1]
       cell.effect_number_string = "0G"
       cell.effect_amount_value = 0
@@ -80,14 +80,30 @@ local function configure_envelope(modulation_set)
   local envelope = modulation_set:insert_device_at(
     path, renoise.SampleModulationDevice.TARGET_VOLUME, 1)
   assert(envelope.tempo_sync_switching_allowed,
-    "Volume envelope cannot use the documented millisecond time base")
+    "Volume envelope cannot switch to the millisecond time base")
   envelope.operator = renoise.SampleModulationDevice.OPERATOR_MUL
   envelope.bipolar = false
-  envelope.tempo_synced = true
+  -- Renoise 3.5.4 uses false for milliseconds, contrary to the API 6.2 prose.
+  -- Set the mode before times: switching modes rescales existing points.
+  envelope.tempo_synced = false
   envelope.play_mode = renoise.SampleEnvelopeModulationDevice.PLAYMODE_LINES
   envelope.loop_mode = renoise.SampleEnvelopeModulationDevice.LOOP_MODE_OFF
   envelope.sustain_enabled = true
   envelope.sustain_position = 31
+  local fade_parameter
+  for _, parameter in ipairs(envelope.parameters) do
+    if math.abs(parameter.value - envelope.fade_amount) < 0.001 then
+      assert(not fade_parameter, "Volume envelope fade parameter is ambiguous")
+      fade_parameter = parameter
+    end
+  end
+  assert(fade_parameter, "Could not find the volume envelope fade parameter")
+  local fade_amount = rawget(_G, "ACID_ARTICULATION_FADE_AMOUNT")
+  if fade_amount == nil then fade_amount = fade_parameter.value_max end
+  assert(type(fade_amount) == "number"
+    and fade_amount >= fade_parameter.value_min and fade_amount <= fade_parameter.value_max,
+    "Volume envelope fade amount is outside the runtime parameter range")
+  envelope.fade_amount = fade_amount
   envelope.length = 37
   envelope:clear_points()
   local expected_points = {
@@ -103,11 +119,13 @@ local function configure_envelope(modulation_set)
   for _, point in ipairs(envelope.points) do
     if not desired_points[point.time] then envelope:remove_point_at(point.time) end
   end
-  assert(envelope.tempo_synced, "Volume envelope millisecond mode did not stick")
+  assert(not envelope.tempo_synced, "Volume envelope millisecond mode did not stick")
   assert(envelope.operator == renoise.SampleModulationDevice.OPERATOR_MUL
     and not envelope.bipolar, "Volume envelope operator or polarity did not stick")
   assert(envelope.sustain_position == 31 and envelope.sustain_enabled,
     "Volume envelope sustain settings did not stick")
+  assert(math.abs(envelope.fade_amount - fade_amount) < 0.001,
+    "Volume envelope fade amount did not read back as requested")
   assert(envelope.length == 37, "Volume envelope length did not read back as 37 ms")
   assert(#envelope.points == 6,
     "Volume envelope point count did not read back as expected: " .. tostring(#envelope.points))
@@ -244,7 +262,7 @@ local ok, err = pcall(function()
   for _, rate in ipairs({ 0x08, 0x20, 0x40 }) do
     local glide = make_phrase(string.format("0G%02X candidate 48 to 55", rate), 8, {
       { step = 0, note = 48 },
-      { step = 2, note = 55, effect = "0G", amount = rate, stop_glide = true },
+      { step = 2, note = 55, effect = "0G", amount = rate, continue_glide = true },
     }, false)
     set_off(glide, 11)
   end
@@ -256,8 +274,10 @@ local ok, err = pcall(function()
 
   print("Created the ACID articulation probe instrument and seven phrases.")
   print("Profile: 44.1 kHz, 168-frame forward-loop saw, root 48, amplitude 0.35, linear interpolation, NNA Cut.")
-  print("Envelope read-back: tempo-synced milliseconds=" .. tostring(envelope.tempo_synced)
+  print("Envelope read-back: tempo_synced=" .. tostring(envelope.tempo_synced)
+    .. ", time_base=milliseconds"
     .. ", points=" .. tostring(#envelope.points) .. ", sustain=" .. tostring(envelope.sustain_position)
+    .. ", fade_amount=" .. tostring(envelope.fade_amount)
     .. ", operator=MUL, bipolar=" .. tostring(envelope.bipolar))
   print("Transport initialized: BPM=" .. tostring(song.transport.bpm)
     .. ", LPB=" .. tostring(song.transport.lpb) .. ", TPL=" .. tostring(song.transport.tpl))

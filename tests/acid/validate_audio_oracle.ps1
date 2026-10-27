@@ -12,6 +12,11 @@ $captureSampleRate = [int]$oracle.capture_requirements.sample_rate
 if ($captureSampleRate -le 0) { throw 'Audio oracle capture rate must be positive' }
 if ([string]::IsNullOrWhiteSpace([string]$oracle.profile.id)) { throw 'Reference profile ID is required' }
 if ([double]$oracle.profile.sample_fundamental_hz -le 0) { throw 'Reference fundamental must be positive' }
+if ($null -eq $oracle.analysis_defaults.release_tail_tolerance_ms -or
+    -not [double]::IsFinite([double]$oracle.analysis_defaults.release_tail_tolerance_ms) -or
+    [double]$oracle.analysis_defaults.release_tail_tolerance_ms -lt 0) {
+  throw 'Release-tail tolerance must be a finite nonnegative value'
+}
 if ([double]$oracle.profile.envelope.attack_ms -le 0 -or
     [double]$oracle.profile.envelope.decay_ms -le 0 -or
     [double]$oracle.profile.envelope.release_ms -le 0 -or
@@ -129,16 +134,20 @@ foreach ($case in $oracle.cases) {
     if ($case.source.reference_fixture -notlike 'tests/acid/fixtures/loop_cases.json#*') { throw 'Calibration must cite a semantic loop fixture' }
     if (@($case.expected.silence_windows).Count -ne $calibrationCount) { throw 'Calibration needs one gated silence window per onset' }
     if ([double]$case.playback.calibration_marker_gate_fraction -ne 0.5) { throw 'Calibration marker gate must be one half-step' }
+    $stepMs = 60000.0 / ([double]$case.capture.bpm * 4.0)
+    $releaseTailMs = [double]$oracle.profile.envelope.release_ms + [double]$oracle.analysis_defaults.release_tail_tolerance_ms
     for ($index = 0; $index -lt $calibrationCount; $index++) {
       $onset = $case.expected.onsets[$index]
       $pitch = $case.expected.pitch_windows[$index]
       $silence = $case.expected.silence_windows[$index]
       $expectedNote = 36 + (($index % 17) % 16)
+      $expectedSilenceStart = $index + [double]$case.playback.calibration_marker_gate_fraction + $releaseTailMs / $stepMs
       if ([double]$onset.at_step -ne $index -or [int]$onset.note -ne $expectedNote -or
           [int]$pitch.note -ne $expectedNote -or [double]$pitch.start_step -lt $index -or
           [double]$pitch.end_step -gt ($index + 0.5) -or
-          [double]$silence.start_step -lt ($index + 0.5) -or [double]$silence.end_step -gt ($index + 1)) {
-        throw "Calibration event $index must preserve the 17-step pitch wrap and half-step marker gate"
+          [Math]::Abs([double]$silence.start_step - $expectedSilenceStart) -gt 0.000001 -or
+          [double]$silence.end_step -gt ($index + 1)) {
+        throw "Calibration event $index must preserve the half-step marker gate and start silence after the release-tail deadline"
       }
     }
   }

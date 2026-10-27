@@ -23,6 +23,7 @@ function script:render_to_pattern(opts, cb)
   local notes = {[1]=first_note,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
   for i=1,16 do
     target.cells[i].note_value = notes[i] or 121
+    target.cells[i].volume_value = i==5 and 255 or (notes[i] and notes[i]<120 and 89 or 255)
   end
   cb(nil, 8, 0)
 end

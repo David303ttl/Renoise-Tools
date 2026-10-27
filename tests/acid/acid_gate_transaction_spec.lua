@@ -15,6 +15,7 @@ end
 local idle,committed=observable(),observable()
 local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}}}
 local contaminate=false
+local wrong_volume=nil
 local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed}
 function script:commit() committed:fire() end
 function script:render_to_pattern(_,callback)
@@ -22,6 +23,10 @@ function script:render_to_pattern(_,callback)
   local values=assert(self.paragraphs[1]:match('local values = { (.-) }\nreturn pattern'))
   local step,count=0,0
   for token in (values..','):gmatch('(.-),') do
+    local volume=tonumber(token:match('volume = ([%d.]+)'))
+    if volume then
+      phrase.cells[(step-1)*2+1].volume_value=volume==1 and 255 or 89
+    end
     local note=tonumber(token:match('key = (%d+)'))
     if note or token:find('"off"',1,true) or token:match('^%s*false%s*$') then
       step=step+1
@@ -32,6 +37,7 @@ function script:render_to_pattern(_,callback)
     end
   end
   if contaminate then phrase.cells[2].delay_value=1 end
+  if wrong_volume then phrase.cells[1].volume_value=wrong_volume end
   callback(nil,count,0)
   return true
 end
@@ -104,6 +110,17 @@ generate(pattern)
 assert(status:find('FAILED',1,true),status)
 assert(song.tool_data==raw and target.name==name and #instrument.phrases==1)
 contaminate=false
+-- A renderer that preserves notes but loses or changes accent levels must never
+-- replace the sealed destination or its persisted source.
+for _,volume in ipairs({0,90,128,255}) do
+  wrong_volume=volume
+  generate(pattern)
+  assert(status:find('Phrase volume mismatch',1,true),status)
+  assert(song.tool_data==raw and target.name==name and #instrument.phrases==1)
+  assert(rawequal(instrument.phrases[1],target) and ownership.status(target)=='owned')
+  assert(target.cells[1].note_value==48 and target.cells[1].volume_value==89)
+end
+wrong_volume=nil
 generate(pattern)
 assert(status:find('generated',1,true),status)
 assert(target.cells[1].note_value==50 and target.cells[2].note_value==120)
@@ -112,4 +129,19 @@ assert(target.cells[6].note_value==120)
 local restored,mode=assert(store.load(song,target))
 assert(mode=='retrigger' and restored.time_events[2]=='N' and restored.pitch_events[1].note==50)
 assert(ownership.status(target)=='owned')
+-- Unity accent uses pattrns' empty/full-volume sentinel, not explicit 0x80.
+raw,name=song.tool_data,target.name
+pattern.pitch_events[1].accent=true
+for _,volume in ipairs({0,89,128}) do
+  wrong_volume=volume
+  generate(pattern)
+  assert(status:find('Phrase volume mismatch',1,true),status)
+  assert(song.tool_data==raw and target.name==name and #instrument.phrases==1)
+  assert(target.cells[1].volume_value==89 and ownership.status(target)=='owned')
+end
+wrong_volume=nil
+generate(pattern)
+assert(status:find('generated',1,true),status)
+assert(target.cells[1].volume_value==255 and target.cells[3].volume_value==89)
+assert(store.load(song,target).pitch_events[1].accent)
 print('ACID one-shot gate generation, regeneration and transaction rollback passed (mocked Renoise)')

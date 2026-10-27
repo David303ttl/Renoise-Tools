@@ -195,7 +195,8 @@ function Find-AudioOnsets(
         for ($forward = $index + 1; $forward -le $last; $forward++) {
           if ($values[$forward] -ge $trough * 1.4 -and $values[$forward] -ge $floor) { $rise = $true; break }
         }
-        if ($trough -le $baseline * 0.75 -and $rise) { $candidate = $true }
+        # Require a paired envelope dip/recovery; overlapping RMS windows soften native resets.
+        if ($trough -le $baseline * 0.85 -and $rise) { $candidate = $true }
       }
     }
     if ($candidate) {
@@ -460,9 +461,9 @@ function Measure-ArticulationCase($Audio, $Case) {
     }
   }
 
-  $releaseExpectation = if ($Case.expected.ContainsKey('release')) { $Case.expected.release } else { $null }
-  if ($releaseExpectation) {
-    $release = $releaseExpectation
+  $releaseExpectations = if ($Case.expected.ContainsKey('release_edges')) { @($Case.expected.release_edges) } elseif ($Case.expected.ContainsKey('release')) { @($Case.expected.release) } else { @() }
+  $releaseMeasurements = [System.Collections.Generic.List[object]]::new()
+  foreach ($release in $releaseExpectations) {
     $offMs = $origin + (Get-WindowMs $release.off_at_step $stepMs)
     $baselineRms = Get-SampleRms $samples $Audio.SampleRate ($offMs - 45.0) ($offMs - 10.0)
     $baselineDb = ConvertTo-Db $baselineRms
@@ -494,7 +495,12 @@ function Measure-ArticulationCase($Audio, $Case) {
     $releaseError = if ($null -eq $crossingMs) { $null } else { [double]$crossingMs - $offMs }
     $releasePassed = $baselineAudible -and $null -ne $crossingMs -and $releaseError -ge -5.0 -and $releaseError -le [double]$release.maximum_tail_ms
     if (-not $releasePassed) { $issues.Add(('release did not reach the declared silence threshold within {0:N1} ms of OFF' -f $release.maximum_tail_ms)) }
-    $measurements.release = @{ off_at_ms=[Math]::Round($offMs,3); pre_off_sustain_dbfs=[Math]::Round($baselineDb,2); minimum_pre_off_sustain_dbfs=[Math]::Round($minimumPreOffDb,2); minimum_pre_off_dbfs=[Math]::Round($minimumSustainDb,2); silence_threshold_dbfs=[Math]::Round($thresholdDb,2); confirmation_ms=$confirmationMs; threshold_crossing_ms=if ($null -eq $crossingMs) {$null} else {[Math]::Round($crossingMs,3)}; tail_ms=if ($null -eq $releaseError) {$null} else {[Math]::Round($releaseError,3)}; passed=$releasePassed }
+    $releaseMeasurement = @{ off_at_ms=[Math]::Round($offMs,3); pre_off_sustain_dbfs=[Math]::Round($baselineDb,2); minimum_pre_off_sustain_dbfs=[Math]::Round($minimumPreOffDb,2); minimum_pre_off_dbfs=[Math]::Round($minimumSustainDb,2); silence_threshold_dbfs=[Math]::Round($thresholdDb,2); confirmation_ms=$confirmationMs; threshold_crossing_ms=if ($null -eq $crossingMs) {$null} else {[Math]::Round($crossingMs,3)}; tail_ms=if ($null -eq $releaseError) {$null} else {[Math]::Round($releaseError,3)}; passed=$releasePassed }
+    $releaseMeasurements.Add($releaseMeasurement)
+  }
+  if ($releaseMeasurements.Count -gt 0) {
+    $measurements.release_edges = @($releaseMeasurements)
+    $measurements.release = $releaseMeasurements[$releaseMeasurements.Count - 1]
   }
 
   return [pscustomobject]@{

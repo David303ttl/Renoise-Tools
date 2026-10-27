@@ -77,4 +77,16 @@ local invalid=sequencer.new_pattern(3,'extended')
 invalid.pitch_length=1
 invalid.time_events={'T','N','N'}
 assert(not emitter.generate(invalid))
+local volumes=assert(emitter.expected_volumes(sample,2,17,2))
+assert(volumes[1][1]==89 and volumes[5][1]==255)
+assert(volumes[3][1]==255 and volumes[7][1]==255)
+assert(volumes[17][1]==255 and volumes[1][2]==255)
+local custom_volumes=assert(emitter.expected_volumes(sample,2,16,1,
+  {normal_volume=0.4,accent_volume=0.9}))
+assert(custom_volumes[1][1]==51 and custom_volumes[5][1]==115)
+local extremes=assert(emitter.expected_volumes(sample,2,16,1,
+  {normal_volume=0,accent_volume=0.5}))
+assert(extremes[1][1]==0 and extremes[5][1]==64)
+assert(not emitter.expected_volumes(sample,2,15,1))
+assert(not emitter.expected_volumes(sample,2,16,1,{normal_volume=2}))
 print('ACID pattrns script emitter checks passed')

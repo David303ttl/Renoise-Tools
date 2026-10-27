@@ -14,6 +14,7 @@ assert(#probe.sample_modulation_sets >= 1
   and probe.sample_modulation_sets[1].name == "ACID diagnostic volume envelope",
   "Probe diagnostic envelope is missing")
 
+probe.samples[1].sample_mapping.map_velocity_to_volume = false
 probe.samples[1].modulation_set_index = 1
 assert(probe.samples[1].modulation_set_index == 1, "Could not restore the diagnostic envelope")
 print("Probe envelope restored: the diagnostic volume modulation set is attached.")
