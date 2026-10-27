@@ -30,13 +30,18 @@ queues/chains, half/double length shortcuts or recording against the playback
 cursor; those workflows belong to Renoise. Existing Live Edit remains source
 editing followed by guarded phrase regeneration, not a new performance engine.
 
-**Clean WIP cutover:** earlier ACID implementations are development iterations.
-There is no user-base requirement to preserve their behavior or saved formats.
-Replace superseded source schemas, interpreters and ownership seals directly;
-add no backward compatibility, migration shims, importers or historical behavior
-modes. Retain Extended musical functions. Test patterns from earlier iterations
-may be recreated. Ownership checks, write preflight and rollback continue to
-protect current-format ACID content and unrelated Renoise song data.
+**Clean WIP cutover:** delete all deprecated audio playback modes (`baseline`,
+`retrigger`, `slide`, `mono`) and their code paths, enum values, selectors,
+configuration, serialized fields, APIs, mode-specific tests and obsolete fixtures.
+No internal aliases, selectable strategies, hidden flags, compatibility branches,
+mode adapters, old-source readers, data migration, import, upgrade or adoption.
+Do not preserve old WIP phrases or source snapshots; generate new ones using the
+single current contract. Preserve the musical **SLIDE** flag and **retrigger**
+semantics as independent NOTE behavior, not named audio modes. General-purpose
+pitch, gate, OFF, and glide math may be implemented afresh or factored into
+capability-aware operators **without retaining deprecated mode identities**.
+Current-format source, ownership checks, write preflight and rollback must still
+protect unrelated Renoise content.
 
 The [design contract](DESIGN.md) defines architecture and unresolved fidelity issues. This file defines **sequence, deliverables, acceptance gates, and verification**. When a historical detail is uncertain, maintain a research/test item; do not convert an assumption into a guarantee.
 
@@ -57,7 +62,7 @@ Implemented on `develop`:
 | --- | --- |
 | Memory | Independent PITCH/TIME model; 64 stored pitch positions initialized to C; LAST STEP 1–64 |
 | Editor | Four 16-step pages, PITCH controls and TIME NOTE/TIE/REST selectors, decoded preview, highlighted selection and diagnostics |
-| Phrasing | Pattrns-based render to regular native instrument phrase; baseline and experimental retrigger/gate/slide modes |
+| Phrasing (M1 implementation snapshot) | Pattrns-based render to regular native instrument phrase; M3.5 replaces the experimental audio-mode selection with one automatic articulation renderer |
 | Destination | Select an existing ACID-owned phrase or append a new phrase to a chosen instrument |
 | Persistence | Original source snapshots via song-scoped `tool_data`, associated with sealed phrase IDs |
 | Protection | Ownership checks, temporary render, guarded replacement and rollback attempts |
@@ -257,7 +262,7 @@ establish TB-303 sound fidelity; M3–M5 requirements remain.
 | Timing | Straight sixteenths only: phrase LPB 8, two lines per step, song TPL 12 for the reference captures. One step is 15000/BPM ms; one line is 7500/BPM ms. No delay-column or tick commands in M3. Reject other output grids rather than round; rational/triplet conversion belongs to M4. |
 | Gate and glide independence | Gate work may proceed if the glide experiment fails. Unsupported slide-connected cases retain precise refusals; no fallback to a fresh attack. Current Repeat glide eligibility is deliberately limited to tested 8/9-step moving layouts and same-pitch layouts under the checked profile and tempo/length matrix below. |
 | Instrument boundary | Runtime generation never changes the user's sample, NNA, modulation, routing or Mono/Glide settings. A measured reference profile is a support prerequisite, not a promise for arbitrary instruments. |
-| Existing modes | Keep Baseline as the structural reference without claiming calibrated gates. Retrigger + Gate implements the gate profile and refuses connected slides it cannot render. Selective Slide + Gate combines verified gate/glide behavior. Do not promote experimental Mono to a distinct verified strategy while it uses the same local effect path. |
+| M3.5 supersession | Remove all experimental mode identities and branching from production source, UI, writer, storage and tests. Preserve musical NOTE retrigger and PITCH-owned SLIDE semantics only. Reference evidence does not imply an internal mode survives the cutover. |
 | Defaults | Repeat remains the new-source default. Do not silently change renderer defaults or persisted settings; enabling a verified path must be explicit and covered by manual and Live Edit tests. |
 
 **Current boundaries:** `writers/phrase_writer.lua` admits exact-profile, selective Repeat cases only. Moving 4-semitone/octave slides are verified for the authored 8/9-step layouts at 90/120/150 BPM; same-pitch Repeat length 16 is verified at all three tempos, while same-pitch lengths 17/32/33/48/49/64 are verified at 120 BPM. Other moving layouts, pitches, intervals, tempos and profiles remain refused before mutation. The full authored Repeat gate matrix passes at 90/120/150 BPM. The read-only diagnostic profile check does not build or alter the user's instrument.
@@ -438,18 +443,20 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 5. Start/Repeating preview remains read-only semantic inspection regardless of output policy. Stop/start/seek, phrase trigger/release and cold-to-steady audio behavior require target-aware acceptance, not calibration-profile admission.
 6. Live Edit regenerates the selected owned phrase when output policy changes without mutating PITCH/TIME; invalid output/host setup leaves last-good phrase and the valid source intact.
 
-**Baseline/Retrigger/Slide removal — automatic synthesis of transitions**
+**Delete obsolete audio modes completely — one semantic articulation pipeline**
 
-1. Delete the main GUI Audio test selector, its calibration help and default selection. Remove positional audio mode arguments from both manual generation and Live Edit.
-2. Derive musical events only from source: NOTE after REST = attack; unconnected NOTE = retrigger; target of outgoing SLIDE = connected transition; TIE = hold; REST = release; ACCENT = pitch-owned expressive intent. Do not require Slide mode or reject slide under Baseline.
-3. Baseline, Retrigger + Gate, Selective Slide + Gate and Mono may survive as internal strategy functions or named development fixtures only. Renderer chooses based on target capabilities and time/command budget; none is user-configured playback semantics.
-4. Where the target cannot implement continuous slide or connected dynamic changes, generate ordered pitches/gates/velocity using the closest safe representation and report a **nonfatal fidelity approximation** with affected steps. Never silently claim slide continuity on a plugin from sample-only 0Gxx commands.
-5. Manual Generate and Live Edit take one unambiguous request: (canonical source, target instrument/phrase, phrase output policy). Strategy and fidelity diagnostics are typed results. No source-owned persisted audio_mode; no mode field passed through source restoration.
+1. **Delete** `baseline`, `retrigger`, `slide` and `mono` **as audio-mode identities**, including Baseline, Retrigger + Gate, Selective Slide + Gate, Mono and any aliases. Remove the main GUI Audio test selector, `mode_values`, `mode_choice`, `REPEAT_HELP`, menu settings, mode-specific status/help text, function arguments, constants and serialized `audio_mode` values.
+2. Delete the mode parameter from `phrase_writer.generate`, `pattern_store.prepare/save/load`, live-regeneration callbacks and render-job records. Remove `AUDIO_MODES` and saved per-phrase mode settings; do not add a default `baseline`, `auto` enum standing in for the deprecated selector, or an adapter for old call sites.
+3. Delete `repeat_preflight(plan,mode,...)` as a mode-whitelist gate, `mode==...` writer branches, `mono` aliasing and mode-selected planning paths. A single semantic compiler always requests gate, release, connected transition and accent; instrument-specific operators then choose feasible Renoise cells by capability and timing. Operators may share algorithms; they must not preserve legacy audio-mode variants or hidden switches.
+4. Derive musical behavior only from source: NOTE after REST = attack; unconnected NOTE = retrigger; target of outgoing SLIDE = connected transition; TIE = hold; REST = release; ACCENT = pitch-owned expressive intent. **Keep** the `slide` PITCH field and NOTE retrigger event semantics; they are musical data, not renderer modes.
+5. Where the target cannot implement continuous slide or connected dynamic changes, generate ordered pitches/gates/velocity using the closest safe representation and report a **nonfatal fidelity approximation** with affected steps. Never silently claim slide continuity on a plugin from sample-only 0Gxx commands.
+6. Remove existing mode-specific unit specs, GUI expectations, audio fixture IDs and snapshot expectations; **replace** them with NOTE/REST/TIE/SLIDE/ACCENT, capability, loop and transaction behavior tests. Keep reusable audio measurement utilities and independently defined expected musical cases, but no test that selects or asserts a deprecated audio mode.
+7. Manual Generate and Live Edit take one unambiguous request: (canonical source, target instrument/phrase, phrase output policy). Planner strategy and fidelity diagnostics are derived typed results, never persisted modes or input flags. New WIP source format contains no audio-mode concept whatsoever.
 
 **Persistence and cutover**
 
-- Version one new current WIP source/seal schema: canonical sequence excludes entry view, source playback switch and renderer mode; phrase-specific output policy is stored separately and safely roundtripped. No historic WIP schema migration or compatibility shim required; recreate old development phrases explicitly.
-- Update **gui.lua**, **model/sequencer.lua**, **model/cycle_interpreter.lua**, **model/editor_state.lua**, **model/pattern_store.lua**, **writers/phrase_writer.lua** and their tests together. Remove unreachable old mode branches, exact-profile mode help and matching refusal messages.
+- Replace the current WIP source/seal schema directly: canonical sequence excludes editor view, source playback switch and any audio-mode field; phrase-specific output policy is stored separately. Do not migrate, import, adopt, default, translate or read superseded snapshots. No backward compatibility or temporary compatibility decoder; discard/recreate old WIP phrases.
+- Update **gui.lua**, **model/sequencer.lua**, **model/cycle_interpreter.lua**, **model/editor_state.lua**, **model/pattern_store.lua**, **writers/phrase_writer.lua** and tests together. Delete old mode selectors/branches/constants, positional mode parameters, mode-owned source fields, mode-dependent refusal messages and mode-specific test fixtures. No dormant code or migration paths.
 - Preserve safe destination ownership, no changes to unrelated content, staging, rollback, source-draft recovery, undo/redo, and atomic phrase/source/output-settings commit.
 
 **Mandatory Gate S acceptance**
@@ -468,7 +475,7 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 | Save/reopen, undo/redo | Canonical source and independent phrase output policy persist; view stays nonsemantic |
 | Fresh pattern | Immediately editable/generatable with C defaults; Reset explicit and undoable |
 
-**Gate S:** no Entry or Audio test choice governs source legality; Playback becomes optional phrase-specific Repeat/Play Once output policy only. No source validity check, renderer selection or writer admission may depend on historical Original/Extended, Baseline/Retrigger/Slide, or a musician choosing Repeat before using SLIDE.
+**Gate S:** no Entry or Audio test choice governs source legality; Playback becomes optional phrase-specific Repeat/Play Once output policy only. No production source, GUI control, writer API, persistence schema, unit/integration test setup, fixture, or code branch retains any of the deprecated audio-mode identities (`baseline`, `retrigger`, `slide`, `mono`). Required musical `slide` flags and retrigger transitions remain valid. There is no migration/legacy/compatibility path and no need to select Repeat or a rendering strategy before entering SLIDE.
 
 ### M3.5.1 — Instrument-agnostic destination and generation
 
@@ -492,7 +499,7 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 - Preserve cold -> steady and steady -> steady Repeat transitions, outgoing SLIDE across the loop seam, same-pitch connected SLIDE, REST interruption, unconnected fresh NOTE attack, TIE holds and end-of-cycle note release policy. Reuse the M3 evidence that a fresh NOTE after glide needs explicit cancellation/OFF on the measured sample path.
 - Support any NOTE accent including connected-slide target and source. Generate a meaningful note velocity/volume instruction; classify an inability to vary a continuously sounding voice as a target-specific sonic limitation, not invalid source.
 - Resolve cell collisions by planning alternatives (resolution/rate, available columns, safe timing placement or explicit approximation). Never drop a required OFF, accidentally retrigger a connected sample voice, write past phrase end or corrupt another column. A true API/resource bound may fail with a step/line diagnostic only after feasible layouts have been tried.
-- Remove musician-facing dependence on the Baseline/Retrigger/Slide implementation-mode selector. The source SLIDE and ACCENT flags determine articulation; internal rendering strategies are automatic. Migrate current WIP mode settings deliberately, with exact save/reopen and no silent source reinterpretation.
+- No deprecated audio-mode implementations, internal enum, strategy aliases or settings survive M3.5-S. Render articulation directly from the NOTE/TIE/REST timeline and PITCH-owned SLIDE/ACCENT. New WIP save/reopen tests use only the replacement schema; old mode values are not loaded, converted or migrated.
 
 **Gate A:** exhaustive legal-source property tests and specified randomized seeds generate phrases without M3 evidence-gate errors; every emitted cell passes validator; target pitches, attacks, RESTs, loop order and stored source match the semantic oracle. Sample audio failures report fidelity limitations independently.
 
@@ -566,7 +573,7 @@ M3.5-S precedes M3.5-A through F and freezes the new source/editor/output/render
 
 | Slice | Content | Merge gate |
 | --- | --- | --- |
-| **M3.5-S** | Entry-view/output-policy/renderer decoupling, one source/schema cutover, removal of three coupled GUI selectors | Gate S and its full test table pass |
+| **M3.5-S** | Program/Grid views, phrase output policy and single semantic renderer; hard delete of all four audio modes, associated code/storage/tests and any compatibility paths | Gate S; no deprecated mode identity or mode-selected generator remains |
 | M3.5-A | Contract/error types, target capability inspection, instrument-agnostic phrase creation, sample gate removal | All target classes generate canonical structural phrases without sample dependency |
 | M3.5-B | Universal semantic timeline, adaptive native operation planner, no reference-profile/layout/tempo admissions | Arbitrary valid sample-target sources compile; safe output or explicit approximation |
 | M3.5-C | Sample articulation and Repeat seam/connected-accent paths, alternative glide rates/line budgets | M3 reference fixtures remain sound; novel layouts/intervals don't block generation |
@@ -575,7 +582,7 @@ M3.5-S precedes M3.5-A through F and freezes the new source/editor/output/render
 | M3.5-F | Cross-product acceptance, save/reopen, GUI, packaging, README/DESIGN updates | All C/I/A/B/L/U gates satisfied, or a precisely documented platform limitation accepted by owner |
 
 **M3.5 complete only when:**
-- Gate S passes: Program/Grid are editor views, Repeat/Play Once is output policy and articulation backend is automatic, without permission or source coupling.
+- Gate S passes: Program/Grid are editor views, Repeat/Play Once is output policy; a single automatic articulation pipeline replaces and **deletes**, rather than wraps or migrates, every deprecated audio mode.
 - Ordinary valid user input and all targeted instrument families regenerate through manual and Live Edit without M3 calibration-profile/layout/tempo refusals.
 - A sample is never a prerequisite for a valid instrument phrase; a plugin-only instrument can be selected, written and heard through its existing plugin route.
 - Every reduced-fidelity articulation commits a musically ordered phrase with explicit warning, and cannot be mistaken for a hardware-faithful slide/accent.
@@ -685,7 +692,7 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 | --- | --- | --- |
 | PITCH/TIME NOTE/TIE/REST consumption | Semantic compiler state/fixtures | Decoded preview versus rendered phrase |
 | Program versus Grid view (M3.5-S) | One source, independent TIME/PITCH bounds, byte-equivalent semantics, view-change purity | Switch views on 32/64-step source with span 3; generated phrase unchanged |
-| Clean WIP cutover | Earlier schemas/seals unsupported; one interpreter and current decoder/verifier | Fresh patterns, save/reopen, explicit reset/recreation of development data |
+| Clean WIP cutover | Deprecated audio-mode symbols, persisted fields, tests, migration/alias paths absent; one semantic pipeline | Fresh patterns save/reopen; old WIP snapshots are rejected without migration and can be recreated |
 | Default C + 64-position storage | Initial state and validation | Fresh-pattern controls and output |
 | LAST STEP and four pages | 1/16/17/32/33/48/49/64 lengths | Boundary edits, no false resets |
 | Repeated phrase loops | At least three semantic cycles | Audible/visual repeats across several cycles |
@@ -743,7 +750,7 @@ For every such decision, supply **reference + decision + test fixture + manual p
 | Priority | Action | Exit criterion |
 | --- | --- | --- |
 | 1 | Finish M3's remaining transport stop/start/seek and Live Edit-during-playback manual checks on its declared diagnostic profile. | Evidence recorded; no broader instrument or audio-fidelity claim. |
-| 2 | Start **M3.5-S** on a dedicated feature branch from the current integrated M3 head. | Gate S: nonsemantic Program/Grid; phrase-specific Repeat/Play Once; no Baseline/Retrigger/Slide mode. |
+| 2 | Start **M3.5-S** on a dedicated feature branch from the current integrated M3 head. | Gate S: Program/Grid and phrase output policy decoupled; deprecated audio modes fully deleted, including internal code, tests and persistence, with no migration. |
 | 3 | Implement **M3.5-A/B/C/D/E/F** with local Lua and Renoise receipts per slice. | No measured-case whitelist blocks normal musical editing; sample/plugin/MIDI and Live Edit acceptance passes. |
 | 4 | Begin M4/M5 only after M3.5's core correctness and instrument-independence gates pass. | No dependence on the discarded evidence-gated runtime policy. |
 
