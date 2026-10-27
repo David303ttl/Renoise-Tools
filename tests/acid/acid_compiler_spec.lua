@@ -1,61 +1,58 @@
 dofile('tests/bootstrap.lua')('acid')
-local sequencer = require("model.sequencer")
-local compiler = require("model.compiler")
+local sequencer = require('model.sequencer')
+local compiler = require('model.cycle_interpreter')
+local pitch = dofile('tests/acid/pitch_fixture.lua')
 
 local function pattern(time, pitches)
   local p = sequencer.new_pattern(#time)
-  p.time_events = time
-  p.pitch_events = pitches
+  p.pitch_length = math.max(#pitches, 1)
+  for step,command in ipairs(time) do p.time_events[step] = command end
+  for i, pitch in ipairs(pitches) do p.pitch_events[i] = pitch end
   return p
 end
 
-local p = pattern({"N", "T", "N", "R", "N"}, {
-  {note=36, slide=true}, {note=39, accent=true}, {note=43}
+local p = pattern({'N', 'T', 'N', 'R', 'N'}, {
+  pitch(36,false,true), pitch(39,true,false), pitch(43)
 })
-local events = assert(compiler.compile(p))
+local events = assert(compiler.compile_cycle(p))
 assert(events.note_count == 3)
-assert(events.steps[1].note == 36 and events.steps[1].transition == "attack")
-assert(events.steps[2].kind == "tie" and events.steps[2].holds)
-assert(events.steps[3].note == 39 and events.steps[3].transition == "slide")
+assert(events.steps[1].note == 36 and events.steps[1].transition == 'attack')
+assert(events.steps[2].kind == 'tie' and events.steps[2].holds)
+assert(events.steps[3].note == 39 and events.steps[3].transition == 'slide')
 assert(events.steps[3].from_note == 36 and events.steps[3].accent)
-assert(events.steps[4].kind == "rest" and events.steps[4].releases)
-assert(events.steps[5].note == 43 and events.steps[5].transition == "attack")
-assert(events.boundary.loop_to_first_note == "retrigger")
+assert(events.steps[4].kind == 'rest' and events.steps[4].releases)
+assert(events.steps[5].note == 43 and events.steps[5].transition == 'attack')
+assert(assert(compiler.plan_loop(p)).steady.steps[1].transition == 'retrigger')
 
-local repeated = assert(compiler.compile(pattern({"N", "R", "N", "T", "N"}, {
-  {note=36}, {note=40}
+local repeated = assert(compiler.compile_cycle(pattern({'N', 'R', 'N', 'T', 'N'}, {
+  pitch(36), pitch(40)
 })))
 assert(repeated.steps[3].note == 40)
 assert(repeated.steps[4].holds and repeated.steps[4].note == 40)
-assert(repeated.steps[5].note == 36 and repeated.steps[5].transition == "retrigger")
+assert(repeated.steps[5].note == 36 and repeated.steps[5].transition == 'retrigger')
 
-local same = assert(compiler.compile(pattern({"N", "N"}, {
-  {note=36, slide=true}, {note=36}
+local same = assert(compiler.compile_cycle(pattern({'N', 'N'}, {
+  pitch(36,false,true), pitch(36)
 })))
-assert(same.steps[2].transition == "slide" and same.steps[2].from_note == 36)
+assert(same.steps[2].transition == 'slide' and same.steps[2].from_note == 36)
 
-local wrap = assert(compiler.compile(pattern({"N", "T", "N"}, {
-  {note=36}, {note=40, slide=true}
+local wrap = assert(compiler.plan_loop(pattern({'N', 'T', 'N'}, {
+  pitch(36), pitch(40,false,true)
 })))
-assert(wrap.boundary.loop_to_first_note == "slide")
-assert(wrap.boundary.end_active and wrap.boundary.end_note == 40)
+assert(wrap.steady.steps[1].transition == 'slide')
+assert(wrap.cold.steps[3].voice.note == 40)
 
-local broken = assert(compiler.compile(pattern({"N", "N", "R"}, {
-  {note=36}, {note=40, slide=true}
+local broken = assert(compiler.plan_loop(pattern({'N', 'N', 'R'}, {
+  pitch(36), pitch(40,false,true)
 })))
-assert(broken.boundary.loop_to_first_note == "attack")
+assert(broken.steady.steps[1].transition == 'attack')
+assert(not compiler.compile_cycle(pattern({'T', 'N'}, {{note=36}})))
 
-local leading = assert(compiler.compile(pattern({"T", "N", "N"}, {
-  {note=36}, {note=40, slide=true}
-})))
-assert(leading.steps[1].holds == false) -- first pass from silence
-assert(leading.boundary.leading_tie_holds_on_loop)
-assert(leading.boundary.loop_to_first_note == "slide")
+local empty = assert(compiler.compile_cycle(pattern({'R', 'R'}, {})))
+assert(empty.note_count == 0)
+local out_of_range=pitch(60)
+out_of_range.note=120
+assert(not compiler.compile_cycle(pattern({'N', 'R'}, {out_of_range})))
+assert(not compiler.compile_cycle({length=3,pitch_events={{note=36}},time_events={'N', 'T'}}))
 
-local empty = assert(compiler.compile(pattern({"R", "R"}, {})))
-assert(empty.note_count == 0 and empty.boundary.loop_to_first_note == nil)
-assert(not compiler.compile(pattern({"N", "R"}, {})))
-assert(not compiler.compile(pattern({"N", "R"}, {{note=120}})))
-assert(not compiler.compile({length=3,pitch_events={{note=36}},time_events={"N", "T"}}))
-
-print("ACID semantic compiler checks passed")
+print('ACID semantic compiler checks passed')

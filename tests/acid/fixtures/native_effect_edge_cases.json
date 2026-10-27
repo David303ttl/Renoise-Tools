@@ -1,0 +1,1442 @@
+{
+  "format": "ACID-AUDIO-ORACLE-1",
+  "status": "Independent native 0G rate, REST-interruption, and post-glide NOTE protocols. Ready means the windows are authored; native playback is unverified.",
+  "index_base": 0,
+  "step_unit": "one straight TIME sixteenth; 1 step = 2 phrase lines at phrase LPB 8",
+  "capture_requirements": {
+    "allowed_pcm_bits": [
+      16,
+      24,
+      32
+    ],
+    "allowed_channels": [
+      1,
+      2
+    ],
+    "calibration_case": "grid_calibration_all_note_pitch_span_16",
+    "no_per_cycle_realign": true,
+    "sample_rate": 48000,
+    "preferred_pcm_bits": 24,
+    "align_once_to_first_onset": true,
+    "peak_ceiling_dbfs": -6,
+    "preferred_channels": 1
+  },
+  "profile": {
+    "id": "acid-reference-168-frame-saw",
+    "root_note": 48,
+    "sample_fundamental_hz": 262.5,
+    "envelope": {
+      "sustain": 0.65,
+      "decay_ms": 20,
+      "release_ms": 5,
+      "attack_ms": 10
+    },
+    "sample_frames": 168,
+    "sample_rate": 44100
+  },
+  "analysis_defaults": {
+    "release_tail_tolerance_ms": 5,
+    "onset_tolerance_ms": 5,
+    "pitch_tolerance_cents": 15,
+    "silence_rms_dbfs": -60
+  },
+  "sweep_model": "Four-semitone coverage prediction: ceil(4*16/effect-amount) command lines, each 7500/BPM ms at LPB8/TPL12; two phrase lines per straight step. Compare native 0G08/20/40 at 90 and 150 BPM. This is a protocol prediction based on the existing independent native control, not a runtime support claim.",
+  "cases": [
+    {
+      "id": "native_0g08_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 8,
+        "length": 12,
+        "glide_target_step": 6.0,
+        "command_lines_to_target": 8.0,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "glide_start_step": 2.0,
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G08 RATE SWEEP",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 90,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 12,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rate-sweep",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE at phrase start; NOTE 48 at step 0, then NOTE 52 with 0G08 at step 2; host OFF at step 12.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 6.55,
+            "start_step": 6.3
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "glide_window": {
+          "rate": 8,
+          "start_step": 2.0,
+          "interpretation": "native 0G rate against four-semitone target; duration is the declared rate prediction, not a runtime support claim",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 6.0,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.07200000000000001,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 12.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 12
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 6.3
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 12.08,
+            "end_step": 12.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g20_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 32,
+        "length": 12,
+        "glide_target_step": 3.0,
+        "command_lines_to_target": 2.0,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "glide_start_step": 2.0,
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G20 RATE SWEEP",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 90,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 12,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rate-sweep",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE at phrase start; NOTE 48 at step 0, then NOTE 52 with 0G20 at step 2; host OFF at step 12.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 3.55,
+            "start_step": 3.3
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "glide_window": {
+          "rate": 32,
+          "start_step": 2.0,
+          "interpretation": "native 0G rate against four-semitone target; duration is the declared rate prediction, not a runtime support claim",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 3.0,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 12.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 12
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 3.3
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 12.08,
+            "end_step": 12.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g40_bpm_90",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 64,
+        "length": 12,
+        "glide_target_step": 2.5,
+        "command_lines_to_target": 1.0,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "glide_start_step": 2.0,
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G40 RATE SWEEP",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 90,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 12,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rate-sweep",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE at phrase start; NOTE 48 at step 0, then NOTE 52 with 0G40 at step 2; host OFF at step 12.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 3.05,
+            "start_step": 2.8
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "glide_window": {
+          "rate": 64,
+          "start_step": 2.0,
+          "interpretation": "native 0G rate against four-semitone target; duration is the declared rate prediction, not a runtime support claim",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 2.5,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 12.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 12
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 2.8
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 12.08,
+            "end_step": 12.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g08_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 8,
+        "length": 12,
+        "glide_target_step": 6.0,
+        "command_lines_to_target": 8.0,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "glide_start_step": 2.0,
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G08 RATE SWEEP",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 150,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 12,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rate-sweep",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE at phrase start; NOTE 48 at step 0, then NOTE 52 with 0G08 at step 2; host OFF at step 12.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 6.7,
+            "start_step": 6.3
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "glide_window": {
+          "rate": 8,
+          "start_step": 2.0,
+          "interpretation": "native 0G rate against four-semitone target; duration is the declared rate prediction, not a runtime support claim",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 6.0,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.07200000000000001,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 12.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 12
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 6.3
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 12.08,
+            "end_step": 12.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g20_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 32,
+        "length": 12,
+        "glide_target_step": 3.0,
+        "command_lines_to_target": 2.0,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "glide_start_step": 2.0,
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G20 RATE SWEEP",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 150,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 12,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rate-sweep",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE at phrase start; NOTE 48 at step 0, then NOTE 52 with 0G20 at step 2; host OFF at step 12.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 3.6999999999999997,
+            "start_step": 3.3
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "glide_window": {
+          "rate": 32,
+          "start_step": 2.0,
+          "interpretation": "native 0G rate against four-semitone target; duration is the declared rate prediction, not a runtime support claim",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 3.0,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 12.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 12
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 3.3
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 12.08,
+            "end_step": 12.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g40_bpm_150",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 64,
+        "length": 12,
+        "glide_target_step": 2.5,
+        "command_lines_to_target": 1.0,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "glide_start_step": 2.0,
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G40 RATE SWEEP",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 150,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 12,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rate-sweep",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE at phrase start; NOTE 48 at step 0, then NOTE 52 with 0G40 at step 2; host OFF at step 12.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 3.1999999999999997,
+            "start_step": 2.8
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "glide_window": {
+          "rate": 64,
+          "start_step": 2.0,
+          "interpretation": "native 0G rate against four-semitone target; duration is the declared rate prediction, not a runtime support claim",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 2.5,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 12.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 12
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 2.8
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 12.08,
+            "end_step": 12.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g08_rest_cancels_glide",
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 8,
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G08 REST CANCEL",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 120,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 8,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-effect-rest-cancellation",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE; NOTE 48 at step 0, NOTE 52 with 0G08 at step 1, REST/NOTE OFF at step 2; no later NOTE.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "glide_window": {
+          "rate": 8,
+          "start_step": 1,
+          "interpretation": "partial 0G08 trajectory before REST interrupts the moving connection",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 2,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 2.2,
+          "maximum_tail_ms": 10,
+          "off_at_step": 2
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.2,
+            "end_step": 7.8
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g08_fresh_note_after_glide",
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "N",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 8,
+        "length": 8,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G08 FRESH NOTE",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 120,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 8,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-unflagged-note-after-glide",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE; NOTE 48 at step 0, NOTE 52 with 0G08 at step 1, then unflagged NOTE 48 at step 6.",
+      "expected": {
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 5.65,
+            "start_step": 5.25
+          },
+          {
+            "note": 48,
+            "end_step": 6.65,
+            "start_step": 6.25
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "glide_window": {
+          "rate": 8,
+          "start_step": 1,
+          "interpretation": "complete 0G08 connection followed by a distinct unflagged NOTE attack",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 5,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "release": {
+          "silence_starts_at_step": 8.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 8
+        },
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 5.3
+        },
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          },
+          {
+            "note": 48,
+            "at_step": 6,
+            "tolerance_ms": 5
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 8.08,
+            "end_step": 8.4
+          }
+        ]
+      }
+    },
+    {
+      "id": "native_0g08_gated_fresh_note_after_glide",
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "T",
+          "T",
+          "T",
+          "R",
+          "N",
+          "T"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          52
+        ],
+        "glide_rate": 8,
+        "length": 8,
+        "note_off_step": 5.5,
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "accent_pitch_indices": []
+      },
+      "phrase": "ACID 0G08 GATED FRESH NOTE",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 120,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 8,
+        "renderer": "native-probe",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "native-glide-note-off-cancellation-and-fresh-note",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "One host NOTE; NOTE 48 step 0, NOTE 52 with 0G08 step 1, explicit NOTE OFF at phrase line 12 / step 5.5 with no effect, then unflagged NOTE 48 step 6.",
+      "expected": {
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release": {
+          "silence_starts_at_step": 8.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 8
+        },
+        "silence_windows": [
+          {
+            "start_step": 5.7,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 8.08,
+            "end_step": 8.4
+          }
+        ],
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 5.1
+        },
+        "release_edges": [
+          {
+            "silence_starts_at_step": 5.7,
+            "maximum_tail_ms": 10,
+            "off_at_step": 5.5
+          }
+        ],
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          },
+          {
+            "note": 48,
+            "at_step": 6,
+            "tolerance_ms": 5
+          }
+        ],
+        "glide_window": {
+          "rate": 8,
+          "start_step": 1,
+          "interpretation": "complete 0G08 connection released by explicit NOTE OFF before an unflagged fresh NOTE",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 5,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 5.42,
+            "start_step": 5.1
+          },
+          {
+            "note": 48,
+            "end_step": 6.65,
+            "start_step": 6.25
+          }
+        ]
+      }
+    },
+    {
+      "id": "writer_0g20_rest_gated_fresh_note",
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "N",
+          "T",
+          "R"
+        ],
+        "pitch_length": 3,
+        "pitches": [
+          48,
+          52,
+          48
+        ],
+        "length": 7,
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": []
+      },
+      "phrase": "Actual ACID writer: NOTE/TIE/NOTE/TIE/NOTE/TIE/REST; one connected 0G20 glide, gated fresh NOTE",
+      "capture": {
+        "sample_format": "PCM24",
+        "tpl": 12,
+        "bpm": 120,
+        "minimum_tail_ms": 500,
+        "channels": "mono-or-dual-mono-stereo",
+        "song_lpb": 8,
+        "sample_rate": 48000
+      },
+      "analysis": {
+        "onset_refractory_ms": 90,
+        "silence_dbfs": -60,
+        "pitch_tolerance_cents": 15,
+        "onset_tolerance_ms": 5,
+        "maximum_continuity_dip_db": 6,
+        "maximum_continuity_dip_ms": 4,
+        "onset_floor_dbfs": -60,
+        "minimum_pitch_window_ms": 40
+      },
+      "playback": {
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "looping": false,
+        "note_off_step": 8,
+        "renderer": "acid-writer",
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "phrase_lpb": 8
+      },
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5,
+        "sample_frames": 168,
+        "sample_rate": 44100
+      },
+      "purpose": "actual-writer-rest-cancels-glide-before-fresh-note",
+      "status": "ready",
+      "qualification": {
+        "protocol_status": "ready",
+        "acoustic_status": "unverified",
+        "blockers": [
+          "Capture three unchanged native renders at the declared tempo before accepting this protocol."
+        ]
+      },
+      "trigger": "Generate with the ACID phrase writer in slide mode. One host NOTE at step 0 and host OFF at step 8. Source NOTE/TIE/NOTE/TIE/NOTE/TIE/REST has pitches 48,52,48; pitch 1 has outgoing slide. The first NOTE is gated off at step 3.5 before the unflagged NOTE at step 4; REST releases the last NOTE at step 6.",
+      "expected": {
+        "settled_window": {
+          "duration_ms": 40,
+          "note": 52,
+          "start_step": 3.15
+        },
+        "pitch_windows": [
+          {
+            "note": 48,
+            "end_step": 0.65,
+            "start_step": 0.25
+          },
+          {
+            "note": 52,
+            "end_step": 3.47,
+            "start_step": 3.15
+          },
+          {
+            "note": 48,
+            "end_step": 4.65,
+            "start_step": 4.25
+          }
+        ],
+        "onsets": [
+          {
+            "note": 48,
+            "at_step": 0,
+            "tolerance_ms": 5
+          },
+          {
+            "note": 48,
+            "at_step": 4,
+            "tolerance_ms": 5
+          }
+        ],
+        "glide_window": {
+          "rate": 32,
+          "start_step": 2,
+          "interpretation": "ACID writer fixed 0G20 connected NOTE transition before the gated fresh NOTE",
+          "to_note": 52,
+          "maximum_intermediate_progress": 0.95,
+          "end_step": 3,
+          "analysis_window_steps": 0.24,
+          "minimum_intermediate_progress": 0.05,
+          "minimum_progress_delta": 0.08,
+          "from_note": 48
+        },
+        "silence_windows": [
+          {
+            "start_step": 3.58,
+            "end_step": 3.9
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.4
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "continuity_windows": [
+          {
+            "baseline_start_step": 1.3,
+            "end_step": 2.16,
+            "baseline_end_step": 1.7,
+            "start_step": 1.84
+          }
+        ],
+        "release": {
+          "silence_starts_at_step": 6.08,
+          "maximum_tail_ms": 10,
+          "off_at_step": 6
+        },
+        "release_edges": [
+          {
+            "silence_starts_at_step": 3.58,
+            "maximum_tail_ms": 10,
+            "off_at_step": 3.5
+          },
+          {
+            "silence_starts_at_step": 6.08,
+            "maximum_tail_ms": 10,
+            "off_at_step": 6
+          }
+        ]
+      }
+    }
+  ]
+}

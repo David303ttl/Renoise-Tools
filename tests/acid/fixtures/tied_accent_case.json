@@ -1,0 +1,17 @@
+{
+  "format": "ACID-TIED-ACCENT-ORACLE-1",
+  "cases": [
+    {
+      "id": "writer_tied_accent",
+      "playback": { "renderer": "acid-writer", "trigger_mode": "selective", "looping": false },
+      "source": {
+        "time": [ "N", "T", "N", "T", "N", "T", "R" ],
+        "pitch_length": 3,
+        "pitches": [ 48, 48, 48 ],
+        "slide_pitch_indices": [],
+        "accent_pitch_indices": [ 2 ],
+        "length": 7
+      }
+    }
+  ]
+}

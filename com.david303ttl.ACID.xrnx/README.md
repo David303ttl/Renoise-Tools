@@ -1,143 +1,88 @@
 # ACID.xrnx
 
-Renoise 3.5+ ACID sequencer, **version 0.1 (unfinished)**.
+ACID is an experimental Renoise 3.5 / scripting API 6.2 phrase sequencer. It
+edits independent PITCH and TIME memories and renders a native instrument
+phrase. Renoise supplies the sound generator, transport and arrangement. The
+manifest remains at version 0.1.
 
-The tool opens from **Tools > ACID...** or the Pattern Editor context menu.
-The dialog now has **Generate / Regenerate ACID Phrase** for native-sample
-instruments. Initial creation requires no existing phrases. Later generation
-may safely replace the single unmodified ACID-owned phrase, while refusing
-foreign or manually edited phrases. An old unmarked `ACID 0.1 TEST` phrase
-requires explicit one-time adoption. No song pattern tracks are modified. The manifest stays at `0.1` until the native-sample sequencer
-is finished and verified in Renoise.
+## Editing a sequence
 
-The implementation now contains a separately testable pitch/time memory model
-(`model/sequencer.lua`) and a semantic NOTE/TIE/REST/slide compiler (`model/compiler.lua`).
-The deterministic `writers/pattrns_writer.lua` module additionally emits a one-shot scripted
-phrase source from semantic events. It handles NOTE, TIE (no new event), REST
-(explicit note-off when required), and provisional accent velocity.
+Open **Tools > ACID...** or use the Pattern Editor context menu. A fresh draft
+is ready immediately: 64 C pitch entries, 64 NOTE commands, LAST STEP 16 and
+an active PITCH span of 16. Change LAST STEP and the active PITCH span as
+needed. Program view selects one PITCH entry and TIME step for editing. Grid
+view edits sixteen positions directly across four continuous pages. Both views
+edit the same source; switching views does not change or regenerate the
+sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
+is increased again.
 
-The pattrns output is **not the finished playable ACID sequence**. Native
-selective slide, correct gate duration, phrase looping and cross-boundary
-articulation still require a verified native phrase renderer. The main pitch/time editor
-remains a draft: the test generator starts with an eight-step fixture and
-accepts the dialog's edited pitch/time state.
-Renoise playback correctness has not yet been verified.
+A NOTE consumes the next active PITCH entry. TIE holds the current semantic
+voice without consuming pitch memory, and REST releases it. ACCENT and outgoing
+SLIDE belong to PITCH entries. Entering TIE at TIME 01 stores NOTE. Repeat
+cycles reset pitch consumption to P01 while preserving the sounding voice for
+boundary interpretation.
 
-For the current development priorities, milestone dependencies, acceptance gates,
-and local verification plan, see [ROADMAP.md](ROADMAP.md).
+## Generating phrases
 
-See [DESIGN.md](DESIGN.md) for the architecture, semantics, unresolved hardware
-and playback cases, and milestone plan. The proposed output is a rendered
-native instrument phrase, produced via pattrns and finalized with native
-sample articulation commands after real playback verification.
+Choose any instrument slot and an existing unchanged ACID-owned phrase or
+**New Phrase**. **Repeat** is the default output policy. **Play Once** renders
+one traversal with an explicit final release. Changing this policy changes the
+owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
+instrument's global phrase trigger settings. The decoded Start/Repeating
+preview is read-only.
 
-## Architecture
+Manual Generate and Regenerate remain available. Live Edit optionally applies
+each valid source edit immediately, with one render in flight. Edits made during
+rendering apply automatically as soon as that render finishes. Undo and Redo cover source edits and
+phrase output policy. A failed Live Edit remains armed; correct the source or
+use Retry Live Edit. Enabling Live Edit also applies the current source. New
+destinations create an ACID phrase automatically. Foreign, modified or deleted
+phrases are preserved; Live Edit creates a separate owned phrase for the edits.
+Uncommitted drafts are stored separately from the last committed phrase in
+song tool data and recover after saving and reopening the XRNS. If a new draft
+has an ambiguous destination or persistence fails, it remains available in the
+open session and ACID reports the unsaved state. Give a new draft's instrument
+a unique name or generate its phrase before closing the song. ACID protects
+foreign or modified phrases and uses staged rendering, ownership checks, source persistence and
+rollback before replacing an owned phrase. Source records and ownership seals
+use the current v3 contract.
 
-- `main.lua`: registers menus
-- `gui.lua`: native ViewBuilder dialog with pitch/time editing and test-phrase controls
-- `model/sequencer.lua`: draft pitch/time state, validation
-- `model/compiler.lua`: pure Lua semantic pitch/time state machine
-- `renoise/selection_context.lua`: read-only selection inspection (legacy scaffold)
-- `writers/pattrns_writer.lua`: deterministic one-pass scripted phrase source emitter
-- `writers/phrase_writer.lua`: asynchronous Renoise script commit and native phrase render
-- `model/articulation.lua`, `model/control_signals.lua`: experimental articulation and gate planning
-- `writers/gate_writer.lua`, `writers/phrase_validator.lua`: native gate commands and rendered phrase validation
-- `renoise/sampler_audit.lua`: read-only sampler inspection
-- `writers/phrase_ownership.lua`: content-sealed ownership and guarded phrase regeneration
-- `model/memory_status.lua`: independent TIME/PITCH usage reporting
-- Future: verified playback, complete editor, persistence
+The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
+source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE
+uses overlapping notes: the target starts in another phrase column before a
+delayed OFF releases its predecessor. Same-pitch connected notes hold the
+existing voice. Repeat preserves this ordering across the loop seam.
 
-## Local tests
+For a plugin or MIDI synth, enable its mono/legato portamento and set its glide
+time. ACID sends the legato note ordering; the receiver supplies continuous
+pitch motion and envelope behavior. A polyphonic receiver may play overlapping
+notes instead of gliding. ACID does not change presets, send speculative pitch
+bend or enable portamento by modifying the instrument. Hybrid instruments use
+the same overlap stream; their sample layers may respond differently. Accent
+changes on a held same-pitch voice are reported when they cannot be delivered.
+Empty slots can receive a silent phrase and are reported as needing a generator.
 
-From the repository root using Lua (e.g. VS Code terminal):
+Phrase generation has been checked with Lua mocks for the current renderer
+contract. Renoise playback and routing checks for Program/Grid switching,
+Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
+pending; see the [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md).
+The full M3.5 instrument and Live Edit gates remain tracked in
+[ROADMAP.md](ROADMAP.md). Triplet timing is not implemented.
+
+## Development checks
+
+From the repository root in PowerShell 7:
 
 ```powershell
 ./scripts/run_tests.ps1 -Tool ACID
+./tests/acid/validate_loop_oracle.ps1
+./scripts/package.ps1 -Tool ACID
 ```
 
-Individual specs can also be run directly, for example
-`lua tests/acid/acid_compiler_spec.lua`.
-
-Other local Lua implementations, including `texlua`, may run the same tests.
-No workflows are needed. These tests do not replace real Renoise playback validation.
-
-See [first native phrase playback test](../tests/acid/acid_phrase_manual.md)
-for the current in-Renoise test procedure.
-
-When installing ACID, remove the previous development tool package from
-Renoise's `Scripts/Tools` directory to avoid duplicated menu entries.
-
-## Development installation
-
-Copy/symlink `com.david303ttl.ACID.xrnx` into Renoise's user `Scripts/Tools`
-folder and reload tools (or restart Renoise). Or run `./scripts/package.ps1 -Tool ACID` from the repository root and install
-the resulting `.xrnx` archive from `dist/`. Its root contains `manifest.xml`
-and `main.lua`.
-
-## Render event validation
-
-Renoise may report raw script events including time steps without musical
-note output. ACID now verifies the rendered native phrase's 16 lines, the
-four expected pitches, both OFF positions, and empty steps rather than
-requiring the raw callback count to equal six. The user screenshot established
-8 raw events for the expected 6 note/OFF events. Re-run the manual test in a
-new sample instrument with no phrases; the previous failed-test phrase may
-still be present and should be inspected or discarded manually.
-
-## Native articulation experiments (still 0.1)
-
-The ACID dialog has three separate modes: Baseline, Retrigger + Gate,
-and Selective Slide + Gate. Experimental native note-column `0Gxx`
-commands and pre-retrigger OFF cells are added only after rendering and
-validating a new phrase. Existing instrument phrases are never replaced.
-These modes start with the same eight-step test fixture; the dialog's pitch/time
-controls can edit the state passed to the generator.
-
-Run the manual comparison in [tests/acid/acid_slide_manual.md](../tests/acid/acid_slide_manual.md).
-Run `lua tests/acid/acid_articulation_modes_spec.lua` locally in VS Code.
-This stage is not verified in real Renoise, and the glide speed and
-sample-envelope behavior are not yet calibrated.
-
-## Editable control-signal prototype (0.1)
-
-The dialog now includes an initial PITCH entry editor (C-3..C-4,
-ACCENT, SLIDE), a separate TIME step editor (NOTE/TIE/REST), and a
-read-only Sampler/Modulation/Effects inspection command. These controls
-feed the native phrase generator. A pure-Lua control-signal timeline
-separates note gate edges, pitch targets, ties and rests; the 50% gate
-is an experiment, not historical calibration.
-
-See [Sampler and control tests](../tests/acid/acid_sampler_control_manual.md).
-Run `lua tests/acid/acid_control_signals_spec.lua` along with all existing
-local specs. **This new GUI/instrument behavior still needs a Renoise
-smoke test** before we consider it validated.
-
-## Regeneration and memory visibility
-
-ACID shows TIME filled/total, NOTE/TIE/REST counts, PITCH entries/16,
-free PITCH slots, next pitch index, and a compact command list. The
-pitch stream wraps independently; it does not need to have as many
-entries as NOTE events. Newly generated phrases are signed in their
-name using a content checksum. Regeneration uses a temporary render,
-checks ownership and manual edits, backs up the old phrase, and then
-replaces its contents in the same phrase slot. Modifying a generated
-phrase invalidates its ownership checksum; regeneration refuses it.
-
-See [manual regeneration QA](../tests/acid/acid_regeneration_manual.md).
-The new implementation still needs the user's in-Renoise verification;
-local specs alone do not prove safe real-world regeneration.
-
-## Readability and slide collision diagnostics
-
-The ACID dialog now uses wider headings and separate TIME/PITCH memory
-sections with a multiline, read-only status panel. The generator identifies
-TIME step and Renoise phrase line for glide placement collisions. When the
-gate renderer has placed a native OFF where an optional `0G00` continuation
-would otherwise be written, the OFF wins and ACID omits the continuation,
-reporting the affected step and line instead of rejecting the phrase.
-An actual occupied target note or foreign effect still blocks generation.
-
-Run `lua tests/acid/acid_glide_overlap_spec.lua` as a regression, then
-repeat the 16-step slide/gate sequence in Renoise. The old phrase should be
-left unchanged if another collision prevents regeneration. These changes
-have not yet been tested in a Renoise installation.
+Each Lua spec runs in a separate process. Semantic and mocked tests do not
+establish Renoise audio behavior. ACID's GUI and phrase-writer regression specs
+cover editable LAST STEP, Reset/Undo, selected-phrase regeneration, and sample
+slide commands scheduled before midpoint OFFs. Run the
+[M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md) in Renoise to
+verify phrase playback and GUI behavior. The package has `manifest.xml` and
+`main.lua` at its root and excludes development files.

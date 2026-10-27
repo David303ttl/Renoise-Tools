@@ -1,112 +1,104 @@
-# ACID.xrnx — design contract (0.1 development)
+# ACID design contract
 
-Status: **experimental**. Keep `manifest.xml` at version **0.1** until the entire
-native-sample sequencer is finished, working, and manually verified in Renoise.
-A passing pure-Lua test is **not** evidence of correct audio playback.
+ACID edits independent PITCH and TIME memories and generates native Renoise
+instrument phrases. The runtime targets Renoise 3.5, scripting API 6.2 and Lua
+5.1. All runtime modules remain inside the tool directory. Manifest version: 0.1.
 
-## Name and identity
+## Source and interpretation
 
-The tool, XRNX bundle ID, visible menus, test artifacts and documentation
-use the standalone **ACID** identity. The design describes sequencing
-behavior generically, without vendor or instrument model branding.
+Canonical source contains 64 valid PITCH entries, 64 stored TIME commands, an
+active TIME length of 1–64 and an independent active PITCH span of 1–64.
+ACCENT and outgoing SLIDE belong to PITCH entries. Inactive stored entries are
+preserved. Editor view, output policy and target capabilities are separate from
+musical source and its ownership hash.
 
-## Purpose and boundaries
+NOTE consumes the next active PITCH entry. TIE holds the semantic voice without
+consuming pitch. REST releases it. PITCH consumption restarts at P01 on each
+TIME traversal and wraps within the active span. Outgoing SLIDE connects to the
+next NOTE unless REST intervenes; equal-pitch SLIDE remains connected. No
+16-step editor page is a playback boundary. Entering TIE at TIME 01 stores NOTE;
+a raw leading TIE is invalid canonical source.
 
-Build a standalone native Renoise 3.5+ XRNX tool that implements
-classic acid-style **separate pitch/time memories**, then produces a playable
-Renoise *native sample instrument phrase*. The sequencer is independent of any
-dedicated acid synthesizer. No custom DSP, plugins, MIDI synth support or GitHub Actions
-are part of the first implementation.
+`model/cycle_interpreter.lua` derives cold and steady cycles independently of
+phrase output policy and sound generator. These rules specify ACID behavior;
+original TB-303 CPU cursor behavior and analog fidelity are not established.
 
-References:
-- Pattrns guide: https://renoise.github.io/pattrns/guide/index.html
-- Pattrns event interface: https://renoise.github.io/pattrns/guide/event.html
-- Renoise phrases: https://tutorials.renoise.com/wiki/Phrase_Editor
+## Editor and output
 
-## Runtime layers (keep separate)
+Program and Grid edit the same source. Both reach all 64 positions. Selection,
+view changes and Start/Repeating preview never edit source or queue regeneration.
+Fresh drafts have C pitches, NOTE commands, TIME length 16 and PITCH span 16.
+Reducing active length preserves hidden entries. Reset is explicit and undoable.
+Source edits and phrase output policy support editor Undo and Redo.
 
-1. `model/sequencer.lua`: serializable ACID pattern state and validation.
-2. `model/compiler.lua`: deterministic pitch/time interpreter. Returns *semantic*
-   NOTE, TIE, REST, and continuity/slide intentions, not Renoise note commands.
-3. `writers/pattrns_writer.lua` and `writers/phrase_writer.lua`: translate
-   musical events into a scripted phrase and render it into a regular phrase.
-4. `model/articulation.lua` and `writers/gate_writer.lua`: describe and apply
-   experimental native-phrase articulation such as note releases, accents,
-   and selective sample glide (`0Gxx`) *after* rendering.
+Repeat is the default phrase-specific output policy. It renders a cold
+introduction followed by a steady body and an exclusive-end sentinel. Play Once
+renders one cold traversal and a final release. Neither policy changes source,
+instrument-wide phrase triggering, plugin state, MIDI routing or sample setup.
 
-`renoise/selection_context.lua` and `renoise/sampler_audit.lua` isolate Renoise
-song and instrument inspection from the pure Lua model and writers. `gui.lua`
-remains the root UI entry and `main.lua` remains the tool entry point.
+## Rendering and protection
 
-The rendered regular phrase is the main playback target. A script-only phrase
-must not be considered equivalent until note-off/slide support is proven.
-Use a looping single-cycle sawtooth sample for initial playback tests.
+`writers/phrase_writer.lua` accepts any valid instrument slot, including
+sample, plugin, MIDI, hybrid, alias and empty targets. Capabilities are inspected
+read-only on regeneration. An empty target receives a phrase with a silent-target
+warning. Sound generation and routing remain the user's instrument configuration.
 
-## 0.1 model implemented so far
+The semantic timeline feeds gate scheduling and capability-aware native
+articulation. `model/control_signals.lua` expresses gate edges in 256 units per
+TIME step and includes the Repeat successor cycle. A fresh NOTE successor or
+Play Once tail releases at the final held-step midpoint. A REST successor
+releases at the REST boundary. A connected slide holds into its target.
 
-```lua
-{
-  length = 4,                        -- 1..16 timing slots
-  pitch_events = {
-    { note = 36, accent = false, slide = true },
-    { note = 39, accent = true,  slide = false },
-  },
-  time_events = { "N", "T", "N", "R" }
-}
-```
+Sample glide commands are budgeted against available lines and releases.
+Plugin/MIDI routes use a periodic multi-column legato plan. A connected target
+NOTE precedes the delayed predecessor OFF by 1/256 phrase line. Same-pitch
+connections hold the existing voice. Source-step coloring preserves cold and
+steady Repeat seams with up to three note columns. Receiver mono/legato
+portamento supplies glide; sample 0G commands are not sent to these routes.
+The final validator checks every planned column and delayed OFF. Unrepresentable continuity,
+connected dynamics and target envelope limitations produce explicit sonic
+approximations. They never invalidate a legal musical source.
 
-- `N` consumes the next pitch entry and triggers a new semantic note event.
-- `T` consumes no pitch; sustains the active semantic note if there is one.
-- `R` consumes no pitch; terminates the active semantic note if there is one.
-- Accent and slide belong to **pitch entries**, not time slots.
-- An active note's `slide=true` makes the transition to the next NOTE a
-  slide, unless an intervening REST has ended the note. This also works after
-  intervening TIE steps and for repeated pitches.
-- Pitch entries wrap when exhausted **within one time-memory traversal**.
-- An output `boundary` record describes the intended transition from the
-  end to the next loop's first note, including leading ties. The compiler's
-  step events represent an initial traversal starting from silence. It does
-  **not** yet render the second traversal or cross-pattern transitions.
+`writers/gate_writer.lua` merges gates and glide operations before mutation.
+`writers/phrase_validator.lua` checks the final note, OFF, effect and metadata
+layout. Rendering uses a temporary phrase, identity and ownership checks, then
+a guarded phrase/source commit. Failed writes preserve the last-good destination
+or retain identified recovery material if rollback cannot finish. Foreign,
+manually modified and duplicate-ID destinations cannot be overwritten.
 
-Draft state accepts partly entered arrays. Compilation requires a complete
-TIME array. Patterns containing no NOTE events are permitted (silence).
+`model/pattern_store.lua` stores the current v3 canonical source and separate
+phrase output policy in song-scoped tool data. `writers/phrase_ownership.lua`
+seals generated contents and loop properties. Only the current source and seal
+contracts are accepted.
 
-## Research and unresolved compatibility decisions
+## Live Edit and drafts
 
-These must be resolved against actual ACID behavior and Renoise playback,
-not silently chosen by the renderer:
+Live Edit starts rendering immediately for each source change and coalesces pending
+edits. Jobs validate their token and song/target identity before mutation and
+commit. Manual generation and Live Edit use structured render outcomes.
 
-- Exact original pitch-memory cursor restart/reset when pattern length and
-  pitch-entry count differ; state restoration across chained patterns.
-- Leading TIE behavior on initial playback versus repeated loops.
-- Whether `0Gxx` preserves sample-voice identity, attack envelope and expected
-  pitch trajectory for every slide interval, including same-note slides.
-- Gate duration for non-slide NOTE and release behavior at a REST.
-- Exact loop boundary slides, first trigger vs subsequent loop articulation,
-  and inter-pattern slide continuity.
-- 303 triplet programming/time-grid mapping into phrase LPB and Renoise delay.
-- Accurate accent envelope/filter response (velocity is an interim mapping).
+CLEAN, RENDERING, COMMITTED, APPROXIMATE and ERROR
+separate pending edits, successful output, sonic limitations and write safety.
+Recoverable failures keep Live Edit armed and preserve the draft. Retry or a
+relevant edit schedules another attempt without an automatic retry loop.
+Live Edit creates and binds its own phrase automatically for new, foreign,
+modified or deleted phrase targets, preserving unrelated content. A hard API or
+persistence failure reports an error while keeping the editor armed.
+Dialog close and song changes invalidate outstanding work.
 
-No renderer may silently substitute a note retrigger, tick cut or global
-instrument portamento for a selective 303 slide. A failed representability
-check must leave existing musical content unchanged.
+Uncommitted drafts are stored separately from committed source in song tool
+data. Owned phrase drafts resolve by ownership ID. New phrase drafts require an
+unambiguous instrument destination. Persistence failures preserve the session
+draft and produce an unsaved warning. Save the XRNS to retain stored drafts.
 
-## Persistence and regeneration
+## Verification
 
-The original pitch and time memories, plus renderer parameters, are canonical
-and must be stored independently of generated phrase events. Use ACID-scoped
-song data, not ARP's metadata. Adapt ARP's guarded preflight/snapshot/rollback
-principles, but do not import ARP's private modules or share tool data.
-Detect user-edited generated content and refuse destructive regeneration.
+Lua specs validate deterministic semantics, current-format persistence and
+mocked API integration. They do not establish actual playback, plugin velocity,
+MIDI delivery, sample continuity or GUI scaling. The manual checklist in
+[tests/acid/acid_m35_s_manual.md](../tests/acid/acid_m35_s_manual.md) records the
+required host checks and their results. Unrun checks remain unverified.
 
-## Next implementation steps (still version 0.1)
-
-1. Verify baseline pitch/time interpreter cases and original-model conformance.
-2. Implement a pattrns script emitter with repeatable test fixtures.
-3. Integrate Renoise instrument script-phrase commit/render APIs.
-4. Test native sample glide, release and loop mechanics **in Renoise**.
-5. Implement the final phrase articulation and protected regeneration.
-6. Add usable Pitch / Time / Preview ViewBuilder interface and persistence.
-7. Manually verify save/reopen, repeat, tempo changes and instrument playback.
-
-All automated tests are plain Lua from VS Code. No GitHub workflows.
+The pinned API SDK is a development reference, never a runtime dependency.
+[ROADMAP.md](ROADMAP.md) tracks implementation and acceptance gates. Triplet
+timing and the full sequential Program workflow are separate planned work.

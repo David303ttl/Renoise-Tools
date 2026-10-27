@@ -1,6 +1,6 @@
 -- Emit finite pattrns scripts from semantic note and timing events.
 -- Glide and release-gate effects are applied separately to the rendered phrase.
-local compiler = require('model.compiler')
+local interpreter = require('model.cycle_interpreter')
 local M = {}
 
 local function valid_unit(value)
@@ -25,7 +25,7 @@ function M.emit(plan, options)
   if type(options) ~= 'table' then return nil, 'options must be a table' end
   if type(plan) ~= 'table' or type(plan.steps) ~= 'table'
     or type(plan.length) ~= 'number' or plan.length % 1 ~= 0
-    or plan.length < 1 or plan.length > 64 then
+    or plan.length < 1 or plan.length > 128 then
     return nil, 'invalid compiled ACID plan'
   end
   local unit = options.unit or '1/16'
@@ -52,7 +52,7 @@ function M.emit(plan, options)
       local velocity = event.accent and accent_volume or normal_volume
       items[index] = string.format('{ key = %d, volume = %.6f }', event.note, velocity)
       note_count = note_count + 1
-      if event.transition == 'slide' or event.slide then
+      if event.transition == 'slide' then
         slide_count = slide_count + 1
       end
     elseif event.kind == 'rest' then
@@ -93,8 +93,47 @@ function M.emit(plan, options)
   }
 end
 
+-- Derive native volume expectations from source events, never rendered cells.
+-- Renoise's pattrns renderer truncates sub-unity volume * 128, and emits
+-- the empty/full-volume sentinel 255 for unity volume.
+function M.expected_volumes(plan, lines_per_step, number_of_lines, columns, options)
+  options = options or {}
+  local normal = options.normal_volume or 0.7
+  local accent = options.accent_volume or 1.0
+  if not valid_volume(normal) or not valid_volume(accent) then
+    return nil, 'volumes must be numbers between 0 and 1'
+  end
+  if type(plan) ~= 'table' or type(plan.steps) ~= 'table'
+    or type(plan.length) ~= 'number' or plan.length < 1 or plan.length % 1 ~= 0
+    or type(lines_per_step) ~= 'number' or lines_per_step < 1 or lines_per_step % 1 ~= 0
+    or type(number_of_lines) ~= 'number' or number_of_lines < plan.length * lines_per_step
+    or number_of_lines % 1 ~= 0 or type(columns) ~= 'number'
+    or columns < 1 or columns % 1 ~= 0 then
+    return nil, 'invalid volume expectation layout'
+  end
+  local volumes = {}
+  for line = 1, number_of_lines do
+    volumes[line] = {}
+    for column = 1, columns do volumes[line][column] = 255 end
+  end
+  for step = 1, plan.length do
+    local event = plan.steps[step]
+    if type(event) ~= 'table' or event.step ~= step then
+      return nil, 'missing or out-of-order semantic step ' .. step
+    end
+    if event.kind == 'note' then
+      -- Match the six-decimal source emitted above before native quantization.
+      local volume = tonumber(string.format('%.6f', event.accent and accent or normal))
+      volumes[(step - 1) * lines_per_step + 1][1] = volume == 1 and 255 or math.floor(volume * 128)
+    elseif event.kind ~= 'rest' and event.kind ~= 'tie' then
+      return nil, 'invalid semantic kind at step ' .. step
+    end
+  end
+  return volumes
+end
+
 function M.generate(pattern, options)
-  local plan, error_message = compiler.compile(pattern)
+  local plan, error_message = interpreter.compile_cycle(pattern)
   if not plan then return nil, error_message end
   return M.emit(plan, options)
 end

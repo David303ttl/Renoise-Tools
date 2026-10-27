@@ -1,0 +1,407 @@
+{
+  "format": "ACID-AUDIO-ORACLE-1",
+  "status": "Independent native host lifecycle windows at 120 BPM; event times are authored from song-pattern line positions. Acoustic status remains unverified.",
+  "index_base": 0,
+  "step_unit": "one straight TIME sixteenth; one step = two phrase lines at phrase LPB 8",
+  "capture_requirements": {
+    "no_per_cycle_realign": true,
+    "align_once_to_first_onset": true,
+    "peak_ceiling_dbfs": -6,
+    "preferred_pcm_bits": 24,
+    "preferred_channels": 1,
+    "allowed_pcm_bits": [
+      16,
+      24,
+      32
+    ],
+    "allowed_channels": [
+      1,
+      2
+    ],
+    "sample_rate": 48000
+  },
+  "profile": {
+    "sample_fundamental_hz": 262.5,
+    "sample_rate": 44100,
+    "interpolation": "linear",
+    "sample_frames": 168,
+    "root_note": 48,
+    "loop": "forward whole cycle",
+    "sample_peak_linear": 0.35,
+    "id": "acid-reference-168-frame-saw",
+    "sample_volume": 3.0,
+    "envelope": {
+      "sustain": 0.65,
+      "release_ms": 5,
+      "decay_ms": 20,
+      "attack_ms": 10
+    }
+  },
+  "analysis_defaults": {
+    "silence_rms_dbfs": -60,
+    "pitch_window_minimum_ms": 40,
+    "onset_tolerance_ms": 5,
+    "pitch_tolerance_cents": 15,
+    "continuity_max_dip_db": 6,
+    "onset_refractory_ms": 40,
+    "continuity_max_dip_duration_ms": 4,
+    "release_tail_tolerance_ms": 5
+  },
+  "cases": [
+    {
+      "id": "host_note_off_native",
+      "status": "ready",
+      "trigger": "native_host_pattern_events",
+      "purpose": "native-host-lifecycle",
+      "profile": {
+        "base_frequency_hz": 262.5,
+        "root_note": 48,
+        "sample_rate": 44100,
+        "id": "acid-reference-168-frame-saw",
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "sample_frames": 168
+      },
+      "capture": {
+        "channels": "mono-or-dual-mono-stereo",
+        "minimum_tail_ms": 500,
+        "tpl": 12,
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "bpm": 120,
+        "song_lpb": 8
+      },
+      "playback": {
+        "looping": false,
+        "lines_per_step": 2,
+        "phrase_lpb": 8,
+        "trigger_mode": "selective",
+        "renderer": "native-host-lifecycle-pattern",
+        "cold_cycles": 1,
+        "steady_cycles": 0
+      },
+      "protocol": {
+        "pitch": 48,
+        "silent_preroll_steps": 16,
+        "final_host_off_step": 8.0,
+        "host_events": [
+          {
+            "note": 48,
+            "pattern_line": 33,
+            "event": "NOTE",
+            "at_step": 0
+          },
+          {
+            "pattern_line": 49,
+            "event": "OFF",
+            "at_step": 8
+          }
+        ],
+        "origin_step": 0,
+        "host_release_deadline_ms": 10
+      },
+      "source": {
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [],
+        "accent_pitch_indices": [],
+        "time": [
+          "N",
+          "R"
+        ],
+        "length": 2
+      },
+      "expected": {
+        "onsets": [
+          {
+            "note": 48,
+            "tolerance_ms": 5,
+            "at_step": 0.0
+          }
+        ],
+        "release_edges": [
+          {
+            "silence_starts_at_step": 8.08,
+            "confirmation_ms": 8,
+            "off_at_step": 8.0,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 8.28,
+            "start_step": 8.08
+          }
+        ]
+      },
+      "analysis": {
+        "maximum_continuity_dip_db": 6,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5,
+        "minimum_pitch_window_ms": 40,
+        "onset_refractory_ms": 40,
+        "pitch_tolerance_cents": 15,
+        "onset_floor_dbfs": -60,
+        "maximum_continuity_dip_ms": 4,
+        "onset_window_ms": 10
+      },
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "A matching native capture is required; synthetic analyzer controls do not establish Renoise playback."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "fresh_retrigger_native",
+      "status": "ready",
+      "trigger": "native_host_pattern_events",
+      "purpose": "native-host-lifecycle",
+      "profile": {
+        "base_frequency_hz": 262.5,
+        "root_note": 48,
+        "sample_rate": 44100,
+        "id": "acid-reference-168-frame-saw",
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "sample_frames": 168
+      },
+      "capture": {
+        "channels": "mono-or-dual-mono-stereo",
+        "minimum_tail_ms": 500,
+        "tpl": 12,
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "bpm": 120,
+        "song_lpb": 8
+      },
+      "playback": {
+        "looping": false,
+        "lines_per_step": 2,
+        "phrase_lpb": 8,
+        "trigger_mode": "selective",
+        "renderer": "native-host-lifecycle-pattern",
+        "cold_cycles": 1,
+        "steady_cycles": 0
+      },
+      "protocol": {
+        "pitch": 48,
+        "silent_preroll_steps": 16,
+        "final_host_off_step": 16.0,
+        "host_events": [
+          {
+            "note": 48,
+            "pattern_line": 33,
+            "event": "NOTE",
+            "at_step": 0
+          },
+          {
+            "note": 48,
+            "pattern_line": 49,
+            "event": "NOTE",
+            "at_step": 8
+          },
+          {
+            "pattern_line": 65,
+            "event": "OFF",
+            "at_step": 16
+          }
+        ],
+        "origin_step": 0,
+        "host_release_deadline_ms": 10
+      },
+      "source": {
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [],
+        "accent_pitch_indices": [],
+        "time": [
+          "N",
+          "R"
+        ],
+        "length": 2
+      },
+      "expected": {
+        "onsets": [
+          {
+            "note": 48,
+            "tolerance_ms": 5,
+            "at_step": 0.0
+          },
+          {
+            "note": 48,
+            "tolerance_ms": 5,
+            "at_step": 8.0
+          }
+        ],
+        "release_edges": [
+          {
+            "silence_starts_at_step": 16.08,
+            "confirmation_ms": 8,
+            "off_at_step": 16.0,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          },
+          {
+            "end_step": 8.72,
+            "start_step": 8.32,
+            "note": 48
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 16.28,
+            "start_step": 16.08
+          }
+        ]
+      },
+      "analysis": {
+        "maximum_continuity_dip_db": 6,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5,
+        "minimum_pitch_window_ms": 40,
+        "onset_refractory_ms": 40,
+        "pitch_tolerance_cents": 15,
+        "onset_floor_dbfs": -60,
+        "maximum_continuity_dip_ms": 4,
+        "onset_window_ms": 10
+      },
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "A matching native capture is required; synthetic analyzer controls do not establish Renoise playback."
+        ],
+        "acoustic_status": "unverified"
+      }
+    },
+    {
+      "id": "keymapped_trigger_native",
+      "status": "ready",
+      "trigger": "native_host_pattern_events",
+      "purpose": "native-host-lifecycle",
+      "profile": {
+        "base_frequency_hz": 262.5,
+        "root_note": 48,
+        "sample_rate": 44100,
+        "id": "acid-reference-168-frame-saw",
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "sample_frames": 168
+      },
+      "capture": {
+        "channels": "mono-or-dual-mono-stereo",
+        "minimum_tail_ms": 500,
+        "tpl": 12,
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "bpm": 120,
+        "song_lpb": 8
+      },
+      "playback": {
+        "looping": false,
+        "lines_per_step": 2,
+        "phrase_lpb": 8,
+        "trigger_mode": "keymapped",
+        "renderer": "native-host-lifecycle-pattern",
+        "cold_cycles": 1,
+        "steady_cycles": 0
+      },
+      "protocol": {
+        "pitch": 48,
+        "silent_preroll_steps": 16,
+        "final_host_off_step": 8.0,
+        "host_events": [
+          {
+            "note": 48,
+            "pattern_line": 33,
+            "event": "NOTE",
+            "at_step": 0
+          },
+          {
+            "pattern_line": 49,
+            "event": "OFF",
+            "at_step": 8
+          }
+        ],
+        "origin_step": 0,
+        "host_release_deadline_ms": 10
+      },
+      "source": {
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [],
+        "accent_pitch_indices": [],
+        "time": [
+          "N",
+          "R"
+        ],
+        "length": 2
+      },
+      "expected": {
+        "onsets": [
+          {
+            "note": 48,
+            "tolerance_ms": 5,
+            "at_step": 0.0
+          }
+        ],
+        "release_edges": [
+          {
+            "silence_starts_at_step": 8.08,
+            "confirmation_ms": 8,
+            "off_at_step": 8.0,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ],
+        "silence_windows": [
+          {
+            "end_step": 8.28,
+            "start_step": 8.08
+          }
+        ]
+      },
+      "analysis": {
+        "maximum_continuity_dip_db": 6,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5,
+        "minimum_pitch_window_ms": 40,
+        "onset_refractory_ms": 40,
+        "pitch_tolerance_cents": 15,
+        "onset_floor_dbfs": -60,
+        "maximum_continuity_dip_ms": 4,
+        "onset_window_ms": 10
+      },
+      "qualification": {
+        "protocol_status": "ready",
+        "blockers": [
+          "A matching native capture is required; synthetic analyzer controls do not establish Renoise playback."
+        ],
+        "acoustic_status": "unverified"
+      }
+    }
+  ]
+}
