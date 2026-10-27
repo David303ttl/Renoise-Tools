@@ -26,11 +26,22 @@ intent. Repeat is the default owned-phrase output policy; Play Once is an
 optional phrase-specific rendering setting, never a canonical source field.
 Both leave instrument-wide phrase triggering, transport and routing unchanged.
 
-**Articulation:** no musician-facing Baseline/Retrigger/Selective Slide switch.
-NOTE/REST/TIE/SLIDE/ACCENT determine the desired transitions; the renderer
-chooses native sample, plugin, MIDI or hybrid strategies automatically. A
-capability limitation is a visible nonfatal approximation, not a reason to
-reject valid source. Empty instrument slots can own silent, inspectable phrases.
+**Articulation:** delete `baseline`, `retrigger`, `slide`, `mono` **audio
+modes entirely**, not only their visible selector. They must not survive as
+internal algorithms, aliases, branch conditions, stored values, test fixtures,
+compatibility options or default modes. A single semantic articulation pipeline
+handles NOTE/REST/TIE and PITCH-owned SLIDE/ACCENT; per-target sample/plugin/MIDI
+operators are capability-based, not renamed copies of old modes. The musical
+SLIDE flag and fresh-NOTE retrigger intent are retained as source semantics,
+not as selectable playback strategies. Missing continuous legato or dynamic
+control is a visible nonfatal approximation, not a source rejection. Empty
+instrument slots may own silent, inspectable phrases.
+
+**WIP cutover:** replace source/seal serialization and APIs directly. Reject
+old development snapshots; no migration, compatibility reader, mode adapter,
+import, alias or adoption. Remove mode-specific tests and obsolete fixtures;
+replace them with behavior-based semantic and renderer tests. Preserve
+transaction, ownership and rollback safety for unrelated user content.
 See ROADMAP.md M3.5.0.1 and M3.5.1–M3.5.6 for implementation gates.
 
 `model/cycle_interpreter.lua` resolves NOTE, TIE and REST for cold and repeated
