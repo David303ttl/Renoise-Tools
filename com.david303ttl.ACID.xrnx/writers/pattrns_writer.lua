@@ -1,6 +1,6 @@
 -- Emit finite pattrns scripts from semantic note and timing events.
 -- Glide and release-gate effects are applied separately to the rendered phrase.
-local compiler = require('model.compiler')
+local interpreter = require('model.cycle_interpreter')
 local M = {}
 
 local function valid_unit(value)
@@ -25,7 +25,7 @@ function M.emit(plan, options)
   if type(options) ~= 'table' then return nil, 'options must be a table' end
   if type(plan) ~= 'table' or type(plan.steps) ~= 'table'
     or type(plan.length) ~= 'number' or plan.length % 1 ~= 0
-    or plan.length < 1 or plan.length > 64 then
+    or plan.length < 1 or plan.length > 128 then
     return nil, 'invalid compiled ACID plan'
   end
   local unit = options.unit or '1/16'
@@ -52,7 +52,7 @@ function M.emit(plan, options)
       local velocity = event.accent and accent_volume or normal_volume
       items[index] = string.format('{ key = %d, volume = %.6f }', event.note, velocity)
       note_count = note_count + 1
-      if event.transition == 'slide' or event.slide then
+      if event.transition == 'slide' then
         slide_count = slide_count + 1
       end
     elseif event.kind == 'rest' then
@@ -94,7 +94,7 @@ function M.emit(plan, options)
 end
 
 function M.generate(pattern, options)
-  local plan, error_message = compiler.compile(pattern)
+  local plan, error_message = interpreter.compile_cycle(pattern)
   if not plan then return nil, error_message end
   return M.emit(plan, options)
 end

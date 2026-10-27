@@ -1,6 +1,11 @@
 dofile('tests/bootstrap.lua')('acid')
 local signals=require("model.control_signals")
-local p={length=8,pitch_events={{note=36,slide=true},{note=39,accent=true},{note=43},{note=41}},time_events={"N","T","N","R","N","N","T","R"}}
+local seq=require("model.sequencer")
+local p=seq.new_pattern(8,"extended")
+p.pitch_length=4
+p.pitch_events[1]={note=36,slide=true};p.pitch_events[2]={note=39,accent=true}
+p.pitch_events[3]={note=43};p.pitch_events[4]={note=41}
+p.time_events={"N","T","N","R","N","N","T","R"}
 local tl=assert(signals.compile(p,{gate_fraction=0.5}))
 local events=tl.events
 local by={}

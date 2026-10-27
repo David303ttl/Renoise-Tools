@@ -20,6 +20,6 @@ function M.apply(phrase,timeline)
     for _,cell in ipairs(targets) do pcall(function()cell.note_value=121 end) end
     return nil,"gate write failed: "..tostring(write_error)
   end
-  return {early_releases=#targets}
+  return {early_releases=#targets,release_lines=lines}
 end
 return M

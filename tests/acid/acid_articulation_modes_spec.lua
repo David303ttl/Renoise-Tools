@@ -1,10 +1,13 @@
 dofile('tests/bootstrap.lua')('acid')
-local engine=require("model.compiler")
+local engine=require("model.cycle_interpreter")
 local art=require("model.articulation")
-local p={length=8,
- pitch_events={{note=36,slide=true},{note=43},{note=39},{note=41}},
- time_events={"N","T","N","R","N","N","T","R"}}
-local plan=assert(engine.compile(p))
+local seq=require("model.sequencer")
+local p=seq.new_pattern(8,"extended")
+p.pitch_length=4
+p.pitch_events[1]={note=36,slide=true};p.pitch_events[2]={note=43}
+p.pitch_events[3]={note=39};p.pitch_events[4]={note=41}
+p.time_events={"N","T","N","R","N","N","T","R"}
+local plan=assert(engine.compile_cycle(p))
 local commands=assert(art.plan(plan,2,0x20))
 assert(#commands==2 and commands[1].line==5 and commands[2].line==6)
 local cells={}

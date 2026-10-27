@@ -24,6 +24,28 @@ locally in VS Code. No GitHub workflows.
 9. Verify the saved source survives closing ACID and saving/reopening the
    XRNS after the last completed live render.
 
+## Renoise result (2026-10-27)
+
+On Renoise 3.5.4 Demo with a disposable song, Live Edit was enabled for an
+Extended Repeat phrase and LAST STEP plus active PITCH span were changed through
+64→17→1→64. The same phrase changed from 257 to 69 to 5 and back to 257 lines.
+The span changes did not append phrases. With Live Edit disabled, changing
+LAST STEP and span left the previous phrase unchanged until manual Generate;
+manual generation then resized it from 257 to 69 lines. No stale lines or
+additional phrase were observed in these cases.
+
+Changing songs while ACID was open produced `Song changed. Close and reopen
+ACID.` on the stale editor. Reopening ACID restored the correct song context.
+An Original-mode phrase source also survived saving and reopening the XRNS and
+was accepted for regeneration.
+
+Rapid edits, edits while a render is in flight, disabling Live Edit mid-job,
+dialog close, notifier/song-close races, and undo/redo remain untested. Renoise
+Demo disabled WAV rendering, so this result covers phrase mutation and context
+guards only; it does not establish audio behavior. The M2 implementation was
+closed on 2026-10-27 with registered-build audio checks deferred; see the
+[Repeat acceptance record](acid_loop_manual.md).
+
 Limitations: Live Edit is an opt-in *phrase regeneration* feature, not
 per-sample real-time DSP. The renderer still relies on Renoise's asynchronous
 script compilation, and phrase playback behavior must be checked in Renoise.
