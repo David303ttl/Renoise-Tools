@@ -8,7 +8,7 @@ function M.plan(plan, lines_per_step, rate)
     or lines_per_step < 2 then
     return nil, "invalid glide plan or step resolution"
   end
-  rate = rate or 0x02
+  rate = rate or 0x20
   if type(rate) ~= "number" or rate % 1 ~= 0
     or rate < 1 or rate > 254 then
     return nil, "glide rate must be 01..FE"
@@ -42,104 +42,24 @@ function M.plan(plan, lines_per_step, rate)
 end
 
 function M.apply(phrase, plan, lines_per_step, rate, early_release)
-  local commands, err = M.plan(plan, lines_per_step, rate)
-  if not commands then return nil, err end
+  if lines_per_step~=2 then return nil,"articulation output requires 2 lines per step" end
+  local commands,err=M.plan(plan,lines_per_step,rate)
+  if not commands then return nil,err end
+  local control=require("model.control_signals")
+  local gates=require("writers.gate_writer")
+  local timeline={events={},steps=plan.length,gate_fraction=0.5}
   if early_release then
-    local active=false
-    for step,ev in ipairs(plan.steps) do
-      if ev.kind=="note" then
-        if active and ev.transition~="slide" then
-          commands[#commands+1]={line=(step-1)*lines_per_step,
-            new_note=120,kind="release",step=step-1}
-        end
-        active=true
-      elseif ev.kind=="rest" then active=false end
-    end
+    timeline,err=control.compile({}, {plan=plan,playback="one_shot",gate_fraction=0.5})
+    if not timeline then return nil,err end
   end
-  table.sort(commands,function(a,b)return a.line<b.line end)
-  for i=2,#commands do
-    if commands[i].line==commands[i-1].line then
-      return nil,"gate/glide collision"
-    end
-  end
-  -- Preflight every write. Gate-off has priority over optional G00
-  -- continuation: a released voice must not be prolonged for glide.
-  local targets = {}
-  local skipped = {}
-  for _, command in ipairs(commands) do
-    local display_line = command.line - 1 -- Renoise line labels are zero-based
-    local location = string.format("%sTIME step %02d, phrase line %02X",
-      command.cycle and (command.cycle==1 and "Initial cycle, " or "Repeating cycle, ") or "",
-      command.time_step or command.step or (math.floor(display_line / lines_per_step) + 1),display_line)
-    local line = phrase:line(command.line)
-    local cell = line and line.note_columns and line.note_columns[1]
-    if not cell then
-      return nil, location .. ": missing note column"
-    end
-    if command.note ~= nil and cell.note_value ~= command.note then
-      return nil, string.format("%s: glide target expects note %d; found %s",
-        location, command.note, tostring(cell.note_value))
-    end
-    if command.note == nil and cell.note_value ~= 121 then
-      if command.kind == "continuation" and cell.note_value == 120 then
-        skipped[#skipped + 1] = {
-          step=command.step, line=display_line,
-          reason="0G00 omitted because the gate releases here (OFF)"
-        }
-      else
-        return nil, string.format(
-          "%s: glide continuation needs an empty note cell; found %s. " ..
-          "Check gate releases and adjacent notes.",
-          location, tostring(cell.note_value))
-      end
-    else
-      if (cell.effect_number_value or 0) ~= 0
-        or (cell.effect_amount_value or 0) ~= 0 then
-        return nil, location ..
-          ": existing note-column FX would be overwritten by 0Gxx"
-      end
-      targets[#targets + 1] = {cell=cell, command=command}
-    end
-  end
-
-  local backups = {}
-  for _, entry in ipairs(targets) do
-    backups[#backups+1] = {
-      cell=entry.cell,
-      note=entry.cell.note_value,
-      number=entry.cell.effect_number_value,
-      amount=entry.cell.effect_amount_value
-    }
-  end
-  local ok, write_error = pcall(function()
-    for _, entry in ipairs(targets) do
-      if entry.command.kind=="release" then
-        entry.cell.note_value=120
-      else
-        entry.cell.effect_number_string=entry.command.command
-        entry.cell.effect_amount_value=entry.command.amount
-      end
-    end
-  end)
-  if not ok then
-    for _, item in ipairs(backups) do
-      pcall(function()
-        item.cell.note_value=item.note
-        item.cell.effect_number_value = item.number or 0
-        item.cell.effect_amount_value = item.amount or 0
-      end)
-    end
-    return nil, "failed to apply glide: " .. tostring(write_error)
-  end
-  local releases=0
-  for _,op in ipairs(commands) do
-    if op.kind=="release" then releases=releases+1 end
-  end
-  return {
-    slide_count=(#commands-releases)/2,
-    early_releases=releases, commands=#targets, rate=rate,
-    skipped_continuations=skipped
-  }
+  local merged
+  merged,err=gates.plan(timeline,plan,commands)
+  if not merged then return nil,err end
+  local applied
+  applied,err=gates.apply_plan(phrase,merged)
+  if not applied then return nil,err end
+  return {slide_count=#commands/2,early_releases=applied.early_releases,
+    commands=#merged.operations,rate=rate or 0x20,skipped_continuations={}}
 end
 
 return M

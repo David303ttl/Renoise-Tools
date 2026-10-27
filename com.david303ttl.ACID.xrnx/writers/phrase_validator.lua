@@ -3,6 +3,19 @@
 local M = {}
 local EMPTY, OFF = 121, 120
 
+local function verify_fields(cell,has_note,line,column)
+  if (cell.delay_value or 0)~=0 or (cell.instrument_value or 255)~=255
+    or (cell.panning_value or 255)~=255 then
+    return nil,string.format("Unexpected delay, instrument or panning at phrase line 0x%02X column %d",line-1,column)
+  end
+  local volume=cell.volume_value or 255
+  if volume~=255 and (not has_note or type(volume)~="number" or volume<0
+    or volume>128 or volume%1~=0) then
+    return nil,string.format("Unexpected volume or cut command at phrase line 0x%02X column %d",line-1,column)
+  end
+  return true
+end
+
 function M.verify(phrase, plan, lines_per_step, layout, articulation)
   if type(plan) ~= "table" or type(plan.steps) ~= "table"
     or type(plan.length) ~= "number" or plan.length < 1
@@ -46,6 +59,7 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
   local columns = phrase.visible_note_columns or 1
   local release_lines=articulation and articulation.release_lines or {}
   local effects=articulation and articulation.effects or {}
+  local volumes=articulation and articulation.volumes or {}
   for step = 1, plan.length do
     local event = plan.steps[step]
     if not event or event.step ~= step then
@@ -76,11 +90,23 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
           return nil, "missing note column at line " .. (line_number-1)
         end
         local wanted = (offset == 1 and column == 1) and expected or EMPTY
-        if column==1 and release_lines[line_number] then wanted=OFF end
+        if column==1 and release_lines[line_number] then
+          if wanted~=EMPTY then
+            return nil,string.format("Contradictory release at TIME step %02d, cycle %d, phrase line 0x%02X",
+              event.source_step or event.step,event.cycle or 1,line_number-1)
+          end
+          wanted=OFF
+          off_count=off_count+1
+        end
         if cell.note_value ~= wanted then
           return nil, string.format(
             "Phrase mismatch at line %02X column %d: expected %d, got %s",
             line_number-1, column, wanted, tostring(cell.note_value))
+        end
+        local fields_ok,fields_error=verify_fields(cell,wanted<OFF,line_number,column)
+        if not fields_ok then return nil,fields_error end
+        if volumes[line_number] and volumes[line_number][column]~=(cell.volume_value or 255) then
+          return nil,string.format("Phrase volume changed at line 0x%02X column %d",line_number-1,column)
         end
         local effect=effects[line_number]
         if column==1 and effect then
@@ -117,6 +143,11 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
             (cell.effect_number_value or 0)~=0 or
             (cell.effect_amount_value or 0)~=0 then
           return nil,"exclusive-end sentinel must be empty at line "..(line_number-1)
+        end
+        local fields_ok,fields_error=verify_fields(cell,false,line_number,column)
+        if not fields_ok then return nil,fields_error end
+        if volumes[line_number] and volumes[line_number][column]~=(cell.volume_value or 255) then
+          return nil,string.format("Phrase volume changed at line 0x%02X column %d",line_number-1,column)
         end
       end
       for column=1,(phrase.visible_effect_columns or 0) do

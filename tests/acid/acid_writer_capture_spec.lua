@@ -66,6 +66,16 @@ assert(closed and #instrument.phrases == 7)
 assert(output:find("generation_result=refused", 1, true)
   and output:find(refusal, 1, true), "Native refusal was lost or bypassed")
 refusal = nil
+for _, id in ipairs({"one_shot_note_tail_bpm_120", "one_shot_tie_tail_bpm_120",
+  "one_shot_two_ties_tail_bpm_120", "tie_before_fresh_note_bpm_120",
+  "two_ties_before_fresh_note_bpm_120", "repeat_note_rest_seam_bpm_120",
+  "repeat_tie_rest_seam_bpm_120"}) do
+  run(id, "retrigger")
+  assert(received.mode == "retrigger" and received.source.pitch_events[1].note == 48)
+  assert(received.source.playback == (id:find("^repeat_") and "loop" or "one_shot"))
+  callback("GENERATION FAILED\ncapture protocol test only")
+  assert(closed, "Gate case metadata did not close after failure")
+end
 run("isolated_note")
 assert(received.mode == "baseline" and received.source.playback == "one_shot")
 local phrase = { name = "sealed writer phrase", number_of_lines = 1 }

@@ -39,6 +39,17 @@ Raw artifacts remain ignored local files. Previous ungated or silent captures ar
 
 ## Automated verification
 
+The successor-aware gate implementation adds 21 planned/authored oracle cases
+(seven source families at 90/120/150 BPM), bringing the oracle to 62 cases.
+They separate one-shot midpoint tails and fresh successors from the existing
+REST-ending cases and cover Repeat REST seams over one cold plus three steady
+cycles. The [gate procedure](acid_gate_manual.md) records exact expected OFF
+positions and the qualification sequence. These cases are not ready analyzer
+protocols and do not change native support. No new native capture, GUI, ownership,
+save/reopen, undo or Live Edit check was performed during this implementation.
+Neither application was running; both are installed and ignored desktop-control
+helpers exist, but the failed normalized control qualification remains unresolved.
+
 - `./tests/acid/validate_audio_oracle.ps1`: 41 cases and all 68 explicit calibration events accepted. Seven malformed-fixture mutations rejected; successor-REST boundaries and seven repeat seam lengths checked.
 - `./tests/acid/test_audio_analyzer.ps1`: five positive controls, 20 held-pitch onset controls, four diagnostic attack-signature controls, 13 seeded failures and four malformed WAV-header controls accepted. Seeded failures include pitch, drift, clipping, retrigger, continuity gap, early release (including 12 ms before OFF), instantaneous glide and delayed jumps at 20/35/50 ms.
 - `./scripts/run_tests.ps1 -Tool ACID`: 19 Lua specs passed, including 90/120/150 BPM host durations, safe OFF relocation, named probe switching, strict-global handling, writer callback failures and native-variant cleanup.

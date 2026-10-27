@@ -46,6 +46,24 @@ One-shot remains available as an explicit choice. Sample release/cut tail,
 voice continuity and transport behavior remain unverified. See [the Renoise
 loop protocol](../tests/acid/acid_loop_manual.md).
 
+`model/control_signals.lua` derives physical gate edges separately from
+semantic voice intent, in 256 units per TIME step. It uses an explicit successor
+cycle for Repeat boundaries. A fresh NOTE successor or one-shot tail releases
+at the final held-step midpoint; a REST successor releases at the REST boundary;
+a connected slide holds through its target. Outgoing SLIDE without a target
+does not suppress a one-shot tail release. These are ACID rendering rules,
+not measured hardware timings.
+
+`writers/gate_writer.lua` merges gate and glide operations before any cell
+mutation. The shared plan rejects collisions, occupied fields and writes beyond
+the musical region, including the exclusive-end sentinel. The final phrase
+validator checks merged note/OFF/effect expectations and rejects unexpected
+delay, instrument, panning and cut-command data before committing the phrase
+and source. Required glide cancellation is never silently discarded for OFF.
+Repeat gate mode remains refused until its calibrated capture matrix passes;
+the pure cyclic scheduler does not confer acoustic support. See the
+[gate verification procedure](../tests/acid/acid_gate_manual.md).
+
 `model/pattern_store.lua` persists only the current song-scoped source format.
 `writers/phrase_ownership.lua` seals generated content and loop properties.
 Generation preflights the destination and source, stages rendering, checks

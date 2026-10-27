@@ -18,6 +18,48 @@ $mutations = @(
 try {
   & $validator -Path $oraclePath
   $authored = $original | ConvertFrom-Json -AsHashtable
+  $gateCases = @(
+    @{ name='one_shot_note_tail'; on=@(0); off=@(0.5) },
+    @{ name='one_shot_tie_tail'; on=@(0); off=@(1.5) },
+    @{ name='one_shot_two_ties_tail'; on=@(0); off=@(2.5) },
+    @{ name='tie_before_fresh_note'; on=@(0,2); off=@(1.5,2.5) },
+    @{ name='two_ties_before_fresh_note'; on=@(0,3); off=@(2.5,3.5) },
+    @{ name='repeat_note_rest_seam'; on=@(0,2,4,6); off=@(1,3,5,7) },
+    @{ name='repeat_tie_rest_seam'; on=@(0,3,6,9); off=@(2,5,8,11) }
+  )
+  foreach ($definition in $gateCases) {
+    foreach ($bpm in @(90,120,150)) {
+      $id = "$($definition.name)_bpm_$bpm"
+      $case = $authored.cases | Where-Object id -eq $id
+      if ($null -eq $case -or $case.capture.bpm -ne $bpm -or
+          $case.status -cne 'planned' -or $case.qualification.protocol_status -cne 'authored' -or
+          @($case.expected.onsets).Count -ne $definition.on.Count -or
+          @($case.expected.release_edges).Count -ne $definition.off.Count) {
+        throw "$id must retain independently authored attacks, successor OFF edges and unverified status"
+      }
+      for ($index = 0; $index -lt $definition.on.Count; $index++) {
+        if ([double]$case.expected.onsets[$index].at_step -ne [double]$definition.on[$index]) {
+          throw "$id has an incorrect authored attack"
+        }
+      }
+      for ($index = 0; $index -lt $definition.off.Count; $index++) {
+        if ([double]$case.expected.release_edges[$index].off_at_step -ne [double]$definition.off[$index]) {
+          throw "$id has an incorrect authored successor OFF"
+        }
+      }
+      foreach ($edge in $case.expected.release_edges) {
+        $tailMs = ($edge.silence_starts_at_step - $edge.off_at_step) * 60000 / ($bpm * 4)
+        if ([Math]::Abs($tailMs - 10) -gt 0.000001) {
+          throw "$id must preserve its 10 ms acoustic release deadline across tempos"
+        }
+      }
+      if ($definition.name -like 'repeat_*' -and
+          (-not $case.playback.looping -or $case.playback.cold_cycles -ne 1 -or
+           $case.playback.steady_cycles -ne 3)) {
+        throw "$id must measure cold-to-steady and steady-to-steady seams"
+      }
+    }
+  }
   foreach ($id in @('isolated_note', 'note_tie', 'note_tie_tie', 'ending_rest')) {
     $case = $authored.cases | Where-Object id -eq $id
     $restStep = [array]::IndexOf([object[]]$case.source.time, 'R')

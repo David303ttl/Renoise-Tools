@@ -38,6 +38,14 @@ broader save/reopen behavior remain open checks in
 A semantic slide request is not proof of envelope-continuous sample glide or
 TB-303 acoustic fidelity. Unsupported Repeat cases are refused with a status.
 
+Experimental one-shot gate rendering releases isolated notes halfway through
+their step and tied runs halfway through their final held step. A following
+REST releases at its own boundary. Gate and glide writes share a preflighted
+operation plan; conflicting OFF and glide commands are refused. Cyclic gate
+scheduling is covered by local tests, but Repeat gate mode remains refused
+pending calibrated native captures. See the
+[gate verification procedure](../tests/acid/acid_gate_manual.md).
+
 The model and evidence decisions are described in [DESIGN.md](DESIGN.md),
 [M2_SEMANTICS.md](M2_SEMANTICS.md), and [ROADMAP.md](ROADMAP.md).
 

@@ -60,6 +60,25 @@ cells[5].note_value=39
 cells[2].note_value=40
 assert(not verifier.verify(phrase,plan,2))
 cells[2].note_value=121
+-- Native commands hidden in auxiliary fields must not bypass validation.
+for _,field in ipairs({"delay_value","instrument_value","panning_value","volume_value"}) do
+  cells[2][field]=field=="volume_value" and 0xC0 or 1
+  assert(not verifier.verify(phrase,plan,2),field.." was accepted")
+  cells[2][field]=nil
+end
+cells[1].volume_value=0xC0
+assert(not verifier.verify(phrase,plan,2),"volume cut command was accepted on a note")
+cells[1].volume_value=89
+-- A plain native volume is valid; acoustic quantization is verified separately.
+phrase.number_of_lines=16
+phrase.looping=false
+phrase.loop_start=1
+phrase.loop_end=16
+assert(verifier.verify(phrase,plan,2))
+assert(verifier.verify(phrase,plan,2,nil,{volumes={[1]={[1]=89,[2]=255}}}))
+assert(not verifier.verify(phrase,plan,2,nil,{volumes={[1]={[1]=90,[2]=255}}}),
+  "a changed validated native volume was accepted")
+cells[1].volume_value=nil
 phrase.number_of_lines=15
 assert(not verifier.verify(phrase,plan,2))
 print("ACID native phrase content validation passed")

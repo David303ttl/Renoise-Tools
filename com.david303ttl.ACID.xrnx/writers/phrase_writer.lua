@@ -224,10 +224,6 @@ local function complete(job, error_message, rendered_events)
     rendered_events.raw_events, job.instrument_index - 1) ..
     (job.mode=="baseline" and "" or
      " | "..job.mode.." articulation applied") ..
-    (job.glide_warnings and #job.glide_warnings>0 and
-      string.format(
-        "\nGlide note: TIME step %02d, phrase line %02X: 0G00 omitted; gate OFF takes priority.",
-        job.glide_warnings[1].step,job.glide_warnings[1].line) or "") ..
     (job.layout.looping and
       "\nRepeat uses baseline NOTE/TIE/REST; selective slide and other audio modes are unsupported." or "") ..
     (job.cleanup_warning and "\n"..job.cleanup_warning or ""))
@@ -261,30 +257,19 @@ local function finalize(job, event_count, skipped)
     complete(job, validation_error)
     return
   end
-  local expected_articulation={effects={},release_lines={}}
-  if job.mode ~= "baseline" then
-    local timeline, timeline_err=control.compile(job.pattern,{gate_fraction=0.5,plan=job.plan})
-    if not timeline then complete(job,timeline_err);return end
-    local gate_result,gate_err=gates.apply(job.phrase,timeline)
-    if not gate_result then complete(job,gate_err);return end
-    for _,line in ipairs(gate_result.release_lines or {}) do expected_articulation.release_lines[line]=true end
-    if job.mode=="slide" or job.mode=="mono" then
-      -- Apply phrase-local glide without changing instrument configuration.
-      local glide_result,glide_err=articulation.apply(
-        job.phrase,job.plan,2,job.glide_rate,false)
-      if not glide_result then complete(job,glide_err);return end
-      job.glide_warnings=glide_result.skipped_continuations
-      local planned=assert(articulation.plan(job.plan,2,job.glide_rate))
-      local skipped={}
-      for _,item in ipairs(glide_result.skipped_continuations or {}) do
-        skipped[item.line+1]=true
-      end
-      for _,command in ipairs(planned) do
-        if command.kind~="continuation" or not skipped[command.line] then
-          expected_articulation.effects[command.line]=command.amount
-        end
-      end
+  local expected_articulation=job.operations or {effects={},release_lines={}}
+  -- Preserve validated native volumes; accent quantization needs audio evidence.
+  expected_articulation.volumes={}
+  for line_number=1,job.layout.number_of_lines do
+    local row={}
+    for column=1,(job.phrase.visible_note_columns or 1) do
+      row[column]=job.phrase:line(line_number).note_columns[column].volume_value or 255
     end
+    expected_articulation.volumes[line_number]=row
+  end
+  if job.operations then
+    local applied,apply_error=gates.apply_plan(job.phrase,job.operations)
+    if not applied then complete(job,apply_error);return end
   end
   local final_result,final_validation_error=validator.verify(job.phrase,job.plan,2,job.layout,expected_articulation)
   if not final_result then complete(job,final_validation_error);return end
@@ -616,6 +601,21 @@ function M.generate(instrument_index, callback, mode, custom_pattern, target_ind
   if meta.slide_intentions ~= 0 and mode ~= "slide" and mode ~= "mono" then
     return nil, "Selective slides require slide or mono playback mode"
   end
+  local operations
+  if mode~="baseline" then
+    local timeline,timeline_error=control.compile(fixture,{gate_fraction=0.5,plan=plan,
+      playback=fixture.playback,successor=plan.loop and plan.loop.steady})
+    if not timeline then return nil,timeline_error end
+    local commands
+    if mode=="slide" or mode=="mono" then
+      local command_error
+      commands,command_error=articulation.plan(plan,2,0x20)
+      if not commands then return nil,command_error end
+    end
+    local operation_error
+    operations,operation_error=gates.plan(timeline,plan,commands)
+    if not operations then return nil,operation_error end
+  end
   local store_candidate,prepare_error=store.prepare(song,snapshot_id,fixture,mode)
   if not store_candidate then return nil,prepare_error end
   local target_phrase=replace and instrument.phrases[target_index] or nil
@@ -625,7 +625,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern, target_ind
     store_candidate=store_candidate,target_phrase=target_phrase,
     target_name=target_phrase and target_phrase.name or nil,
     expected_events = meta.note_count + meta.off_count,
-    plan = plan, layout=layout, pattern=fixture, mode=mode, glide_rate=0x20,
+    plan = plan, layout=layout, pattern=fixture, mode=mode, glide_rate=0x20, operations=operations,
     replace=replace,target_index=target_index,temporary=true,token=options.token,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false

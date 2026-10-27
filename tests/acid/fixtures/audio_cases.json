@@ -6712,6 +6712,3069 @@
         "acoustic_status": "unverified",
         "protocol_status": "blocked"
       }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_note_tail_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 0.56,
+          "off_at_step": 0.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 0.56,
+            "end_step": 1.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 0.56,
+            "off_at_step": 0.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 1,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_note_tail_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 0.58,
+          "off_at_step": 0.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 1.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 0.58,
+            "off_at_step": 0.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 1,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_note_tail_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 0.6,
+          "off_at_step": 0.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 0.6,
+            "end_step": 1.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 0.6,
+            "off_at_step": 0.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 1,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_tie_tail_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 1.56,
+          "off_at_step": 1.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.56,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.56,
+            "off_at_step": 1.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_tie_tail_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 1.58,
+          "off_at_step": 1.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.58,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.58,
+            "off_at_step": 1.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_tie_tail_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 1.6,
+          "off_at_step": 1.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.6,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.6,
+            "off_at_step": 1.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_two_ties_tail_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 2.56,
+          "off_at_step": 2.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.56,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 1.5,
+            "end_step": 2.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.56,
+            "off_at_step": 2.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.02,
+            "end_step": 2.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_two_ties_tail_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 2.58,
+          "off_at_step": 2.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.58,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 1.5,
+            "end_step": 2.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.58,
+            "off_at_step": 2.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.02,
+            "end_step": 2.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "one_shot_two_ties_tail_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 2.6,
+          "off_at_step": 2.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.6,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 1.5,
+            "end_step": 2.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.6,
+            "off_at_step": 2.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.02,
+            "end_step": 2.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "tie_before_fresh_note_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 2.56,
+          "off_at_step": 2.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 2
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.56,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 2.56,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.56,
+            "off_at_step": 1.5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.56,
+            "off_at_step": 2.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "tie_before_fresh_note_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 2.58,
+          "off_at_step": 2.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 2
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.58,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 2.58,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.58,
+            "off_at_step": 1.5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.58,
+            "off_at_step": 2.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "tie_before_fresh_note_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 2.6,
+          "off_at_step": 2.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 2
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.6,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 2.6,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.6,
+            "off_at_step": 1.5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.6,
+            "off_at_step": 2.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "two_ties_before_fresh_note_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 3.56,
+          "off_at_step": 3.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 3
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.56,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 3.56,
+            "end_step": 4.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 1.5,
+            "end_step": 2.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.56,
+            "off_at_step": 2.5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 3.56,
+            "off_at_step": 3.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.02,
+            "end_step": 2.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 4,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T",
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "two_ties_before_fresh_note_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 3.58,
+          "off_at_step": 3.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 3
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.58,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 3.58,
+            "end_step": 4.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 1.5,
+            "end_step": 2.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.58,
+            "off_at_step": 2.5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 3.58,
+            "off_at_step": 3.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.02,
+            "end_step": 2.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 4,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T",
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "two_ties_before_fresh_note_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 3.6,
+          "off_at_step": 3.5
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 3
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.6,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 3.6,
+            "end_step": 4.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 1.5,
+            "end_step": 2.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.6,
+            "off_at_step": 2.5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 3.6,
+            "off_at_step": 3.5
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.02,
+            "end_step": 2.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 4,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T",
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_note_rest_seam_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 7.06,
+          "off_at_step": 7
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 2
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 4
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 6
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.06,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 3.06,
+            "end_step": 3.9
+          },
+          {
+            "start_step": 5.06,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 7.06,
+            "end_step": 8.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.06,
+            "off_at_step": 1
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 3.06,
+            "off_at_step": 3
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 5.06,
+            "off_at_step": 5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 7.06,
+            "off_at_step": 7
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.48,
+            "note": 48
+          },
+          {
+            "start_step": 4.08,
+            "end_step": 4.48,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.48,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_note_rest_seam_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 7.08,
+          "off_at_step": 7
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 2
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 4
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 6
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.08,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.9
+          },
+          {
+            "start_step": 5.08,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 7.08,
+            "end_step": 8.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.08,
+            "off_at_step": 1
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 3.08,
+            "off_at_step": 3
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 5.08,
+            "off_at_step": 5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 7.08,
+            "off_at_step": 7
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.48,
+            "note": 48
+          },
+          {
+            "start_step": 4.08,
+            "end_step": 4.48,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.48,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_note_rest_seam_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 7.1,
+          "off_at_step": 7
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 2
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 4
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 6
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 1.1,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 3.1,
+            "end_step": 3.9
+          },
+          {
+            "start_step": 5.1,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 7.1,
+            "end_step": 8.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 1.1,
+            "off_at_step": 1
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 3.1,
+            "off_at_step": 3
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 5.1,
+            "off_at_step": 5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 7.1,
+            "off_at_step": 7
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.48,
+            "note": 48
+          },
+          {
+            "start_step": 4.08,
+            "end_step": 4.48,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.48,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 90,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_tie_rest_seam_bpm_90",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 11.06,
+          "off_at_step": 11
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 3
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 6
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 9
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.06,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 5.06,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 8.06,
+            "end_step": 8.9
+          },
+          {
+            "start_step": 11.06,
+            "end_step": 12.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 3.5,
+            "end_step": 4.42
+          },
+          {
+            "start_step": 6.5,
+            "end_step": 7.42
+          },
+          {
+            "start_step": 9.5,
+            "end_step": 10.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.06,
+            "off_at_step": 2
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 5.06,
+            "off_at_step": 5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 8.06,
+            "off_at_step": 8
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 11.06,
+            "off_at_step": 11
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.48,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.48,
+            "note": 48
+          },
+          {
+            "start_step": 9.08,
+            "end_step": 9.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 4.02,
+            "end_step": 4.42,
+            "note": 48
+          },
+          {
+            "start_step": 7.02,
+            "end_step": 7.42,
+            "note": 48
+          },
+          {
+            "start_step": 10.02,
+            "end_step": 10.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_tie_rest_seam_bpm_120",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 11.08,
+          "off_at_step": 11
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 3
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 6
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 9
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 5.08,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 8.08,
+            "end_step": 8.9
+          },
+          {
+            "start_step": 11.08,
+            "end_step": 12.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 3.5,
+            "end_step": 4.42
+          },
+          {
+            "start_step": 6.5,
+            "end_step": 7.42
+          },
+          {
+            "start_step": 9.5,
+            "end_step": 10.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.08,
+            "off_at_step": 2
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 5.08,
+            "off_at_step": 5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 8.08,
+            "off_at_step": 8
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 11.08,
+            "off_at_step": 11
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.48,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.48,
+            "note": 48
+          },
+          {
+            "start_step": 9.08,
+            "end_step": 9.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 4.02,
+            "end_step": 4.42,
+            "note": 48
+          },
+          {
+            "start_step": 7.02,
+            "end_step": 7.42,
+            "note": 48
+          },
+          {
+            "start_step": 10.02,
+            "end_step": 10.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 150,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_tie_rest_seam_bpm_150",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "successor-aware gate acceptance",
+      "expected": {
+        "release": {
+          "maximum_tail_ms": 10,
+          "silence_starts_at_step": 11.1,
+          "off_at_step": 11
+        },
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 3
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 6
+          },
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 9
+          }
+        ],
+        "silence_windows": [
+          {
+            "start_step": 2.1,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 5.1,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 8.1,
+            "end_step": 8.9
+          },
+          {
+            "start_step": 11.1,
+            "end_step": 12.4
+          }
+        ],
+        "continuity_windows": [],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 3.5,
+            "end_step": 4.42
+          },
+          {
+            "start_step": 6.5,
+            "end_step": 7.42
+          },
+          {
+            "start_step": 9.5,
+            "end_step": 10.42
+          }
+        ],
+        "release_edges": [
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 2.1,
+            "off_at_step": 2
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 5.1,
+            "off_at_step": 5
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 8.1,
+            "off_at_step": 8
+          },
+          {
+            "maximum_tail_ms": 10,
+            "silence_starts_at_step": 11.1,
+            "off_at_step": 11
+          }
+        ],
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.48,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.48,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.48,
+            "note": 48
+          },
+          {
+            "start_step": 9.08,
+            "end_step": 9.48,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 4.02,
+            "end_step": 4.42,
+            "note": 48
+          },
+          {
+            "start_step": 7.02,
+            "end_step": 7.42,
+            "note": 48
+          },
+          {
+            "start_step": 10.02,
+            "end_step": 10.42,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
+      "qualification": {
+        "blockers": [
+          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
     }
   ],
   "expectation_scope": "The ready cases reproduce independent native probe controls. Planned cases freeze acoustic requirements for downstream writer work; they are unsupported until their profile, trigger and emitted cells are captured. Expectations are authored without runtime scheduling."

@@ -27,4 +27,14 @@ assert(cells[10].note_value==120)
 local old=cells[1].note_value
 assert(not art.apply(phrase,plan,2,0x20,true))
 assert(cells[1].note_value==old)
+-- Standalone application uses the same terminal gate policy as the writer.
+local isolated=seq.new_pattern(1,"extended")
+isolated.playback="one_shot"
+isolated.time_events={"N"}
+local tail_plan=assert(engine.compile_cycle(isolated))
+cells[1]={note_value=tail_plan.steps[1].note,effect_number_value=0,effect_amount_value=0}
+cells[2]={note_value=121,effect_number_value=0,effect_amount_value=0}
+local tail=assert(art.apply(phrase,tail_plan,2,nil,true))
+assert(tail.early_releases==1 and tail.slide_count==0 and tail.commands==1)
+assert(tail.rate==0x20 and cells[2].note_value==120)
 print("ACID gate/slide operation checks passed")

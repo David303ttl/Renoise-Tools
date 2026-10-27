@@ -269,7 +269,7 @@ trigger/start helpers, actual-writer capture/read-back helper, strict oracle
 validation, offline analyzer and normalization/provenance tests are implemented.
 See [articulation verification](../tests/acid/acid_articulation_manual.md) and
 [capture evidence](../tests/acid/audio_capture_evidence.md). The oracle contains
-seven executable independent protocols and 34 planned writer cases with
+seven executable independent protocols and 55 planned writer cases with
 authored deterministic semantic windows and explicit native-dependent
 qualification blockers. This does not pass the acoustic exit gate. Raw desktop
 grid calibration passed again; held/retrigger/0G20 controls were recorded, with
@@ -302,6 +302,15 @@ No renderer support or manifest version changed.
 **Required fixture families:** isolated NOTE; NOTE-TIE and NOTE-TIE-TIE; adjacent equal/different NOTES; NOTE-REST-NOTE; all-rest; ending REST; trailing TIE before fresh NOTE and before slide; one-step repeat; outgoing versus incoming flags; same-note/up/down/octave slides; short and tied-long slides; cold-to-steady and steady-to-steady slide seams; slide interrupted by REST; accents on/off, consecutive accents, accent changes within a slide chain. Exercise lengths 1/16/17/32/33/48/49/64 structurally and capture 1/16/17/64 with seam articulation. Test host OFF, fresh retrigger, stop/start and seek separately. Selective and keymapped triggering have separate support rows; coverage in one never enables the other.
 
 ### M3.2 — Correct gate and release semantics
+
+**Implementation status (2026-10-27):** successor-aware scheduling, shared
+operation validation and regression coverage are implemented; acoustic acceptance
+remains outstanding. The [gate procedure](../tests/acid/acid_gate_manual.md)
+adds independently authored one-shot-tail, fresh-successor and Repeat REST-seam
+fixtures at 90/120/150 BPM. No native capture or GUI/lifecycle check ran during
+this implementation. Existing normalized calibration/control failures remain
+prerequisites; no new Repeat gate/profile support is established by local specs.
+M3-B's calibrated-capture exit gate remains open.
 
 **Chosen profile:** an isolated unconnected NOTE gates for half a step. A following TIE keeps the gate high through the preceding step; release occurs halfway through the final held NOTE/TIE step before a fresh NOTE. Thus NOTE-TIE lasts 1.5 steps and NOTE-TIE-TIE lasts 2.5 steps before a fresh attack. The resulting retrigger gap is half a step (62.5 ms at 120 BPM). A following REST overrides midpoint release and emits OFF exactly at the REST's start. A connected slide holds through the target without OFF. An outgoing flag with no next NOTE never creates a target or bypasses REST.
 

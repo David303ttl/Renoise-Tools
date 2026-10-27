@@ -1,0 +1,93 @@
+# ACID successor-aware gate acceptance
+
+Automated scheduling and mocked cell validation do not establish sample-envelope
+behavior. Use a disposable song and the [capture preparation](renoise_articulation_probe_manual.md).
+No native gate capture was performed during this implementation: neither Renoise
+nor Audacity was running, and document-control discovery returned no sessions.
+Both applications and ignored desktop scripting helpers are present locally;
+application availability does not resolve the existing failed normalized controls.
+
+The [evidence record](audio_capture_evidence.md) remains authoritative. The
+normalized grid failed all 68 silence windows, the retrigger control missed its
+timing limit, and the realized release differs from the nominal 5 ms profile.
+Resolve those independent profile/detector controls, then recalibrate before
+interpreting writer output. Keep Repeat gate support refused until its declared
+trigger/profile/tempo matrix has passing acoustic evidence. Keep connected-slide
+refusals independently of gate results.
+
+## Authored sources and deadlines
+
+The following oracle IDs have `_bpm_90`, `_bpm_120` and `_bpm_150` variants in
+[audio_cases.json](fixtures/audio_cases.json). Coordinates are zero-based TIME
+steps. All use pitch 48 without SLIDE or ACCENT; they are planned/authored and
+acoustically unverified. The 10 ms tail deadline is frozen independently of the
+writer; its step offset changes with BPM. Do not widen it to fit a capture.
+
+| ID prefix | TIME | Expected attack steps | Expected OFF steps |
+| --- | --- | --- | --- |
+| `one_shot_note_tail` | N | 0 | 0.5 |
+| `one_shot_tie_tail` | NT | 0 | 1.5 |
+| `one_shot_two_ties_tail` | NTT | 0 | 2.5 |
+| `tie_before_fresh_note` | NTN | 0, 2 | 1.5, 2.5 |
+| `two_ties_before_fresh_note` | NTTN | 0, 3 | 2.5, 3.5 |
+| `repeat_note_rest_seam` | NR | 0, 2, 4, 6 | 1, 3, 5, 7 |
+| `repeat_tie_rest_seam` | NTR | 0, 3, 6, 9 | 2, 5, 8, 11 |
+
+Repeat cases include one cold cycle and three steady cycles. Also capture the
+existing `one_step_repeat` and `trailing_tie_fresh_note` cases at their authored
+120 BPM to measure midpoint gates at cold-to-steady and steady-to-steady seams.
+The existing `isolated_note`, `note_tie` and `note_tie_tie` cases end in REST;
+their OFF belongs at the REST boundary, so they cannot substitute for the new
+one-shot-tail cases. Longer 16/17/64-step seam playback and silent all-rest
+synchronization remain separate native checks; existing slide-seam sources do
+not qualify unconnected gate playback.
+
+## Actual writer procedure
+
+1. Prepare the reference instrument and capture route, run independent controls
+   and calibration, and retain readback and original WAV hashes. Use the same
+   declared normalization policy for controls and candidates.
+2. Select ACID's tool scripting context. Set `ACID_ARTICULATION_CASE_ID` to the
+   exact tempo-specific ID and `ACID_ARTICULATION_WRITER_MODE = "retrigger"`, then run
+   `tests/acid/renoise_articulation_writer.lua`. Do not use the generic application
+   terminal: it lacks `renoise.tool().app_idle_observable`. Wait for the generated
+   status and retain its metadata/readback. A refusal is a recorded unsupported
+   result; never patch around it or substitute a hand-built phrase for acceptance.
+3. At the authored BPM, set host LPB 8 and TPL 12. Set
+   `ACID_ARTICULATION_CAPTURE_STEPS` to source length for one-shot cases and four
+   times source length for Repeat. Run `renoise_articulation_trigger.lua`; retain
+   at least two seconds after host OFF. Capture the writer-selected phrase without
+   editing any cells. Stop and freshly trigger between takes using the start
+   helper. Record three unchanged takes for every claimed support row.
+4. Align once to the first onset. Check all expected pitch/silence windows, each
+   OFF-to-silence deadline, held-step absence of a new attack and every seam.
+   Inspect the actual merged note/OFF/volume/effect cells against the metadata.
+   Host OFF, stop/start, seek and keymapped playback require their own experiments.
+5. The standard analyzer deliberately returns `unsupported` for these planned
+   cases. Qualify its complete gate protocol and seeded-failure controls before
+   promoting a case to ready. Never relabel a case merely to obtain a passing
+   report. Record route/profile, BPM, triggering, writer mode, take count, hashes,
+   measured edges and remaining limitations in the evidence record before
+   changing runtime eligibility.
+
+After qualifying enabled output, manually recheck Generate/Regenerate, foreign
+and modified ownership rejection, current source save/reopen, Live Edit and
+undo/redo in Renoise. None of those native lifecycle checks ran in this change.
+
+## Local verification record (2026-10-27)
+
+- `./scripts/run_tests.ps1 -Tool ACID`: all 21 specs passed, including 1,936
+  independent successor-oracle combinations, cell collision/setter rollback,
+  one-shot generation/regeneration and phrase/source transaction rollback.
+- `./tests/acid/test_audio_oracle.ps1`: 62 cases validated; seven malformed
+  mutations rejected. `validate_loop_oracle.ps1` passed 18 semantic cases and
+  all eight structural lengths.
+- `./tests/acid/test_audio_analyzer.ps1` and `test_audio_normalization.ps1`:
+  synthetic positive/negative controls and normalization checks passed.
+- `./scripts/package.ps1 -Tool ACID`: built version 0.1 with 18 runtime files;
+  archive inspection confirmed root manifest/main, module directories and no
+  SDK or development files. `git diff --check` passed.
+
+The shared validator preserves the actual rendered native volume cells across
+articulation writes. Exact normal/accent quantization and captured level response
+remain separate accent acceptance work; preservation alone does not verify them.
