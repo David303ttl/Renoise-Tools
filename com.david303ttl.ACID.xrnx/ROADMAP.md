@@ -2,9 +2,8 @@
 
 **Project:** ARP/SEQ / ACID.xrnx  
 **Target:** Renoise 3.5+, Lua 5.1-compatible XRNX, scripting API 6.2  
-**Working branch:** `develop`  
-**Baseline:** merged ACID M1 + Live Edit, commit `75999f9ee01e4840199797847271ed092be6dbab`  
-**Document status:** implementation plan; outstanding TB-303 hardware claims require evidence and playback verification  
+**Integration target:** `develop` (current planning source: `feature/M3` at `f70d1197c61d7041f328e5d94c96469cfcd17941`)  
+**Document status:** implementation plan; M3 measured-audio scope retained; M3.5 is the release-blocking functional correction; TB-303 hardware fidelity remains separately evidence-gated  
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
 **Updated:** 2026-10-27
 
@@ -20,6 +19,8 @@ Keep the recognizable TB-303 sequencing ideas while labeling departures explicit
 - Prioritize original behavior in new drafts; expose independent short PITCH-span cycling and longer patterns as explicit **Extended** functions under the same new interpreter. Both modes follow Roland's leading-TIE normalization and outgoing-SLIDE rules.
 - ACID must never describe experimental native-sample glide, gate, velocity, or filter behavior as acoustically identical to a TB-303 without measurements.
 - No embedded DSP synth, mandatory VST, arbitrary MIDI-effect rack, or redesign of ARP.xrnx is part of this roadmap.
+- Every valid ACID source must compile to playable phrase events for any selected Renoise instrument slot: sample-based, plugin/VST, external MIDI, hybrid, or empty (empty targets generate a silent phrase with a warning).
+- Valid musical edits never depend on a measured BPM, a diagnostic sample fingerprint, or a specific test-pattern layout. Evidence qualifies **fidelity claims**, not permission to sequence. See M3.5.
 
 **Extended expansion scope:** retain the established 64-step storage/direct-grid
 and explicit PITCH-span design. The only additional OS-303-inspired sequencer
@@ -75,10 +76,11 @@ The current source stores **64 valid C pitches** and carries an independent acti
 | --- | --- | --- | --- |
 | Completed | M1 — Editable source, phrase output and Live Edit | Edit ACID patterns and regenerate native phrases | — |
 | Completed (implementation) | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
-| Completed (implementation); live acceptance open | **M3 — Articulation and native sample fidelity** | Verified profile-scoped gate, selective slide and accent behavior; stop/start, seek and Live Edit during playback remain unchecked | M2 semantic contracts |
-| Next | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M2 + gate-placement decisions |
-| Required for fidelity | **M5 — Source programming and Renoise workflow** | Separate step-entry/check workflow, source management and scoped Extended editing | M2; stable persistence |
-| Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M2–M5 |
+| Completed (implementation); live acceptance open | **M3 — Articulation measurement and reference-profile renderer** | Scoped reference audio evidence; remaining host transport/live-playback checks | M2 semantic contracts |
+| **P0 — next after M3** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
+| After M3.5 | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M3.5 renderer/timeline contract |
+| After M3.5 | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M3.5 editor and source guarantees |
+| Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5 |
 
 **Milestone completion** normally requires deterministic Lua checks and targeted Renoise verification for rendered notes, audio, GUI, phrases, persistence, or undo. If a user accepts deferring a check, record the scope decision and keep the deferred claim explicitly unverified; a passing mock test alone is not an audio conformance result.
 
@@ -381,6 +383,140 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 
 ---
 
+## 5A. M3.5 — Post-M3 sequencer-first correction (P0; blocks M4, M5 and M6)
+
+**Scope:** replace reference-test-limited production generation with general musical rendering. Preserve M2 source semantics and ownership/transaction safety. M3 audio fixtures remain regression and fidelity evidence, never user-input allowlists. **Status: planned; no code or verification claimed.**
+
+### M3.5.0 — Normative contracts and failure taxonomy
+
+| ID | Required invariant | Acceptance |
+| --- | --- | --- |
+| C01 | Any structurally valid NOTE/TIE/REST/PITCH/SLIDE/ACCENT source can generate/regenerate with any valid Renoise instrument slot. | No musical edit is rejected because of unmeasured accent, interval, layout, BPM, LPB/TPL, groove, trigger route or sample profile. |
+| C02 | Source semantics are independent of the target sound generator. | Identical source and timing context yield identical logical NOTE/REST/TIE/SLIDE/ACCENT event streams on sampler, plugin and MIDI targets. |
+| C03 | Normal generation writes an executable native phrase; sonic accuracy is reported separately. | NOTES, RESTs, timing, velocity intent and phrase loop exist even if a target cannot produce continuous pitch glide. |
+| C04 | Rendering chooses a feasible command strategy per target and time budget. | No fixed 0G20 rate, fixed 8/9-step topology, or exact-profile whitelist in production admission. |
+| C05 | Articulation limitations never become silent semantic substitutions. | The destination is updated with the closest explicit approximation; UI reports affected steps and lost fidelity. |
+| C06 | Live Edit is latched until user disables it, closes the dialog, changes song, or a genuine destination-safety loss requires suspension. | A recoverable compile/render problem never silently unchecks Live Edit. |
+| C07 | No destructive side effects on the selected instrument or other song content. | No changes to samples, plugin state, MIDI routing, preset, NNA, trigger settings, sample mapping, instrument FX or foreign phrases. |
+| C08 | Source, generated phrase, ownership seal and UI state remain consistent. | Atomic success or protected last-good phrase; source edits remain recoverable as an explicit draft. |
+| C09 | Musical validity, phrase representability, sonic capability and transaction safety are separate checks. | Independent error codes and tests; fidelity evidence cannot reject an otherwise valid source. |
+
+**Permitted hard failures only:** invalid/out-of-range canonical source; invalid or missing instrument index; Renoise API/phrase capacity or truly unrepresentable phrase size after trying supported render layouts; unsafe ownership/duplicate IDs; foreign or modified target; stale song/target; corrupt persistence; interrupted or failed transaction. Show precise cause and action. An empty but valid instrument slot is **not** an error: generate its phrase and mark playback silent until a generator is configured.
+
+**Nonfatal fidelity diagnostics:** target does not implement continuous legato, connected-accent dynamics, plugin pitch-bend semantics, sample glide, expected envelope response or precise sub-line articulation. Report capability + affected step(s) + rendering strategy. Never call these "GENERATION FAILED" when the phrase committed.
+
+**Priority at runtime:** source validity -> semantic timeline -> destination safety -> target capability -> feasible native operations -> guarded commit -> separately evaluated fidelity. M3 sections 5.0–5.4 document the old scoped implementation/evidence; their profile/tempo/layout refusals are **superseded as production policy by M3.5**. Do not delete the M3 laboratory fixtures.
+
+### M3.5.1 — Instrument-agnostic destination and generation
+
+- Replace the sample-buffer and "playable sample instrument" gate in **writers/phrase_writer.lua** with a valid Renoise instrument-slot check. Permit plugin-only, MIDI-only, hybrid and empty slots; do not inject a dummy sample.
+- Use Renoise instrument phrases as the common output format. Renoise supports phrase playback for samples, plugins and MIDI. Do not make phrase creation dependent on sample_data, sample mapping, sample rate or the diagnostic envelope.
+- Probe the actual instrument configuration read-only: sample layer, loaded plugin or alias, external MIDI output, hybrid layers, phrase playback mode and relevant trigger properties. A GUI tab or presence of a sample object is not proof of audible playback.
+- If Pattrns scripting/rendering depends on sample-backed audition, separate event construction from audio preview and provide a **direct native phrase-cell emitter**; both routes must pass the same structural validator and guarded transaction. No rendering-to-sample, plugin freezing or third-party conversion dependency.
+- Keep selecting existing owned phrases or appending a phrase to the chosen instrument. Do not overwrite another instrument's phrase, alter the selected track, or reroute audio/MIDI.
+- Empty instrument: produce valid event cells and warn "No active sound source; phrase will be silent." Missing/unavailable plugin or disconnected MIDI port: keep phrase generation possible; show the target's actual playback dependency without rewriting plugin or device settings.
+- Detect a target's changed capabilities at each regeneration and after song/instrument changes. Use semantic target identity and ownership, not stale GUI list indices.
+
+**Gate I:** fresh sample, plugin-only VST/VST3 (where available), external MIDI, hybrid, empty and alias instruments all accept Generate/Regenerate and source save/reopen. No temporary phrases, unrequested instrument mutations or sample-required errors.
+
+### M3.5.2 — General articulation planner (no test-matrix admission)
+
+- Split **model/cycle_interpreter.lua** semantic output from **model/control_signals.lua** musical gate/connection timeline, a capability-aware articulation planner, native operation emission and post-write validation. The same planner feeds manual Generate and Live Edit.
+- Remove production use of **reference_gate_context**, **eligible_repeat_slide_layout**, **eligible_repeat_same_pitch_tempo**, exact 90/120/150 BPM gates, diagnostic instrument fingerprints, hardcoded pitch pairs and blanket connected-accent refusal. Retain measured cases as offline reference tests.
+- Compute slide direction, interval, available musical duration and command budget for any legal source pitch, including 0, +/-1, +/-4, +/-12, +/-25 and larger within valid note range. Rate and required continuation are derived, not fixed to 0G20.
+- For sample-capable targets, evaluate 0Gxx coverage with legal rate 01..FE and FF instant behavior, available lines/ticks, NOTE/OFF locations, successor REST/NOTE and phrase seam. Search feasible rates/placements before approximating; test against native Renoise execution, not arithmetic alone.
+- Use an adaptive duration/line representation where possible within Renoise phrase limits. When the exact glide cannot fit, still render its target pitch and remaining sequence; signal truncated/stepped glide. Do not emit a command sequence that audibly stalls indefinitely or erases a successor attack.
+- Preserve cold -> steady and steady -> steady Repeat transitions, outgoing SLIDE across the loop seam, same-pitch connected SLIDE, REST interruption, unconnected fresh NOTE attack, TIE holds and end-of-cycle note release policy. Reuse the M3 evidence that a fresh NOTE after glide needs explicit cancellation/OFF on the measured sample path.
+- Support any NOTE accent including connected-slide target and source. Generate a meaningful note velocity/volume instruction; classify an inability to vary a continuously sounding voice as a target-specific sonic limitation, not invalid source.
+- Resolve cell collisions by planning alternatives (resolution/rate, available columns, safe timing placement or explicit approximation). Never drop a required OFF, accidentally retrigger a connected sample voice, write past phrase end or corrupt another column. A true API/resource bound may fail with a step/line diagnostic only after feasible layouts have been tried.
+- Remove musician-facing dependence on the Baseline/Retrigger/Slide implementation-mode selector. The source SLIDE and ACCENT flags determine articulation; internal rendering strategies are automatic. Migrate current WIP mode settings deliberately, with exact save/reopen and no silent source reinterpretation.
+
+**Gate A:** exhaustive legal-source property tests and specified randomized seeds generate phrases without M3 evidence-gate errors; every emitted cell passes validator; target pitches, attacks, RESTs, loop order and stored source match the semantic oracle. Sample audio failures report fidelity limitations independently.
+
+### M3.5.3 — Sample, plugin and MIDI articulation backends
+
+| Target capability | Required minimum | Optional enhanced path and conditions |
+| --- | --- | --- |
+| Native sample | NOTE/REST/TIE, deterministic OFF/gate, accent volume, target pitch and loop. | Selective 0Gxx legato, adaptive rate and connected accent where native behavior supports it. Do not change sample or modulation settings. |
+| Plugin instrument (VST/VST3/AU where host supports) | Native phrase NOTE/NOTE-OFF and velocity reaching plugin; accurate pitch and rhythmic event order. | Legato/portamento only if current plugin/host behavior supports it; scoped MIDI pitch bend only with known bend range, isolated channel/voice and correct reset. |
+| External MIDI | Phrase note-on/note-off/velocity and ordering; no stuck notes after REST, stop or target change within host control. | Pitch bend/CC only with confirmed channel, range and reset policy; never assume a receiving synth's glide behavior. |
+| Hybrid / plugin alias | Phrase events address the selected Renoise instrument without hidden layer/alias changes. | Report per-layer articulation limitations if components react differently. |
+| Empty / unavailable generator | Phrase can be created, edited, stored, inspected and replaced. | Explicit silent/missing-device status, not an installation or sample requirement. |
+
+- Renoise sample 0Gxx is **not** a general plugin/MIDI glide command. Never emit it as proof of plugin legato. Native plugin/MIDI fallback is discrete target NOTE with a visible "SLIDE approximated: retrigger" diagnostic where genuine continuity cannot be expressed.
+- Do not send speculative pitch bend, CC, sustain, channel pressure or instrument automation; do not overwrite user-defined plugin portamento or routing. Treat plugin-specific legato as a capability/verification path, not an assumption based on plugin format.
+- Velocity/accent must preserve the PITCH-owned flag; verify native volume-cell to plugin velocity delivery and sample loudness separately. Do not claim native sample envelopes, VST amp/filter accents and TB-303 analog accent are equivalent.
+- Preserve target plugin/MIDI note-off and voice lifecycle during Repeat, stop/start/seek, phrase switching, regeneration and instrument reassignment; where Renoise controls external tail behavior, state that limitation precisely.
+- No required commercial plugin. Use a reproducible available test VSTi and a MIDI capture/loopback route for acceptance; no soundcard-loopback dependency for structural correctness.
+
+**Gate B:** plugin-only and external MIDI run the same NOTE/TIE/REST/SLIDE/ACCENT source without generation refusal or phantom sample requirements; note stream and note-offs verified in Renoise. Any discontinuous SLIDE produces an explicit diagnostic, not a failed render or a false continuity claim.
+
+### M3.5.4 — Live Edit: persistent, transactional and observable
+
+- Keep Live Edit **armed** across arbitrary valid STEP/PITCH/ACCENT/SLIDE changes, BPM changes, TPL/LPB changes, groove changes and playback stop/start/seek. Never uncheck on a nonfatal fidelity limitation.
+- Model states explicitly: **CLEAN, DIRTY, QUEUED, RENDERING, COMMITTED, APPROXIMATE, SUSPENDED, ERROR**. Expose last successful commit, current pending edit, active target and reason for suspension; "APPROXIMATE" means successful audio-limited render.
+- Serialize regeneration and coalesce intermediate edits. Validate job token/document identity both before mutation and before commit. An edit while rendering enqueues the latest full canonical source and regenerates once the in-flight job resolves.
+- On transient failure, retain the last-good sealed phrase, keep source draft and pending status, remain armed, and retry on the next relevant change or user Retry. Do not spin on a permanent error. Keep debounce configurable only if needed for performance; no UI-selection-only rebuilds.
+- On real ownership loss/target deletion/song change, **suspend** writes with a visible reason; never hijack a foreign phrase or silently select a different destination. Rebind only by explicit user selection or documented identity-safe recovery.
+- Closing/switching the dialog does not create a partially owned phrase. Define and test save/reopen of a dirty canonical draft separately from the last committed seal; user is warned before any unsaved draft would be lost.
+- Avoid string-matching success messages as the Live Edit completion API: use typed success/failure/approximation results with structured diagnostics; manual Generate uses the same result contract.
+
+**Gate L:** rapid edits (including while audio plays), failed render then corrected edit, tempo/groove changes, cancellation, undo/redo, target mutation, dialog close/reopen and song switch never silently disable an armed session or corrupt last-good content. Suspensions are visible and resumable after safe target resolution.
+
+### M3.5.5 — Diagnostics and editing UI
+
+- One primary **Generate/Regenerate** action and one **Live Edit** toggle; no mandatory technical playback-mode selection to use a valid SLIDE.
+- Display **committed / approximate / rendering / dirty / suspended / failed** with target instrument and phrase. Put diagnostic text in a readable, selectable area with source TIME/PITCH step, phrase line, capability and recommended action.
+- Distinguish **fatal safety/structural errors** from **nonfatal sonic approximations**. Never label a completed phrase as generation failed. Do not show reference profile, measured tempo or whitelist boundaries as required user setup.
+- Allow edit navigation directly to reported step and keep the user's source editable regardless of output capability. Warnings never undo the edit, reset ACCENT/SLIDE or deselect Live Edit.
+- Expose resolved instrument type and silent/unavailable target warning without requiring instrument inspection knowledge. Do not promise audio for an empty instrument.
+
+**Gate U:** all warning/error classes have deterministic mocked GUI tests plus manual 125%/150% Windows scaling checks; status readable without truncating the offending step and cause.
+
+### M3.5.6 — Test matrix, local gates and delivery slices
+
+**Mandatory dimensions (pairwise coverage plus named cross-products):**
+
+| Dimension | Cases |
+| --- | --- |
+| Target | Sample instrument; plugin-only VST/VST3; MIDI-only; sample+plugin hybrid; plugin alias; empty instrument; missing plugin/disconnected MIDI |
+| Source | NOTE/TIE/REST; outgoing/loop SLIDE; same-pitch SLIDE; connected and unconnected ACCENT; adjacent slides; long TIE; all-REST; all-NOTE; short/64-step source |
+| Interval | 0, +/-1, +/-4, +/-12, +/-25 and legal pitch-range extremes |
+| Layout | 1, 8, 9, 16, 17, 32, 33, 48, 49, 64 steps; irregular NOTE/TIE/REST; 16/17, 32/33, 48/49, last/first seams |
+| Transport | BPM 73, 90, 120, 137, 150 and tempo change during playback; song LPB/TPL variations; groove on/off; stop, start, seek |
+| Ownership | New owned phrase; regenerate; manual phrase modification; foreign phrase; duplicate ID; reordering/deletion; interrupted job |
+| Live Edit | Single edit, rapid batches, in-flight edit, approximation, transient error and retry, target change, song reopen, undo/redo |
+
+**Test obligations:**
+
+1. **Unit/fixture:** test semantic timeline across all targets independent of device configuration; property/fuzz seeds captured on failure; targeted 25-semitone / 2-line glide must be rendered or explicitly approximated, never refused merely for fixed 0G20.
+2. **Writer:** prove plan completeness, safe native effects, exact NOTE/OFF destinations, Repeat seams, adequate cancellations, staging/rollback, correct phrase metadata and current-format persistence.
+3. **Integration:** in Renoise, create/regenerate plugin-only and empty-instrument phrases with **zero loaded samples**; verify sample phrases still work; verify instrument plugin/MIDI output without requiring a rendered sample.
+4. **Audio/MIDI:** inspect plugin note-on/note-off/velocity and affected sample glide/gate offline or by controlled capture. Record fidelity grade separately from generation success.
+5. **Lifecycle:** verify Live Edit while Renoise plays, then stop/start/seek, change tempo/target, recover from error and save/reopen. No stolen target or silently unchecked Live Edit.
+6. **Regression:** rerun M1/M2 source, M3 reference captures/probes where relevant, unrelated ARP specs if shared code changes, packaging and installed XRNX smoke tests. New functionality may approximate outside verified M3 captures but must not silently regress existing measured behavior.
+7. **Local execution only:** PowerShell/VS Code Lua specs; no GitHub Actions/workflow requirement. Record manual Renoise results as pass/fail/not run, not inferred from mocks.
+
+**Implementation PRs (each includes its own tests and manual acceptance notes):**
+
+| Slice | Content | Merge gate |
+| --- | --- | --- |
+| M3.5-A | Contract/error types, target capability inspection, instrument-agnostic phrase creation, sample gate removal | All target classes generate canonical structural phrases without sample dependency |
+| M3.5-B | Universal semantic timeline, adaptive native operation planner, no reference-profile/layout/tempo admissions | Arbitrary valid sample-target sources compile; safe output or explicit approximation |
+| M3.5-C | Sample articulation and Repeat seam/connected-accent paths, alternative glide rates/line budgets | M3 reference fixtures remain sound; novel layouts/intervals don't block generation |
+| M3.5-D | Plugin/MIDI/hybrid articulation, note-off/velocity, non-applicable effect filtering, capability diagnostics | Plugin-only and MIDI note traces pass; no speculative command or instrument mutation |
+| M3.5-E | Typed render result, retained draft and persistent Live Edit state, safety suspension and readable status | Failure/recovery/race manual tests and Lua mocks pass |
+| M3.5-F | Cross-product acceptance, save/reopen, GUI, packaging, README/DESIGN updates | All C/I/A/B/L/U gates satisfied, or a precisely documented platform limitation accepted by owner |
+
+**M3.5 complete only when:**
+- Ordinary valid user input and all targeted instrument families regenerate through manual and Live Edit without M3 calibration-profile/layout/tempo refusals.
+- A sample is never a prerequisite for a valid instrument phrase; a plugin-only instrument can be selected, written and heard through its existing plugin route.
+- Every reduced-fidelity articulation commits a musically ordered phrase with explicit warning, and cannot be mistaken for a hardware-faithful slide/accent.
+- All real safety failures preserve unrelated/last-good phrase data, report corrective action and retain recoverable source.
+- Verified local specs, Renoise manual receipts and docs agree; no background service, mandatory VST, synth engine, implicit sample conversion, or GitHub workflows.
+
+---
+
 ## 6. M4 — Rhythmic fidelity and timing modes
 
 **Goal:** correctly represent the time base, especially TB-303-style triplet programming, with an explicit stored grid for straight and triplet patterns.
@@ -395,7 +531,7 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 ### M4.2 — Deterministic timing conversion
 
 - Implement a timing compiler that emits rational musical positions or a fixed high-resolution tick representation without cumulative rounding drift.
-- Choose LPB/phrase lengths/delays based on representability; reject impossible mappings with precise step/line diagnostics.
+- Choose LPB/phrase lengths/delays based on representability; search supported grids and explicit timing approximations before declining a truly unrepresentable native phrase. Keep the valid canonical source editable and provide precise step/line diagnostics on hard resource bounds; follow M3.5's nonfatal-fidelity contract.
 - Reuse the M3 gate/articulation timeline so timing modes do not destroy note lengths or selective glide.
 - Persist an explicit timing mode with the source snapshot and validate it. Revise the WIP format directly when adding the field; do not infer timing from or migrate earlier development records.
 
@@ -436,13 +572,13 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 
 - Document native phrase triggering, arrangement, transposition and resizing through Renoise. No ACID pattern queue, chain player, performance transpose, half/double shortcut or playback-cursor recording is required.
 - Test native phrase triggering and document supported boundary continuity. R03's end-to-start slide remains a core single-sequence loop requirement; it does not require an ACID arrangement engine. Do not claim independent phrase switches preserve a voice without playback evidence.
-- Keep existing Live Edit regeneration responsive and safe. Do not change unrelated tracks, instrument routing, sample setup or phrase contents as an invisible side effect.
+- Build on M3.5's latched Live Edit and typed result states. Do not change unrelated tracks, instrument routing, sample setup, plugin configuration or phrase contents as an invisible side effect.
 
 ### M5.3 — Editor refinement
 
 - Improve page/current-step indicators, keyboard legibility, used versus unused PITCH markers and precise error navigation.
 - Distinguish **stored C entry**, **referenced PITCH entry**, and **user-modified PITCH entry**; avoid conflating edit history with musical validity.
-- Provide visible dirty/rendering/committed/failed states. Define what happens to unsaved drafts when closing, switching instruments, or changing songs.
+- Refine M3.5's dirty/queued/rendering/committed/approximate/suspended/error states and durable draft workflow; do not reinvent the Live Edit scheduler in M5.
 - Maintain responsive Live Edit with many phrases and 64-step patterns; avoid regenerating on selection-only UI clicks.
 
 **M5 done when:** a user can program via the Original workflow, edit using the three scoped Extended expansions, duplicate/select and revisit current-format ACID source in a saved XRNS. Preview and output agree, edits are reversible, and Renoise provides arrangement/performance without an ACID substitute. Native playback limitations remain documented.
@@ -472,7 +608,7 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 - Package ACID with the repository's PowerShell 7 script, verifying `main.lua` and `manifest.xml` at archive root and no SDK/test files.
 - Decide version/tag **after** demonstrated functionality; manifest `0.1` stays unchanged until a release decision. Do not imply all analog aspects of the original TB-303 are reproduced.
 
-**M6 done when:** local regression suite, manual Renoise checklist, release package inspection and documentation agree on exactly what ACID supports; there are no unresolved data-loss regressions.
+**M6 done when:** M3.5 guarantees hold on sample, plugin, MIDI, hybrid and empty instrument targets; local regression suite, manual Renoise checklist, release package inspection and documentation agree on exactly what ACID supports; there are no unresolved data-loss regressions.
 
 ---
 
@@ -488,6 +624,10 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 | Repeated phrase loops | At least three semantic cycles | Audible/visual repeats across several cycles |
 | Leading/trailing TIE, REST, SLIDE | Explicit boundary state assertions | Phrase boundary and actual envelope response |
 | Gate and release | Scheduled timeline/collision tests | OFF locations and recorded attack/release |
+| Instrument-agnostic phrase writing (M3.5) | Capability fixtures, no sample-buffer admission | Sample, plugin-only, external MIDI, hybrid, alias and empty slots; zero-sample plugin writes |
+| Arbitrary articulation (M3.5) | Interval/layout fuzzing; no evidence allowlists; explicit approximations | 25-semitone short slide, connected accents, Repeat seams, multiple BPM/groove settings |
+| Plugin/MIDI commands (M3.5) | Only target-compatible operations; pitch-bend safeguards | VST note/velocity/OFF and MIDI capture; no sample-only Gxx imposed on plugins |
+| Live Edit recovery (M3.5) | Typed result, armed/dirty/pending/retry/suspend transitions | Editing during playback, recoverable failure, undo, ownership loss, song change |
 | Straight and triplet timing | Grid conversion and no cumulative drift | BPM/LPB/triplet repeat checks |
 | Several target phrases | IDs, snapshot roundtrip, ownership | Switching, adding and regenerating phrase slots |
 | Original re-entry/check workflow | Separate cursors, command/flag reset rules | PITCH audition, TIME review, back/correction, undo |
@@ -532,12 +672,11 @@ For every such decision, supply **reference + decision + test fixture + manual p
 
 ## 11. Immediate next work package
 
-**Current remaining M3 acceptance (2026-10-27):** all authored successor-gate protocols and the measured moving-glide cases now pass as listed above. The earlier `tempo_synced` correction and `G00` interpretation remain relevant; old missed-retrigger/low-level loopback results below are endpoint-specific history. Do not generalize current offline renders to a soundcard route.
+| Priority | Action | Exit criterion |
+| --- | --- | --- |
+| 1 | Finish M3's remaining transport stop/start/seek and Live Edit-during-playback manual checks on its declared diagnostic profile. | Evidence recorded; no broader instrument or audio-fidelity claim. |
+| 2 | Start **M3.5-A** on a dedicated feature branch from the current integrated M3 head. | Any valid Renoise instrument slot accepts structural phrase generation; plugin-only and empty targets need no samples. |
+| 3 | Implement **M3.5-B/C/D/E/F** in the specified order with local Lua and Renoise receipts per slice. | No measured-case whitelist blocks normal musical editing; sample/plugin/MIDI and Live Edit acceptance passes. |
+| 4 | Begin M4/M5 only after M3.5's core correctness and instrument-independence gates pass. | No dependence on the discarded evidence-gated runtime policy. |
 
-1. Manually verify transport stop/start and seek for the declared selective workflow, and Live Edit while audio is playing. Native host OFF/retrigger/keymapped controls are offline evidence; they do not enable ACID keymapped runtime behavior.
-2. Keep the final ACID regression, package, installed-runtime hash and GUI-fit receipts with the release record; they currently pass.
-3. Keep the connected-slide accent preflight refusal explicit in UI/help and covered by regression; reopen support only with new measured evidence.
-
-**M3 completion:** the authored gate matrix, bounded Repeat glide classes, flat-profile NOTE/TIE level response, and packaged runtime checks pass on the checked profile. Connected-slide accents are explicitly refused by preflight. Do not close M3 until the declared stop/start/seek checks and Live Edit during playback are verified in Renoise. The offline renderer is accepted for its named cases; current-desktop soundcard-loopback behavior remains unverified. No reduced scope is approved.
-
-The ordering remains **semantic correctness → repeatable native phrase output → articulation fidelity → timing fidelity → source editing and Renoise integration → hardened release**.
+**Blocking release rule:** M3 reference calibration is not a substitute for a usable sequencer. M3.5 functional guarantees are required before M6 release acceptance; hardware-faithful analog sound remains a separately labeled research/fidelity objective.
