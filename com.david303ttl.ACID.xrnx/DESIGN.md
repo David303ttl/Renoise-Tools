@@ -50,8 +50,12 @@ Play Once tail releases at the final held-step midpoint. A REST successor
 releases at the REST boundary. A connected slide holds into its target.
 
 Sample glide commands are budgeted against available lines and releases.
-Plugin and MIDI routes receive ordered notes, velocity and OFF events; sample
-0G commands do not establish plugin or MIDI legato. Unrepresentable continuity,
+Plugin/MIDI routes use a periodic multi-column legato plan. A connected target
+NOTE precedes the delayed predecessor OFF by 1/256 phrase line. Same-pitch
+connections hold the existing voice. Source-step coloring preserves cold and
+steady Repeat seams with up to three note columns. Receiver mono/legato
+portamento supplies glide; sample 0G commands are not sent to these routes.
+The final validator checks every planned column and delayed OFF. Unrepresentable continuity,
 connected dynamics and target envelope limitations produce explicit sonic
 approximations. They never invalidate a legal musical source.
 
@@ -69,15 +73,17 @@ contracts are accepted.
 
 ## Live Edit and drafts
 
-Live Edit debounces source changes, serializes rendering and coalesces pending
+Live Edit starts rendering immediately for each source change and coalesces pending
 edits. Jobs validate their token and song/target identity before mutation and
 commit. Manual generation and Live Edit use structured render outcomes.
 
-CLEAN, DIRTY, QUEUED, RENDERING, COMMITTED, APPROXIMATE, SUSPENDED and ERROR
+CLEAN, RENDERING, COMMITTED, APPROXIMATE and ERROR
 separate pending edits, successful output, sonic limitations and write safety.
 Recoverable failures keep Live Edit armed and preserve the draft. Retry or a
 relevant edit schedules another attempt without an automatic retry loop.
-Destination safety loss suspends writes until the user resolves the target.
+Live Edit creates and binds its own phrase automatically for new, foreign,
+modified or deleted phrase targets, preserving unrelated content. A hard API or
+persistence failure reports an error while keeping the editor armed.
 Dialog close and song changes invalidate outstanding work.
 
 Uncommitted drafts are stored separately from committed source in song tool

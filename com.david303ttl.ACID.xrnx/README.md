@@ -32,9 +32,12 @@ instrument's global phrase trigger settings. The decoded Start/Repeating
 preview is read-only.
 
 Manual Generate and Regenerate remain available. Live Edit optionally applies
-valid source edits after a short debounce. Undo and Redo cover source edits and
+each valid source edit immediately, with one render in flight. Edits made during
+rendering apply automatically as soon as that render finishes. Undo and Redo cover source edits and
 phrase output policy. A failed Live Edit remains armed; correct the source or
-use Retry Live Edit. If the destination changes, select it again before writing.
+use Retry Live Edit. Enabling Live Edit also applies the current source. New
+destinations create an ACID phrase automatically. Foreign, modified or deleted
+phrases are preserved; Live Edit creates a separate owned phrase for the edits.
 Uncommitted drafts are stored separately from the last committed phrase in
 song tool data and recover after saving and reopening the XRNS. If a new draft
 has an ambiguous destination or persistence fails, it remains available in the
@@ -45,12 +48,19 @@ rollback before replacing an owned phrase. Source records and ownership seals
 use the current v3 contract.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
-source. It attempts native sample glide when the target has sample data. Plugin
-and MIDI targets retain ordered note events and receive an explicit slide
-approximation where continuous pitch movement cannot be represented by their
-phrase route. Connected accent behavior and sample envelope response depend on
-the target and are not claimed to match TB-303 hardware. Empty instrument slots
-can receive a silent phrase and are reported as needing a generator.
+source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE
+uses overlapping notes: the target starts in another phrase column before a
+delayed OFF releases its predecessor. Same-pitch connected notes hold the
+existing voice. Repeat preserves this ordering across the loop seam.
+
+For a plugin or MIDI synth, enable its mono/legato portamento and set its glide
+time. ACID sends the legato note ordering; the receiver supplies continuous
+pitch motion and envelope behavior. A polyphonic receiver may play overlapping
+notes instead of gliding. ACID does not change presets, send speculative pitch
+bend or enable portamento by modifying the instrument. Hybrid instruments use
+the same overlap stream; their sample layers may respond differently. Accent
+changes on a held same-pitch voice are reported when they cannot be delivered.
+Empty slots can receive a silent phrase and are reported as needing a generator.
 
 Phrase generation has been checked with Lua mocks for the current renderer
 contract. Renoise playback and routing checks for Program/Grid switching,

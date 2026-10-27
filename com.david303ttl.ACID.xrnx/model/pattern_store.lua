@@ -270,15 +270,34 @@ function M.has_drafts(song)
 end
 
 function M.commit(song,candidate)
-  if type(candidate)~="table" or type(candidate.raw)~="string" then return nil,"invalid ACID store candidate" end
+  if type(candidate)~="table" or type(candidate.raw)~="string" or
+      (candidate.previous_raw~=nil and type(candidate.previous_raw)~="string") then
+    return nil,"invalid ACID store candidate"
+  end
   local current,err=raw_data(song)
   if current==nil and err then return nil,err end
-  if current~=candidate.previous_raw then return nil,"ACID song data changed during generation" end
-  local ok,write_error=pcall(function() song.tool_data=candidate.raw end)
+  local previous_entries,previous_drafts=decode(candidate.previous_raw or "")
+  if not previous_entries then return nil,previous_drafts end
+  local current_entries,current_drafts=decode(current or "")
+  if not current_entries then return nil,current_drafts end
+  local next_entries,next_drafts=decode(candidate.raw)
+  if not next_entries then return nil,next_drafts end
+  local previous_sources,previous_error=encode(previous_entries,{})
+  local current_sources,current_error=encode(current_entries,{})
+  if not previous_sources or not current_sources then
+    return nil,previous_error or current_error or "Could not compare ACID source records"
+  end
+  if current_sources~=previous_sources then return nil,"ACID song data changed during generation" end
+  local rebased,encode_error=encode(next_entries,current_drafts)
+  if not rebased then return nil,encode_error end
+
+  candidate.previous_raw=current
+  candidate.raw=rebased
+  local ok,write_error=pcall(function() song.tool_data=rebased end)
   if not ok then return nil,"Could not store ACID song data: "..tostring(write_error) end
   local written,verify_error=raw_data(song)
   if not written then return nil,verify_error end
-  if written~=candidate.raw then return nil,"ACID song data write did not persist the prepared source" end
+  if written~=rebased then return nil,"ACID song data write did not persist the prepared source" end
   return true
 end
 

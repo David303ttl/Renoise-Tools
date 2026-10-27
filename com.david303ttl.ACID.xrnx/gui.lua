@@ -144,7 +144,6 @@ function M.show()
     return drafts.put(song,bound_instrument,bound_phrase,pattern,output_policy)
   end
   local loading=false
-  local stopping_live=false
   local function default_pitch()
     return sequencer.new_pitch(0,0,false,false)
   end
@@ -322,11 +321,19 @@ function M.show()
   local function changed()
     history:record(pattern,output_policy)
     local saved,save_error=save_draft()
-    status.text=saved and ("DIRTY: draft saved with song for instrument "..selected_instrument..
-      "; Generate to update phrase output.") or
-      ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error))
     update()
     if live then live:changed();update_live_state() end
+    local state=live and type(live.state)=="function" and live:state()
+    if state and state.enabled then
+      if state.busy then
+        status.text=state.pending and "LIVE EDIT RENDERING: applying the latest edit next."
+          or "LIVE EDIT RENDERING: applying edits."
+      end
+      if not saved then status.text=status.text.."\nDRAFT WARNING: "..tostring(save_error) end
+    else
+      status.text=saved and "Draft saved; enable Live Edit to apply changes automatically."
+        or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error))
+    end
   end
   playback_popup:add_notifier(function(value)
     if updating then return end
@@ -492,11 +499,18 @@ function M.show()
   end
   local function load_target(index)
     local was_armed=live and type(live.state)=="function" and live:state().enabled or false
-    if was_armed then live:suspend("Destination changed; select a safe ACID-owned phrase to resume.") end
+    if was_armed then live:rebind("Destination changed") end
     local instrument=song.instruments[selected_instrument]
     local target=phrase_targets[index]
     bound_instrument=instrument
     bound_phrase=target and instrument.phrases[target] or nil
+    if was_armed and bound_phrase and ownership.status(bound_phrase)~="owned" then
+      bound_phrase=nil
+      target=#instrument.phrases+1
+      loading=true
+      phrase_choice.value=#phrase_choice.items
+      loading=false
+    end
     revision=revision+1
     if target and target<=#instrument.phrases then
       local source,output_policy_or_error=store.load(song,instrument.phrases[target])
@@ -522,17 +536,13 @@ function M.show()
     local draft,policy=drafts.get(song,bound_instrument,bound_phrase)
     if draft then
       pattern,output_policy=draft,policy
-      status.text="Recovered saved draft. Generate to update the phrase output."
+      status.text="Recovered saved draft. Live Edit applies it automatically when enabled."
     elseif policy then
       status.text="DRAFT RECOVERY ERROR: "..tostring(policy).."; existing phrase output is protected."
     end
     history:reset(pattern,output_policy)
     update()
-    if was_armed then
-      local safe,reason=live_target()
-      if safe then live:resume()
-      else live:suspend(reason) end
-    end
+    if was_armed then live:changed() end
     if update_live_state then update_live_state() end
   end
   local phrase_names
@@ -581,23 +591,32 @@ function M.show()
       return nil,"Target instrument changed; select the destination again."
     end
     local index=phrase_targets[phrase_choice.value]
-    if not index or index>#instrument.phrases or not rawequal(instrument.phrases[index],bound_phrase) then
-      return nil,"Live Edit needs an existing ACID phrase. Generate it manually first."
+    if not bound_phrase and index==#instrument.phrases+1 then return index end
+    if bound_phrase then
+      local found
+      for position,phrase in ipairs(instrument.phrases) do
+        if rawequal(phrase,bound_phrase) then found=position;break end
+      end
+      if found and ownership.status(bound_phrase)=="owned" and ownership.id(bound_phrase) then
+        local source=store.load(song,bound_phrase)
+        if source then
+          refresh_phrase_choices(found)
+          return found
+        end
+      end
     end
-    local phrase=instrument.phrases[index]
-    if ownership.status(phrase)~="owned" or not ownership.id(phrase) then
-      return nil,"Live Edit can only overwrite an unchanged ACID-owned phrase."
-    end
-    local source,reason=store.load(song,phrase)
-    if not source then return nil,reason end
-    return index
+    bound_phrase=nil
+    refresh_phrase_choices(#instrument.phrases+1)
+    return #instrument.phrases+1
   end
   local function describe_live_result(result)
     local message="LIVE EDIT "..string.upper(result.status)..": "..tostring(result.message)
     if type(result.diagnostics)=="table" and #result.diagnostics>0 then
       local details={}
       for _,detail in ipairs(result.diagnostics) do
-        if tostring(detail)~=tostring(result.message) then details[#details+1]=tostring(detail) end
+        if not tostring(result.message):find(tostring(detail),1,true) then
+          details[#details+1]=tostring(detail)
+        end
       end
       if #details>0 then message=message.."\n"..table.concat(details,"\n") end
     end
@@ -622,8 +641,7 @@ function M.show()
     local target_name=phrase_choice and phrase_choice.items[phrase_choice.value] or "No phrase selected"
     local instrument_name=bound_instrument and bound_instrument.name or "No instrument"
     local prefix="LIVE EDIT "..state.status
-    if state.suspension_reason then prefix=prefix..": "..state.suspension_reason
-    elseif state.last_result and state.last_result.message and
+    if state.last_result and state.last_result.message and
         (state.status=="ERROR" or state.status=="APPROXIMATE" or state.status=="COMMITTED") then
       prefix=prefix..": "..state.last_result.message
     end
@@ -644,12 +662,12 @@ function M.show()
     result.diagnostics=result.diagnostics or {}
     result.diagnostics[#result.diagnostics+1]="DRAFT WARNING: "..message
   end
-  live=live_regen.new(renoise.tool(),function(done,token)
+  live=live_regen.new(function(done,token)
     if opened~=generation or not dialog or not dialog.visible then
       return nil,"ACID dialog is no longer active"
     end
     local target_index,reason=live_target()
-    if not target_index then return nil,{kind="complete",status="suspended",message=reason,diagnostics={reason}} end
+    if not target_index then return nil,{kind="complete",status="error",message=reason,diagnostics={reason}} end
     update_live_state()
     -- Freeze the source for the asynchronous renderer; subsequent UI edits
     -- are scheduled for another pass and cannot mutate the running job.
@@ -678,6 +696,23 @@ function M.show()
         if result.status=="committed" or result.status=="approximate" then
           local result_target=result.target and result.target.phrase_index or target_index
           result.target_label=target_summary(requested_instrument,result_target)
+          if not requested_phrase then
+            local created=requested_instrument.phrases[result_target]
+            if rawequal(bound_instrument,requested_instrument) and not bound_phrase then
+              bound_phrase=created
+              refresh_phrase_choices(result_target)
+            end
+            if revision~=requested_revision and created then
+              local draft,policy=drafts.get(song,requested_instrument,nil)
+              if draft then
+                local moved,move_error=drafts.put(song,requested_instrument,created,draft,policy)
+                if moved then
+                  local cleared,clear_error=drafts.clear(song,requested_instrument,nil)
+                  if not cleared then result_issue(result,tostring(clear_error)) end
+                else result_issue(result,tostring(move_error)) end
+              end
+            end
+          end
         end
         if (result.status=="committed" or result.status=="approximate") and revision==requested_revision then
           local cleared,clear_error=drafts.clear(song,requested_instrument,requested_phrase)
@@ -690,32 +725,27 @@ function M.show()
     return success,reason
   end,function(result)
     if opened~=generation then return end
+    if result.code=="safety.target_changed" and live:state().enabled then
+      live:changed()
+      update_live_state()
+      return
+    end
     status.text=describe_live_result(result)
     update_live_state()
-  end,nil,function(token,reason)
+  end,function(token,reason)
     return phrase_writer.cancel(token,reason)
   end)
   active_live=live
   live_checkbox=vb:checkbox{value=false,notifier=function(value)
     if value then
-      local index,reason=live_target()
-      if not index then
-        stopping_live=true
-        live_checkbox.value=false
-        stopping_live=false
-        status.text=reason
-        return
-      end
       live:set_enabled(true)
-      status.text="Live Edit enabled: edits auto-regenerate the selected ACID phrase."
-      if drafts.get(song,bound_instrument,bound_phrase) then live:changed() end
+      status.text="LIVE EDIT RENDERING: applying the current source."
+      live:changed()
       update_live_state()
     else
       live:stop()
       update_live_state()
-      if not stopping_live then
-        status.text="Live Edit disabled; manual Generate/Regenerate is available."
-      end
+      status.text="Live Edit disabled; manual Generate/Regenerate is available."
     end
   end}
   active_live_checkbox=live_checkbox
@@ -798,10 +828,8 @@ function M.show()
     vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
-        local state=live:state()
-        if state.suspended then
-          if live:resume() then status.text="LIVE EDIT QUEUED: target recheck and retry scheduled." end
-        elseif live:retry() then status.text="LIVE EDIT QUEUED: retry scheduled." end
+        live:retry()
+        update_live_state()
         update_live_state()
       end}},
     vb:row{spacing=8,
@@ -885,7 +913,7 @@ function M.show()
       vb:button{text="Sampler audit",notifier=function()
         status.text=sampler.describe(song.instruments[selected_instrument])
       end}},
-    vb:text{text="Draft edits are saved with the song and restored when reopened; Generate updates phrase output."},
+    vb:text{text="Live Edit applies changes automatically. With Live Edit off, Generate applies the saved draft."},
     live_state_view,inspect,status}
   select_instrument(selected_instrument)
   update()

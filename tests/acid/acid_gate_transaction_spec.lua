@@ -1,4 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
+local columns=dofile('tests/acid/phrase_columns.lua')
 
 local function observable()
   local handlers={}
@@ -50,9 +51,10 @@ function instrument:insert_phrase_at(index)
     phrase.cells[line]={note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
   end
-  function phrase:line(line) return {note_columns={self.cells[line]},effect_columns={}} end
+  function phrase:line(line) return columns.line(self,line) end
   function phrase:column_is_muted() return false end
   function phrase:copy_from(other)
+    columns.copy(self,other)
     for _,key in ipairs(properties) do self[key]=other[key] end
     self.cells={}
     for line,cell in ipairs(other.cells) do

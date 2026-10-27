@@ -3,8 +3,8 @@
 local M = {}
 local EMPTY, OFF = 121, 120
 
-local function verify_fields(cell,has_note,line,column)
-  if (cell.delay_value or 0)~=0 or (cell.instrument_value or 255)~=255
+local function verify_fields(cell,has_note,line,column,delay)
+  if (cell.delay_value or 0)~=(delay or 0) or (cell.instrument_value or 255)~=255
     or (cell.panning_value or 255)~=255 then
     return nil,string.format("Unexpected delay, instrument or panning at phrase line 0x%02X column %d",line-1,column)
   end
@@ -60,6 +60,8 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
   local release_lines=articulation and articulation.release_lines or {}
   local effects=articulation and articulation.effects or {}
   local volumes=articulation and articulation.volumes or {}
+  local native=articulation and articulation.native_notes
+  if native and columns~=native.columns then return nil,"Legato column count mismatch" end
   for step = 1, plan.length do
     local event = plan.steps[step]
     if not event or event.step ~= step then
@@ -68,11 +70,11 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
     local expected = EMPTY
     if event.kind == "note" then
       expected = event.note
-      note_count = note_count + 1
+      if not native then note_count = note_count + 1 end
     elseif event.kind == "rest" then
       if event.releases then
         expected = OFF
-        off_count = off_count + 1
+        if not native then off_count = off_count + 1 end
       end
     elseif event.kind ~= "tie" then
       return nil, "unsupported semantic kind at step " .. step
@@ -90,6 +92,12 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
           return nil, "missing note column at line " .. (line_number-1)
         end
         local wanted = (offset == 1 and column == 1) and expected or EMPTY
+        local native_cell=native and native.cells[line_number] and native.cells[line_number][column]
+        if native then
+          wanted=native_cell and native_cell.note_value or EMPTY
+          if wanted<OFF then note_count=note_count+1
+          elseif wanted==OFF then off_count=off_count+1 end
+        end
         if column==1 and release_lines[line_number] then
           if wanted~=EMPTY then
             return nil,string.format("Contradictory release at TIME step %02d, cycle %d, phrase line 0x%02X",
@@ -103,9 +111,12 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
             "Phrase mismatch at line %02X column %d: expected %d, got %s",
             line_number-1, column, wanted, tostring(cell.note_value))
         end
-        local fields_ok,fields_error=verify_fields(cell,wanted<OFF,line_number,column)
+        local fields_ok,fields_error=verify_fields(cell,wanted<OFF,line_number,column,
+          native_cell and native_cell.delay_value)
         if not fields_ok then return nil,fields_error end
-        if volumes[line_number] and volumes[line_number][column]~=(cell.volume_value or 255) then
+        local expected_volume=native and (native_cell and native_cell.volume_value or 255)
+          or (volumes[line_number] and volumes[line_number][column])
+        if expected_volume and expected_volume~=(cell.volume_value or 255) then
           return nil,string.format("Phrase volume mismatch at line 0x%02X column %d",line_number-1,column)
         end
         local effect=effects[line_number]

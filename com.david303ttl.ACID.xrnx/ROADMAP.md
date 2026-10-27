@@ -396,7 +396,7 @@ restrict valid source input.
 
 **Implementation:** Program/Grid share one canonical source; Repeat/Play Once
 are phrase-specific output policies. Instrument-slot generation, adaptive sample
-articulation, plugin/MIDI approximations, typed render outcomes, latched Live
+articulation, plugin/MIDI legato, typed render outcomes, latched Live
 Edit, draft recovery and edit Undo/Redo use the same protected writer.
 
 **Verification:** deterministic Lua and synthetic oracle checks validate source,
@@ -414,7 +414,7 @@ not run in this workspace; functional acceptance remains open.
 | C03 | Normal generation writes an executable native phrase; sonic accuracy is reported separately. | NOTES, RESTs, timing, velocity intent and phrase loop exist even if a target cannot produce continuous pitch glide. |
 | C04 | Rendering chooses a feasible command strategy per target and time budget. | No fixed 0G20 rate, fixed 8/9-step topology, or exact-profile whitelist in production admission. |
 | C05 | Articulation limitations never become silent semantic substitutions. | The destination is updated with the closest explicit approximation; UI reports affected steps and lost fidelity. |
-| C06 | Live Edit is latched until user disables it, closes the dialog, changes song, or a genuine destination-safety loss requires suspension. | A recoverable compile/render problem never silently unchecks Live Edit. |
+| C06 | Live Edit is latched until user disables it, closes the dialog, changes song, or the song closes. | A recoverable compile/render problem never silently unchecks Live Edit. |
 | C07 | No destructive side effects on the selected instrument or other song content. | No changes to samples, plugin state, MIDI routing, preset, NNA, trigger settings, sample mapping, instrument FX or foreign phrases. |
 | C08 | Source, generated phrase, ownership seal and UI state remain consistent. | Atomic success or protected last-good phrase; source edits remain recoverable as an explicit draft. |
 | C09 | Musical validity, phrase representability, sonic capability and transaction safety are separate checks. | Independent error codes and tests; fidelity evidence cannot reject an otherwise valid source. |
@@ -526,7 +526,7 @@ not run in this workspace; functional acceptance remains open.
 | Hybrid / plugin alias | Phrase events address the selected Renoise instrument without hidden layer/alias changes. | Report per-layer articulation limitations if components react differently. |
 | Empty / unavailable generator | Phrase can be created, edited, stored, inspected and replaced. | Explicit silent/missing-device status, not an installation or sample requirement. |
 
-- Renoise sample 0Gxx is **not** a general plugin/MIDI glide command. Never emit it as proof of plugin legato. Native plugin/MIDI fallback is discrete target NOTE with a visible "SLIDE approximated: retrigger" diagnostic where genuine continuity cannot be expressed.
+- Renoise sample 0Gxx is **not** a general plugin/MIDI glide command. Never emit it as proof of plugin legato. Plugin/MIDI targets emit overlapping NOTE/OFF events for receiver-controlled mono/legato portamento. The target NOTE starts in another column before a delayed predecessor OFF; connected same-pitch notes hold the existing voice. Show the receiver setup requirement and do not claim glide for a receiver that ignores overlap.
 - Do not send speculative pitch bend, CC, sustain, channel pressure or instrument automation; do not overwrite user-defined plugin portamento or routing. Treat plugin-specific legato as a capability/verification path, not an assumption based on plugin format.
 - Velocity/accent must preserve the PITCH-owned flag; verify native volume-cell to plugin velocity delivery and sample loudness separately. Do not claim native sample envelopes, VST amp/filter accents and TB-303 analog accent are equivalent.
 - Preserve target plugin/MIDI note-off and voice lifecycle during Repeat, stop/start/seek, phrase switching, regeneration and instrument reassignment; where Renoise controls external tail behavior, state that limitation precisely.
@@ -537,19 +537,19 @@ not run in this workspace; functional acceptance remains open.
 ### M3.5.4 — Live Edit: persistent, transactional and observable
 
 - Keep Live Edit **armed** across arbitrary valid STEP/PITCH/ACCENT/SLIDE changes, BPM changes, TPL/LPB changes, groove changes and playback stop/start/seek. Never uncheck on a nonfatal fidelity limitation.
-- Model states explicitly: **CLEAN, DIRTY, QUEUED, RENDERING, COMMITTED, APPROXIMATE, SUSPENDED, ERROR**. Expose last successful commit, current pending edit, active target and reason for suspension; "APPROXIMATE" means successful audio-limited render.
+- Model states explicitly: **CLEAN, RENDERING, COMMITTED, APPROXIMATE, ERROR**. Expose last successful commit, current pending edit, active target and any error; "APPROXIMATE" means successful audio-limited render.
 - Serialize regeneration and coalesce intermediate edits. Validate job token/document identity both before mutation and before commit. An edit while rendering enqueues the latest full canonical source and regenerates once the in-flight job resolves.
-- On transient failure, retain the last-good sealed phrase, keep source draft and pending status, remain armed, and retry on the next relevant change or user Retry. Do not spin on a permanent error. Keep debounce configurable only if needed for performance; no UI-selection-only rebuilds.
-- On real ownership loss/target deletion/song change, **suspend** writes with a visible reason; never hijack a foreign phrase or silently select a different destination. Rebind only by explicit user selection or documented identity-safe recovery.
+- On transient failure, retain the last-good sealed phrase, keep source draft and pending status, remain armed, and retry on the next relevant change or user Retry. Do not spin on a permanent error. Start valid edits immediately without a debounce timer or manual Generate prerequisite. Edits arriving during a render apply immediately after it settles; editor-view and cursor-only changes never rebuild.
+- New, foreign, modified or deleted phrase destinations create a separate ACID-owned phrase automatically on the explicitly selected instrument. Preserve unrelated phrases and bind subsequent edits to the generated phrase. Song changes invalidate and stop the session; missing instrument or corrupt persistence reports an error without disabling Live Edit.
 - Closing/switching the dialog does not create a partially owned phrase. Define and test save/reopen of a dirty canonical draft separately from the last committed seal; user is warned before any unsaved draft would be lost.
 - Avoid string-matching success messages as the Live Edit completion API: use typed success/failure/approximation results with structured diagnostics; manual Generate uses the same result contract.
 
-**Gate L:** rapid edits (including while audio plays), failed render then corrected edit, tempo/groove changes, cancellation, undo/redo, target mutation, dialog close/reopen and song switch never silently disable an armed session or corrupt last-good content. Suspensions are visible and resumable after safe target resolution.
+**Gate L:** rapid edits (including while audio plays), failed render then corrected edit, tempo/groove changes, cancellation, undo/redo, target mutation, dialog close/reopen and song switch never silently disable an armed session or corrupt last-good content. Valid source edits never require Generate or an explicit resume step.
 
 ### M3.5.5 — Diagnostics and editing UI
 
 - One primary **Generate/Regenerate** action and one **Live Edit** toggle; no mandatory technical playback-mode selection to use a valid SLIDE.
-- Display **committed / approximate / rendering / dirty / suspended / failed** with target instrument and phrase. Put diagnostic text in a readable, selectable area with source TIME/PITCH step, phrase line, capability and recommended action.
+- Display **committed / approximate / rendering / failed** with target instrument and phrase. Put diagnostic text in a readable, selectable area with source TIME/PITCH step, phrase line, capability and recommended action.
 - Distinguish **fatal safety/structural errors** from **nonfatal sonic approximations**. Never label a completed phrase as generation failed. Do not show reference profile, measured tempo or whitelist boundaries as required user setup.
 - Allow edit navigation directly to reported step and keep the user's source editable regardless of output capability. Warnings never undo the edit, reset ACCENT/SLIDE or deselect Live Edit.
 - Expose resolved instrument type and silent/unavailable target warning without requiring instrument inspection knowledge. Do not promise audio for an empty instrument.
@@ -588,9 +588,9 @@ not run in this workspace; functional acceptance remains open.
 | **M3.5-A — instrument targets** | Read-only sample/plugin/MIDI/hybrid/alias/empty capability detection; no sample prerequisite; capability changes suspend staged commits. | Actual generator routing, alias behavior, disconnected MIDI and unchanged instrument settings. |
 | **M3.5-B — native planning** | Semantic timeline, successor-aware gates, adaptive legal glide rates, FF instant approximation, collision checks and current-source validation. Seeded writer tests cover all lengths 1–64 across five target configurations and signed intervals. | Boundary playback and large intervals. Rendering uses two phrase lines per TIME step; timing-resolution expansion belongs to M4. |
 | **M3.5-C — sample articulation** | Sample glide placement respects NOTE/OFF timing; limited continuity and connected accents report approximations. | Sample envelope response, fresh attacks, Repeat seams and connected dynamics. |
-| **M3.5-D — plugin/MIDI/hybrid** | Ordered native NOTE, velocity and OFF intent with explicit SLIDE approximation; read-only routing diagnostics. | Plugin velocity/OFF delivery, MIDI capture and voice lifecycle, hybrid/alias output. |
+| **M3.5-D — plugin/MIDI/hybrid** | Periodic multi-column SLIDE legato with target NOTE before delayed predecessor OFF, same-pitch holds, velocity and read-only routing diagnostics. | Plugin velocity/OFF delivery, MIDI capture and voice lifecycle, hybrid/alias output. |
 | **M3.5-E — Live Edit and drafts** | Typed outcomes and failure categories, latched recovery/retry, visible state/target, single-flight coalescing, cancellation, edit Undo/Redo and separate durable drafts. Unsafe or failed draft persistence keeps session recovery with a loss warning. | Playback edits, host undo, dirty XRNS save/reopen, target changes and error recovery. |
-| **M3.5-F — verification/package** | 27 ACID and 3 ARP Lua specs pass; semantic and synthetic audio controls pass; 20-file runtime archive matches source bytes with root main.lua/manifest.xml and no development files. | Installed-tool smoke test, Windows scaling, audio/MIDI and manual acceptance checklist. |
+| **M3.5-F — verification/package** | 29 ACID and 3 ARP Lua specs pass; semantic and synthetic audio controls pass; 22-file runtime archive matches source bytes with root main.lua/manifest.xml and no development files. | Installed-tool smoke test, Windows scaling, audio/MIDI and manual acceptance checklist. |
 
 **M3.5 complete only when:**
 - Gate S passes: Program/Grid are editor views, Repeat/Play Once is output policy; a single automatic articulation pipeline replaces and **deletes**, rather than wraps or migrates, every deprecated audio mode.
@@ -722,7 +722,7 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 | Targeted transformations | Exact flag/command changes, unaffected source unchanged | Action scope, undo and regenerated result |
 | Non-destructive scale mask | Raw PITCH unchanged, deterministic mapping, bounds, bypass and roundtrip | Resolved preview/output agreement; slide connection after pitch mapping |
 | Trigger, stop/start and seek | Explicit cold/repeat context, no stale voice | Sustained versus fresh trigger, release, transport, selective/keymapped coverage |
-| Live Edit under pressure | Debounce, single-flight, pending edits | Rapid UI edits while playing |
+| Live Edit under pressure | Immediate dispatch, single-flight, automatic pending edits | Rapid UI edits while playing |
 | Undo/redo and failures | Injected write/cancel failures | Undo, save/reopen, manual edits, song switch |
 | Packaging | Static archive layout validation | Install, start and playback in Renoise |
 

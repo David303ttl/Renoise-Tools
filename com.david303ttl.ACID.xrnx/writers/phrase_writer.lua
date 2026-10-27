@@ -9,6 +9,8 @@ local ownership = require("writers.phrase_ownership")
 local store = require("model.pattern_store")
 local target_capabilities = require("model.target_capabilities")
 local sequencer = require("model.sequencer")
+local legato = require("model.legato")
+local legato_writer = require("writers.legato_writer")
 local M = {}
 
 M.LPB = 8
@@ -355,7 +357,11 @@ local function finalize(job, event_count, skipped)
   end
   local expected_articulation=job.operations or {effects={},release_lines={}}
   expected_articulation.volumes=volumes
-  if job.operations then
+  if job.native_notes then
+    local applied,apply_error=legato_writer.apply(job.phrase,job.native_notes)
+    if not applied then complete(job,apply_error);return end
+    expected_articulation={native_notes=job.native_notes}
+  elseif job.operations then
     local applied,apply_error=gates.apply_plan(job.phrase,job.operations)
     if not applied then complete(job,apply_error);return end
   end
@@ -366,6 +372,7 @@ local function finalize(job, event_count, skipped)
     complete(job,final_validation_error)
     return
   end
+  result=final_result
   local ok, error_message = pcall(function()
     -- Rendered lines are normal native phrase data (not a running script).
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
@@ -690,7 +697,21 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   local timeline,timeline_error=control.compile(fixture,{gate_fraction=0.5,plan=plan,
     output_policy=output_policy,successor=plan.loop and plan.loop.steady})
   if not timeline then return nil,failure("source.invalid","source",timeline_error) end
-  local commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline)
+  local native_notes
+  if (capabilities.plugin or capabilities.midi or capabilities.alias) and #slide_steps(plan)>0 then
+    local native_error
+    native_notes,native_error=legato.plan(plan,timeline,layout)
+    if not native_notes then return nil,failure("phrase.legato_plan","phrase",native_error) end
+  end
+  local commands,approximations,minimum_rate
+  if native_notes then
+    commands,approximations,minimum_rate={},native_notes.diagnostics,1
+    if capabilities.sample then
+      approximations[#approximations+1]="Hybrid sample layers receive overlapping notes; their envelopes and glide can differ from the plugin/MIDI receiver."
+    end
+  else
+    commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline)
+  end
   if not commands then return nil,failure("phrase.unrepresentable","phrase",approximations) end
   local operations,operation_error=gates.plan(timeline,plan,commands)
   if not operations and #commands>0 then
@@ -730,7 +751,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     target_name=target_phrase and target_phrase.name or nil,
     expected_events = meta.note_count + meta.off_count,
     plan = plan, layout=layout, pattern=fixture, output_policy=output_policy,
-    operations=operations,approximations=approximations,
+    operations=operations,approximations=approximations,native_notes=native_notes,
     target_warning=capabilities.diagnostic,
     capabilities=capabilities,
     replace=replace,target_index=target_index,temporary=true,token=options.token,

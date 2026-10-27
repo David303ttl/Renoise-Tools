@@ -34,8 +34,6 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_idle_observable=observable()}
-function tool:add_timer() end
-function tool:remove_timer() end
 local instrument={name="Target",phrases={{id=21,name="ACID phrase 1"},
   {id=22,name="ACID phrase 2"}},samples={},sample_modulation_sets={},
   sample_device_chains={},phrase_program=1}
@@ -53,12 +51,37 @@ function app:show_warning(message) error(message) end
 
 local render_calls,edit_notifications=0,0
 local generation_request,generation_callback
-package.loaded["model.live_regen"]={new=function()
-  return {
-    changed=function() edit_notifications=edit_notifications+1 end,
-    stop=function() end,
-    set_enabled=function() end
-  }
+package.loaded["model.live_regen"]={new=function(render,on_result)
+  local self={enabled=false,busy=false,pending=false,status="CLEAN",last_result=nil,last_commit=nil}
+  local function dispatch()
+    if not self.enabled or self.busy or not self.pending then return end
+    self.pending=false
+    self.busy=true
+    self.status="RENDERING"
+    render(function(result)
+      self.busy=false
+      self.last_result=result
+      if result.status=="committed" or result.status=="approximate" then self.last_commit=result end
+      self.status=string.upper(result.status)
+      if on_result then on_result(result) end
+      if self.pending then dispatch() end
+    end,{is_current=function()return true end})
+  end
+  function self:changed()
+    if not self.enabled then return end
+    edit_notifications=edit_notifications+1
+    self.pending=true
+    dispatch()
+  end
+  function self:set_enabled(value) self.enabled=value==true end
+  function self:rebind() end
+  function self:stop() self.enabled=false;self.pending=false end
+  function self:retry() self.pending=true;dispatch();return true end
+  function self:state()
+    return {enabled=self.enabled,busy=self.busy,pending=self.pending,status=self.status,
+      last_result=self.last_result,last_commit=self.last_commit}
+  end
+  return self
 end}
 package.loaded["writers.phrase_writer"]={
   generate=function(instrument_index,callback,pattern,target_index,options)
@@ -129,17 +152,17 @@ assert(edit_notifications==0 and render_calls==0)
 builder.views.acid_program_time_command:fire(3)
 assert(builder.views.acid_grid_time_01.value==3)
 assert(builder.views.acid_preview_summary.text:find("REST",1,true))
-assert(edit_notifications==1 and render_calls==0)
+assert(edit_notifications==0 and render_calls==0)
 builder.views.acid_editor_view:fire(2)
 assert(builder.views.acid_grid_time_01.value==3)
-assert(edit_notifications==1 and render_calls==0)
+assert(edit_notifications==0 and render_calls==0)
 builder.views.acid_editor_view:fire(1)
 builder.views.acid_program_key_popup:fire(2)
 assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
-assert(edit_notifications==2 and render_calls==0)
+assert(edit_notifications==0 and render_calls==0)
 builder.views.acid_editor_view:fire(2)
 assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
-assert(edit_notifications==2 and render_calls==0)
+assert(edit_notifications==0 and render_calls==0)
 
 local last_step
 local output_popup
@@ -213,4 +236,26 @@ assert(not draft_cache.get(song,instrument,nil),
 assert(not draft_cache.get(song,instrument_two,instrument_two.phrases[1]),
   "completion never attaches an in-flight source draft to the current foreign target")
 
-print("ACID Program/Grid views share one source and switch presentation without regeneration")
+target_popup:fire(1)
+phrase_popup:fire(4)
+local live_checkbox
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="checkbox" and node.value==false then live_checkbox=node end
+end
+assert(live_checkbox,"Live Edit checkbox was not created")
+live_checkbox:fire(true)
+assert(render_calls==3 and generation_request.target_index==4,
+  "arming Live Edit immediately appends the selected new phrase")
+local appended={id=24,name="Live appended phrase"}
+instrument.phrases[4]=appended
+generation_callback({kind="complete",status="committed",message="Live append committed.",
+  diagnostics={},target={instrument_index=1,phrase_index=4}})
+assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
+builder.views.acid_program_key_popup:fire(5)
+assert(render_calls==4 and generation_request.target_index==4,
+  "the next edit regenerates the same appended phrase in place")
+generation_callback({kind="complete",status="committed",message="Live regeneration committed.",
+  diagnostics={},target={instrument_index=1,phrase_index=4}})
+assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
+
+print("ACID Program/Grid views and immediate Live Edit append checks passed")

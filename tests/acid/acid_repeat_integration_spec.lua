@@ -1,4 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
+local columns=dofile('tests/acid/phrase_columns.lua')
 
 local idle_handlers={}
 local committed_handlers={}
@@ -61,10 +62,11 @@ local function make_phrase()
   for line=1,513 do phrase.cells[line]=blank() end
   function phrase:line(line)
     if not self.cells[line] then return nil end
-    return {note_columns={self.cells[line]},effect_columns={}}
+    return columns.line(self,line)
   end
   function phrase:column_is_muted() return false end
   function phrase:copy_from(other)
+    columns.copy(self,other)
     for _,key in ipairs({'number_of_lines','lpb','playback_mode','looping',
       'loop_start','loop_end','key_tracking','name','visible_note_columns',
       'visible_effect_columns','instrument_column_visible',
@@ -295,20 +297,87 @@ for _,item in ipairs(targets) do
   local target_index=#instrument.phrases+1
   local phrase,status=generate(target_source,'repeat',target_index,nil,target_instrument)
   assert(phrase and ownership.status(phrase)=='owned',item.name..' target did not commit')
-  assert(phrase.cells[1].note_value==35 and phrase.cells[5].note_value==60,
-    item.name..' target lost ordered note events')
+  assert(phrase:line(1).note_columns[1].note_value==35,
+    item.name..' target lost its attack')
   assert(instrument.phrase_playback_mode==before_policy
     and instrument.phrase_program==before_program
     and instrument.phrase_editor_visible==before_editor,
     item.name..' target settings were changed')
   if item.name=='empty' then
+    assert(phrase.cells[5].note_value==60)
     assert(status.message:find('silent',1,true), 'empty target must report that playback is silent')
   elseif item.name~='sample' then
+    local onset=phrase:line(5).note_columns
+    assert(onset[2].note_value==60 and onset[2].delay_value==0,
+      'legato target must start in another column before the preceding note ends')
+    assert(onset[1].note_value==120 and onset[1].delay_value==1,
+      'preceding note must release after the target NOTE')
+    assert(phrase:line(7).note_columns[2].note_value==120,
+      'REST must release the actual sounding column')
     assert(not phrase.cells[5].effect_number_string,
       item.name..' target received a sample-only glide command')
     assert(status.message:find('Articulation approximation:',1,true),
       item.name..' target did not report reduced glide fidelity')
+
+    -- A connected odd-length loop must preserve voice columns at both seams.
+    local connected=source(3)
+    connected.pitch_length=3
+    for index,note in ipairs({36,39,43}) do
+      connected.pitch_events[index]=pitch(note,false,true)
+    end
+    local looped=generate(connected,'repeat',#instrument.phrases+1,nil,target_instrument)
+    assert(looped.visible_note_columns==3)
+    local seam=looped:line(looped.loop_start).note_columns
+    assert(seam[1].note_value==36 and seam[1].delay_value==0)
+    assert(seam[3].note_value==120 and seam[3].delay_value==1,
+      'Repeat seam must overlap the first target with the final voice')
+    assert(ownership.status(looped)=='owned')
+
+    -- Failure after native mutation cannot damage a sealed destination.
+    local emitter=require('writers.legato_writer')
+    local original_apply=emitter.apply
+    local before_name,before_data=looped.name,song.tool_data
+    emitter.apply=function(destination,plan)
+      assert(original_apply(destination,plan))
+      return nil,'injected legato emission failure'
+    end
+    local failed
+    assert(writer.generate(target_instrument,function(value)failed=value end,
+      connected,#instrument.phrases,{output_policy='repeat'}))
+    for _=1,6 do idle:fire() end
+    emitter.apply=original_apply
+    assert(failed.kind=='complete' and failed.status=='error')
+    assert(looped.name==before_name and song.tool_data==before_data)
+    assert(ownership.status(looped)=='owned' and #instrument.phrases==2,
+      'failed multi-column emission must preserve the last-good phrase and source')
   end
 end
 instrument=original_instrument
+-- An edit saved during asynchronous rendering must not reject the source commit
+-- or discard the newer draft that Live Edit will apply next.
+local original_render=script.render_to_pattern
+local delayed_options,delayed_callback
+function script:render_to_pattern(options,callback)
+  delayed_options,delayed_callback=options,callback
+  return true
+end
+local render_status
+local rendering_source=source(4)
+local latest_source=source(5)
+local count_before=#instrument.phrases
+assert(writer.generate(1,function(value)render_status=value end,rendering_source,1,
+  {output_policy='repeat'}))
+for _=1,6 do idle:fire() end
+assert(delayed_callback,'native render did not start')
+local draft_cache=require('model.draft_cache')
+assert(draft_cache.put(song,instrument,instrument.phrases[1],latest_source,'repeat'))
+script.render_to_pattern=original_render
+original_render(script,delayed_options,delayed_callback)
+assert(render_status.kind=='complete' and
+  (render_status.status=='committed' or render_status.status=='approximate'),render_status.message)
+assert(store.load(song,instrument.phrases[1]).length==4)
+assert(draft_cache.get(song,instrument,instrument.phrases[1]).length==5,
+  'render commit discarded the newer source edit')
+assert(#instrument.phrases==count_before and ownership.status(instrument.phrases[1])=='owned',
+  'ordinary in-flight editing left a recovery or staging phrase')
 print('ACID Repeat end-to-end mocked integration checks passed (playback checked separately in Renoise)')

@@ -56,12 +56,37 @@ With a sample target, also use NOTE–TIE–NOTE–NOTE with an outgoing slide i
 the third NOTE. Confirm its 0G command completes before the fourth NOTE's
 midpoint OFF, and both the glide and OFF remain in the phrase.
 
+## Plugin and MIDI SLIDE
+
+1. Use a plugin-only or MIDI-only target with no samples. Enable the receiver's
+   mono-legato portamento and choose an audible glide time. Keep its preset and
+   routing unchanged while generating. Record receiver and configuration.
+2. Generate NOTE C → NOTE G with outgoing SLIDE on C. Inspect the target line:
+   G starts in another note column with delay 00; C has OFF with delay 01 in its
+   original column. Capture note-on G before note-off C. Listen for continuous
+   pitch movement without an envelope restart. A polyphonic receiver may overlap
+   notes instead; do not record that as glide success.
+3. Disable the SLIDE flag. Confirm a midpoint OFF separates C and G and the
+   receiver produces a fresh attack. Re-enable it and confirm overlap returns.
+4. Try C → C with SLIDE. Confirm the second C emits neither a new note-on nor
+   a note-off; a subsequent REST releases the held C. A changed accent on this
+   held voice produces an explicit limitation rather than a retrigger.
+5. Repeat three distinct sliding notes for several cycles. Inspect all three
+   note columns and the last-to-first seam. Capture note order and delayed OFFs;
+   confirm no accumulating notes. Repeat with C → G → C and same-pitch seam.
+6. Exercise TIE, connected ACCENT, REST, 64 steps, Play Once tail, stop/start,
+   seek and Live Edit regeneration. Verify note-offs in the MIDI/plugin capture.
+   Test hybrid layers separately; their sample envelopes may retrigger.
+
 ## Save, reopen and Live Edit
 
 1. Save and reopen the XRNS. Confirm current source and Repeat/Play Once policy
 restore for each owned phrase.
-2. Enable Live Edit, make several rapid source edits, and confirm the final
-   source is rendered once edits settle. Disable Live Edit during an in-flight
+2. Enable Live Edit on New Phrase and confirm it creates and binds an owned
+   phrase automatically. Make a source edit and confirm rendering starts
+   immediately without Generate or a debounce wait. Make several edits during
+   rendering and confirm the latest source applies automatically next.
+   Disable Live Edit during an in-flight
    render and confirm the destination remains consistent.
 3. Change songs while ACID is open, then close/reopen the tool. Confirm stale
    jobs are invalidated and no phrase in the new song is changed.
@@ -74,9 +99,10 @@ restore for each owned phrase.
    BPM, LPB/TPL and groove during playback, then stop/start/seek. Confirm Live
    Edit remains armed and note/OFF order stays correct.
 6. Cause a recoverable render failure and confirm Live Edit stays enabled.
-   Correct the problem and use Retry Live Edit; confirm the last-good phrase
-   is preserved until the retry commits. Modify the destination externally and
-   confirm writes suspend until the destination is selected again.
+   Correct the problem by editing the source; confirm it renders immediately
+   and preserves the last-good phrase until success. Modify or delete the
+   destination externally; confirm Live Edit creates and binds a separate owned
+   phrase automatically and preserves unrelated content.
 
 
 ## Async generation and draft safety
@@ -97,7 +123,7 @@ restore for each owned phrase.
 ## Diagnostics and Windows scaling
 
 At 125% and 150% scaling, inspect dirty, queued, rendering, committed,
-approximate, suspended and error states. Confirm target and cause are readable
+approximate and error states. Confirm target and cause are readable
 and diagnostic text can be selected. Use Go to source error and confirm the
 reported TIME/PITCH location is selected without modifying source.
 
@@ -108,8 +134,8 @@ reported TIME/PITCH location is selected without modifying source.
 | Program/Grid and source | | Not run | |
 | Repeat / Play Once | | Not run | |
 | Sample target | | Not run | |
-| Plugin-only target | | Not run | |
-| External MIDI target | | Not run | |
+| Plugin-only target and legato SLIDE | | Not run | |
+| External MIDI target and legato SLIDE | | Not run | |
 | Hybrid target | | Not run | |
 | Empty slot | | Not run | |
 | Save/reopen and recovery | | Not run | |

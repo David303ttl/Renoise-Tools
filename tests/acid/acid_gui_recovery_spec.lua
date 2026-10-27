@@ -39,19 +39,7 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),
-  timers={},writer_calls={}}
-function tool:add_timer(handler,delay)
-  assert(delay==350)
-  self.timers[handler]=true
-end
-function tool:remove_timer(handler) self.timers[handler]=nil end
-function tool:fire_timer()
-  local handler=next(self.timers)
-  assert(handler,"no scheduled Live Edit action")
-  self.timers[handler]=nil
-  handler()
-end
+  app_idle_observable=observable(),writer_calls={}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="Owned two"}
@@ -106,8 +94,9 @@ package.loaded["renoise.selection_context"]={inspect_selection=function()return 
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 package.loaded["writers.phrase_writer"]={
-  generate=function(_,callback,_,target,options)
-    tool.writer_calls[#tool.writer_calls+1]={target=target,options=options}
+  generate=function(instrument_index,callback,pattern,target,options)
+    tool.writer_calls[#tool.writer_calls+1]={instrument_index=instrument_index,
+      target=target,options=options,pattern=pattern}
     render_callbacks[#render_callbacks+1]=callback
     return true
   end,
@@ -206,12 +195,8 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
-builder.views.acid_program_key_popup:fire(4)
-assert(builder.views.acid_live_edit_state.text:find("QUEUED",1,true),
-  "pending Live Edit is visible before rendering")
-tool:fire_timer()
 assert(builder.views.acid_live_edit_state.text:find("RENDERING",1,true),
-  "active Live Edit rendering is visible")
+  "arming Live Edit immediately renders the current source")
 assert(#render_callbacks==1 and tool.writer_calls[1].options.token,
   "Live Edit passes a cancellation token to the writer")
 render_callbacks[1]({kind="complete",status="error",message="temporary render failure",
@@ -224,11 +209,21 @@ for _,node in ipairs(builder.nodes) do
   if node.kind=="multiline_textfield" then status=node end
 end
 assert(status.text=="LIVE EDIT ERROR: temporary render failure",status.text)
-button(builder,"Retry Live Edit"):fire()
-tool:fire_timer()
-assert(#render_callbacks==2)
+builder.views.acid_program_key_popup:fire(6)
+assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key==5,
+  "a source edit immediately retries the armed Live Edit: callbacks="..
+    #render_callbacks.." calls="..#tool.writer_calls.." key="..
+    tostring(tool.writer_calls[2] and tool.writer_calls[2].pattern.pitch_events[2].key))
+builder.views.acid_program_key_popup:fire(7)
+assert(#render_callbacks==2 and #tool.writer_calls==2,
+  "rapid edits coalesce while one render is active")
+render_callbacks[2]({kind="complete",status="error",message="intermediate render failed"})
+assert(#render_callbacks==3 and tool.writer_calls[3].pattern.pitch_events[2].key==6,
+  "the in-flight follow-up renders the newest source immediately: P1="..
+    tostring(tool.writer_calls[3].pattern.pitch_events[1].key).." P2="..
+    tostring(tool.writer_calls[3].pattern.pitch_events[2].key))
 fail_draft_clear=true
-render_callbacks[2]({kind="complete",status="approximate",message="recovered with approximation",
+render_callbacks[3]({kind="complete",status="approximate",message="recovered with approximation",
   diagnostics={"slide approximated"}})
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
 assert(status.text=="LIVE EDIT APPROXIMATE: recovered with approximation\nslide approximated\n"..
@@ -239,36 +234,69 @@ assert(builder.views.acid_live_edit_state.text:find("APPROXIMATE",1,true),
 fail_draft_clear=false
 
 phrase_choice:fire(2)
-tool:fire_timer()
-assert(live_checkbox.value and #render_callbacks==3,
+assert(live_checkbox.value and #render_callbacks==4,
   "owned-to-owned destination selection keeps Live Edit armed and resumes")
-render_callbacks[3]({kind="complete",status="committed",message="owned phrase rebound"})
+render_callbacks[4]({kind="complete",status="committed",message="owned phrase rebound"})
 local target_popup=popup(builder,290)
 target_popup:fire(2)
-tool:fire_timer()
-assert(live_checkbox.value and #render_callbacks==4,
-  "explicit instrument selection rebinds Live Edit to its selected owned phrase")
-render_callbacks[4]({kind="complete",status="committed",message="instrument rebound"})
-phrase_choice:fire(2)
-assert(live_checkbox.value and builder.views.acid_live_edit_state.text:find("SUSPENDED",1,true),
-  "foreign phrase selection suspends without disarming Live Edit")
-assert(next(tool.timers)==nil,"foreign selection schedules no phrase write")
-phrase_choice:fire(3)
-assert(live_checkbox.value and builder.views.acid_live_edit_state.text:find("SUSPENDED",1,true),
-  "new phrase selection remains suspended until a safe owned target is selected")
-assert(next(tool.timers)==nil,"new phrase selection schedules no phrase write")
-phrase_choice:fire(1)
-tool:fire_timer()
 assert(live_checkbox.value and #render_callbacks==5,
-  "selecting a safe owned target explicitly resumes the armed editor")
-render_callbacks[5]({kind="complete",status="committed",message="safe target rebound"})
-assert(live_checkbox.value and status.text=="LIVE EDIT COMMITTED: safe target rebound",status.text)
+  "explicit instrument selection rebinds Live Edit to its selected owned phrase")
+render_callbacks[5]({kind="complete",status="committed",message="instrument rebound"})
+phrase_choice:fire(3)
+assert(live_checkbox.value and #render_callbacks==6 and tool.writer_calls[6].target==3,
+  "selecting NEW PHRASE immediately starts an append render")
+builder.views.acid_program_key_popup:fire(9)
+local explicit_append={id=23,name="ACID explicit append"}
+other_instrument.phrases[3]=explicit_append
+render_callbacks[6]({kind="complete",status="committed",message="initial append",
+  target={instrument_index=2,phrase_index=3}})
+assert(phrase_choice.value==3 and #render_callbacks==7 and tool.writer_calls[7].target==3,
+  "an edit during first append moves to its committed phrase and renders the newest source")
+assert(tool.writer_calls[7].pattern.pitch_events[1].key==8,
+  "the follow-up append render uses the edit made while the first render was active")
+render_callbacks[7]({kind="complete",status="committed",message="explicit phrase updated",
+  target={instrument_index=2,phrase_index=3}})
+phrase_choice:fire(2)
+assert(live_checkbox.value and #render_callbacks==8 and tool.writer_calls[8].target==4,
+  "foreign phrase selection redirects to a new append slot")
+assert(other_instrument.phrases[2]==other_foreign,
+  "foreign phrase remains untouched while Live Edit appends a separate phrase")
+local separate_owned={id=24,name="ACID foreign replacement"}
+other_instrument.phrases[4]=separate_owned
+render_callbacks[8]({kind="complete",status="committed",message="foreign redirected",
+  target={instrument_index=2,phrase_index=4}})
+assert(phrase_choice.value==4,"successful redirect binds the new owned phrase")
 builder.views.acid_program_key_popup:fire(8)
-tool:fire_timer()
-render_callbacks[6]({kind="complete",status="error",message="later render failed"})
+assert(#render_callbacks==9 and tool.writer_calls[9].target==4,
+  "the edit after foreign redirection regenerates its new owned phrase")
+render_callbacks[9]({kind="complete",status="committed",message="separate phrase updated",
+  target={instrument_index=2,phrase_index=4}})
+assert(#other_instrument.phrases==4 and other_instrument.phrases[2]==other_foreign,
+  "foreign phrase stays in place and repeated edits do not append duplicates")
+assert(live_checkbox.value and status.text=="LIVE EDIT COMMITTED: separate phrase updated",status.text)
+builder.views.acid_program_key_popup:fire(8)
+other_instrument.phrases[4].foreign=true
+render_callbacks[10]({kind="complete",status="suspended",code="safety.target_changed",
+  category="safety",message="target phrase changed during generation"})
+assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
+  "a target ownership change during rendering immediately redirects to append")
+assert(other_instrument.phrases[4]==separate_owned,
+  "the changed target object is retained without overwrite")
+local safety_append={id=25,name="ACID safety append"}
+other_instrument.phrases[5]=safety_append
+render_callbacks[11]({kind="complete",status="committed",message="safety append committed",
+  target={instrument_index=2,phrase_index=5}})
+assert(phrase_choice.value==5,"safety redirect binds the separately appended owned phrase")
+builder.views.acid_program_key_popup:fire(9)
+assert(#render_callbacks==12 and tool.writer_calls[12].target==5,
+  "edits after safety redirect regenerate the appended phrase")
+render_callbacks[12]({kind="complete",status="committed",message="safety phrase updated",
+  target={instrument_index=2,phrase_index=5}})
+builder.views.acid_program_key_popup:fire(8)
+render_callbacks[13]({kind="complete",status="error",message="later render failed"})
 local live_state=builder.views.acid_live_edit_state.text
 assert(live_state:find("LIVE EDIT ERROR",1,true) and
-  live_state:find("LAST COMMIT: COMMITTED | Other target / 01 Other owned | safe target rebound",1,true),
+  live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID safety append | safety phrase updated",1,true),
   "a later render error preserves the prior successful target and result")
 
 print("ACID GUI draft recovery and typed Live Edit outcome checks passed")

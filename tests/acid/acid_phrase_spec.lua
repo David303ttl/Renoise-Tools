@@ -128,7 +128,7 @@ assert(instrument.phrase_playback_mode==2 and instrument.phrase_program==7
   and instrument.phrase_editor_visible==false)
 assert_terminal_status("committed")
 assert(message_text(messages[#messages]):find("generated",1,true),messages[#messages].message)
-assert(message_text(messages[#messages]):find("4 notes, 2 OFF",1,true))
+assert(message_text(messages[#messages]):find("4 notes, 4 OFF",1,true))
 local repeat_source=source_fixture()
 local repeat_plan,repeat_layout=assert(writer.plan_output(repeat_source,"repeat"))
 assert(repeat_plan.length==16 and repeat_layout.looping)

@@ -95,12 +95,34 @@ instrument_a.phrases={phrase_b}
 assert(cache.get(song_a,instrument_a,phrase_a)==nil)
 instrument_a.phrases={phrase_a,phrase_b}
 
--- A dirty draft invalidates an in-flight song-data candidate safely.
+-- A draft-only write rebases an in-flight source candidate and survives its commit.
 local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat"))
 local changed=sequencer.new_pattern(19)
+changed.pitch_events[2]=sequencer.new_pitch(7,0,true,false)
 assert(cache.put(song_a,instrument_a,phrase_a,changed,"repeat"))
 local committed,commit_error=pattern_store.commit(song_a,candidate)
-assert(not committed and commit_error=="ACID song data changed during generation")
+assert(committed,commit_error)
+local merged=assert(pattern_store.read(song_a))
+assert(merged[88].pattern.length==5)
+package.loaded["model.draft_cache"]=nil
+cache=require("model.draft_cache")
+local recovered=assert(cache.get(song_a,instrument_a,phrase_a))
+assert(recovered.length==19 and recovered.pitch_events[2].note==43,
+  "commit preserves the newest dirty draft while storing the rendered source")
+assert(pattern_store.restore(song_a,candidate))
+local rolled_back=assert(pattern_store.read(song_a))
+assert(rolled_back[88]==nil,
+  "rollback removes only the source snapshot from the in-flight render")
+local persisted_draft=assert(pattern_store.read_draft(song_a,1,41,"A"))
+assert(persisted_draft.length==19 and persisted_draft.pitch_events[2].note==43,
+  "rollback restores the rebased raw data and preserves the newest draft")
+
+-- A concurrent source-record change still rejects the prepared candidate.
+local stale_candidate=assert(pattern_store.prepare(song_a,89,sequencer.new_pattern(6),"repeat"))
+assert(pattern_store.save(song_a,90,sequencer.new_pattern(7),"repeat"))
+local stale,stale_error=pattern_store.commit(song_a,stale_candidate)
+assert(not stale and stale_error=="ACID song data changed during generation")
+assert(pattern_store.read(song_a)[90]~=nil and pattern_store.read(song_a)[89]==nil)
 
 -- Corrupt persistence leaves a recoverable volatile draft and reports the fault.
 local volatile_instrument={name="Volatile",phrases={}}
