@@ -407,6 +407,69 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 
 **Priority at runtime:** source validity -> semantic timeline -> destination safety -> target capability -> feasible native operations -> guarded commit -> separately evaluated fidelity. M3 sections 5.0–5.4 document the old scoped implementation/evidence; their profile/tempo/layout refusals are **superseded as production policy by M3.5**. Do not delete the M3 laboratory fixtures.
 
+### M3.5.0.1 — Separate Entry, Playback and renderer strategy (P0 architecture gate)
+
+**Remove three user-facing mode couplings.** Current GUI offers Entry = Original/Extended, Playback = One-shot/Repeat, and Audio test = Baseline/Retrigger + Gate/Selective Slide + Gate. The first two currently constrain and change source interpretation; the third determines whether valid SLIDE can render. None may act as a permission gate for musical input.
+
+| Domain | Authority | UI contract | Must not affect |
+| --- | --- | --- | --- |
+| Musical source | Canonical PITCH/TIME memories, LAST STEP, active PITCH span, accent/slide flags, musical timing grid | One editable sequence | Editor view, generator type, audio-test strategy |
+| Editor presentation | GUI/controller | **Program (Roland-style PITCH/TIME)** or **Grid (direct)**; both edit identical memory | Source validity, playable length, selected instrument |
+| Cycle semantics | Pure compiler | Cold start, steady repeats, outgoing SLIDE, REST, TIE | User editor selection or device capability |
+| Phrase output policy | Per-owned-phrase render settings | **Repeat (default)** or advanced **Play Once** | Musical source, active PITCH span, semantic event stream |
+| Rendering strategy | Capability-aware renderer | Automatic sample/plugin/MIDI rendering | Source validity or musical meaning |
+| Preview | Pure semantic projection | Read-only Start/Repeating inspection | Source, phrase settings and commit state |
+
+**Entry redesign — baseline delivery in M3.5, full Roland sequential-entry workflow in M5.0**
+
+1. Remove entry_mode=original/extended from canonical source storage, semantic validation and compile branching. Independent TIME length 1–64, active PITCH span 1–64, 64 initialized stored pitches and their flags remain the source contract. Original-hardware limits belong to optional informational conformance diagnostics, not permission gating.
+2. Replace Entry mode with a nonsemantic **Program/Grid** view selector. Switching views does not reset, re-enter, normalize, reallocate, rewrite or regenerate any musical values. Selection-only actions cannot schedule Live Edit.
+3. Both views can access/edit all 1–64 TIME steps and any valid active PITCH span. Program view may use 16-step pages with explicit extension labeling, but must never force Grid mode to edit a 17–64 step pattern.
+4. Share source-edit commands for NOTE/TIE/REST, PITCH, octave, ACCENT, SLIDE, LAST STEP and active PITCH span. Only an explicit destructive Roland-style re-entry or Reset command may change stored flags beyond the intended edit.
+5. New patterns are immediately initialized to documented C defaults with a valid TIME sequence. Remove **Create / Reset Pattern** as a prerequisite to user editing/generation; keep Reset as explicit, guarded, undoable destructive action. Changing LAST STEP preserves nonvisible stored PITCH and eligible saved TIME entries.
+6. Editor view preference is GUI/session metadata, not source semantics, and does not belong in phrase ownership hashes. In M5.0 implement full Program pitch/time cursors, back/correction, check and audition over this common source.
+
+**Playback redesign — sequence iteration is not the phrase output switch**
+
+1. For every source compile cold-start and steady-cycle semantic interpretation, including final-to-first SLIDE, same-pitch connected transitions, TIE holds, REST interruption and subsequent attack. Do not gate cycle interpretation by a persisted source playback selector.
+2. Remove playback=loop/one_shot from canonical source and source validity checks. **Repeat** is the default target phrase-output policy. Optional **Play Once** is advanced per-destination renderer metadata, not a separate category of musical pattern or editor mode.
+3. Repeat output: render cold introduction plus stable repeating body with exclusive-end sentinel. Play Once output: render one cold traversal and explicit appropriate final note release. Changing policy changes phrase layout/termination only; the canonical source remains byte-equivalent.
+4. Distinguish phrase looping/loop points from instrument-wide phrase triggering and from song transport. Never silently change an instrument's global phrase playback mode, key mapping, plugin preset, trigger settings or MIDI routing to make output work.
+5. Start/Repeating preview remains read-only semantic inspection regardless of output policy. Stop/start/seek, phrase trigger/release and cold-to-steady audio behavior require target-aware acceptance, not calibration-profile admission.
+6. Live Edit regenerates the selected owned phrase when output policy changes without mutating PITCH/TIME; invalid output/host setup leaves last-good phrase and the valid source intact.
+
+**Baseline/Retrigger/Slide removal — automatic synthesis of transitions**
+
+1. Delete the main GUI Audio test selector, its calibration help and default selection. Remove positional audio mode arguments from both manual generation and Live Edit.
+2. Derive musical events only from source: NOTE after REST = attack; unconnected NOTE = retrigger; target of outgoing SLIDE = connected transition; TIE = hold; REST = release; ACCENT = pitch-owned expressive intent. Do not require Slide mode or reject slide under Baseline.
+3. Baseline, Retrigger + Gate, Selective Slide + Gate and Mono may survive as internal strategy functions or named development fixtures only. Renderer chooses based on target capabilities and time/command budget; none is user-configured playback semantics.
+4. Where the target cannot implement continuous slide or connected dynamic changes, generate ordered pitches/gates/velocity using the closest safe representation and report a **nonfatal fidelity approximation** with affected steps. Never silently claim slide continuity on a plugin from sample-only 0Gxx commands.
+5. Manual Generate and Live Edit take one unambiguous request: (canonical source, target instrument/phrase, phrase output policy). Strategy and fidelity diagnostics are typed results. No source-owned persisted audio_mode; no mode field passed through source restoration.
+
+**Persistence and cutover**
+
+- Version one new current WIP source/seal schema: canonical sequence excludes entry view, source playback switch and renderer mode; phrase-specific output policy is stored separately and safely roundtripped. No historic WIP schema migration or compatibility shim required; recreate old development phrases explicitly.
+- Update **gui.lua**, **model/sequencer.lua**, **model/cycle_interpreter.lua**, **model/editor_state.lua**, **model/pattern_store.lua**, **writers/phrase_writer.lua** and their tests together. Remove unreachable old mode branches, exact-profile mode help and matching refusal messages.
+- Preserve safe destination ownership, no changes to unrelated content, staging, rollback, source-draft recovery, undo/redo, and atomic phrase/source/output-settings commit.
+
+**Mandatory Gate S acceptance**
+
+| Scenario | Required result |
+| --- | --- |
+| Program -> Grid -> Program | Byte-identical source and semantic output; no view-switch regeneration |
+| TIME 32/64, active PITCH span 3 | Both views edit and regenerate; no Extended-required error |
+| LAST STEP 16 -> 17 -> 16 | Source entries retained; no reset or Create gate |
+| Read Start/Repeating preview | No source, phrase, output-policy or ownership mutation |
+| Repeat -> Play Once -> Repeat | Same source; only owned phrase looping/termination differs |
+| SLIDE at last/first seam | Correct cold attack and steady connected transition; no audio mode selection |
+| Connected accent, REST, TIE, large glide | Normal Generate and Live Edit succeed or commit explicit sonic approximation |
+| Unconnected NOTE after glide | Fresh attack, cancellation and OFF preserved where representable |
+| Sample/plugin/MIDI instrument | Same musical event intent, automatic renderer, no mandatory sample |
+| Save/reopen, undo/redo | Canonical source and independent phrase output policy persist; view stays nonsemantic |
+| Fresh pattern | Immediately editable/generatable with C defaults; Reset explicit and undoable |
+
+**Gate S:** no Entry or Audio test choice governs source legality; Playback becomes optional phrase-specific Repeat/Play Once output policy only. No source validity check, renderer selection or writer admission may depend on historical Original/Extended, Baseline/Retrigger/Slide, or a musician choosing Repeat before using SLIDE.
+
 ### M3.5.1 — Instrument-agnostic destination and generation
 
 - Replace the sample-buffer and "playable sample instrument" gate in **writers/phrase_writer.lua** with a valid Renoise instrument-slot check. Permit plugin-only, MIDI-only, hybrid and empty slots; do not inject a dummy sample.
@@ -499,8 +562,11 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 
 **Implementation PRs (each includes its own tests and manual acceptance notes):**
 
+M3.5-S precedes M3.5-A through F and freezes the new source/editor/output/renderer boundary. M3.5-S must pass as its own testable slice.
+
 | Slice | Content | Merge gate |
 | --- | --- | --- |
+| **M3.5-S** | Entry-view/output-policy/renderer decoupling, one source/schema cutover, removal of three coupled GUI selectors | Gate S and its full test table pass |
 | M3.5-A | Contract/error types, target capability inspection, instrument-agnostic phrase creation, sample gate removal | All target classes generate canonical structural phrases without sample dependency |
 | M3.5-B | Universal semantic timeline, adaptive native operation planner, no reference-profile/layout/tempo admissions | Arbitrary valid sample-target sources compile; safe output or explicit approximation |
 | M3.5-C | Sample articulation and Repeat seam/connected-accent paths, alternative glide rates/line budgets | M3 reference fixtures remain sound; novel layouts/intervals don't block generation |
@@ -509,6 +575,7 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 | M3.5-F | Cross-product acceptance, save/reopen, GUI, packaging, README/DESIGN updates | All C/I/A/B/L/U gates satisfied, or a precisely documented platform limitation accepted by owner |
 
 **M3.5 complete only when:**
+- Gate S passes: Program/Grid are editor views, Repeat/Play Once is output policy and articulation backend is automatic, without permission or source coupling.
 - Ordinary valid user input and all targeted instrument families regenerate through manual and Live Edit without M3 calibration-profile/layout/tempo refusals.
 - A sample is never a prerequisite for a valid instrument phrase; a plugin-only instrument can be selected, written and heard through its existing plugin route.
 - Every reduced-fidelity articulation commits a musically ordered phrase with explicit warning, and cannot be mistaken for a hardware-faithful slide/accent.
@@ -543,16 +610,16 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 
 ## 7. M5 — Source programming and Renoise workflow
 
-**Goal:** complete source programming and editing, with native Renoise handling arrangement and performance. The original-style source workflow supports the fidelity goal; the three scoped Extended expansions operate on ACID's independent source memories.
+**Goal:** complete source programming and editing, with native Renoise handling arrangement and performance. Program and Grid edit the same canonical source; optional Extended transformations operate on that source without switching semantic Entry mode.
 
-### M5.0 — Original programming workflow
+### M5.0 — Roland-style Program view (same source as Grid)
 
-- Add sequential PITCH entry/check with a distinct cursor, octave controls, back/correction and pitch audition; TIME entry/check advances its own N/T/R cursor. Keep the direct grid as an Extended editing route.
-- Define clear, re-enter PITCH, edit one pitch and re-enter TIME as distinct source operations. Use R02 for destructive flag-reset behavior in Original re-entry; Extended direct edits preserve flags. Provide undo and clear labels for the affected memory.
+- Complete M3.5's Program view with sequential PITCH entry/check, independent TIME cursor, octave controls, back/correction and pitch audition. Grid is an alternate view of the **same source**, not a separate Extended music mode.
+- Implement clear, re-enter PITCH, edit one pitch and re-enter TIME as explicit commands. Apply R02's flag-reset behavior only to an explicitly selected Roland-style re-entry operation; Grid editing and view switching never reset flags. Provide undo and labels for affected memory.
 - Support pitch-owned ACCENT/SLIDE editing during pitch review; page/selection movement never edits the source. Keep M2's leading-TIE normalization in the shared command path for both entry modes.
 - Specify TAP timing entry/check and its clock/quantization before implementation; do not confuse TAP audition with real-time TIME recording. Consult the relevant manual procedure and record it before claiming panel-operation fidelity.
 
-**Acceptance:** enter one reference pattern through the Original workflow and the equivalent canonical source through the Extended grid; compare decoded events and playback. Test PITCH re-entry versus TIME re-entry, flag preservation/reset, cursor restart, correction, cancellation and save/reopen.
+**Acceptance:** build the same pattern via Program and Grid and compare byte-equivalent canonical source, decoded events and playback. Include >16 steps, arbitrary active PITCH span, PITCH versus TIME re-entry, flag preservation/reset, cursor restart, correction, cancellation, view changes and save/reopen.
 
 ### M5.1 — Pattern management
 
@@ -581,7 +648,7 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 - Refine M3.5's dirty/queued/rendering/committed/approximate/suspended/error states and durable draft workflow; do not reinvent the Live Edit scheduler in M5.
 - Maintain responsive Live Edit with many phrases and 64-step patterns; avoid regenerating on selection-only UI clicks.
 
-**M5 done when:** a user can program via the Original workflow, edit using the three scoped Extended expansions, duplicate/select and revisit current-format ACID source in a saved XRNS. Preview and output agree, edits are reversible, and Renoise provides arrangement/performance without an ACID substitute. Native playback limitations remain documented.
+**M5 done when:** a user can program through Program or Grid, apply the three scoped Extended transformations, duplicate/select and revisit current-format ACID source in a saved XRNS. Preview and output agree, edits are reversible, and Renoise provides arrangement/performance without an ACID substitute. Native playback limitations remain documented.
 
 ---
 
@@ -617,11 +684,12 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 | Behavior | Lua (no Renoise) | Renoise manual |
 | --- | --- | --- |
 | PITCH/TIME NOTE/TIE/REST consumption | Semantic compiler state/fixtures | Decoded preview versus rendered phrase |
-| Original versus Extended entry | T01 normalization, mode bounds/defaults, current-format roundtrip | Entry workflow, mode changes, preview and regenerated playback |
+| Program versus Grid view (M3.5-S) | One source, independent TIME/PITCH bounds, byte-equivalent semantics, view-change purity | Switch views on 32/64-step source with span 3; generated phrase unchanged |
 | Clean WIP cutover | Earlier schemas/seals unsupported; one interpreter and current decoder/verifier | Fresh patterns, save/reopen, explicit reset/recreation of development data |
 | Default C + 64-position storage | Initial state and validation | Fresh-pattern controls and output |
 | LAST STEP and four pages | 1/16/17/32/33/48/49/64 lengths | Boundary edits, no false resets |
 | Repeated phrase loops | At least three semantic cycles | Audible/visual repeats across several cycles |
+| Repeat versus Play Once (M3.5-S) | Cold/steady source independent of output policy | Change owned phrase output without changing musical source or instrument-wide playback settings |
 | Leading/trailing TIE, REST, SLIDE | Explicit boundary state assertions | Phrase boundary and actual envelope response |
 | Gate and release | Scheduled timeline/collision tests | OFF locations and recorded attack/release |
 | Instrument-agnostic phrase writing (M3.5) | Capability fixtures, no sample-buffer admission | Sample, plugin-only, external MIDI, hybrid, alias and empty slots; zero-sample plugin writes |
@@ -630,7 +698,7 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 | Live Edit recovery (M3.5) | Typed result, armed/dirty/pending/retry/suspend transitions | Editing during playback, recoverable failure, undo, ownership loss, song change |
 | Straight and triplet timing | Grid conversion and no cumulative drift | BPM/LPB/triplet repeat checks |
 | Several target phrases | IDs, snapshot roundtrip, ownership | Switching, adding and regenerating phrase slots |
-| Original re-entry/check workflow | Separate cursors, command/flag reset rules | PITCH audition, TIME review, back/correction, undo |
+| Roland-style re-entry/check workflow | Separate cursors and explicit command/flag reset rules | PITCH audition, TIME review, back/correction, switch view, undo |
 | Independent PITCH/TIME randomization | Seeded output, valid N/T/R and spans, other memory unchanged | Preview/output agreement, undo and Live Edit |
 | Targeted transformations | Exact flag/command changes, unaffected source unchanged | Action scope, undo and regenerated result |
 | Non-destructive scale mask | Raw PITCH unchanged, deterministic mapping, bounds, bypass and roundtrip | Resolved preview/output agreement; slide connection after pitch mapping |
@@ -675,8 +743,8 @@ For every such decision, supply **reference + decision + test fixture + manual p
 | Priority | Action | Exit criterion |
 | --- | --- | --- |
 | 1 | Finish M3's remaining transport stop/start/seek and Live Edit-during-playback manual checks on its declared diagnostic profile. | Evidence recorded; no broader instrument or audio-fidelity claim. |
-| 2 | Start **M3.5-A** on a dedicated feature branch from the current integrated M3 head. | Any valid Renoise instrument slot accepts structural phrase generation; plugin-only and empty targets need no samples. |
-| 3 | Implement **M3.5-B/C/D/E/F** in the specified order with local Lua and Renoise receipts per slice. | No measured-case whitelist blocks normal musical editing; sample/plugin/MIDI and Live Edit acceptance passes. |
+| 2 | Start **M3.5-S** on a dedicated feature branch from the current integrated M3 head. | Gate S: nonsemantic Program/Grid; phrase-specific Repeat/Play Once; no Baseline/Retrigger/Slide mode. |
+| 3 | Implement **M3.5-A/B/C/D/E/F** with local Lua and Renoise receipts per slice. | No measured-case whitelist blocks normal musical editing; sample/plugin/MIDI and Live Edit acceptance passes. |
 | 4 | Begin M4/M5 only after M3.5's core correctness and instrument-independence gates pass. | No dependence on the discarded evidence-gated runtime policy. |
 
 **Blocking release rule:** M3 reference calibration is not a substitute for a usable sequencer. M3.5 functional guarantees are required before M6 release acceptance; hardware-faithful analog sound remains a separately labeled research/fidelity objective.
