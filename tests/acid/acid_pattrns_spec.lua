@@ -1,4 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
+local pitch=dofile('tests/acid/pitch_fixture.lua')
 local emitter = require('writers.pattrns_writer')
 local sequencer = require('model.sequencer')
 
@@ -59,12 +60,12 @@ assert(not emitter.emit({length=1, steps={{step=1,kind='rest'}}}))
 assert(not emitter.emit({length=1, steps={{step=1,kind='invalid'}}}))
 
 -- End-to-end path via sequencer/compiler, with a REST not consuming a pitch.
-local p=sequencer.new_pattern(5,'extended')
+local p=sequencer.new_pattern(5)
 p.pitch_length=3
-p.pitch_events[1]={note=36,slide=true}
-p.pitch_events[2]={note=40,accent=true}
-p.pitch_events[3]={note=43}
-p.time_events={'N','T','N','R','N'}
+p.pitch_events[1]=pitch(36,false,true)
+p.pitch_events[2]=pitch(40,true,false)
+p.pitch_events[3]=pitch(43)
+for i,command in ipairs({'N','T','N','R','N'}) do p.time_events[i]=command end
 local generated, result = assert(emitter.generate(p))
 local actual = compile_script(generated)
 assert(result.note_count == 3 and result.off_count == 1)
@@ -73,9 +74,9 @@ assert(actual.event({pulse_step=2}) == nil)
 assert(actual.event({pulse_step=3}).key == 40)
 assert(actual.event({pulse_step=4}) == 'off')
 assert(actual.event({pulse_step=5}).key == 43)
-local invalid=sequencer.new_pattern(3,'extended')
+local invalid=sequencer.new_pattern(3)
 invalid.pitch_length=1
-invalid.time_events={'T','N','N'}
+for i,command in ipairs({'T','N','N'}) do invalid.time_events[i]=command end
 assert(not emitter.generate(invalid))
 local volumes=assert(emitter.expected_volumes(sample,2,17,2))
 assert(volumes[1][1]==89 and volumes[5][1]==255)

@@ -79,7 +79,8 @@ local function make_phrase()
   return phrase
 end
 
-instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}}}
+instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}},
+  phrase_playback_mode=1,phrase_program=3,phrase_editor_visible=false}
 function instrument:insert_phrase_at(index)
   assert(index==#self.phrases+1)
   local phrase=make_phrase()
@@ -99,29 +100,27 @@ local writer=require('writers.phrase_writer')
 local sequencer=require('model.sequencer')
 local store=require('model.pattern_store')
 local ownership=require('writers.phrase_ownership')
+local pitch=dofile('tests/acid/pitch_fixture.lua')
 local messages={}
 local function source(length,command)
-  local pattern=sequencer.new_pattern(length,'extended')
+  local pattern=sequencer.new_pattern(length)
   pattern.pitch_length=64
-  pattern.playback='loop'
   for index=1,64 do
-    pattern.pitch_events[index]={note=24+(index-1)%60,accent=index%3==0,slide=false}
+    pattern.pitch_events[index]=pitch(24+(index-1)%37,index%3==0,false)
   end
   for step=1,length do pattern.time_events[step]=command or 'N' end
   return pattern
 end
 
-local function generate(pattern,mode,target_index,options)
-  local ok,err=writer.generate(1,function(message) messages[#messages+1]=message end,
-    mode or 'baseline',pattern,target_index,options)
+local function generate(pattern,policy,target_index,options,instrument_index)
+  options=options or {}
+  if policy~=nil then options.output_policy=policy end
+  local ok,err=writer.generate(instrument_index or 1,function(message) messages[#messages+1]=message end,
+    pattern,target_index,options)
   assert(ok,err)
   for _=1,6 do idle:fire() end
   local status=messages[#messages]
   assert(status and status:find('generated',1,true),status)
-  assert(status:find('\nRepeat baseline renders NOTE/TIE/REST.',1,true),
-    'repeat verification status must use a real line break')
-  assert(not status:find('\\nRepeat baseline renders',1,true),
-    'repeat status must not display an escaped newline literally')
   return instrument.phrases[target_index],status
 end
 
@@ -129,7 +128,7 @@ end
 -- ownership seal and transaction -> exact source round-trip at all grid lengths.
 for _,length in ipairs({1,16,17,32,33,48,49,64}) do
   local pattern=source(length)
-  local physical,layout=assert(writer.plan_repeat(pattern))
+  local physical,layout=assert(writer.plan_output(pattern,'repeat'))
   assert(physical.length==2*length and #physical.steps==2*length)
   assert(layout.looping and layout.loop_start==2*length+1)
   assert(layout.loop_end==4*length+1 and layout.number_of_lines==4*length+1)
@@ -143,7 +142,7 @@ for _,length in ipairs({1,16,17,32,33,48,49,64}) do
   end
 
   local target=#instrument.phrases+1
-  local phrase=generate(pattern,'baseline',target)
+  local phrase=generate(pattern,nil,target)
   assert(phrase.number_of_lines==layout.number_of_lines)
   assert(phrase.looping and phrase.loop_start==layout.loop_start)
   assert(phrase.loop_end==layout.loop_end)
@@ -153,14 +152,17 @@ for _,length in ipairs({1,16,17,32,33,48,49,64}) do
   assert(phrase.cells[4*length+1].note_value==121,
     'loop sentinel line must remain empty')
   assert(ownership.status(phrase)=='owned')
-  local restored,mode=assert(store.load(song,phrase))
-  assert(mode=='baseline' and restored.playback=='loop')
+  local restored,policy=store.load(song,phrase)
+  assert(restored and policy=='repeat')
   assert(restored.length==length and restored.pitch_length==64)
   for index=1,64 do
     assert(restored.pitch_events[index].note==pattern.pitch_events[index].note)
     assert(restored.pitch_events[index].accent==pattern.pitch_events[index].accent)
   end
-  for step=1,length do assert(restored.time_events[step]=='N') end
+  for step=1,64 do assert(restored.time_events[step]=='N') end
+  assert(instrument.phrase_playback_mode==1 and instrument.phrase_program==3
+    and instrument.phrase_editor_visible==false,
+    'phrase generation changed instrument-wide trigger settings')
   local render=render_calls[#render_calls]
   assert(render.max_events==2*length+8 and render.steps==2*length)
   assert(render.notes==2*length and render.offs==0)
@@ -169,11 +171,11 @@ end
 -- Mixed source semantics are carried across both the cold and steady cycle.
 local mixed=source(4)
 mixed.pitch_length=3
-mixed.time_events={'N','T','N','R'}
-mixed.pitch_events[1]={note=36,accent=false,slide=false}
-mixed.pitch_events[2]={note=43,accent=false,slide=false}
-mixed.pitch_events[3]={note=40,accent=false,slide=false}
-local physical=assert(writer.plan_repeat(mixed))
+for i,command in ipairs({'N','T','N','R'}) do mixed.time_events[i]=command end
+mixed.pitch_events[1]=pitch(36)
+mixed.pitch_events[2]=pitch(43)
+mixed.pitch_events[3]=pitch(40)
+local physical=assert(writer.plan_output(mixed,'repeat'))
 assert(physical.steps[1].kind=='note' and physical.steps[2].kind=='tie')
 assert(physical.steps[4].kind=='rest' and physical.steps[4].releases)
 assert(physical.steps[5].kind=='note' and physical.steps[5].cycle==2)
@@ -182,12 +184,12 @@ assert(physical.steps[8].kind=='rest' and physical.steps[8].releases)
 
 -- Zero-event cycles still complete, commit source, and leave every line empty.
 local rests=source(17,'R')
-local rest_phrase=generate(rests,'baseline',#instrument.phrases+1)
+local rest_phrase=generate(rests,'repeat',#instrument.phrases+1)
 assert(rest_phrase.number_of_lines==69 and rest_phrase.looping)
 assert(rest_phrase.loop_start==35 and rest_phrase.loop_end==69)
 for line=1,69 do assert(rest_phrase.cells[line].note_value==121) end
-local rest_source,rest_mode=assert(store.load(song,rest_phrase))
-assert(rest_mode=='baseline' and rest_source.length==17)
+local rest_source,rest_policy=store.load(song,rest_phrase)
+assert(rest_source and rest_policy=='repeat' and rest_source.length==17)
 for step=1,17 do assert(rest_source.time_events[step]=='R') end
 local rest_render=render_calls[#render_calls]
 assert(rest_render.steps==34 and rest_render.notes==0 and rest_render.offs==0)
@@ -196,340 +198,115 @@ assert(rest_render.steps==34 and rest_render.notes==0 and rest_render.offs==0)
 local too_long=source(64)
 too_long.length=65
 too_long.time_events[65]='N'
-local invalid_plan,invalid_reason=writer.plan_repeat(too_long)
+local invalid_plan,invalid_reason=writer.plan_output(too_long,'repeat')
 assert(not invalid_plan and invalid_reason)
 local too_long_store=song.tool_data
-local rejected=writer.generate(1,function() end,'baseline',too_long,#instrument.phrases+1)
+local rejected=writer.generate(1,function() end,too_long,#instrument.phrases+1,
+  {output_policy='repeat'})
 assert(not rejected)
 assert(#instrument.phrases==9 and song.tool_data==too_long_store)
 
--- Unsafe slide seams and nonbaseline Repeat modes fail with useful locations.
-local slide=source(16)
-slide.pitch_events[1].slide=true
-local accepted,diagnostic=writer.generate(1,function() end,'baseline',slide,#instrument.phrases+1)
-assert(not accepted and diagnostic:find('slide continuity is unverified',1,true))
-assert(diagnostic:find('TIME step',1,true) and diagnostic:find('phrase line',1,true))
-local nonbaseline,mode_diagnostic=writer.generate(1,function() end,'retrigger',source(16),
-  #instrument.phrases+1)
-assert(not nonbaseline and mode_diagnostic:find("audio mode 'retrigger' is unverified",1,true))
-assert(mode_diagnostic:find('TIME step',1,true) and mode_diagnostic:find('phrase line',1,true))
-
--- Reference eligibility gates the real transactional Repeat path before mutation.
-local profiles=require('renoise.articulation_profile')
-local original_check=profiles.check
-local original_transport=song.transport
-local original_program=instrument.phrase_playback_mode
-local profile_checks=0
-profiles.check=function(candidate,name,options)
-  profile_checks=profile_checks+1
-  assert(candidate==instrument and name=='reference_diagnostic' and options.fade_amount>765)
-  return {profile=name}
+-- Repeat and Play Once are phrase-output choices over the same source.
+local policy_source=source(4)
+policy_source.pitch_length=2
+policy_source.pitch_events[1]=pitch(48)
+policy_source.pitch_events[2]=pitch(52)
+for i,command in ipairs({'N','T','T','R'}) do policy_source.time_events[i]=command end
+local function source_copy(input)
+  local copy=sequencer.new_pattern(input.length)
+  copy.pitch_length=input.pitch_length
+  for index=1,64 do
+    local pitch=input.pitch_events[index]
+    copy.pitch_events[index]={note=pitch.note,key=pitch.key,octave=pitch.octave,
+      accent=pitch.accent,slide=pitch.slide}
+    copy.time_events[index]=input.time_events[index]
+  end
+  return copy
 end
-song.transport={bpm=120,lpb=8,tpl=12,groove_enabled=false}
-instrument.phrase_playback_mode=renoise.Instrument.PHRASES_PLAY_SELECTIVE
-local gate_source=source(2)
-gate_source.pitch_length=1;gate_source.pitch_events[1]={note=48,accent=false,slide=false}
-gate_source.time_events={'N','R'}
-local target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'retrigger',gate_source,target))
-for _=1,6 do idle:fire() end
-local gated=instrument.phrases[target]
-assert(gated and ownership.status(gated)=='owned' and gated.looping)
-assert(gated.cells[3].note_value==120 and gated.cells[7].note_value==120)
-assert(gated.cells[9].note_value==121 and profile_checks==2)
-local connected=source(4)
-connected.pitch_length=1
-connected.pitch_events[1]={note=48,accent=false,slide=true}
-local connected_target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',connected,connected_target))
-for _=1,6 do idle:fire() end
-local connected_phrase=instrument.phrases[connected_target]
-assert(connected_phrase and ownership.status(connected_phrase)=='owned')
-assert(connected_phrase.cells[3].effect_number_string=='0G')
-assert(connected_phrase.cells[17].note_value==121)
-local moving=source(8);moving.pitch_length=2
-moving.pitch_events[1]={note=48,accent=false,slide=true}
-moving.pitch_events[2]={note=52,accent=false,slide=true}
-moving.time_events={'N','T','T','T','N','T','T','T'}
-local moving_target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',moving,moving_target))
-for _=1,6 do idle:fire() end
-local moving_phrase=instrument.phrases[moving_target]
-assert(moving_phrase and ownership.status(moving_phrase)=='owned')
-assert(moving_phrase.cells[9].effect_number_string=='0G' and
- moving_phrase.cells[9].effect_amount_value==0x20)
-assert(moving_phrase.cells[10].effect_number_string=='0G' and
- moving_phrase.cells[10].effect_amount_value==0)
-assert(moving_phrase.cells[17].effect_number_string=='0G' and
- moving_phrase.cells[25].effect_number_string=='0G',
- 'cold and steady slide targets both receive writer commands')
-assert(profile_checks==6,'moving Repeat support context is rechecked before commit')
+local function same_source(left,right)
+  if left.length~=right.length or left.pitch_length~=right.pitch_length then return false end
+  for index=1,64 do
+    local a,b=left.pitch_events[index],right.pitch_events[index]
+    if a.note~=b.note or a.key~=b.key or a.octave~=b.octave or
+        a.accent~=b.accent or a.slide~=b.slide then return false end
+    if left.time_events[index]~=right.time_events[index] then return false end
+  end
+  return true
+end
+local original_source=source_copy(policy_source)
+local policy_target=#instrument.phrases+1
+local repeated=generate(policy_source,'repeat',policy_target)
+assert(repeated.looping and ownership.status(repeated)=='owned')
+local saved_repeat,saved_repeat_policy=store.load(song,repeated)
+assert(saved_repeat_policy=='repeat' and same_source(saved_repeat,original_source))
+local one_shot=generate(policy_source,'play_once',policy_target)
+assert(not one_shot.looping and ownership.status(one_shot)=='owned')
+assert(one_shot.number_of_lines==policy_source.length*2)
+assert(one_shot.cells[1].note_value==48 and one_shot.cells[2].note_value==121
+  and one_shot.cells[6].note_value==121 and one_shot.cells[7].note_value==120)
+local saved_once,saved_once_policy=store.load(song,one_shot)
+assert(saved_once_policy=='play_once' and same_source(saved_once,original_source))
+local repeated_again=generate(policy_source,'repeat',policy_target)
+local saved_again,saved_again_policy=store.load(song,repeated_again)
+assert(repeated_again.looping and saved_again_policy=='repeat'
+  and same_source(saved_again,original_source))
+assert(instrument.phrase_playback_mode==1 and instrument.phrase_program==3
+  and instrument.phrase_editor_visible==false,
+  'changing phrase output policy changed instrument-wide trigger settings')
 
-for _,tempo in ipairs({90,150}) do
- song.transport.bpm=tempo
- for _,case in ipairs({{8,52},{8,60},{9,52},{9,60}}) do
-  local length,note=case[1],case[2]
-  local candidate=source(length);candidate.pitch_length=2
-  candidate.pitch_events[1]={note=48,accent=false,slide=true}
-  candidate.pitch_events[2]={note=note,accent=false,slide=true}
-  candidate.time_events=length==8 and {'N','T','T','T','N','T','T','T'}
-   or {'N','T','T','T','N','T','T','T','T'}
+-- Large slides and connected accent changes commit ordered phrase events with a warning.
+local slide=source(4)
+slide.pitch_length=2
+slide.pitch_events[1]=pitch(35,false,true)
+slide.pitch_events[2]=pitch(60,true,false)
+for i,command in ipairs({'N','T','N','R'}) do slide.time_events[i]=command end
+local slide_target=#instrument.phrases+1
+local slide_phrase,slide_status=generate(slide,'repeat',slide_target)
+assert(ownership.status(slide_phrase)=='owned')
+assert(slide_phrase.cells[1].note_value==35 and slide_phrase.cells[5].note_value==60)
+assert(slide_status:find('Articulation approximation:',1,true),
+  'slide or connected accent limitations must be reported as nonfatal')
+
+-- Capability inspection is read-only and all target classes receive a native phrase.
+local function make_target(samples,plugin,midi)
+  local target={phrases={},samples=samples,phrase_playback_mode=1,
+    phrase_program=3,phrase_editor_visible=false}
+  if plugin then target.plugin_properties={plugin_loaded=true} end
+  if midi then target.midi_output_properties={device_name='MIDI Device'} end
+  target.insert_phrase_at=instrument.insert_phrase_at
+  target.delete_phrase_at=instrument.delete_phrase_at
+  return target
+end
+local original_instrument=instrument
+local targets={
+  {name='plugin-only',target=make_target({},true,false)},
+  {name='MIDI-only',target=make_target({},false,true)},
+  {name='empty',target=make_target({},false,false)}
+}
+for _,item in ipairs(targets) do
+  local target_instrument=#song.instruments+1
+  song.instruments[target_instrument]=item.target
+  instrument=item.target
+  local before_policy,before_program,before_editor=instrument.phrase_playback_mode,
+    instrument.phrase_program,instrument.phrase_editor_visible
+  local target_source=source_copy(slide)
   local target_index=#instrument.phrases+1
-  assert(writer.generate(1,function(message)messages[#messages+1]=message end,
-   'slide',candidate,target_index))
-  for _=1,6 do idle:fire() end
-  local phrase=instrument.phrases[target_index]
-  assert(phrase and ownership.status(phrase)=='owned'
-   and phrase.number_of_lines==length*4+1
-   and phrase.loop_start==length*2+1 and phrase.loop_end==length*4+1,
-   'the exact moving-slide layout should provisionally render at BPM '..tempo)
- end
- local same_pitch=source(16);same_pitch.pitch_length=1
- same_pitch.pitch_events[1]={note=48,accent=false,slide=true}
- same_pitch.time_events[1]='N'
- for step=2,16 do same_pitch.time_events[step]='T' end
- local same_pitch_target=#instrument.phrases+1
- assert(writer.generate(1,function(message)messages[#messages+1]=message end,
-  'slide',same_pitch,same_pitch_target))
- for _=1,6 do idle:fire() end
- local same_pitch_phrase=instrument.phrases[same_pitch_target]
- assert(same_pitch_phrase and ownership.status(same_pitch_phrase)=='owned'
-  and same_pitch_phrase.number_of_lines==65
-  and same_pitch_phrase.loop_start==33 and same_pitch_phrase.loop_end==65,
-  'the captured 16-step same-pitch slide should provisionally render at BPM '..tempo)
- local unsupported_same_pitch=source(4);unsupported_same_pitch.pitch_length=1
- unsupported_same_pitch.pitch_events[1]={note=48,accent=false,slide=true}
- local same_pitch_count=#instrument.phrases
- local same_pitch_started,same_pitch_error=writer.generate(1,function()end,
-  'slide',unsupported_same_pitch,same_pitch_count+1)
- assert(not same_pitch_started and #instrument.phrases==same_pitch_count
-  and same_pitch_error:find('slide continuity is unverified',1,true),
-  'only the captured 16-step same-pitch layout is eligible at 90/150 BPM')
+  local phrase,status=generate(target_source,'repeat',target_index,nil,target_instrument)
+  assert(phrase and ownership.status(phrase)=='owned',item.name..' target did not commit')
+  assert(phrase.cells[1].note_value==35 and phrase.cells[5].note_value==60,
+    item.name..' target lost ordered note events')
+  assert(instrument.phrase_playback_mode==before_policy
+    and instrument.phrase_program==before_program
+    and instrument.phrase_editor_visible==before_editor,
+    item.name..' target settings were changed')
+  if item.name=='empty' then
+    assert(status:find('silent',1,true), 'empty target must report that playback is silent')
+  elseif item.name~='sample' then
+    assert(not phrase.cells[5].effect_number_string,
+      item.name..' target received a sample-only glide command')
+    assert(status:find('Articulation approximation:',1,true),
+      item.name..' target did not report reduced glide fidelity')
+  end
 end
-song.transport.bpm=120
-
-local octave=source(8);octave.pitch_length=2
-octave.pitch_events[1]={note=48,accent=false,slide=true}
-octave.pitch_events[2]={note=60,accent=false,slide=true}
-octave.time_events={'N','T','T','T','N','T','T','T'}
-local octave_target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',octave,octave_target))
-for _=1,6 do idle:fire() end
-local octave_phrase=instrument.phrases[octave_target]
-assert(octave_phrase and ownership.status(octave_phrase)=='owned')
-for line=9,14 do
-  assert(octave_phrase.cells[line].effect_number_string=='0G' and
-    octave_phrase.cells[line].effect_amount_value==(line==9 and 0x20 or 0),
-    'octave glide command coverage must span six lines')
-end
-assert(octave_phrase.cells[17].effect_number_string=='0G' and
-  octave_phrase.cells[22].effect_number_string=='0G')
-
-local tail_hold=source(9);tail_hold.pitch_length=2
-tail_hold.pitch_events[1]={note=48,accent=false,slide=true}
-tail_hold.pitch_events[2]={note=52,accent=false,slide=true}
-tail_hold.time_events={'N','T','T','T','N','T','T','T','T'}
-local tail_hold_target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',tail_hold,tail_hold_target))
-for _=1,6 do idle:fire() end
-local tail_hold_phrase=instrument.phrases[tail_hold_target]
-assert(tail_hold_phrase and ownership.status(tail_hold_phrase)=='owned')
-assert(tail_hold_phrase.number_of_lines==37 and tail_hold_phrase.loop_start==19
-  and tail_hold_phrase.loop_end==37)
-assert(tail_hold_phrase.cells[9].effect_number_string=='0G'
-  and tail_hold_phrase.cells[19].effect_number_string=='0G'
-  and tail_hold_phrase.cells[27].effect_number_string=='0G',
-  'the trailing-TIE extension must preserve cold and steady glide commands')
-
-tail_hold.pitch_events[2].note=60
-local octave_tail_target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',tail_hold,octave_tail_target))
-for _=1,6 do idle:fire() end
-local octave_tail_phrase=instrument.phrases[octave_tail_target]
-assert(octave_tail_phrase and ownership.status(octave_tail_phrase)=='owned')
-assert(octave_tail_phrase.number_of_lines==37 and octave_tail_phrase.loop_start==19
-  and octave_tail_phrase.loop_end==37)
-for _,line in ipairs({9,19,27}) do
-  assert(octave_tail_phrase.cells[line].effect_number_string=='0G'
-    and octave_tail_phrase.cells[line].effect_amount_value==0x20,
-    string.format('octave tie-tail command mismatch at line %d: %s %s',line,
-      tostring(octave_tail_phrase.cells[line].effect_number_string),
-      tostring(octave_tail_phrase.cells[line].effect_amount_value)))
-end
-
-local interrupted=source(8);interrupted.playback='one_shot';interrupted.pitch_length=2
-interrupted.pitch_events[1]={note=48,accent=false,slide=true}
-interrupted.pitch_events[2]={note=52,accent=false,slide=true}
-interrupted.time_events={'N','T','N','T','R','N','T','T'}
-local interrupted_target=#instrument.phrases+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',interrupted,interrupted_target))
-for _=1,6 do idle:fire() end
-local interrupted_phrase=instrument.phrases[interrupted_target]
-assert(interrupted_phrase and ownership.status(interrupted_phrase)=='owned')
-assert(interrupted_phrase.cells[5].effect_number_string=='0G')
-assert(interrupted_phrase.cells[9].note_value==120 and
- interrupted_phrase.cells[11].note_value==48 and
- interrupted_phrase.cells[11].effect_number_value==0,
- 'REST must cancel its outgoing slide before the next fresh NOTE')
-
-local function refuses_without_phrase(pattern)
- local count=#instrument.phrases
- local stored=song.tool_data
- local started,why=writer.generate(1,function()end,'slide',pattern,count+1)
- assert(not started and #instrument.phrases==count and song.tool_data==stored,why)
- return why
-end
-local unsupported=source(8);unsupported.pitch_length=2
-unsupported.pitch_events[1]={note=48,accent=false,slide=true}
-unsupported.pitch_events[2]={note=53,accent=false,slide=true}
-unsupported.time_events={'N','T','T','T','N','T','T','T'}
-assert(refuses_without_phrase(unsupported):find('outside the tested 0/±4/±12 set',1,true))
-unsupported.pitch_events[2].note=52;unsupported.pitch_events[2].accent=true
-assert(refuses_without_phrase(unsupported):find('accented notes are outside',1,true))
-local short_hold=source(4);short_hold.pitch_length=2
-short_hold.pitch_events[1]={note=48,accent=false,slide=true}
-short_hold.pitch_events[2]={note=60,accent=false,slide=true}
-short_hold.time_events={'N','T','N','T'}
-assert(refuses_without_phrase(short_hold):find('only the tested 8-step',1,true))
-local short_four=source(8);short_four.pitch_length=3
-short_four.pitch_events[1]={note=48,accent=false,slide=true}
-short_four.pitch_events[2]={note=52,accent=false,slide=true}
-short_four.pitch_events[3]={note=48,accent=false,slide=true}
-short_four.time_events={'N','N','N','T','T','T','T','T'}
-assert(refuses_without_phrase(short_four):find('only the tested 8-step',1,true),
- 'moving slides outside the captured step layout stay refused')
-local short_octave=source(8);short_octave.pitch_length=3
-short_octave.pitch_events[1]={note=48,accent=false,slide=true}
-short_octave.pitch_events[2]={note=60,accent=false,slide=true}
-short_octave.pitch_events[3]={note=48,accent=false,slide=true}
-short_octave.time_events={'N','T','N','T','T','N','T','T'}
-assert(refuses_without_phrase(short_octave):find('only the tested 8-step',1,true),
- 'octave glides without the captured command and settle span stay refused')
-local one_shot_accent=source(4);one_shot_accent.playback='one_shot'
-one_shot_accent.pitch_length=2
-one_shot_accent.pitch_events[1]={note=48,accent=false,slide=true}
-one_shot_accent.pitch_events[2]={note=52,accent=true,slide=false}
-one_shot_accent.time_events={'N','N','T','R'}
-local accent_count=#instrument.phrases
-local accent_store=song.tool_data
-local accent_started,accent_error=writer.generate(1,function()end,'slide',
- one_shot_accent,accent_count+1)
-assert(not accent_started and #instrument.phrases==accent_count and song.tool_data==accent_store)
-assert(accent_error:find('connected accent volume changes are unverified',1,true),accent_error)
-local held_source_accent=source(4);held_source_accent.playback='one_shot'
-held_source_accent.pitch_length=2
-held_source_accent.pitch_events[1]={note=48,accent=true,slide=true}
-held_source_accent.pitch_events[2]={note=52,accent=false,slide=true}
-held_source_accent.time_events={'N','T','N','T'}
-assert(refuses_without_phrase(held_source_accent):find(
- 'connected accent volume changes are unverified',1,true),
- 'an accent held through TIEs must be refused before a connected slide')
-local one_shot_source_accent=source(4);one_shot_source_accent.playback='one_shot'
-one_shot_source_accent.pitch_length=2
-one_shot_source_accent.pitch_events[1]={note=48,accent=true,slide=true}
-one_shot_source_accent.pitch_events[2]={note=52,accent=false,slide=false}
-one_shot_source_accent.time_events={'N','N','T','R'}
-assert(refuses_without_phrase(one_shot_source_accent):find(
- 'connected accent volume changes are unverified',1,true))
-for _,tempo in ipairs({90,150}) do
- song.transport.bpm=tempo
- local target_index=#instrument.phrases+1
- assert(writer.generate(1,function(message)messages[#messages+1]=message end,
-  'retrigger',gate_source,target_index))
- for _=1,6 do idle:fire() end
- assert(instrument.phrases[target_index]
-  and ownership.status(instrument.phrases[target_index])=='owned',
-  'Repeat Retrigger should provisionally accept the exact 90/150 BPM profile')
-end
-song.transport.bpm=120
-profiles.check=function()return nil,'mismatched profile' end
-assert(not writer.generate(1,function()end,'retrigger',gate_source,#instrument.phrases+1))
-local tempo_checked=0
-profiles.check=function(candidate,name)
- tempo_checked=tempo_checked+1
- assert(candidate==instrument and name=='reference_diagnostic')
- return {profile=name}
-end
-local tempo_count,tempo_store=#instrument.phrases,song.tool_data
-local tempo_target=tempo_count+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'retrigger',gate_source,tempo_target))
-song.transport.bpm=91
-for _=1,6 do idle:fire() end
-assert(tempo_checked==1 and #instrument.phrases==tempo_count
- and song.tool_data==tempo_store and not instrument.phrases[tempo_target],
- string.format('tempo change guard failed: checks=%d phrases=%d/%d store_same=%s target=%s',
-  tempo_checked,#instrument.phrases,tempo_count,tostring(song.tool_data==tempo_store),
-  tostring(instrument.phrases[tempo_target])))
-assert(messages[#messages]:find('GENERATION FAILED',1,true))
-song.transport.bpm=120
-tempo_checked=0
-song.transport.bpm=150
-local slide_tempo_count,slide_tempo_store=#instrument.phrases,song.tool_data
-local slide_tempo_target=slide_tempo_count+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',moving,slide_tempo_target))
-song.transport.bpm=91
-for _=1,6 do idle:fire() end
-assert(tempo_checked==1 and #instrument.phrases==slide_tempo_count
- and song.tool_data==slide_tempo_store and not instrument.phrases[slide_tempo_target],
- 'moving slides must recheck their tempo profile before phrase/source commit')
-assert(messages[#messages]:find('GENERATION FAILED',1,true))
-song.transport.bpm=120
-tempo_checked=0
-song.transport.bpm=150
-local same_pitch_tempo=source(16);same_pitch_tempo.pitch_length=1
-same_pitch_tempo.pitch_events[1]={note=48,accent=false,slide=true}
-same_pitch_tempo.time_events[1]='N'
-for step=2,16 do same_pitch_tempo.time_events[step]='T' end
-local same_pitch_tempo_count,same_pitch_tempo_store=#instrument.phrases,song.tool_data
-local same_pitch_tempo_target=same_pitch_tempo_count+1
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'slide',same_pitch_tempo,same_pitch_tempo_target))
-song.transport.bpm=91
-for _=1,6 do idle:fire() end
-assert(tempo_checked==1 and #instrument.phrases==same_pitch_tempo_count
- and song.tool_data==same_pitch_tempo_store and not instrument.phrases[same_pitch_tempo_target],
- 'same-pitch tempo changes must abort before phrase/source commit')
-assert(messages[#messages]:find('GENERATION FAILED',1,true))
-song.transport.bpm=120
-local checked=0
-profiles.check=function()
- checked=checked+1
- if checked==1 then return {profile='reference_diagnostic'} end
- return nil,'profile changed during rendering'
-end
-local unchanged_count,unchanged_store=#instrument.phrases,song.tool_data
-assert(writer.generate(1,function(message)messages[#messages+1]=message end,
- 'retrigger',gate_source,unchanged_count+1))
-for _=1,6 do idle:fire() end
-assert(checked==2 and #instrument.phrases==unchanged_count and song.tool_data==unchanged_store)
-assert(messages[#messages]:find('GENERATION FAILED',1,true))
-profiles.check=original_check;song.transport=original_transport
-instrument.phrase_playback_mode=original_program
--- If invalidated while rendering is pending, the phrase and store both remain
--- unchanged and the staging phrase is removed after the delayed callback.
-local delayed=source(16)
-local original_render=script.render_to_pattern
-local pending_render
-function script:render_to_pattern(_,callback) pending_render=callback;return true end
-local stale={valid=true,is_current=function(self) return self.valid end}
-local old_count,old_store=#instrument.phrases,song.tool_data
-assert(writer.generate(1,function(message) messages[#messages+1]=message end,
-  'baseline',delayed,#instrument.phrases+1,{token=stale}))
-for _=1,6 do idle:fire() end
-assert(type(pending_render)=='function')
-stale.valid=false
-pending_render(nil,32,0)
-assert(#instrument.phrases==old_count and song.tool_data==old_store)
-assert(messages[#messages]:find('generation was invalidated',1,true))
-script.render_to_pattern=original_render
-
+instrument=original_instrument
 print('ACID Repeat end-to-end mocked integration checks passed (playback checked separately in Renoise)')

@@ -71,24 +71,25 @@ _G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
   song=function()return song end,tool=function()return {app_idle_observable=idle} end}
 local writer=require('writers.phrase_writer')
 local seq=require('model.sequencer')
+local pitch=dofile('tests/acid/pitch_fixture.lua')
 local store=require('model.pattern_store')
 local ownership=require('writers.phrase_ownership')
 local status
 local function generate(pattern)
-  assert(writer.generate(1,function(message)status=message end,'retrigger',pattern,1))
+  assert(writer.generate(1,function(message)status=message end,pattern,1,
+    {output_policy='play_once'}))
   for _=1,6 do idle:fire() end
 end
-local pattern=seq.new_pattern(3,'extended')
-pattern.pitch_events[1]={note=48,accent=false,slide=false}
-pattern.pitch_events[2]={note=48,accent=false,slide=false}
-pattern.playback='one_shot'
-pattern.time_events={'N','T','T'}
+local pattern=seq.new_pattern(3)
+pattern.pitch_events[1]=pitch(48)
+pattern.pitch_events[2]=pitch(48)
+for i,command in ipairs({'N','T','T'}) do pattern.time_events[i]=command end
 generate(pattern)
 assert(status:find('generated',1,true),status)
 local target=instrument.phrases[1]
 assert(target.cells[1].note_value==48)
 assert(target.cells[2].note_value==121 and target.cells[4].note_value==121)
-assert(target.cells[6].note_value==120,'one-shot NTT must release at 2.5 steps')
+assert(target.cells[6].note_value==120,'Play Once NTT must release at 2.5 steps')
 assert(ownership.status(target)=='owned')
 local raw,name=song.tool_data,target.name
 local original_commit=store.commit
@@ -96,8 +97,8 @@ store.commit=function(target_song,candidate)
   target_song.tool_data=candidate.raw
   error('injected persistence failure after gate application')
 end
-pattern.time_events={'N','N','T'}
-pattern.pitch_events[1].note=50
+for i,command in ipairs({'N','N','T'}) do pattern.time_events[i]=command end
+pattern.pitch_events[1]=pitch(50)
 generate(pattern)
 store.commit=original_commit
 assert(status:find('injected persistence failure',1,true),status)
@@ -126,8 +127,9 @@ assert(status:find('generated',1,true),status)
 assert(target.cells[1].note_value==50 and target.cells[2].note_value==120)
 assert(target.cells[3].note_value==48 and target.cells[4].note_value==121)
 assert(target.cells[6].note_value==120)
-local restored,mode=assert(store.load(song,target))
-assert(mode=='retrigger' and restored.time_events[2]=='N' and restored.pitch_events[1].note==50)
+local restored,output_policy=store.load(song,target)
+assert(restored and output_policy=='play_once' and restored.time_events[2]=='N'
+  and restored.pitch_events[1].note==50)
 assert(ownership.status(target)=='owned')
 -- Unity accent uses pattrns' empty/full-volume sentinel, not explicit 0x80.
 raw,name=song.tool_data,target.name

@@ -14,21 +14,19 @@ function M.compile(pattern,options)
   if type(fraction)~="number" or fraction<=0 or fraction>=1 or fraction~=fraction then
     return nil,"gate_fraction must be between 0 and 1"
   end
-  local playback=options.playback or pattern.playback or "loop"
-  if playback~="loop" and playback~="one_shot" then
-    return nil,"playback must be loop or one_shot"
+  local output_policy=options.output_policy or "repeat"
+  if output_policy~="repeat" and output_policy~="play_once" then
+    return nil,"output_policy must be repeat or play_once"
   end
   local plan,successor=options.plan,options.successor
   if not plan then
     local exit
     plan,exit=compiler.compile_cycle(pattern)
     if not plan then return nil,exit end
-    if playback=="loop" then
-      successor=compiler.compile_cycle(pattern,exit)
-    end
+    successor=compiler.compile_cycle(pattern,exit)
   end
-  if playback=="loop" and not successor then
-    return nil,"loop gate scheduling requires an explicit successor cycle"
+  if output_policy=="repeat" and not successor then
+    return nil,"Repeat gate scheduling requires an explicit successor cycle"
   end
   if not plan.steps or not plan.steps[1] or #plan.steps~=plan.length then
     return nil,"gate scheduling requires a complete semantic cycle"
@@ -63,7 +61,7 @@ function M.compile(pattern,options)
       add(events,start,"rest",ev)
     end
     local next_ev=plan.steps[step+1]
-    if not next_ev and playback=="loop" then next_ev=successor.steps[1] end
+    if not next_ev and output_policy=="repeat" then next_ev=successor.steps[1] end
     if gate and (not next_ev or (next_ev.kind=="note" and next_ev.transition~="slide")) then
       add(events,start+gap,"gate_off",ev,
         {reason=next_ev and "retrigger" or "tail",note=note})
@@ -71,7 +69,7 @@ function M.compile(pattern,options)
     end
   end
   return {events=events,steps=plan.length,units_per_step=256,
-    gate_fraction=fraction,boundary=plan.boundary,playback=playback,
+    gate_fraction=fraction,boundary=plan.boundary,output_policy=output_policy,
     open_at_end=gate,final_note=note,semantic=plan,successor=successor}
 end
 

@@ -31,12 +31,13 @@ io.open = function(path, mode)
   return original_open(path, mode)
 end
 local mock = assert((loadstring or load)([[
-  return function(index, callback, mode, source, target)
-    return ACID_CAPTURE_WRITER_TEST(index, callback, mode, source, target)
+  return function(index, callback, source, target, options)
+    return ACID_CAPTURE_WRITER_TEST(index, callback, source, target, options)
   end
 ]], "@./com.david303ttl.ACID.xrnx/writers/phrase_writer.lua"))()
-ACID_CAPTURE_WRITER_TEST = function(index, cb, mode, source, target)
-  received = { index = index, mode = mode, source = source, target = target }
+ACID_CAPTURE_WRITER_TEST = function(index, cb, source, target, options)
+  received = { index = index, source = source, target = target,
+    output_policy=options.output_policy }
   callback = cb
   if synchronous_failure then
     cb("GENERATION FAILED\nsynchronous native setup failure")
@@ -47,14 +48,14 @@ ACID_CAPTURE_WRITER_TEST = function(index, cb, mode, source, target)
 end
 local original_writer = package.loaded["writers.phrase_writer"]
 package.loaded["writers.phrase_writer"] = { generate = mock }
-local function run(id, mode)
+local function run(id, output_policy)
   ACID_ARTICULATION_CASE_ID = id
-  ACID_ARTICULATION_WRITER_MODE = mode
+  ACID_ARTICULATION_OUTPUT_POLICY = output_policy
   dofile("./tests/acid/renoise_articulation_writer.lua")
 end
-run("repeat_slide_seam_length_17", "slide")
-assert(received.index == 1 and received.target == 8 and received.mode == "slide")
-assert(received.source.playback == "loop" and received.source.length == 17)
+run("repeat_slide_seam_length_17", "repeat")
+assert(received.index == 1 and received.target == 8 and received.output_policy == "repeat")
+assert(received.source.length == 17)
 assert(received.source.pitch_events[1].slide and received.source.time_events[17] == "T")
 assert(output:find("generation_result=pending", 1, true) and not closed)
 callback("GENERATION FAILED\nnative rendering error")
@@ -69,8 +70,8 @@ assert(closed and output:find("synchronous native setup failure", 1, true)
   and not output:find("generation_result=refused", 1, true),
   "Synchronous completion and nil return did not preserve the first terminal result")
 synchronous_failure = nil
-refusal = "Repeat slide continuity is unverified at TIME step 01"
-run("repeat_slide_seam_length_17", "slide")
+refusal = "Selected phrase is not safely ACID-owned"
+run("isolated_note", "play_once")
 assert(closed and #instrument.phrases == 7)
 assert(output:find("generation_result=refused", 1, true)
   and output:find(refusal, 1, true), "Native refusal was lost or bypassed")
@@ -79,14 +80,14 @@ for _, id in ipairs({"one_shot_note_tail_bpm_120", "one_shot_tie_tail_bpm_120",
   "one_shot_two_ties_tail_bpm_120", "tie_before_fresh_note_bpm_120",
   "two_ties_before_fresh_note_bpm_120", "repeat_note_rest_seam_bpm_120",
   "repeat_tie_rest_seam_bpm_120"}) do
-  run(id, "retrigger")
-  assert(received.mode == "retrigger" and received.source.pitch_events[1].note == 48)
-  assert(received.source.playback == (id:find("^repeat_") and "loop" or "one_shot"))
+  local policy=id:find("^repeat_") and "repeat" or "play_once"
+  run(id, policy)
+  assert(received.output_policy == policy and received.source.pitch_events[1].note == 48)
   callback("GENERATION FAILED\ncapture protocol test only")
   assert(closed, "Gate case metadata did not close after failure")
 end
 run("isolated_note")
-assert(received.mode == "baseline" and received.source.playback == "one_shot")
+assert(received.output_policy == "play_once")
 local phrase = { name = "sealed writer phrase", number_of_lines = 1 }
 function phrase:line()
   return { note_columns = {{note_value=48,instrument_value=255,volume_value=89,
@@ -113,5 +114,5 @@ io.open = original_open
 package.loaded["writers.phrase_writer"] = original_writer
 ACID_CAPTURE_WRITER_TEST = nil
 ACID_ARTICULATION_CASE_ID = nil
-ACID_ARTICULATION_WRITER_MODE = nil
+ACID_ARTICULATION_OUTPUT_POLICY = nil
 print("ACID writer capture delegation and readback checks passed (audio unverified)")

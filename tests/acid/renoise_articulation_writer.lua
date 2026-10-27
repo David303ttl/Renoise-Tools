@@ -2,7 +2,6 @@
 local song = assert(renoise.song(), "Open the disposable ACID song copy first")
 local case_id = assert(rawget(_G, "ACID_ARTICULATION_CASE_ID"), "Set ACID_ARTICULATION_CASE_ID first")
 assert(type(case_id) == "string" and case_id:match("^[a-z0-9_]+$"), "Invalid case ID")
-local mode = rawget(_G, "ACID_ARTICULATION_WRITER_MODE") or "baseline"
 assert(type(renoise.tool) == "function" and renoise.tool()
   and renoise.tool().app_idle_observable,
   "Run in ACID's tool scripting context; the writer requires renoise.tool().app_idle_observable")
@@ -32,6 +31,9 @@ assert(selected, "Unknown oracle case ID")
 assert(selected.playback.renderer == "acid-writer", "Select an acid-writer oracle case")
 assert(selected.playback.trigger_mode == "selective",
   "This helper supports selective triggering only; keymapped playback needs a separate experiment")
+local output_policy = rawget(_G, "ACID_ARTICULATION_OUTPUT_POLICY") or
+  (selected.playback.looping and "repeat" or "play_once")
+assert(output_policy == "repeat" or output_policy == "play_once", "Invalid phrase output policy")
 
 local instrument_index
 for index, candidate in ipairs(song.instruments) do
@@ -58,11 +60,11 @@ assert(loaded, writer)
 local writer_provenance = provenance.describe(root, writer.generate, "writers/phrase_writer.lua")
 local sequencer_provenance = provenance.describe(root, sequencer.new_pattern, "model/sequencer.lua")
 local source = selected.source
-local pattern = sequencer.new_pattern(source.length, source.entry_mode)
+local pattern = sequencer.new_pattern(source.length)
+local fixture_pitch = dofile(root .. "/tests/acid/pitch_fixture.lua")
 pattern.pitch_length = source.pitch_length
-pattern.playback = selected.playback.looping and "loop" or "one_shot"
 for index, note in ipairs(source.pitches) do
-  pattern.pitch_events[index] = { note = note, accent = false, slide = false }
+  pattern.pitch_events[index] = fixture_pitch(note)
 end
 for _, index in ipairs(source.accent_pitch_indices or {}) do
   pattern.pitch_events[index].accent = true
@@ -84,10 +86,9 @@ end
 record("format", "ACID-WRITER-CAPTURE-1")
 record("case_id", case_id)
 record("oracle", oracle_relative)
-record("writer_mode", mode)
+record("output_policy", output_policy)
 record("loaded_writer_source", writer_provenance)
 record("loaded_sequencer_source", sequencer_provenance)
-record("playback", pattern.playback)
 record("capture_status", "not captured; generation metadata only")
 local sample = instrument.samples[1]
 for _, key in ipairs({"volume", "panning", "transpose", "fine_tune", "loop_start", "loop_end",
@@ -158,7 +159,7 @@ local ok, reason = writer.generate(instrument_index, function(message)
     output:close()
     output = nil
   end
-end, mode, pattern, target)
+end, pattern, target, {output_policy=output_policy})
 if not ok then
   -- A synchronous terminal callback may already have finalized the record.
   if output then

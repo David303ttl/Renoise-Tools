@@ -1,5 +1,9 @@
 # ACID native phrase repeat verification
 
+This page retains M2 Repeat playback measurements. Its profile and renderer
+eligibility statements are historical; current output-policy acceptance is in
+[acid_m35_s_manual.md](acid_m35_s_manual.md).
+
 The pure cycle interpreter and physical intro plus steady-cycle plan have
 automated semantic coverage. A Renoise 3.5.4 offline WAV render at BPM 137 and
 phrase LPB 8 tested lengths 1, 16, 17, 32, 33, 48, 49 and 64 using one
@@ -30,8 +34,9 @@ and source save/load were also checked. This verifies the recorded source,
 metadata and sampled pitch/silence schedule only. Sample release/cut tail,
 voice continuity, transport stop/start, seek, undo and slide remain unverified.
 
-ACID now enables baseline Repeat generation by default, and refuses slide
-transitions and non-baseline audio modes in Repeat. For the standalone
+**Historical M2 policy:** ACID enabled only baseline Repeat generation and
+refused slide transitions and other audio modes. M3.5 removes those runtime
+restrictions. For the standalone
 Scripting Terminal endpoint probe and setup, see
 [`renoise_loop_probe_manual.md`](renoise_loop_probe_manual.md). Phrase-loop
 property signatures come from the pinned API 6.2 definitions; they do not
@@ -81,7 +86,7 @@ Generate then resized it to 69 lines. No stale lines or extra phrase were
 observed in these checks. Rapid edits and changes while a render was in flight
 were not tested.
 
-**Original-mode persistence:** generated a 16-step Original Repeat phrase
+**Historical Original-mode persistence:** generated a 16-step Original Repeat phrase
 (phrase 01: 32 notes, 0 NOTE OFFs), saved the temporary XRNS, reopened it, and
 reopened ACID. ACID reported `Restored ACID source for phrase 01`; regenerating
 that phrase succeeded. This adds one Original-mode source/seal roundtrip. It
@@ -93,13 +98,12 @@ the displayed loop/effect values were restored, that phrase remained refused;
 the untouched phrase still regenerated. Changing songs with ACID open also
 caused the stale editor to refuse generation until ACID was reopened.
 
-**Deferred audio and lifecycle checks:** the WAV render command displayed
+**Historical deferred audio and lifecycle checks:** the WAV render command displayed
 `Rendering is disabled in the demo version of Renoise`. Sample release/cut
 tail, ending-REST audibility, held-voice continuity, cold-intro versus steady
 cycle sound, transport stop/start and seek, and keymapped triggering therefore
-remain unverified in this session. The UI identifies slide continuity and
-advanced audio modes as unsupported in Repeat, but a fresh source-specific
-slide-refusal request was not completed here. Rapid/in-flight edits, disable or
+remain unverified in this session. The M2 UI's slide and audio-mode refusals
+were part of the superseded implementation. Rapid/in-flight edits, disable or
 close during a job, undo/redo, forced source-save/rollback failure, and manual
 cutover checks for earlier formats/seals also remain outstanding.
 
@@ -118,7 +122,7 @@ LPB, sample loop configuration, source, expected phrase lines, loop endpoints,
 and observed playback. Use a looping single-cycle saw sample. Keep cell
 inspection results separate from recorded audio or transient measurements.
 
-1. Generate baseline Repeat phrases through ACID for lengths 1, 16, 17, 32, 33,
+1. Generate Repeat phrases through ACID for lengths 1, 16, 17, 32, 33,
    48, 49 and 64 TIME steps. Trigger once and listen for at least three cycles;
    host retriggers must not conceal the phrase period. Confirm no grid drift and
    compare generated loop endpoints and cells against the hand-built probes.
@@ -126,10 +130,9 @@ inspection results separate from recorded audio or transient measurements.
    NOTE-TIE-NOTE, NOTE-REST-NOTE, all NOTE, all REST, and a leading REST that
    receives a held voice only on repetition.
 3. Compare the cold intro with the steady loop cycle for a trailing TIE, ending
-   REST and ordinary last NOTE. Verify Repeat refuses outgoing SLIDE transitions
-   (including equal-pitch cases) and non-baseline audio modes. Do not interpret
-   those refusals as evidence of native slide behavior; correct phrase cells
-   alone do not prove sample voice continuity or attack behavior.
+   REST and ordinary last NOTE. Confirm SLIDE sources generate without a mode
+   selection and that any target limitation appears as an approximation. Phrase
+   cells alone do not prove sample voice continuity or attack behavior.
 4. Test sustained phrase trigger, release, host stop/start, and seek. Check
    keymapped triggering separately from selective phrase triggering.
 5. Change LAST STEP and active PITCH span through 64→17→1→64 with Live Edit
@@ -140,8 +143,8 @@ inspection results separate from recorded audio or transient measurements.
    confirm exact old source, phrase, and playback selection restoration or
    identify retained recovery material.
 
-Writer-generated baseline Repeat passed the recorded grid and pitch/silence
-checks, and the 2026-10-27 writer-cell, Live Edit, Original-mode roundtrip, and
+Writer-generated Repeat passed the recorded grid and pitch/silence checks, and
+the 2026-10-27 writer-cell, Live Edit, historical Original-mode roundtrip, and
 ownership/context checks are recorded above. Sample release/cut tail, native
 voice continuity, source-specific slide refusal, stop/start, seek, undo, and
 the remaining lifecycle/failure-injection checks are still unverified. Do not

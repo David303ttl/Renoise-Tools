@@ -2,8 +2,7 @@
   "format": "ACID-LOOP-ORACLE-1",
   "status": "semantic expectations exercised by the pure cycle interpreter; native playback unverified",
   "cursor_policy": "reset_each_time_cycle",
-  "entry_mode": "extended",
-  "profile_scope": "The cases and boundary_family default to Extended ACID source unless entry_modes lists both modes. These are proposed ACID expectations, not original-hardware traces. Both modes follow Roland: entered leading TIE becomes NOTE; raw leading-TIE source is invalid. entry_cases cover each entry_mode or all listed entry_modes; cutover_cases reject unsupported development data without import or adoption.",
+  "profile_scope": "These are proposed ACID source expectations, not original-hardware traces. Entered leading TIE becomes NOTE; raw leading-TIE source is invalid. Cutover cases reject unsupported development data without import or adoption.",
   "cycles": 3,
   "index_base": 1,
   "note_numbering": "Renoise note_value, 0..119",
@@ -13,80 +12,32 @@
   "expectation_order": "Each note_* array follows NOTE commands in TIME order. tie_notes follows TIE commands, null means silent. rest_releases follows REST commands. expected has exactly one record per cycle.",
   "entry_cases": [
     {
-      "id": "original_leading_tie_entry_becomes_note",
-      "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
+      "id": "leading_tie_entry_becomes_note_then_ties_hold",
       "operation": "enter_time",
-      "entry_mode": "original",
       "length": 3,
-      "pitch_length": 16,
-      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
-      "input_time": ["T", "N", "N"],
-      "expected_time": ["N", "N", "N"],
-      "expected_note_pitch_indices_each_cycle": [1, 2, 3],
-      "expected_note_values_each_cycle": [36, 39, 43],
-      "expected_first_transitions": ["attack", "retrigger", "retrigger"]
-    },
-    {
-      "id": "extended_leading_tie_entry_becomes_note",
-      "operation": "enter_time",
-      "entry_mode": "extended",
-      "length": 3,
-      "pitch_length": 3,
-      "pitches": [{"note": 36}, {"note": 39}, {"note": 43}],
-      "input_time": ["T", "N", "N"],
-      "expected_time": ["N", "N", "N"],
-      "expected_note_pitch_indices_each_cycle": [1, 2, 3],
-      "expected_note_values_each_cycle": [36, 39, 43],
-      "expected_first_transitions": ["attack", "retrigger", "retrigger"],
-      "cycle_case": "normalized_leading_tie_three_notes"
-    },
-    {
-      "id": "original_length_seventeen_requires_explicit_extended_choice",
-      "operation": "validate_source",
-      "entry_mode": "original",
-      "length": 17,
-      "pitch_length": 16,
-      "expected_error": "original_time_length",
-      "source_unchanged": true
-    },
-    {
-      "id": "original_independent_short_pitch_span_requires_extended",
-      "operation": "validate_source",
-      "entry_mode": "original",
-      "length": 12,
-      "pitch_length": 3,
-      "expected_error": "original_pitch_span",
-      "source_unchanged": true
-    },
-    {
-      "id": "noncanonical_leading_tie_is_rejected_in_both_modes",
-      "operation": "validate_source",
-      "entry_modes": ["original", "extended"],
-      "length": 3,
-      "pitch_length": 16,
-      "input_time": ["T", "N", "N"],
-      "expected_error": "leading_tie",
-      "source_unchanged": true
-    },
-    {
-      "id": "tie_only_entry_becomes_note_then_ties_in_both_modes",
-      "operation": "enter_time",
-      "entry_modes": ["original", "extended"],
-      "length": 3,
-      "pitch_length": 16,
+      "pitch_length": 1,
       "pitches": [{"note": 36}],
       "input_time": ["T", "T", "T"],
       "expected_time": ["N", "T", "T"],
       "expected_note_pitch_indices_each_cycle": [1],
       "expected_note_values_each_cycle": [36],
       "expected_first_transitions": ["attack", "retrigger", "retrigger"]
+    },
+    {
+      "id": "raw_leading_tie_source_is_rejected_without_rewrite",
+      "operation": "validate_source",
+      "length": 3,
+      "pitch_length": 1,
+      "input_time": ["T", "N", "N"],
+      "expected_error": "leading_tie",
+      "source_unchanged": true
     }
   ],
   "cutover_cases": [
     {
       "id": "earlier_development_source_format_is_unsupported",
       "operation": "load_source",
-      "source_format": "ACID-PITCH-TIME-1",
+      "source_format": "ACID-PITCH-TIME-2",
       "expected_error": "unsupported_source_format",
       "imports": 0,
       "writes_on_read": 0
@@ -94,7 +45,7 @@
     {
       "id": "earlier_development_seal_confers_no_ownership",
       "operation": "check_ownership",
-      "phrase_name": "ACID 0.1 #12 [DEADBEEF]",
+      "phrase_name": "ACID 0.1 #12 [v2:DEADBEEF]",
       "expected_status": "foreign",
       "adoption_allowed": false
     }
@@ -136,9 +87,8 @@
     {"id":"all_note_full_pitch_span_64_wraps_at_cycle_end","length":64,"pitch_length":64,"pitches":[{"note":24},{"note":25},{"note":26},{"note":27},{"note":28},{"note":29},{"note":30},{"note":31},{"note":32},{"note":33},{"note":34},{"note":35},{"note":36},{"note":37},{"note":38},{"note":39},{"note":40},{"note":41},{"note":42},{"note":43},{"note":44},{"note":45},{"note":46},{"note":47},{"note":48},{"note":49},{"note":50},{"note":51},{"note":52},{"note":53},{"note":54},{"note":55},{"note":56},{"note":57},{"note":58},{"note":59},{"note":60},{"note":24},{"note":25},{"note":26},{"note":27},{"note":28},{"note":29},{"note":30},{"note":31},{"note":32},{"note":33},{"note":34},{"note":35},{"note":36},{"note":37},{"note":38},{"note":39},{"note":40},{"note":41},{"note":42},{"note":43},{"note":44},{"note":45},{"note":46},{"note":47},{"note":48},{"note":49},{"note":50}],"time":["N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N", "N"],"expected":[{"note_pitch_indices":[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64],"note_values":[24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],"note_transitions":["attack", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger"],"tie_notes":[],"rest_releases":[],"exit_voice":{"note":50,"pitch_index":64,"slide":false},"exit_next_pitch":1},{"note_pitch_indices":[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64],"note_values":[24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],"note_transitions":["retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger"],"tie_notes":[],"rest_releases":[],"exit_voice":{"note":50,"pitch_index":64,"slide":false},"exit_next_pitch":1},{"note_pitch_indices":[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64],"note_values":[24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50],"note_transitions":["retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger", "retrigger"],"tie_notes":[],"rest_releases":[],"exit_voice":{"note":50,"pitch_index":64,"slide":false},"exit_next_pitch":1}]},
     {"id":"all_rest_multistep_stays_silent","length":4,"pitch_length":1,"pitches":[{"note":36}],"time":["R", "R", "R", "R"],"expected":[{"note_pitch_indices":[],"note_values":[],"note_transitions":[],"tie_notes":[],"rest_releases":[false, false, false, false],"exit_voice":null,"exit_next_pitch":1},{"note_pitch_indices":[],"note_values":[],"note_transitions":[],"tie_notes":[],"rest_releases":[false, false, false, false],"exit_voice":null,"exit_next_pitch":1},{"note_pitch_indices":[],"note_values":[],"note_transitions":[],"tie_notes":[],"rest_releases":[false, false, false, false],"exit_voice":null,"exit_next_pitch":1}]},
     {
-      "id": "outgoing_boundary_slide_connects_different_pitches_in_both_modes",
+      "id": "outgoing_boundary_slide_connects_different_pitches",
       "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
-      "entry_modes": ["original", "extended"],
       "length": 2,
       "pitch_length": 16,
       "pitches": [{"note": 36}, {"note": 43, "slide": true}],
@@ -150,9 +100,8 @@
       ]
     },
     {
-      "id": "outgoing_boundary_slide_ties_equal_pitches_in_both_modes",
+      "id": "outgoing_boundary_slide_ties_equal_pitches",
       "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
-      "entry_modes": ["original", "extended"],
       "length": 2,
       "pitch_length": 16,
       "pitches": [{"note": 36}, {"note": 36, "slide": true}],
@@ -165,7 +114,6 @@
     },
     {
       "id": "tie_after_rest_stays_silent_without_consuming_pitch",
-      "entry_modes": ["original", "extended"],
       "length": 4,
       "pitch_length": 16,
       "pitches": [{"note": 36, "slide": true}, {"note": 43}],

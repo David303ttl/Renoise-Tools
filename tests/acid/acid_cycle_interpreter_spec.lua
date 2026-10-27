@@ -1,6 +1,7 @@
 dofile('tests/bootstrap.lua')('acid')
 local seq = require('model.sequencer')
 local interpreter = require('model.cycle_interpreter')
+local pitch = dofile('tests/acid/pitch_fixture.lua')
 local json = dofile('tests/acid/fixture_json.lua')
 local oracle = json.read('tests/acid/fixtures/loop_cases.json')
 
@@ -8,17 +9,18 @@ local function equal(actual, expected, message)
   assert(actual == expected, message .. ': expected ' .. tostring(expected) .. ', got ' .. tostring(actual))
 end
 
-local function source(case, mode)
-  local p = seq.new_pattern(case.length, mode)
-  p.entry_mode, p.pitch_length = mode, case.pitch_length
-  p.playback = 'loop'
-  p.time_events = case.time
-  for i, pitch in ipairs(case.pitches) do p.pitch_events[i] = pitch end
+local function source(case)
+  local p = seq.new_pattern(case.length)
+  p.pitch_length = case.pitch_length
+  for step,command in ipairs(case.time) do p.time_events[step]=command end
+  for i, source_pitch in ipairs(case.pitches) do
+    p.pitch_events[i]=pitch(source_pitch.note,source_pitch.accent,source_pitch.slide)
+  end
   return p
 end
 
-local function check_case(case, mode)
-  local p = source(case, mode)
+local function check_case(case)
+  local p = source(case)
   local plans, exit = assert(interpreter.compile_cycles(p, 3))
   local state
   for cycle, plan in ipairs(plans) do
@@ -67,66 +69,58 @@ local function check_case(case, mode)
 end
 
 for _, case in ipairs(oracle.cases) do
-  for _, mode in ipairs(case.entry_modes or {'extended'}) do
-    check_case(case, mode)
-    local loop = assert(interpreter.plan_loop(source(case, mode)))
-    equal(loop.cold.cycle, 1, case.id .. ' cold cycle')
-    equal(loop.steady.cycle, 2, case.id .. ' steady cycle')
-    equal(loop.verification.cycle, 3, case.id .. ' verification cycle')
-  end
+  check_case(case)
+  local loop = assert(interpreter.plan_loop(source(case)))
+  equal(loop.cold.cycle, 1, case.id .. ' cold cycle')
+  equal(loop.steady.cycle, 2, case.id .. ' steady cycle')
+  equal(loop.verification.cycle, 3, case.id .. ' verification cycle')
 end
 
 for _, entry in ipairs(oracle.entry_cases) do
-  local modes = entry.entry_modes or {entry.entry_mode}
-  for _, mode in ipairs(modes) do
-    if entry.operation == 'enter_time' then
-      local case = {length=entry.length, pitch_length=entry.pitch_length,
-        pitches=entry.pitches, time={}}
-      for step, command in ipairs(entry.input_time) do
-        case.time[step] = assert(interpreter.normalize_time_entry(mode, step, command))
-        equal(case.time[step], entry.expected_time[step], entry.id)
-      end
-      local p = source(case, mode)
-      local plans = assert(interpreter.compile_cycles(p, 3))
-      for cycle, plan in ipairs(plans) do
-        local n = 0
-        for _, event in ipairs(plan.steps) do
-          if event.kind == 'note' then
-            n = n + 1
-            equal(event.pitch_index, entry.expected_note_pitch_indices_each_cycle[n], entry.id)
-            equal(event.note, entry.expected_note_values_each_cycle[n], entry.id)
-            if n == 1 then equal(event.transition, entry.expected_first_transitions[cycle], entry.id) end
-          end
+  if entry.operation == 'enter_time' then
+    local case = {length=entry.length, pitch_length=entry.pitch_length,
+      pitches=entry.pitches, time={}}
+    for step, command in ipairs(entry.input_time) do
+      case.time[step] = assert(interpreter.normalize_time_entry(step, command))
+      equal(case.time[step], entry.expected_time[step], entry.id)
+    end
+    local p = source(case)
+    local plans = assert(interpreter.compile_cycles(p, 3))
+    for cycle, plan in ipairs(plans) do
+      local n = 0
+      for _, event in ipairs(plan.steps) do
+        if event.kind == 'note' then
+          n = n + 1
+          equal(event.pitch_index, entry.expected_note_pitch_indices_each_cycle[n], entry.id)
+          equal(event.note, entry.expected_note_values_each_cycle[n], entry.id)
+          if n == 1 then equal(event.transition, entry.expected_first_transitions[cycle], entry.id) end
         end
       end
+    end
+  else
+    local p = seq.new_pattern(entry.length)
+    p.pitch_length = entry.pitch_length
+    if entry.input_time then
+      for step,command in ipairs(entry.input_time) do p.time_events[step]=command end
     else
-      local p = seq.new_pattern(entry.length, 'extended')
-      p.entry_mode, p.pitch_length = mode, entry.pitch_length
-      p.time_events = entry.input_time or {}
-      if #p.time_events == 0 then
-        for i=1,entry.length do p.time_events[i] = 'R' end
-      end
-      local plan, err = interpreter.compile_cycle(p)
-      assert(not plan and err, entry.id)
-      if entry.expected_error == 'leading_tie' then
-        assert(err:find('leading TIE', 1, true), entry.id)
-        equal(p.time_events[1], 'T', entry.id .. ' source unchanged')
-      elseif entry.expected_error == 'original_time_length' then
-        assert(err:lower():find('original time length', 1, true), entry.id)
-      elseif entry.expected_error == 'original_pitch_span' then
-        assert(err:lower():find('original pitch span', 1, true), entry.id)
-      end
+      for i=1,entry.length do p.time_events[i] = 'R' end
+    end
+    local plan, err = interpreter.compile_cycle(p)
+    assert(not plan and err, entry.id)
+    if entry.expected_error == 'leading_tie' then
+      assert(err:find('leading TIE', 1, true), entry.id)
+      equal(p.time_events[1], 'T', entry.id .. ' source unchanged')
     end
   end
 end
 
 local family = oracle.boundary_family
 for _, length_case in ipairs(family.length_cases) do
-  local p = seq.new_pattern(length_case.length, 'extended')
-  p.entry_mode, p.pitch_length = 'extended', 64
-  p.playback = 'loop'
+  local p = seq.new_pattern(length_case.length)
+  p.pitch_length = 64
   for i=1,64 do
-    p.pitch_events[i] = {note=24+(i-1)%37, slide=i==15 or i==30 or i==45 or i==60}
+    p.pitch_events[i] = pitch(24+(i-1)%37,false,
+      i==15 or i==30 or i==45 or i==60)
   end
   for i=1,p.length do p.time_events[i] = family.source_generator.time_overrides[tostring(i)] or 'N' end
   local plans, final_state = assert(interpreter.compile_cycles(p, 3))
@@ -167,9 +161,8 @@ end
 
 for _, length in ipairs({1,16,17,32,33,48,49,64}) do
   for _, command in ipairs({'N','R'}) do
-    local p = seq.new_pattern(length, 'extended')
-    p.entry_mode, p.pitch_length = 'extended', 64
-    p.playback = 'loop'
+    local p = seq.new_pattern(length)
+    p.pitch_length = 64
     for i=1,length do p.time_events[i] = command end
     local plans = assert(interpreter.compile_cycles(p, 3))
     for cycle, plan in ipairs(plans) do
@@ -186,10 +179,9 @@ for _, length in ipairs({1,16,17,32,33,48,49,64}) do
 end
 
 local p = seq.new_pattern(3)
-p.entry_mode, p.pitch_length = 'extended', 1
-p.playback = 'loop'
+p.pitch_length = 1
 p.pitch_events[1] = seq.new_pitch(3, -1, true, true)
-p.time_events = {'N','T','N'}
+p.time_events[1],p.time_events[2],p.time_events[3] = 'N','T','N'
 local plans, state = assert(interpreter.compile_cycles(p, 3))
 equal(plans[1].steps[1].octave, -1, 'octave preserved')
 equal(plans[1].steps[2].voice.accent, true, 'accent retained on tie')
@@ -198,11 +190,9 @@ equal(p.pitch_events[1].octave, -1, 'source remains unchanged')
 plans[1].steps[2].voice.note = 0
 equal(state.voice.note, p.pitch_events[1].note, 'events do not alias exit voice')
 equal(p.pitch_events[1].note, 27, 'events do not alias source')
-p.playback = 'one_shot'
-equal(assert(interpreter.compile_cycle(p)).steps[3].hold_intent, false, 'one-shot stop has no hold')
-assert(not interpreter.plan_loop(p))
-p.playback = 'loop'
-local incoming = {cycle=2, next_pitch=17, voice={note=40, pitch_index=7, accent=true, slide=true}}
+local incoming_pitch=pitch(40,true,true)
+incoming_pitch.pitch_index=7
+local incoming = {cycle=2,next_pitch=17,voice=incoming_pitch}
 local first, returned = assert(interpreter.compile_cycle(p, incoming))
 equal(first.steps[1].pitch_index, 1, 'pitch cursor resets independently of voice')
 equal(first.steps[1].from_note, 40, 'incoming voice preserved')
@@ -211,12 +201,11 @@ returned.voice.note = 0
 equal(incoming.voice.note, 40, 'returned state does not alias input')
 p.time_events[1] = 'T'
 assert(not interpreter.compile_cycle(p))
-p.entry_mode = 'original'
-assert(not interpreter.compile_cycle(p))
 assert(not interpreter.compile_cycles(p, 0))
 assert(not interpreter.compile_cycles(p, interpreter.MAX_CYCLES+1))
-assert(not interpreter.compile_cycle(p, {cycle=1, voice={note=36}}))
-assert(not interpreter.normalize_time_entry('original', 17, 'T'))
-assert(not interpreter.normalize_time_entry('extended', 1, 'X'))
+assert(not interpreter.compile_cycle(p, {cycle=1, voice=pitch(36)}))
+assert(interpreter.normalize_time_entry(64, 'T')=='T')
+assert(not interpreter.normalize_time_entry(65, 'T'))
+assert(not interpreter.normalize_time_entry(1, 'X'))
 
 print('ACID repeating cycle interpreter checks passed')

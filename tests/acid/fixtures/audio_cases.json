@@ -114,7 +114,6 @@
           50,
           51
         ],
-        "entry_mode": "extended",
         "pitch_length": 16
       },
       "phrase": "Grid calibration 17-step pitch-span wrap",
@@ -1214,7 +1213,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -1325,7 +1323,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           48
@@ -1437,7 +1434,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -1590,7 +1586,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 8
       }
     },
@@ -1726,7 +1721,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 8
       }
     },
@@ -1862,7 +1856,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 8
       }
     },
@@ -1954,7 +1947,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -2081,7 +2073,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -2209,7 +2200,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -2340,7 +2330,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           48
@@ -2471,7 +2460,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -2558,7 +2546,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -2684,7 +2671,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -2889,7 +2875,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -3062,7 +3047,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 2
       },
       "qualification": {
@@ -3220,7 +3204,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -3355,7 +3338,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -3489,7 +3471,6 @@
           2
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -3621,7 +3602,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -3748,7 +3728,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -3875,7 +3854,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -4002,7 +3980,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -4129,7 +4106,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 3
       },
       "qualification": {
@@ -4263,7 +4239,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 6
       },
       "qualification": {
@@ -4398,7 +4373,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 4
       },
       "qualification": {
@@ -4575,7 +4549,6 @@
           2,
           4
         ],
-        "entry_mode": "extended",
         "length": 5
       },
       "qualification": {
@@ -4731,7 +4704,6 @@
           2,
           3
         ],
-        "entry_mode": "extended",
         "length": 4
       },
       "qualification": {
@@ -4873,7 +4845,6 @@
         "accent_pitch_indices": [
           2
         ],
-        "entry_mode": "extended",
         "length": 4
       },
       "qualification": {
@@ -5053,7 +5024,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 16
       },
       "qualification": {
@@ -5232,7 +5202,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 17
       },
       "qualification": {
@@ -5426,7 +5395,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 32
       },
       "qualification": {
@@ -5621,7 +5589,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 33
       },
       "qualification": {
@@ -5831,7 +5798,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 48
       },
       "qualification": {
@@ -6042,7 +6008,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 49
       },
       "qualification": {
@@ -6268,7 +6233,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 64
       },
       "qualification": {
@@ -6350,7 +6314,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -6441,7 +6404,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -6532,7 +6494,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -6623,7 +6584,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -6714,7 +6674,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -6823,7 +6782,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -6932,7 +6890,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7041,7 +6998,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7167,7 +7123,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7294,7 +7249,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7421,7 +7375,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7557,7 +7510,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7694,7 +7646,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7831,7 +7782,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -7971,7 +7921,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -8111,7 +8060,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -8251,7 +8199,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -8400,7 +8347,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -8550,7 +8496,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -8700,7 +8645,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -8869,7 +8813,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -9036,7 +8979,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -9203,7 +9145,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -9407,7 +9348,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -9612,7 +9552,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -9817,7 +9756,6 @@
         "onset_tolerance_ms": 5
       },
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -9969,8 +9907,7 @@
         ],
         "length": 5,
         "pitch_length": 2,
-        "accent_pitch_indices": [],
-        "entry_mode": "extended"
+        "accent_pitch_indices": []
       },
       "qualification": {
         "blockers": [

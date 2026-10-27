@@ -17,27 +17,14 @@ end
 local function validate(pattern)
   local ok, err = sequencer.validate(pattern)
   if not ok then return nil, err end
-  if pattern.entry_mode ~= "original" and pattern.entry_mode ~= "extended" then
-    return nil, "entry mode must be original or extended"
-  end
   if not integer(pattern.pitch_length, 1, sequencer.MAX_STEPS) then
     return nil, "pitch length must be 1..64"
   end
-  if pattern.entry_mode == "original" and pattern.length > 16 then
-    return nil, "original time length must be 1..16"
-  end
-  if pattern.entry_mode == "original" and pattern.pitch_length ~= 16 then
-    return nil, "original pitch span must be 16"
-  end
-  if #pattern.time_events ~= pattern.length then
-    return nil, "time memory must have exactly one N/T/R value per step"
+  if #pattern.time_events < pattern.length then
+    return nil, "time memory must have one N/T/R value per active step"
   end
   if pattern.time_events[1] == "T" then
     return nil, "leading TIE must be entered as NOTE"
-  end
-  if pattern.playback ~= nil and pattern.playback ~= "loop" and
-      pattern.playback ~= "one_shot" then
-    return nil, "playback must be loop or one_shot"
   end
   for _, command in ipairs(pattern.time_events) do
     if command == "N" and #pattern.pitch_events < pattern.pitch_length then
@@ -62,14 +49,14 @@ local function validate_state(state)
         type(voice.accent) ~= "boolean" or type(voice.slide) ~= "boolean" then
       return nil, "invalid cycle voice"
     end
+    local key, octave_or_error=sequencer.pitch_controls(voice)
+    if key==nil then return nil,"invalid cycle voice: "..octave_or_error end
   end
   return true
 end
 
-function M.normalize_time_entry(mode, step, command)
-  if mode ~= "original" and mode ~= "extended" then return nil, "invalid entry mode" end
-  local maximum = mode == "original" and 16 or sequencer.MAX_STEPS
-  if not integer(step, 1, maximum) then return nil, "invalid time step" end
+function M.normalize_time_entry(step, command)
+  if not integer(step, 1, sequencer.MAX_STEPS) then return nil, "invalid time step" end
   if command ~= "N" and command ~= "T" and command ~= "R" then
     return nil, "invalid timing command"
   end
@@ -108,10 +95,8 @@ local function run_cycle(pattern, state)
       event.released_note = voice and voice.note or nil
       voice = nil
     end
-    local next_command = pattern.time_events[step + 1]
-    if not next_command and pattern.playback ~= "one_shot" then
-      next_command = pattern.time_events[1]
-    end
+    local next_command = step<pattern.length and pattern.time_events[step + 1]
+      or pattern.time_events[1]
     event.hold_intent = voice ~= nil and
       (next_command == "T" or (next_command == "N" and voice.slide)) or false
     event.voice = copy_voice(voice)
@@ -151,9 +136,7 @@ local function same_voice(a, b)
 end
 
 function M.plan_loop(pattern)
-  if type(pattern) ~= "table" or pattern.playback == "one_shot" then
-    return nil, "loop planning requires repeating playback"
-  end
+  if type(pattern) ~= "table" then return nil, "invalid pattern" end
   local plans, state_or_error = M.compile_cycles(pattern, 3)
   if not plans then return nil, state_or_error end
   local steady, verification = plans[2], plans[3]

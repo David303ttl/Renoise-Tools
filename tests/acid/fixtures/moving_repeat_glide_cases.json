@@ -61,7 +61,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -306,7 +305,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -551,7 +549,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -796,7 +793,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -1042,7 +1038,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -1288,7 +1283,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -1530,7 +1524,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           48
         ]
@@ -1689,7 +1682,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           52
         ]
@@ -1848,7 +1840,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           60
         ]
@@ -2010,7 +2001,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -2255,7 +2245,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -2500,7 +2489,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -2745,7 +2733,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -2991,7 +2978,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -3237,7 +3223,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -3479,7 +3464,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           48
         ]
@@ -3638,7 +3622,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           52
         ]
@@ -3797,7 +3780,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           60
         ]
@@ -3959,7 +3941,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -4204,7 +4185,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -4449,7 +4429,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -4694,7 +4673,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -4940,7 +4918,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -5186,7 +5163,6 @@
           2
         ],
         "pitch_length": 2,
-        "entry_mode": "extended",
         "pitches": [
           48,
           60
@@ -5428,7 +5404,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           48
         ]
@@ -5587,7 +5562,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           52
         ]
@@ -5746,7 +5720,6 @@
         "length": 8,
         "slide_pitch_indices": [],
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           60
         ]
@@ -6050,7 +6023,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 16
       },
       "qualification": {
@@ -6225,7 +6197,6 @@
           1
         ],
         "accent_pitch_indices": [],
-        "entry_mode": "extended",
         "length": 16
       },
       "qualification": {

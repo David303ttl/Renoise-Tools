@@ -1,7 +1,8 @@
-# ACID M1: paged PITCH / TIME editor (Renoise manual QA)
+# ACID PITCH / TIME editor (Renoise manual QA)
 
-Implementation branch: feature/acid-m1-pitch-time-64. The 64-step capacity is a
-software extension; a hardware TB-303 has a 16-step pattern limit.
+The original M1 procedure is superseded. Current Gate S checks are in
+[acid_m35_s_manual.md](acid_m35_s_manual.md). The 64-step capacity is a software
+extension; a hardware TB-303 has a 16-step pattern limit.
 
 ## Local deterministic regression
 
@@ -17,9 +18,9 @@ boundaries, TIE and REST, and exact-step errors.
 
 ## Renoise smoke test (requires Renoise 3.5/API 6.2)
 
-1. Install the ACID tool from this branch. Open an instrument with a playable
+1. Install the ACID tool. Open an instrument with a playable
    sample and no foreign phrase content. Open Tools > ACID.
-2. Confirm LAST STEP=16, choose Create / Reset Pattern. All 64 PITCH positions
+2. Confirm LAST STEP=16. The fresh draft is immediately editable. All 64 PITCH positions
    should show C, normal octave, ACCENT and SLIDE off. The sixteen active
    TIME steps should all be NOTE. Confirm the decoded preview is C for every
    step without editing any pitches.
@@ -30,7 +31,7 @@ boundaries, TIE and REST, and exact-step errors.
    step 3 P02. P03 onwards should be marked unused.
 5. Set LAST STEP=17, select TIME page 17-32 and set step 17 to NOTE. Verify it
    maps to the next pitch position, not automatically to P17.
-6. Set LAST STEP=64 and visit all four PITCH and TIME pages. Edit steps 16,
+6. Switch to Grid view. Set LAST STEP=64 and visit all four PITCH and TIME pages. Edit steps 16,
    17, 32, 33, 48, 49, 64; ensure state persists when switching pages.
 7. Shrink LAST STEP to 16, then enlarge again. Time values outside the active
    range should be restored in this open draft.
@@ -49,7 +50,7 @@ boundaries, TIE and REST, and exact-step errors.
   a correct editor preview is not evidence of faithful audio behavior.
 - The editor currently uses straight 1/16 divisions; triplet is not ready
   for rendering and must not be silently enabled.
-- Draft pattern persistence across dialog close, song save/reopen, and undo
-  remains a separate milestone. Reset clears the current unsaved draft.
+- Draft source is stored after successful phrase generation. Reset requires
+  confirmation and can be undone once in the open editor.
 - Native Renoise GUI rendering and playback have not been exercised in this
   environment. The tests must be run locally before merge.

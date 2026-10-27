@@ -1,67 +1,59 @@
 # ACID.xrnx
 
-ACID is an experimental Renoise 3.5 / scripting API 6.2 phrase-based
-sequencer. It edits independent PITCH and TIME memories and generates a native
-instrument phrase; Renoise supplies the instrument, transport and arrangement.
-The manifest remains at version 0.1.
+ACID is an experimental Renoise 3.5 / scripting API 6.2 phrase sequencer. It
+edits independent PITCH and TIME memories and renders a native instrument
+phrase. Renoise supplies the sound generator, transport and arrangement. The
+manifest remains at version 0.1.
 
-M3 implementation is complete for the verified reference-profile matrix.
-The fresh package is installed and matches the repository. All 24 ACID Lua
-specs and 11 PowerShell checks pass. Live transport stop/start, seek and Live
-Edit during playback remain the outstanding M3 acceptance checks; see
-[the evidence record](../tests/acid/audio_capture_evidence.md).
+## Editing a sequence
 
-Open **Tools > ACID...** or the Pattern Editor context menu. Choose a sample
-instrument and an existing unchanged ACID-owned phrase or **New Phrase**.
-Set LAST STEP and create a draft, then edit PITCH and TIME. A NOTE consumes the
-next active PITCH entry; TIE holds the current semantic voice, and REST releases
-it. ACCENT and outgoing SLIDE belong to the PITCH entry. Entering TIE at TIME
-01 stores NOTE.
+Open **Tools > ACID...** or use the Pattern Editor context menu. A fresh draft
+is ready immediately: 64 C pitch entries, 64 NOTE commands, LAST STEP 16 and
+an active PITCH span of 16. Change LAST STEP and the active PITCH span as
+needed. Program view selects one PITCH entry and TIME step for editing. Grid
+view edits sixteen positions directly across four continuous pages. Both views
+edit the same source; switching views does not change or regenerate the
+sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
+is increased again.
 
-Original entry supports 1–16 straight TIME steps with an active span of 16
-pitches. Extended entry supports 1–64 steps and an independent active PITCH
-span of 1–64. All 64 pitch positions are retained when inactive; the four
-editor pages form one continuous sequence. PITCH consumption starts at P01 on
-each TIME traversal. Original and Extended use the same interpretation; the
-cursor policy is an ACID decision rather than a measured original-hardware
-claim. Triplets are not implemented.
+A NOTE consumes the next active PITCH entry. TIE holds the current semantic
+voice without consuming pitch memory, and REST releases it. ACCENT and outgoing
+SLIDE belong to PITCH entries. Entering TIE at TIME 01 stores NOTE. Repeat
+cycles reset pitch consumption to P01 while preserving the sounding voice for
+boundary interpretation.
 
-Generate or regenerate explicitly, or enable Live Edit for debounced automatic
-regeneration of an eligible destination. The current source is stored with the
-song. ACID refuses foreign or modified phrases and unsupported earlier
-source/seal formats; recreate older development patterns instead of adopting
-them. Do not use the tool as a backup for unrelated song data.
+## Generating phrases
 
-New drafts default to Repeat. Repeat NOTE/TIE/REST generation is available on
-the checked diagnostic profile at 90/120/150 BPM/selective/LPB8/TPL12/no
-groove. All 21 authored gate protocols pass across those three tempos.
-Selective same-pitch and moving slide generation is limited to the measured
-Repeat layouts, lengths, tempos and pitches described in [the articulation support matrix](../tests/acid/acid_articulation_manual.md).
-The full authored gate matrix passes on the checked profile; moving glide and
-same-pitch glide each have their own measured length/tempo classes. Other
-profiles, pitches and layouts are refused before mutation. Accent on a connected
-slide chain is also refused. One-shot remains available as a separate playback
-setting. Deterministic Renoise offline renders pass the listed gate, glide and
-flat NOTE/TIE-accent cases; they do not establish current-desktop soundcard-loopback
-or hardware behavior. Manual transport stop/start, seek and Live Edit during
-audio playback remain unverified. A semantic slide
-request is not proof of envelope-continuous sample glide or TB-303 acoustic
-fidelity. Remaining acceptance checks are in the
-[articulation](../tests/acid/acid_articulation_manual.md) and
-[loop verification](../tests/acid/acid_loop_manual.md) procedures.
+Choose any instrument slot and an existing unchanged ACID-owned phrase or
+**New Phrase**. **Repeat** is the default output policy. **Play Once** renders
+one traversal with an explicit final release. Changing this policy changes the
+owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
+instrument's global phrase trigger settings. The decoded Start/Repeating
+preview is read-only.
 
-Experimental one-shot gate rendering releases isolated notes halfway through
-their step and tied runs halfway through their final held step. A following
-REST releases at its own boundary. Gate and glide writes share a preflighted
-operation plan; conflicting OFF and glide commands are refused. The one-shot
-tail, fresh-successor and Repeat REST-seam matrix passes deterministic offline
-renders on the checked profile at 90/120/150 BPM. See the
-[gate verification procedure](../tests/acid/acid_gate_manual.md).
+Manual Generate and Regenerate remain available. Live Edit optionally applies
+valid source edits after a short debounce. ACID protects foreign or modified
+phrases and uses staged rendering, ownership checks, source persistence and
+rollback before replacing an owned phrase. New current-format source records
+and seals use the v3 cutover. Earlier development snapshots and seals are not
+imported or adopted; recreate those phrases.
 
-The model and evidence decisions are described in [DESIGN.md](DESIGN.md),
-[M2_SEMANTICS.md](M2_SEMANTICS.md), and [ROADMAP.md](ROADMAP.md).
+The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
+source. It attempts native sample glide when the target has sample data. Plugin
+and MIDI targets retain ordered note events and receive an explicit slide
+approximation where continuous pitch movement cannot be represented by their
+phrase route. Connected accent behavior and sample envelope response depend on
+the target and are not claimed to match TB-303 hardware. Empty instrument slots
+can receive a silent phrase and are reported as needing a generator.
 
-## Local checks
+Phrase generation has been checked with Lua mocks for the current renderer
+contract. Renoise playback and routing checks for Program/Grid switching,
+Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
+pending; see the [M3.5-S manual checklist](../tests/acid/acid_m35_s_manual.md).
+The full M3.5 instrument and Live Edit gates remain tracked in
+[ROADMAP.md](ROADMAP.md). Triplet timing is not implemented.
+
+## Development checks
 
 From the repository root in PowerShell 7:
 
@@ -71,10 +63,10 @@ From the repository root in PowerShell 7:
 ./scripts/package.ps1 -Tool ACID
 ```
 
-Each Lua spec runs in a separate process. Mock and semantic checks do not
-establish actual Renoise audio behavior. The package has `manifest.xml` and
-`main.lua` at its root; development references and tests are excluded.
-
-For development, copy or symlink `com.david303ttl.ACID.xrnx` into Renoise's
-user `Scripts/Tools` folder and reload tools, or install the package produced in
-`dist/`. Remove earlier development copies to avoid duplicate menu entries.
+Each Lua spec runs in a separate process. Semantic and mocked tests do not
+establish Renoise audio behavior. ACID's GUI and phrase-writer regression specs
+cover editable LAST STEP, Reset/Undo, selected-phrase regeneration, and sample
+slide commands scheduled before midpoint OFFs. Run the
+[M3.5-S manual checklist](../tests/acid/acid_m35_s_manual.md) in Renoise to
+verify phrase playback and GUI behavior. The package has `manifest.xml` and
+`main.lua` at its root and excludes development files.

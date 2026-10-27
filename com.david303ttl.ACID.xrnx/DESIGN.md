@@ -7,23 +7,24 @@ ACID tool directory. The manifest remains version 0.1.
 
 ## Source and interpretation
 
-The M3.5 canonical source contract holds 64 valid PITCH entries, a TIME length
-1–64 and complete TIME commands, an independently selected active PITCH span
-1–64, articulation flags and musical timing mode. It contains **no editor
-view, one-shot/repeat switch, renderer mode or instrument-profile whitelist**.
-Inactive stored pitches remain part of the source. Entry of TIE at TIME 01
-stores NOTE; a noncanonical stored leading TIE is refused.
+The M3.5 canonical source contract holds 64 valid PITCH entries, 64 stored TIME
+commands with an active length of 1–64, an independently selected active
+PITCH span of 1–64, and articulation flags. It contains **no editor view,
+phrase-output policy, renderer mode or instrument-profile whitelist**. Inactive
+stored pitches and TIME commands remain part of the source. Entry of TIE at
+TIME 01 stores NOTE; a noncanonical stored leading TIE is refused.
 
-**Editor:** Program (Roland-style PITCH/TIME) and Grid are two views of the
-same source. View changes never reset, reinterpret or validate musical length.
-New patterns are editable immediately with C pitch defaults. Destructive Reset
-is explicit and undoable. Roland hardware conformance is a separate diagnostic,
-not an Original-versus-Extended admission rule.
+**Editor:** Program selects one PITCH entry and TIME step at a time; Grid edits
+sixteen positions directly through four pages. Both views use the same source.
+View changes never reset, reinterpret or validate musical length. New patterns
+are editable immediately with C pitch defaults. Destructive Reset is explicit
+and undoable. Roland hardware conformance is a separate diagnostic, not a
+source mode or admission rule.
 
 **Semantic interpreter:** cold and repeated cycles are derived for any valid
 source. Output policy does not change NOTE/TIE/REST consumption or SLIDE/ACCENT
 intent. Repeat is the default owned-phrase output policy; Play Once is an
-optional phrase-specific rendering setting, never a canonical source field.
+optional phrase-specific setting stored separately from the canonical source.
 Both leave instrument-wide phrase triggering, transport and routing unchanged.
 
 **Articulation:** delete `baseline`, `retrigger`, `slide`, `mono` **audio
@@ -68,21 +69,22 @@ jobs when the editing context changes.
 
 `writers/pattrns_writer.lua` emits finite staging data, and
 `writers/phrase_writer.lua` validates and commits a regular native phrase.
-The current M3 writer uses a cold intro and steady loop with an exclusive-end
-sentinel. The M3 sample-only playback-mode and exact-profile admission gates
-are **implementation limitations to remove in M3.5**, not future design rules.
-The replacement writer always accepts valid semantic input, uses an instrument-
-capability-aware strategy, and commits a native phrase for samples, plugins,
-MIDI or silent empty targets. Repeat and optional Play Once control the owned
-phrase output layout only. Source edits never require choosing a separate
-renderer or switching an Entry mode. See ROADMAP.md M3.5.0.1.
+Repeat uses a cold introduction and steady loop with an exclusive-end sentinel;
+Play Once renders a cold traversal and final release. Valid NOTE/TIE/REST input
+is not refused for missing sample data or unmeasured reference profiles. The
+writer inspects loaded sample, plugin and MIDI capabilities without changing
+instrument settings. Native sample glide is attempted when sample data is
+present; plugin and MIDI routes retain ordered note events and report slide
+continuity as an approximation. Empty targets receive a silent phrase and a
+warning. Target playback and routing checks remain manual acceptance work. See
+ROADMAP.md M3.5.0.1.
 
 `model/control_signals.lua` derives physical gate edges separately from
 semantic voice intent, in 256 units per TIME step. It uses an explicit successor
-cycle for Repeat boundaries. A fresh NOTE successor or one-shot tail releases
+cycle for Repeat boundaries. A fresh NOTE successor or Play Once tail releases
 at the final held-step midpoint; a REST successor releases at the REST boundary;
 a connected slide holds through its target. Outgoing SLIDE without a target
-does not suppress a one-shot tail release. These are ACID rendering rules,
+does not suppress a Play Once tail release. These are ACID rendering rules,
 not measured hardware timings.
 
 `writers/gate_writer.lua` merges gate and glide operations before any cell
@@ -92,12 +94,13 @@ validator checks merged note/OFF/effect expectations and rejects unexpected
 delay, instrument, panning and cut-command data before committing the phrase
 and source. Required glide cancellation is never silently discarded for OFF.
 Repeat NOTE/REST gate seams pass offline renders on the checked profile, but
-the full successor and tempo matrix is still open; the pure cyclic scheduler
-does not confer broader acoustic support. See the
+the full target and tempo matrix is still open; the pure cyclic scheduler does
+not confer broader acoustic support. See the
 [gate verification procedure](../tests/acid/acid_gate_manual.md).
 
-`model/pattern_store.lua` persists only the current song-scoped source format.
-`writers/phrase_ownership.lua` seals generated content and loop properties.
+`model/pattern_store.lua` persists only the current song-scoped v3 source and
+separate phrase-output policy. `writers/phrase_ownership.lua` uses v3 seals for
+generated content and loop properties.
 Generation preflights the destination and source, stages rendering, checks
 object identity and ownership again, and retains a backup while committing the
 phrase and source. Failures attempt to restore both and report recovery material
@@ -112,12 +115,16 @@ glide classes, and mapped NOTE/TIE accent cases listed in the articulation
 evidence. Identical exports establish deterministic offline output, not
 independent soundcard captures. A fresh packaged-tool GUI check covered
 Generate, Live Edit 8→9→8 resizing, ownership and save/reopen for one moving
-Repeat case. Manual transport stop/start and seek, Live Edit during playback,
-runtime keymapped triggering and rapid UI races remain unverified. M3 currently refuses accents on connected slide chains; M3.5 must remove this source-level prohibition, render the best target-compatible articulation, and mark fidelity separately.
+Repeat case. The M3.5-S Renoise checklist covers the new editor, output-policy
+and target-family behavior; those manual checks have not yet been run. Manual
+transport stop/start and seek, Live Edit during playback, runtime keymapped
+triggering and rapid UI races remain unverified. Connected accents and large
+slides are accepted as source semantics and reported as approximations where
+the target cannot preserve them.
 An earlier Renoise Demo session inspected writer-generated NOTE/TIE/REST cells
 and ownership but could not render audio; its limitations are historical and
 are superseded only for the named offline-render cases above. Undo, broad
-field/mode roundtrips and failure-injection behavior remain unverified. The
+field roundtrips and failure-injection behavior remain unverified. The
 pinned SDK under
 `sdk/renoise-api-6.2` is a development reference and is not a runtime
 dependency. Remaining gates and unresolved playback/hardware questions are in

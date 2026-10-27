@@ -101,7 +101,6 @@
       },
       "source": {
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -221,7 +220,6 @@
       },
       "source": {
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -345,7 +343,6 @@
       },
       "source": {
         "pitch_length": 1,
-        "entry_mode": "extended",
         "pitches": [
           48
         ],

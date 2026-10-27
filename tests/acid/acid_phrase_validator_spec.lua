@@ -2,11 +2,12 @@ dofile('tests/bootstrap.lua')('acid')
 local verifier = require("writers.phrase_validator")
 local compiler = require("model.cycle_interpreter")
 local seq=require("model.sequencer")
-local fixture=seq.new_pattern(8,"extended")
+local pitch=dofile("tests/acid/pitch_fixture.lua")
+local fixture=seq.new_pattern(8)
 fixture.pitch_length=4
-fixture.pitch_events[1]={note=36};fixture.pitch_events[2]={note=39,accent=true}
-fixture.pitch_events[3]={note=43};fixture.pitch_events[4]={note=41}
-fixture.time_events={"N","T","N","R","N","N","T","R"}
+fixture.pitch_events[1]=pitch(36);fixture.pitch_events[2]=pitch(39,true,false)
+fixture.pitch_events[3]=pitch(43);fixture.pitch_events[4]=pitch(41)
+for i,command in ipairs({"N","T","N","R","N","N","T","R"}) do fixture.time_events[i]=command end
 local plan = assert(compiler.compile_cycle(fixture))
 local cells={}
 local extra_cells={}

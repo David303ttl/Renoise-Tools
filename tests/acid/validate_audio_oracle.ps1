@@ -40,8 +40,7 @@ foreach ($case in $oracle.cases) {
     }
   }
   $source = $case.source
-  if ($source.entry_mode -cnotin @('original', 'extended') -or
-      $source.length -lt 1 -or $source.length -gt 64 -or
+  if ($source.length -lt 1 -or $source.length -gt 64 -or
       @($source.time).Count -ne $source.length -or
       $source.pitch_length -lt 1 -or $source.pitch_length -gt 64 -or
       @($source.pitches).Count -lt $source.pitch_length) { throw "$id`: invalid canonical source" }

@@ -33,7 +33,7 @@ function New-Case([int]$Target,[string]$Id,[int]$Bpm=120,[bool]$RequireFortyMs=$
  $settled=@{start_step=$settleStep;duration_ms=40;note=$Target}
  return [ordered]@{
   id=$Id
-  source=@{entry_mode='extended';length=8;pitch_length=2;pitches=@(48,$Target);time=@('N','T','T','T','N','T','T','T');slide_pitch_indices=@(1,2);accent_pitch_indices=@()}
+  source=@{length=8;pitch_length=2;pitches=@(48,$Target);time=@('N','T','T','T','N','T','T','T');slide_pitch_indices=@(1,2);accent_pitch_indices=@()}
   phrase="Independent bidirectional moving Repeat glide $Id"
   capture=@{sample_rate=48000;sample_format='PCM24';channels='mono-or-dual-mono-stereo';tpl=12;song_lpb=8;bpm=$Bpm;minimum_tail_ms=500}
   analysis=@{pitch_tolerance_cents=15;minimum_pitch_window_ms=40;maximum_continuity_dip_ms=4;maximum_continuity_dip_db=6;onset_floor_dbfs=-60;silence_dbfs=-60;onset_tolerance_ms=5;onset_refractory_ms=90}
@@ -81,7 +81,7 @@ function New-TailHoldWriterCase([int]$Target,[string]$Id,[int]$Bpm=120,[bool]$Re
  $progressThreshold=if([Math]::Abs($Target-48) -ge 12){0.08}else{0.12}
  return [ordered]@{
   id=$Id
-  source=@{entry_mode='extended';length=$stepCount;pitch_length=2;pitches=@(48,$Target);time=@('N','T','T','T','N','T','T','T','T');slide_pitch_indices=@(1,2);accent_pitch_indices=@()}
+  source=@{length=$stepCount;pitch_length=2;pitches=@(48,$Target);time=@('N','T','T','T','N','T','T','T','T');slide_pitch_indices=@(1,2);accent_pitch_indices=@()}
   phrase="Actual ACID writer bidirectional moving Repeat glide with trailing tie $Id"
   capture=@{sample_rate=48000;sample_format='PCM24';channels='mono-or-dual-mono-stereo';tpl=12;song_lpb=8;bpm=$Bpm;minimum_tail_ms=500}
   analysis=@{pitch_tolerance_cents=15;minimum_pitch_window_ms=40;maximum_continuity_dip_ms=4;maximum_continuity_dip_db=6;onset_floor_dbfs=-60;silence_dbfs=-60;onset_tolerance_ms=5;onset_refractory_ms=90}
@@ -107,7 +107,7 @@ function New-HoldCase([int]$Note,[string]$Id,[int]$Bpm=120) {
   $continuity.Add(@{start_step=$start-0.16;end_step=$start+0.16;baseline_start_step=$start-0.7;baseline_end_step=$start-0.3})
  }
  return [ordered]@{
-  id=$Id;source=@{entry_mode='extended';length=8;pitch_length=1;pitches=@($Note);time=@('N','T','T','T','T','T','T','T');slide_pitch_indices=@();accent_pitch_indices=@()}
+  id=$Id;source=@{length=8;pitch_length=1;pitches=@($Note);time=@('N','T','T','T','T','T','T','T');slide_pitch_indices=@();accent_pitch_indices=@()}
   phrase="Pitch-matched held NOTE control $Note"
   capture=@{sample_rate=48000;sample_format='PCM24';channels='mono-or-dual-mono-stereo';tpl=12;song_lpb=8;bpm=$Bpm;minimum_tail_ms=500}
   analysis=@{pitch_tolerance_cents=15;minimum_pitch_window_ms=40;maximum_continuity_dip_ms=4;maximum_continuity_dip_db=6;onset_floor_dbfs=-60;silence_dbfs=-60;onset_tolerance_ms=5;onset_refractory_ms=90}

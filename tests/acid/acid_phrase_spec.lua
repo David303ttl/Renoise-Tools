@@ -48,7 +48,8 @@ function phrase:copy_from(other)
     for k,v in pairs(other.cells[i]) do self.cells[i][k]=v end
   end
 end
-instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}}}
+instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}},
+  phrase_playback_mode=2,phrase_program=7,phrase_editor_visible=false}
 function instrument:insert_phrase_at(i)
   assert(i == #self.phrases+1)
   if i == 1 then self.phrases[1]=phrase; return phrase end
@@ -88,29 +89,47 @@ _G.renoise={
 }
 local writer=require("writers.phrase_writer")
 local store=require("model.pattern_store")
+local sequencer=require("model.sequencer")
+local pitch=dofile("tests/acid/pitch_fixture.lua")
 local messages={}
-local ok,err=writer.generate(1,function(msg)messages[#messages+1]=msg end)
+local function source_fixture()
+  local pattern=sequencer.new_pattern(8)
+  pattern.pitch_length=4
+  for i,command in ipairs({"N","T","N","R","N","N","T","R"}) do
+    pattern.time_events[i]=command
+  end
+  for i,note in ipairs({36,39,43,41}) do
+    pattern.pitch_events[i]=pitch(note,i==2,false)
+  end
+  return pattern
+end
+local function generate(callback,pattern,target,options)
+  pattern=pattern or source_fixture()
+  options=options or {}
+  options.output_policy=options.output_policy or "play_once"
+  return writer.generate(1,callback,pattern,target,options)
+end
+local ok,err=generate(function(msg)messages[#messages+1]=msg end)
 assert(ok,err)
 idle:fire()
 idle:fire()
 idle:fire()
 assert(phrase.playback_mode==1 and phrase.lpb==8)
 assert(phrase.number_of_lines==16 and phrase.looping==false)
-assert(instrument.phrase_program==1)
+assert(instrument.phrase_playback_mode==2 and instrument.phrase_program==7
+  and instrument.phrase_editor_visible==false)
 assert(messages[#messages]:find("generated",1,true),messages[#messages])
 assert(messages[#messages]:find("4 notes, 2 OFF",1,true))
-local repeat_source=writer.fixture()
-repeat_source.playback="loop"
-local repeat_plan,repeat_layout=assert(writer.plan_repeat(repeat_source))
+local repeat_source=source_fixture()
+local repeat_plan,repeat_layout=assert(writer.plan_output(repeat_source,"repeat"))
 assert(repeat_plan.length==16 and repeat_layout.looping)
 assert(repeat_layout.loop_start==17 and repeat_layout.loop_end==33)
 assert(repeat_layout.number_of_lines==33)
 assert(repeat_plan.steps[1].cycle==1 and repeat_plan.steps[9].cycle==2)
 for _,length in ipairs({1,16,17,32,33,48,49,64}) do
-  local pattern=require("model.sequencer").new_pattern(length,"extended")
+  local pattern=require("model.sequencer").new_pattern(length)
   for step=1,length do pattern.time_events[step]="N" end
-  pattern.playback="loop"
-  local physical,layout=assert(writer.plan_repeat(pattern))
+  local physical,layout=assert(writer.plan_output(pattern,"repeat"))
   assert(physical.length==2*length)
   assert(layout.looping and layout.loop_start==2*length+1)
   assert(layout.loop_end==4*length+1 and layout.number_of_lines==4*length+1)
@@ -118,23 +137,22 @@ for _,length in ipairs({1,16,17,32,33,48,49,64}) do
   assert(physical.steps[physical.length].step==physical.length)
 end
 local before_repeat=#instrument.phrases
-local repeat_slide=require("model.sequencer").new_pattern(4,"extended")
-repeat_slide.playback="loop"
-repeat_slide.time_events={"N","T","N","R"}
-for i=1,64 do repeat_slide.pitch_events[i]={note=36+i%12,accent=false,slide=false} end
+local repeat_slide=require("model.sequencer").new_pattern(4)
+for i,command in ipairs({"N","T","N","R"}) do repeat_slide.time_events[i]=command end
+for i=1,64 do repeat_slide.pitch_events[i]=pitch(36+i%12) end
 repeat_slide.pitch_events[1].slide=true
-local slide_ok,slide_error=writer.generate(1,function()end,"baseline",repeat_slide,2)
-assert(not slide_ok and slide_error:find("TIME step 03",1,true)
-  and slide_error:find("cycle 1",1,true) and slide_error:find("phrase line 0x04",1,true),slide_error)
-local retrigger_ok,retrigger_error=writer.generate(1,function()end,"retrigger",repeat_source,2)
-assert(not retrigger_ok and retrigger_error:find("audio mode 'retrigger'",1,true)
-  and retrigger_error:find("TIME step",1,true) and retrigger_error:find("phrase line",1,true),retrigger_error)
+local slide_plan,slide_layout=assert(writer.plan_output(repeat_slide,"repeat"))
+assert(slide_plan.loop and slide_layout.looping,
+  "A valid SLIDE source must enter the automatic Repeat renderer")
+local play_once_plan,play_once_layout=assert(writer.plan_output(repeat_slide,"play_once"))
+assert(not play_once_layout.looping and repeat_slide.pitch_events[1].slide,
+  "Phrase output policy must not rewrite the musical source")
 assert(#instrument.phrases==before_repeat)
 -- Sealed ownership permits a second generation to the same phrase.
 local first=instrument.phrases[1]
-local edited=writer.fixture()
-edited.pitch_events[1].note=38
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited))
+local edited=source_fixture()
+edited.pitch_events[1]=pitch(38)
+assert(generate(function(msg)messages[#messages+1]=msg end,edited))
 idle:fire();idle:fire();idle:fire()
 assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(messages[#messages]:find("generated",1,true),messages[#messages])
@@ -143,23 +161,23 @@ assert(require("model.pattern_store").load(song,first).pitch_events[1].note==38)
 -- The idle observer starts the async renderer once while its callback is pending.
 local base_render=script.render_to_pattern
 local render_calls,pending_render=0,nil
-local delayed=writer.fixture()
-delayed.pitch_events[1].note=37
+local delayed=source_fixture()
+delayed.pitch_events[1]=pitch(37)
 function script:render_to_pattern(opts,cb)
   render_calls=render_calls+1
   pending_render=cb
   return true
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",delayed,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,delayed,1))
 for _=1,6 do idle:fire() end
 assert(render_calls==1 and type(pending_render)=="function")
 script.render_to_pattern=base_render
 base_render(script,{lpb=8},pending_render)
 assert(messages[#messages]:find("generated",1,true))
 assert(first.cells[1].note_value==37)
-local restored_source=writer.fixture()
-restored_source.pitch_events[1].note=38
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",restored_source,1))
+local restored_source=source_fixture()
+restored_source.pitch_events[1]=pitch(38)
+assert(generate(function(msg)messages[#messages+1]=msg end,restored_source,1))
 idle:fire();idle:fire();idle:fire()
 assert(first.cells[1].note_value==38)
 -- Renoise document objects must use rawequal; their == metamethod may throw.
@@ -167,7 +185,7 @@ local unsafe_equality={__eq=function()error("unsafe Renoise object equality")end
 setmetatable(song,unsafe_equality)
 setmetatable(instrument,unsafe_equality)
 setmetatable(first,unsafe_equality)
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",restored_source,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,restored_source,1))
 idle:fire();idle:fire();idle:fire()
 assert(messages[#messages]:find("generated",1,true),messages[#messages])
 setmetatable(first,nil)
@@ -178,11 +196,12 @@ function script:render_to_pattern(opts,cb)
   table.insert(instrument.phrases,1,{name="unrelated phrase"})
   return base_render(self,opts,cb)
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 script.render_to_pattern=base_render
 assert(#instrument.phrases==2 and instrument.phrases[2]==first)
-assert(instrument.phrase_program==2)
+assert(instrument.phrase_playback_mode==2 and instrument.phrase_program==7
+  and instrument.phrase_editor_visible==false)
 table.remove(instrument.phrases,1)
 assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 
@@ -194,7 +213,7 @@ function script:render_to_pattern(opts,cb)
     cb(...)
   end)
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 script.render_to_pattern=base_render
 assert(song.tool_data=="newer source written during render")
@@ -208,7 +227,7 @@ function script:render_to_pattern(opts,cb)
     cb(...)
   end)
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 script.render_to_pattern=base_render
 assert(messages[#messages]:find("target phrase was removed",1,true))
@@ -216,14 +235,13 @@ assert(#instrument.phrases==1 and instrument.phrases[1].name=="replacement phras
 instrument.phrases[1]=first
 local original_commit=store.commit
 store.commit=function()return nil,"injected source write failure"end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 store.commit=original_commit
 assert(messages[#messages]:find("injected source write failure",1,true))
 assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(first.cells[1].note_value==38)
-local append_failed=writer.generate(1,function(msg)messages[#messages+1]=msg end,
-  "baseline",edited,2)
+local append_failed=generate(function(msg)messages[#messages+1]=msg end,edited,2)
 assert(append_failed)
 store.commit=function()return nil,"injected append source failure"end
 idle:fire();idle:fire();idle:fire()
@@ -232,17 +250,17 @@ assert(messages[#messages]:find("injected append source failure",1,true))
 assert(#instrument.phrases==1)
 -- Manual edits invalidate the seal.
 first.cells[1].note_value=41
-local denied,reason=writer.generate(1,function()end)
+local denied,reason=generate(function()end)
 assert(not denied and reason:find("not safely ACID-owned",1,true))
 first.cells[1].note_value=38
 local render=script.render_to_pattern
 function script:render_to_pattern() return false,"renderer unavailable" end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited))
 idle:fire();idle:fire();idle:fire()
 assert(messages[#messages]:find("renderer unavailable",1,true))
 assert(#instrument.phrases==1 and first.cells[1].note_value==38)
 script.render_to_pattern=render
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited))
 idle:fire();idle:fire();idle:fire()
 assert(messages[#messages]:find("generated",1,true))
 
@@ -252,7 +270,7 @@ store.commit=function(target,candidate)
   target.tool_data=candidate.raw
   error("injected exception after source write")
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 store.commit=original_commit
 assert(messages[#messages]:find("injected exception after source write",1,true))
@@ -263,7 +281,7 @@ store.commit=function(target)
   target.tool_data="newer external source"
   return nil,"stale source candidate"
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 store.commit=original_commit
 assert(song.tool_data=="newer external source")
@@ -281,7 +299,7 @@ function first:copy_from(other)
   end
   return original_copy(self,other)
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 first.copy_from=original_copy
 assert(messages[#messages]:find("recovery phrase retained",1,true))
@@ -300,7 +318,7 @@ function instrument:delete_phrase_at(index)
   end
   return original_delete(self,index)
 end
-assert(writer.generate(1,function(msg)messages[#messages+1]=msg end,"baseline",edited,1))
+assert(generate(function(msg)messages[#messages+1]=msg end,edited,1))
 idle:fire();idle:fire();idle:fire()
 instrument.delete_phrase_at=original_delete
 assert(messages[#messages]:find("recovery backup remains",1,true),messages[#messages])
@@ -311,7 +329,7 @@ instrument:delete_phrase_at(2)
 -- Cancellation settles even when temporary phrase removal fails.
 local token={valid=true,is_current=function(self)return self.valid end}
 local cancel_message
-assert(writer.generate(1,function(msg)cancel_message=msg end,"baseline",edited,2,{token=token}))
+assert(generate(function(msg)cancel_message=msg end,edited,2,{token=token}))
 token.valid=false
 local remove=instrument.delete_phrase_at
 function instrument:delete_phrase_at(index)
@@ -326,3 +344,53 @@ assert(cancel_message and cancel_message:find("recovery material was retained",1
 assert(#instrument.phrases==2 and instrument.phrases[2].name=="ACID RECOVERY STAGING")
 instrument:delete_phrase_at(2)
 print("ACID phrase API mock checks passed")
+
+-- A slide must finish before the following note's midpoint release.
+local slide_source=sequencer.new_pattern(4)
+slide_source.pitch_length=2
+slide_source.pitch_events[1]=pitch(36,false,true)
+slide_source.pitch_events[2]=pitch(44)
+for i,command in ipairs({"N","T","N","N"}) do
+  slide_source.time_events[i]=command
+end
+local original_render=script.render_to_pattern
+function script:render_to_pattern(opts,cb)
+  local target=instrument.phrases[#instrument.phrases]
+  local notes={36,121,121,121,44,121,36,121}
+  for line=1,8 do
+    target.cells[line]={note_value=notes[line],
+      volume_value=(line==1 or line==5 or line==7) and 89 or 255,
+      instrument_value=255,panning_value=255,delay_value=0,
+      effect_number_value=0,effect_amount_value=0}
+  end
+  cb(nil,16,0)
+end
+local slide_status
+assert(generate(function(message)slide_status=message end,
+  slide_source,#instrument.phrases+1))
+idle:fire();idle:fire();idle:fire()
+script.render_to_pattern=original_render
+local slide_phrase=instrument.phrases[#instrument.phrases]
+assert(slide_status and slide_status:find("generated",1,true),slide_status)
+assert(slide_phrase.cells[5].effect_number_string=="0G",
+  "sample slide must retain its native glide command")
+assert(slide_phrase.cells[5].effect_amount_value==128,
+  "glide rate must fit before the following midpoint release")
+assert(slide_phrase.cells[6].note_value==120,
+  "the glide continuation line is reserved for the midpoint OFF")
+local first_phrase=instrument.phrases[1]
+local first_note=first_phrase.cells[1].note_value
+local replacement=source_fixture()
+replacement.pitch_events[1]=pitch(40)
+local replacement_status
+assert(generate(function(message)replacement_status=message end,replacement,2))
+idle:fire();idle:fire();idle:fire()
+assert(replacement_status and replacement_status:find("Phrase 02 generated",1,true),
+  replacement_status)
+assert(#instrument.phrases==2 and instrument.phrases[2]==slide_phrase,
+  "regeneration must replace the selected second phrase in place")
+assert(slide_phrase.cells[1].note_value==40,
+  "the selected second phrase must receive the new source")
+assert(first_phrase.cells[1].note_value==first_note,
+  "regeneration must leave the preceding phrase unchanged")
+print("ACID phrase writer slide and destination regression checks passed")

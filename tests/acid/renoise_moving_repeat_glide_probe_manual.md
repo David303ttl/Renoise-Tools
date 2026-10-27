@@ -37,7 +37,7 @@ Create the independent windows with `create_moving_repeat_glide_protocols.ps1`. 
   -OutputPath tmp/acid-articulation/<capture>.analysis.json
 ```
 
-The custom oracle also includes actual-writer cases `writer_repeat_glide_four_semitones` and `writer_repeat_glide_octave`. Set `ACID_ARTICULATION_ORACLE_PATH="tests/acid/fixtures/moving_repeat_glide_cases.json"`, the selected case ID, and writer mode `slide` before running `renoise_articulation_writer.lua` in ACID's Scripting Terminal. Capture its generated phrase through the same trigger/render path; the writer record contains the emitted cells.
+The custom oracle also includes actual-writer cases `writer_repeat_glide_four_semitones` and `writer_repeat_glide_octave`. Set `ACID_ARTICULATION_ORACLE_PATH="tests/acid/fixtures/moving_repeat_glide_cases.json"`, the selected case ID, and `ACID_ARTICULATION_OUTPUT_POLICY="repeat"` before running `renoise_articulation_writer.lua` in ACID's Scripting Terminal. Capture its generated phrase through the same trigger/render path; the writer record contains the emitted cells.
 
 The authored windows require an intermediate upward pitch trajectory, a 40 ms settled target, stable pitch in all four loops, no attack and no audible continuity break at any connected transition, and release within the declared deadline. Compare each glide with its pitch-matched held NOTE control. Three unchanged valid captures per case are required before that case passes. Native phrase controls and analyzer readiness do not establish actual ACID writer behavior or expand runtime support by themselves.
 

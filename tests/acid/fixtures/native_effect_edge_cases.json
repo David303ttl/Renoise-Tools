@@ -67,7 +67,6 @@
         "glide_rate": 8,
         "length": 12,
         "glide_target_step": 6.0,
-        "entry_mode": "extended",
         "command_lines_to_target": 8.0,
         "slide_pitch_indices": [
           1,
@@ -205,7 +204,6 @@
         "glide_rate": 32,
         "length": 12,
         "glide_target_step": 3.0,
-        "entry_mode": "extended",
         "command_lines_to_target": 2.0,
         "slide_pitch_indices": [
           1,
@@ -343,7 +341,6 @@
         "glide_rate": 64,
         "length": 12,
         "glide_target_step": 2.5,
-        "entry_mode": "extended",
         "command_lines_to_target": 1.0,
         "slide_pitch_indices": [
           1,
@@ -481,7 +478,6 @@
         "glide_rate": 8,
         "length": 12,
         "glide_target_step": 6.0,
-        "entry_mode": "extended",
         "command_lines_to_target": 8.0,
         "slide_pitch_indices": [
           1,
@@ -619,7 +615,6 @@
         "glide_rate": 32,
         "length": 12,
         "glide_target_step": 3.0,
-        "entry_mode": "extended",
         "command_lines_to_target": 2.0,
         "slide_pitch_indices": [
           1,
@@ -757,7 +752,6 @@
         "glide_rate": 64,
         "length": 12,
         "glide_target_step": 2.5,
-        "entry_mode": "extended",
         "command_lines_to_target": 1.0,
         "slide_pitch_indices": [
           1,
@@ -890,7 +884,6 @@
         ],
         "glide_rate": 8,
         "length": 8,
-        "entry_mode": "extended",
         "slide_pitch_indices": [
           1,
           2
@@ -1011,7 +1004,6 @@
         ],
         "glide_rate": 8,
         "length": 8,
-        "entry_mode": "extended",
         "slide_pitch_indices": [
           1,
           2
@@ -1152,7 +1144,6 @@
         ],
         "glide_rate": 8,
         "length": 8,
-        "entry_mode": "extended",
         "note_off_step": 5.5,
         "slide_pitch_indices": [
           1,
@@ -1304,7 +1295,6 @@
           48
         ],
         "length": 7,
-        "entry_mode": "extended",
         "slide_pitch_indices": [
           1
         ],
