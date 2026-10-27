@@ -35,6 +35,9 @@ and follow the relevant guides:
 - [ACID phrase playback](acid/acid_phrase_manual.md)
 - [ACID articulation modes](acid/acid_slide_manual.md)
 - [ACID sampler and control signals](acid/acid_sampler_control_manual.md)
+- [ACID Repeat acceptance and deferred audio checks](acid/acid_loop_manual.md)
+- [ACID Live Edit](acid/acid_live_edit_manual.md)
+- [ACID regeneration, ownership and persistence](acid/acid_regeneration_manual.md)
 
 Keep the existing DigitaktSampleChain tool installed and confirm it still opens
 after reloading tools. Real Renoise integration, playback, undo, and save/reload

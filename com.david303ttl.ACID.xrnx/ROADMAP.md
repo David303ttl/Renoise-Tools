@@ -63,7 +63,7 @@ Implemented on `develop`:
 | Live Edit | Opt-in debounced (350 ms), serialized automatic regeneration; manual Generate/Regenerate retained |
 | Verification | User-confirmed local Lua regressions and in-Renoise testing for M1, phrase selection/persistence, and Live Edit |
 
-**Do not infer from the M1 baseline** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. M2 now provides baseline Repeat phrase generation; its actual writer-generated audio still needs Renoise verification. `0Gxx` and gate behavior remain experimental.
+**Do not infer from the M1 baseline** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. M2 provides baseline Repeat phrase generation and has passed the recorded pitch/grid renders plus the available writer-cell, Live Edit, ownership, and source-persistence checks. Additional acoustic acceptance is deferred until a registered Renoise build is available. `0Gxx` and gate behavior remain experimental.
 
 ### Important model debt to address in M2
 
@@ -74,23 +74,23 @@ The current source stores **64 valid C pitches** and carries an independent acti
 | Order | Milestone | User-visible result | Dependency |
 | --- | --- | --- | --- |
 | Completed | M1 — Editable source, phrase output and Live Edit | Edit ACID patterns and regenerate native phrases | — |
-| In progress | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
+| Completed (implementation) | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
 | Next | **M3 — Articulation and native sample fidelity** | Predictable gate, selective slide and accent behavior | M2 semantic contracts |
 | Next | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M2 + gate-placement decisions |
 | Required for fidelity | **M5 — Source programming and Renoise workflow** | Separate step-entry/check workflow, source management and scoped Extended editing | M2; stable persistence |
 | Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M2–M5 |
 
-**Milestone completion** requires both deterministic Lua checks *and* targeted manual Renoise verification when the milestone touches rendered notes, audio, GUI, phrases, persistence, or undo. A passing mock test alone is not an audio conformance result.
+**Milestone completion** normally requires deterministic Lua checks and targeted Renoise verification for rendered notes, audio, GUI, phrases, persistence, or undo. If a user accepts deferring a check, record the scope decision and keep the deferred claim explicitly unverified; a passing mock test alone is not an audio conformance result.
 
 ---
 
 ## 4. M2 — Continuous playback and loop correctness
 
-**Goal:** a phrase repeats predictably over successive cycles, including PITCH consumption and NOTE/TIE/REST behavior at the last-to-first boundary. Baseline Repeat output is implemented; remaining work verifies actual writer output and protects unsupported slide/audio-mode cases.
+**Goal:** a phrase repeats predictably over successive cycles, including PITCH consumption and NOTE/TIE/REST behavior at the last-to-first boundary. The implementation and structural acceptance are closed; additional audio-level acceptance is deferred until a registered Renoise build is available.
 
-**Priority:** highest. **Recommended implementation:** small feature branch from `develop`, separate commits for each subtask. **Avoid treating `looping = true` alone as completion.**
+**Status (2026-10-27):** M2 implementation closed by user decision after code/spec coverage and available Renoise 3.5.4 Demo checks. This status does not claim sample-envelope fidelity or complete acoustic acceptance. See the [manual results](../tests/acid/acid_loop_manual.md), [Live Edit results](../tests/acid/acid_live_edit_manual.md), and [regeneration results](../tests/acid/acid_regeneration_manual.md). **Do not treat `looping = true` alone as evidence of audio behavior.**
 
-**Implementation and verification record:** [M2 blueprint](M2_BLUEPRINT.md), checked against original Roland documentation, the pinned OS-303 firmware and current ACID code. It defines Original/Extended entry, the cursor/voice contract, logical PITCH span, source/seal cutover, native-loop experiments, safety work and acceptance fixtures. M2 remains incomplete until ACID writer-generated audio and lifecycle behavior pass the remaining checks; no hardware fidelity is implied.
+**Implementation and verification record:** [M2 blueprint](M2_BLUEPRINT.md), checked against original Roland documentation, the pinned OS-303 firmware and current ACID code. It defines Original/Extended entry, the cursor/voice contract, logical PITCH span, source/seal cutover, native-loop experiments, safety work and acceptance fixtures. Renoise Demo disabled new WAV rendering; release/cut-tail, voice-continuity, transport, keymapped-trigger, and remaining lifecycle checks are documented as deferred follow-up. No hardware fidelity is implied.
 
 ### M2.0 — Define the conformance oracle
 
@@ -143,9 +143,10 @@ verification are tracked under M2.3–M2.5.
 **Acceptance tests:** entered T01 becomes NOTE and consumes P01 in both modes; raw leading-TIE source is rejected in both; fewer/more PITCH entries than NOTE triggers in Extended; full-C and inactive storage roundtrip in the current format; earlier development formats unsupported; stable preview and explicit entry-mode changes.
 
 The current source, editor and persistence use these fields and the shared
-cycle interpreter. Old development source formats and seals are refused. One
-current-format Extended source/seal save/reopen case passed; broader field and
-GUI coverage remains in the manual checklist.
+cycle interpreter. Automated coverage rejects old development source formats
+and seals. A current-format Extended source/seal save/reopen case and an
+Original-mode Renoise save/reopen case both passed. Full field-by-field GUI
+coverage and in-Renoise rejection of earlier formats/seals were not checked.
 
 ### M2.3 — Resolve loop-boundary TIE, REST and SLIDE
 
@@ -177,7 +178,7 @@ native slide continuity remains unverified.
 
 **Likely modules:** `writers/phrase_writer.lua`, `writers/pattrns_writer.lua`, `writers/phrase_validator.lua` and articulation boundary handling.
 
-**Recorded partial acceptance:** the ACID writer's baseline output for lengths 1/16/17/32/33/48/49/64 matched the sampled pitch/silence grid over three cycles. 16-to-17, 32-to-33 and 48-to-49 are page boundaries, **not musical resets**. Sample-release, transport and other lifecycle checks remain open.
+**Recorded audio acceptance:** the ACID writer's baseline output for lengths 1/16/17/32/33/48/49/64 matched the sampled pitch/silence grid over three cycles. 16-to-17, 32-to-33 and 48-to-49 are page boundaries, **not musical resets**. Sample-release, voice-continuity, transport and other lifecycle checks are deferred follow-up.
 
 The Renoise 3.5.4 WAV probe verified loop endpoint behavior and grid/pitch
 markers at all eight required lengths for the recorded test instrument. Two
@@ -185,22 +186,34 @@ hand-built native mixed-event phrases also passed recorded pitch/silence
 checkpoints over four steady periods. ACID's writer-generated Repeat phrases
 then passed 780 sampled mid-step pitch/silence checkpoints across three cycles
 at lengths 1, 16, 17, 32, 33, 48, 49 and 64, with source save/load and loop
-metadata checks. Sample release/cut tail, voice continuity, slide, stop/start,
-seek and undo remain acceptance gates. A 64-step all-REST source also produced
+metadata checks. Sample release/cut tail, native voice continuity, slide,
+transport stop/start, seek and undo remain deferred audio or lifecycle checks.
+
+Renoise 3.5.4 Demo checks on 2026-10-27 verified writer-generated NOTE/TIE/REST
+cells around 16/17, 32/33 and 48/49 in both intro and loop regions, including
+the 257-line phrase and loop endpoints. LAST STEP and active PITCH span changes
+through 64→17→1→64 resized the same phrase with Live Edit on; with Live Edit off,
+manual Generate performed the pending resize. Original-mode source/seal
+save/reopen and regeneration passed. Loop start, loop end, and effect mutations
+caused ownership refusal; song changes invalidated the open editor until
+reopened. A 64-step all-REST source also produced
 the expected empty 257-line phrase and passed source/ownership checks. The GUI
 opened an existing 64-step Extended/span-3 Repeat source and regenerated its
 owned phrase. One Live Edit change on a 16-step Extended/span-3 Repeat phrase
 also regenerated TIME02 TIE→REST and passed saved-source, cold/repeating OFF,
 and ownership checks. Rapid/in-flight edits, disable/close races and
 dialog/notifier lifecycle remain untested. A fresh trigger after host NOTE OFF
-matched the first six TIME events on one 16-step Repeat source. Transport
-stop/start and seek are still untested. See the
-[repeat record](../tests/acid/acid_loop_manual.md) and
+matched the first six TIME events on one 16-step Repeat source. Renoise Demo
+blocked a new WAV render, so no audio result is claimed for the 2026-10-27
+checks. Rapid/in-flight edits, disable/close races, rollback failure injection,
+undo, and in-Renoise cutover checks remain unverified. See the
+[repeat record](../tests/acid/acid_loop_manual.md),
+[Live Edit record](../tests/acid/acid_live_edit_manual.md), and
 [regeneration record](../tests/acid/acid_regeneration_manual.md).
 
-### M2.5 — Regressions and merge gate
+### M2.5 — Regressions and closure record
 
-Maintain `tests/acid/acid_loop_*_spec.lua` and `tests/acid/acid_loop_manual.md`. Test:
+The verification matrix was:
 
 - Triple-cycle event equality/continuity under the chosen cursor policy.
 - Long patterns with TIE/REST and slide at steps 16/17, 32/33, 48/49, 64/1.
@@ -209,11 +222,22 @@ Maintain `tests/acid/acid_loop_*_spec.lua` and `tests/acid/acid_loop_manual.md`.
 - Save/reopen/reload of current-format patterns and all new source fields; earlier source formats and seals confer no load/ownership support.
 - No leftover temporary phrases, broken ownership seals, or changed non-ACID content on a failed render.
 
-**M2 done when:** a 64-step sequence can loop repeatedly with correct decoded events, stable pitch-memory semantics and no unintended page-boundary discontinuity. **Do not conflate this gate with verified TB-303-sounding slides; that is M3.**
+**M2 implementation closure (2026-10-27):** the 64-step interpreter, Original
+and Extended source behavior, clean current-format cutover, guarded Repeat
+writer, and source/phrase transaction path are implemented and spec-covered.
+Available Renoise verification confirmed writer cells at all three page seams,
+Live Edit line cleanup with the requested LAST STEP/span changes, refusal after
+loop/effect edits, stale-song invalidation, and Original-mode save/reopen. The
+previously recorded WAV checks cover grid periods and sampled pitch/silence;
+Demo-specific rendering limits prevent additional audio verification now.
 
-M2 must also distinguish Original entry from Extended input and complete the
-clean source/seal cutover. Passing this milestone does not complete the original
-sequencer goal; the fidelity requirements in M3–M5 remain required.
+M2 is closed as an implementation milestone by user decision. Release/cut-tail,
+held-voice continuity, cold-versus-steady articulation, request-level slide
+refusal, transport stop/start/seek, and keymapped triggering remain explicitly
+deferred until registered Renoise is available. Undo, failure injection, rapid
+in-flight edits, and manual rejection of earlier formats/seals are also not
+claimed as passed. Passing M2 does not complete the original sequencer goal or
+establish TB-303 sound fidelity; M3–M5 requirements remain.
 
 ---
 

@@ -1,7 +1,7 @@
 # ACID M2 blueprint: deterministic repeating PITCH/TIME sequences
 
 Date: 2026-10-26; cutover scope corrected 2026-10-27.
-Status: **cycle semantics and guarded baseline Repeat path implemented; grid playback verification passed with lifecycle checks outstanding**.
+Status: **M2 implementation closed 2026-10-27; recorded grid renders and available structural Renoise checks passed; additional acoustic and lifecycle checks deferred until registered Renoise is available**.
 Scope: [ROADMAP.md, M2.0–M2.5](ROADMAP.md#4-m2--continuous-playback-and-loop-correctness).
 M2.0 oracle: [M2_SEMANTICS.md](M2_SEMANTICS.md), with hand-authored cases in
 [`tests/acid/fixtures/loop_cases.json`](../tests/acid/fixtures/loop_cases.json).
@@ -671,9 +671,9 @@ modified. Retain ID uniqueness checks and refusal of foreign/modified phrases.
    if cleanup/restoration fails rather than deleting the sole backup.
 
 This is a guarded multi-object operation; the SDK does not promise a database
-transaction. Undo grouping and actual undo/source consistency need Renoise
-verification. M2 must address new failure paths and the source-save hole its
-schema change touches; a repository-wide undo redesign remains M6.
+transaction. The M2 transaction path handles source-save failures and attempts
+restoration; forced failure injection and undo/source consistency still need
+Renoise verification. A repository-wide undo redesign remains M6.
 
 Cancellation must detach observers and clean only this job's temporary objects.
 A late render callback must be harmless after song close, cancellation or target
@@ -759,12 +759,15 @@ formats are rejected, not converted or assigned inferred playback semantics.
 
 ### 9.3 Manual Renoise protocol and recorded coverage
 
-The protocol is in [`tests/acid/acid_loop_manual.md`](../tests/acid/acid_loop_manual.md).
-Use a disposable song and an explicitly configured looping single-cycle saw
-sample. Record Renoise version, instrument/sample configuration, BPM, song
-LPB/TPL, phrase LPB, source fixture, output layout, loop endpoints, expected
-events and observed results. Current endpoint and one-shot observations are
-recorded there; the rest of this matrix remains outstanding.
+The protocol and dated results are in
+[`tests/acid/acid_loop_manual.md`](../tests/acid/acid_loop_manual.md), with
+additional Live Edit and regeneration results in their linked records. Use a
+disposable song and an explicitly configured looping single-cycle saw sample.
+The Renoise 3.5.4 Demo session on 2026-10-27 verified writer-generated cells at
+the 16/17, 32/33 and 48/49 page seams, Live Edit line resizing, an Original-mode
+save/reopen, ownership refusals for loop/effect edits, and the stale-song guard.
+The Demo disabled WAV rendering; acoustic and some lifecycle items below remain
+deferred and are not represented as passed.
 
 1. **Loop API experiment:** render distinctive notes at candidate loop endpoints.
    Trigger once and sustain; establish which lines repeat and the exact period.
@@ -821,12 +824,14 @@ Conventional Commits; the titles below are suggestions, not actions performed.
 | M2-G / M2.4–5 | `fix(acid): commit loop phrases and sources together` | Source-save failure rolls back; no stale target writes or job-object leaks |
 | M2-H / M2.5 | `test(acid): cover loop playback and clean cutover` | Local specs, current-format cutover checks, manual records, documentation and package inspection agree |
 
-Some packages can be reviewed separately. Baseline Repeat generation is enabled
-with semantic, persistence and safety checks integrated; its writer-generated
-audio remains subject to the Renoise acceptance checks. Unsupported slide
-transitions and non-baseline Repeat modes are refused.
-Implement transaction scaffolding before exposing schema-changing writes; the
-table describes review slices, not permission to ship the source-save hole.
+The table records the original implementation slices; the closure status in
+section 11 supersedes their proposed exit gates. Baseline Repeat generation is
+enabled with semantic, persistence and safety checks integrated. The recorded
+audio checks support only their stated grid and pitch/silence observations;
+remaining acoustic follow-up is listed in section 11. Unsupported slide
+transitions and non-baseline Repeat modes are refused by the Repeat contract.
+The transaction and rollback path is implemented; forced failure behavior was
+not manually injected.
 
 For implementation, run `./scripts/run_tests.ps1 -Tool ACID` after Lua changes;
 all specs remain separate processes. Run the whole suite if shared scripts change.
@@ -835,53 +840,48 @@ After adding runtime modules or changing package inputs, run
 private module directories preserved, no tests/SDK/reference firmware included.
 No CI workflows or runtime dependency on the OS-303 checkout are introduced.
 
-Update the implemented model contract in DESIGN.md and current user-facing
-instructions as each feature lands; keep ROADMAP milestone status honest. Merge
-to `develop` only after the user's local/manual verification gate. No release
-tag or version bump is implied by this planning document.
+The implemented model contract is recorded in DESIGN.md and the manual results
+are linked from ROADMAP. M2 implementation closure does not imply a release tag
+or version bump. Registered-build audio checks remain follow-up work, and any
+defect they expose should be handled as a new focused change.
 
-## 11. M2 completion decision and present verification
+## 11. M2 closure and verification status
 
-M2 is complete only when:
+**Closure decision (2026-10-27):** the user closed M2 as an implementation
+milestone after reviewing the completed code and available manual checks. This
+closes the repeating-sequence implementation scope; it does not claim full
+acoustic acceptance or TB-303 hardware fidelity. Additional WAV acceptance is
+deferred until a registered Renoise build is available.
 
-- Independent PITCH/TIME interpretation matches documented expectations over
-  three or more cycles, for all required lengths and edge transitions.
-- Active pitch span, fixed cursor reset and retained voice state are explicit;
-  all four pages form one sequence.
-- Original entry and Extended source are distinguished; R03 normalization has
-  fixtures for both modes and both use the same new interpreter. Literal
-  leading TIE is not a supported extension.
-- Ordinary native looping, ties/rests and exact period pass Renoise checks;
-  unsupported slide continuity is identified and never silently substituted.
-- One current source format and ownership seal are supported; no historical
-  interpreter, importer, compatibility UI or adoption path remains. Current
-  fields and inactive pitches survive regeneration and save/reopen.
-- Ownership, stale-job checks, rollback and Live Edit protect user content.
-- The local suite and recorded manual matrix support the exact supported claims.
+**Implemented and covered:** the three-cycle interpreter and fixture oracle;
+the current source/seal format and Original/Extended entry modes; the guarded
+baseline Repeat writer and `4L+1` intro/loop layout; phrase/source transaction
+and rollback path; and Live Edit serialization and context invalidation. ACID
+specs cover the pure model, writer, persistence, ownership, regeneration and
+Live Edit paths. Earlier source formats and seals are rejected by the current
+code/spec contract; their rejection was not manually rechecked in Renoise.
 
-Initial M2 review included delegated audits of firmware semantics, ACID model,
-and phrase integration; the pinned API 6.2 definitions and offline documentation
-were also checked. The implementation now includes the three-cycle interpreter,
-current source/editor and ownership formats, and guarded one-shot integration.
-Automated ACID suite results and package checks are recorded with the current
-implementation review; those checks do not establish Renoise audio behavior.
+**Recorded Renoise checks:** prior Renoise 3.5.4 WAV probes verified endpoint
+and grid/pitch behavior for lengths 1, 16, 17, 32, 33, 48, 49 and 64, and
+sampled writer-generated NOTE/TIE/REST pitch/silence checkpoints across three
+cycles. The 2026-10-27 Renoise 3.5.4 Demo session additionally inspected
+writer-generated cells around steps 16/17, 32/33 and 48/49 in both intro and
+loop regions; exercised Live Edit LAST STEP/span changes through 64→17→1→64
+with Live Edit on and off; confirmed Original-mode XRNS save/reopen and
+regeneration; tested loop/effect ownership refusal; and confirmed stale-song
+invalidation. See the [Repeat record](../tests/acid/acid_loop_manual.md),
+[Live Edit record](../tests/acid/acid_live_edit_manual.md), and
+[regeneration record](../tests/acid/acid_regeneration_manual.md).
 
-Second-pass implementation audit checks the current working tree against the
-fixture oracle, current source grammar, phrase writer, transaction and lifecycle
-paths, and the pinned SDK. Renoise 3.5.4 offline WAV renders tested lengths 1,
-16, 17, 32, 33, 48, 49 and 64 at BPM 137 / phrase LPB 8; pitch/marker checks
-reported zero mismatches. They establish the tested grid periods and exclusive
-loop-end sentinel behavior only. A corrected mixed-event test of two hand-built
-native phrases passed 64 pitch/silence checkpoints across four steady periods;
-they bypassed ACID's phrase writer. ACID writer Repeat output passed three-cycle
-sampled pitch/silence checks for all eight required lengths, with ownership,
-source save/load and loop metadata inspected. Sample release/cut tail,
-rollback/lifecycle behavior, transport restart/seek, undo, slides and
-original-hardware measurements remain unverified. The earlier 7-line
-NOTE/TIE/NOTE/REST probe is superseded for pitch/silence checks.
-A current-format save/reopen check passed for one Extended source case, as
-recorded in [the regeneration manual](../tests/acid/acid_regeneration_manual.md).
-See [the manual result record](../tests/acid/acid_loop_manual.md).
+**Deferred or not tested:** Renoise Demo disabled WAV rendering during the
+latest session. Release/cut tail, ending-REST audibility, trailing-TIE voice
+continuity, cold-intro versus steady-loop articulation, transport stop/start
+and seek, keymapped triggering, and a fresh request-level slide refusal remain
+unverified in that session. Undo/redo, rapid/in-flight edits, disable/close and
+notifier races, forced source-save/rollback failures, broad field/mode
+roundtrips, and in-Renoise rejection of earlier development formats/seals also
+remain unverified. These limits are explicit follow-up checks and do not reopen
+the M2 implementation milestone. No original-hardware measurements are claimed.
 
 **Scope correction (2026-10-27):** the user explicitly requires a clean WIP cutover. Earlier
 development behavior has no preservation requirement. The current plan replaces

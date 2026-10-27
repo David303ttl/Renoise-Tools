@@ -58,9 +58,15 @@ seals are unsupported; they are not imported or adopted.
 
 Pure Lua checks cover cycle semantics, source roundtrips and mocked integration.
 Renoise 3.5.4 endpoint, hand-built mixed-event and ACID writer probes validate
-their recorded pitch/grid checkpoints; current-format source/seal save/load
-passed for the recorded cases. Sample release/cut tail, phrase restart behavior,
-undo and broader save/reopen remain unverified. The pinned SDK under
+their recorded pitch/grid checkpoints. A 2026-10-27 Renoise 3.5.4 Demo session
+also inspected writer-generated NOTE/TIE/REST cells at all three 16-step page
+seams, checked Live Edit line resizing with Live Edit on and off, verified an
+Original-mode source/seal save/reopen, and confirmed loop/effect ownership
+refusal and stale-song invalidation. The Demo disabled WAV rendering, so the
+new session did not establish sample release/cut tail, repeated voice
+continuity, or cold-versus-steady articulation. Transport stop/start and seek,
+keymapped triggering, undo, broad field/mode roundtrips, and failure-injection
+behavior remain unverified. The pinned SDK under
 `sdk/renoise-api-6.2` is a development reference and is not a runtime
 dependency. Remaining gates and unresolved playback/hardware questions are in
 [ROADMAP.md](ROADMAP.md) and [M2_BLUEPRINT.md](M2_BLUEPRINT.md).

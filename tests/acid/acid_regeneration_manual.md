@@ -34,6 +34,28 @@ repeating line 35, and a valid owned seal. This covers one edit/regeneration
 only; rapid edits, edits while a render is in flight, disabling Live Edit,
 dialog close, notifier cleanup and undo remain untested.
 
+**M2 manual checks on Renoise 3.5.4 Demo (2026-10-27):** a current-format
+Original-mode Repeat phrase was saved to a disposable XRNS, reopened, and
+loaded in ACID. The editor reported `Restored ACID source for phrase 01`; manual
+regeneration succeeded with 32 notes and 0 NOTE OFFs. This supplements the
+Extended save/reopen case above, but is not a complete field-by-field or
+entry-mode-switching roundtrip.
+
+Loop start, loop end, and effect changes made to a generated phrase through the
+Renoise Scripting Terminal each made ACID refuse regeneration. Restoring the
+displayed properties did not restore write eligibility for that phrase; an
+untouched owned phrase still regenerated. A song change while ACID remained
+open also caused the stale editor to refuse generation until reopened.
+
+The Demo build disabled WAV rendering. Release/cut tail, repeated-voice
+continuity, transport stop/start and seek, keymapped triggering, request-level
+slide refusal, undo/redo, rapid/in-flight edits, forced source-save/rollback
+failures, and earlier-format cutover were not verified in this session. The
+M2 implementation was closed on 2026-10-27 by user decision, with audio
+acceptance deferred until a registered Renoise build is available. See the
+[Repeat acceptance record](acid_loop_manual.md) for the cell-level writer
+checks and remaining audio limits.
+
 1. Create a new ACID phrase, then regenerate it after editing the source.
    Check that the selected phrase is updated, the phrase count is unchanged,
    and unrelated instruments, phrases and tracks are unchanged.

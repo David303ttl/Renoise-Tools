@@ -51,6 +51,63 @@ compared the first six TIME steps of both traversals. Both matched
 This verifies a new trigger after release for this phrase and sample setup;
 transport stop/start, seeking, and other phrase states remain unverified.
 
+## Renoise visual and persistence checks (2026-10-27)
+
+These checks used Renoise 3.5.4 Demo, a disposable song, BPM 137, song LPB 8,
+phrase LPB 8, and a 168-frame mono 44.1 kHz sample. They verify generated
+phrase structure and editor behavior, not audio output.
+
+**Writer page-boundary cells:** an Extended 64-step Repeat source used NOTE at
+steps 16/32/48, TIE at 17/33/49, and REST at 18/34/50; other TIME entries were
+NOTE. ACID generated phrase 02 with 257 lines, `loop_start=129`, and exclusive
+`loop_end=257` (116 notes, 6 NOTE OFFs, 128 raw events). Inspection of the
+writer-generated primary note column found:
+
+| TIME steps | Cold intro cells | Repeating-cycle cells |
+| --- | --- | --- |
+| 16 NOTE, 17 TIE, 18 REST | 31 NOTE, 33 TIE hold, 35 NOTE OFF | 159 NOTE, 161 TIE hold, 163 NOTE OFF |
+| 32 NOTE, 33 TIE, 34 REST | 63 NOTE, 65 TIE hold, 67 NOTE OFF | 191 NOTE, 193 TIE hold, 195 NOTE OFF |
+| 48 NOTE, 49 TIE, 50 REST | 95 NOTE, 97 TIE hold, 99 NOTE OFF | 223 NOTE, 225 TIE hold, 227 NOTE OFF |
+
+This closes the writer-coverage gap for those page boundaries at the cell and
+layout level. The cells were inspected in Renoise; this session could not
+record their sound.
+
+**Live Edit length and span:** with Live Edit on, LAST STEP and active PITCH
+span were changed through 64→17→1→64. The same phrase resized 257→69→5→257
+lines, and changing the span did not append another phrase. With Live Edit off,
+LAST STEP/span changes left the previous 257-line phrase pending; manual
+Generate then resized it to 69 lines. No stale lines or extra phrase were
+observed in these checks. Rapid edits and changes while a render was in flight
+were not tested.
+
+**Original-mode persistence:** generated a 16-step Original Repeat phrase
+(phrase 01: 32 notes, 0 NOTE OFFs), saved the temporary XRNS, reopened it, and
+reopened ACID. ACID reported `Restored ACID source for phrase 01`; regenerating
+that phrase succeeded. This adds one Original-mode source/seal roundtrip. It
+does not cover every stored field or entry-mode switching.
+
+**Ownership and context guards:** changing loop start, loop end, and an effect
+through the Renoise Scripting Terminal each caused regeneration refusal. After
+the displayed loop/effect values were restored, that phrase remained refused;
+the untouched phrase still regenerated. Changing songs with ACID open also
+caused the stale editor to refuse generation until ACID was reopened.
+
+**Deferred audio and lifecycle checks:** the WAV render command displayed
+`Rendering is disabled in the demo version of Renoise`. Sample release/cut
+tail, ending-REST audibility, held-voice continuity, cold-intro versus steady
+cycle sound, transport stop/start and seek, and keymapped triggering therefore
+remain unverified in this session. The UI identifies slide continuity and
+advanced audio modes as unsupported in Repeat, but a fresh source-specific
+slide-refusal request was not completed here. Rapid/in-flight edits, disable or
+close during a job, undo/redo, forced source-save/rollback failure, and manual
+cutover checks for earlier formats/seals also remain outstanding.
+
+Per the user's decision on 2026-10-27, the M2 implementation and structural
+acceptance are closed with these audio checks deferred until a registered
+Renoise build is available. Do not treat that closure as audio or hardware
+fidelity evidence.
+
 The earlier 4-step NOTE/TIE/NOTE/REST phrase experiment used an endpoint that
 produced a 7-line period instead of the intended 8 lines. Its TIE/OFF result is
 exploratory only; use the corrected two-case result linked above for the
@@ -84,7 +141,9 @@ inspection results separate from recorded audio or transient measurements.
    identify retained recovery material.
 
 Writer-generated baseline Repeat passed the recorded grid and pitch/silence
-checks. Sample release/cut tail, native voice continuity, slide, stop/start,
-seek and undo remain unverified. Repeat requests containing slide transitions
-or a non-baseline audio mode are refused. Do not describe native sample glide
-or held-voice continuity as verified from the tested checkpoints.
+checks, and the 2026-10-27 writer-cell, Live Edit, Original-mode roundtrip, and
+ownership/context checks are recorded above. Sample release/cut tail, native
+voice continuity, source-specific slide refusal, stop/start, seek, undo, and
+the remaining lifecycle/failure-injection checks are still unverified. Do not
+describe native sample glide or held-voice continuity as verified from the
+tested checkpoints.
