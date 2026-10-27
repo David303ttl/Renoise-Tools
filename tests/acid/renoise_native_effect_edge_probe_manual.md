@@ -67,7 +67,7 @@ For the writer variant, in ACID's tool scripting context set:
 ```lua
 ACID_ARTICULATION_ORACLE_PATH = "tests/acid/fixtures/native_effect_edge_cases.json"
 ACID_ARTICULATION_CASE_ID = "writer_0g20_rest_gated_fresh_note"
-ACID_ARTICULATION_WRITER_MODE = "slide"
+ACID_ARTICULATION_OUTPUT_POLICY = "play_once"
 ```
 
 Then load/run `tests/acid/renoise_articulation_writer.lua`. The generated

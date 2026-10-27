@@ -10,7 +10,6 @@
         "pitches": [ 48, 48, 48 ],
         "slide_pitch_indices": [],
         "accent_pitch_indices": [ 2 ],
-        "entry_mode": "extended",
         "length": 7
       }
     }

@@ -3,10 +3,12 @@ local M={}
 function M.inspect(pattern)
   local length=pattern.length
   local notes,ties,rests=0,0,0
+  local missing_time=0
   local used={}
   local time={}
   for i=1,length do
     local t=pattern.time_events[i]
+    if t==nil then missing_time=missing_time+1 end
     if t=="N" then notes=notes+1
     elseif t=="T" then ties=ties+1
     elseif t=="R" then rests=rests+1 end
@@ -24,7 +26,7 @@ function M.inspect(pattern)
     notes=notes,ties=ties,rests=rests,length=length,
     pitch_count=pitch_count,pitch_length=active,
     referenced_count=math.min(notes,active),next_pitch=next_pitch,
-    missing_time=length-#pattern.time_events,
+    missing_time=missing_time,
     pitch_text=table.concat(used,"  "),
     time_text=table.concat(time," ")
   }

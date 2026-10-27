@@ -1,12 +1,10 @@
--- Exact, song-local storage for the current ACID source contract.
+-- Exact, song-local storage for canonical ACID sources and phrase output policy.
 local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("writers.phrase_ownership")
 local M = {}
-local MAGIC = "ACID-PITCH-TIME-2"
-local AUDIO_MODES = {baseline=true, retrigger=true, slide=true, mono=true}
-local ENTRY_MODES = {original=true, extended=true}
-local PLAYBACK = {loop=true, one_shot=true}
+local MAGIC = "ACID-PITCH-TIME-3"
+local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}
 local MAX_ID = 2147483647
 
 local function valid_id(id)
@@ -23,22 +21,15 @@ local function raw_data(song)
 end
 
 local function encode_pitch(p)
-  return string.format("%d:%s:%s:%d%d",p.note,
-    p.key==nil and "-" or tostring(p.key),
-    p.octave==nil and "-" or tostring(p.octave),
+  return string.format("%d:%d:%d:%d%d",p.note,p.key,p.octave,
     p.accent and 1 or 0,p.slide and 1 or 0)
 end
 
 local function decode_pitch(token, line)
-  local note,key,octave,flags=token:match("^(%d+):([%d%-]+):([%d%-]+):([01][01])$")
+  local note,key,octave,flags=token:match("^(%d+):(%d+):(-?%d+):([01][01])$")
   if not note then return nil,"Corrupt pitch at line "..line end
-  local p={note=tonumber(note),accent=flags:sub(1,1)=="1",slide=flags:sub(2,2)=="1"}
-  if key~="-" and octave~="-" then
-    p.key,p.octave=tonumber(key),tonumber(octave)
-  elseif key~="-" or octave~="-" then
-    return nil,"Incomplete octave at line "..line
-  end
-  return p
+  return {note=tonumber(note),key=tonumber(key),octave=tonumber(octave),
+    accent=flags:sub(1,1)=="1",slide=flags:sub(2,2)=="1"}
 end
 
 local function decode(raw)
@@ -51,37 +42,32 @@ local function decode(raw)
   for line_number=2,#lines do
     local line=lines[line_number]
     if line=="" then return nil,"Unexpected blank ACID entry at line "..line_number end
-      local id,audio,entry_mode,pitch_length,playback,length,pitch_data,time=
-        line:match("^(%d+)|([%w_]+)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
-      id,audio=tonumber(id),audio
-      pitch_length,length=tonumber(pitch_length),tonumber(length)
-      if not id or not valid_id(id) or entries[id] or not AUDIO_MODES[audio] or
-          not ENTRY_MODES[entry_mode] or not PLAYBACK[playback] or
-          not pitch_length or pitch_length<1 or pitch_length>64 or
-          not length or length<1 or length>64 or #time~=length then
-        return nil,"Invalid ACID snapshot header at line "..line_number
-      end
-      if entry_mode=="original" and (length>16 or pitch_length~=16) then
-        return nil,"Invalid Original ACID source bounds at line "..line_number
-      end
-      local pattern=sequencer.new_pattern(length,entry_mode)
-      pattern.entry_mode,pattern.pitch_length,pattern.playback=entry_mode,pitch_length,playback
-      pattern.pitch_events={}
-      local normalized_tokens={}
-      for token in pitch_data:gmatch("[^,]+") do
-        normalized_tokens[#normalized_tokens+1]=token
-        local pitch,err=decode_pitch(token,line_number)
-        if not pitch then return nil,err end
-        pattern.pitch_events[#pattern.pitch_events+1]=pitch
-      end
-      if table.concat(normalized_tokens,",")~=pitch_data then
-        return nil,"Invalid pitch separators at line "..line_number
-      end
-      if #pattern.pitch_events~=64 then return nil,"ACID source must store exactly 64 pitches at line "..line_number end
-      for step=1,length do pattern.time_events[step]=time:sub(step,step) end
-      local ok,err=interpreter.compile_cycle(pattern)
-      if not ok then return nil,"Invalid ACID source: "..err end
-      entries[id]={pattern=pattern,audio_mode=audio}
+    local id,output_policy,pitch_length,length,pitch_data,time=
+      line:match("^(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
+    id,pitch_length,length=tonumber(id),tonumber(pitch_length),tonumber(length)
+    if not id or not valid_id(id) or entries[id] or not OUTPUT_POLICIES[output_policy] or
+        not pitch_length or pitch_length<1 or pitch_length>64 or
+        not length or length<1 or length>64 or not time or #time~=64 then
+      return nil,"Invalid ACID snapshot header at line "..line_number
+    end
+    local pattern=sequencer.new_pattern(length)
+    pattern.pitch_length=pitch_length
+    pattern.pitch_events={}
+    local normalized_tokens={}
+    for token in pitch_data:gmatch("[^,]+") do
+      normalized_tokens[#normalized_tokens+1]=token
+      local pitch,err=decode_pitch(token,line_number)
+      if not pitch then return nil,err end
+      pattern.pitch_events[#pattern.pitch_events+1]=pitch
+    end
+    if table.concat(normalized_tokens,",")~=pitch_data then
+      return nil,"Invalid pitch separators at line "..line_number
+    end
+    if #pattern.pitch_events~=64 then return nil,"ACID source must store exactly 64 pitches at line "..line_number end
+    for step=1,64 do pattern.time_events[step]=time:sub(step,step) end
+    local ok,err=interpreter.compile_cycle(pattern)
+    if not ok then return nil,"Invalid ACID source: "..err end
+    entries[id]={pattern=pattern,output_policy=output_policy}
   end
   return entries
 end
@@ -99,12 +85,14 @@ local function encode(entries)
     local pattern=item.pattern
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID source: "..err end
-    if not AUDIO_MODES[item.audio_mode] then return nil,"invalid audio mode" end
+    if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid phrase output policy" end
     local pitches={}
     for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
-    lines[#lines+1]=table.concat({tostring(id),item.audio_mode,pattern.entry_mode,
-      tostring(pattern.pitch_length),pattern.playback,tostring(pattern.length),
-      table.concat(pitches,","),table.concat(pattern.time_events)},"|")
+    local time={}
+    for step=1,64 do time[step]=pattern.time_events[step] or "N" end
+    lines[#lines+1]=table.concat({tostring(id),item.output_policy,
+      tostring(pattern.pitch_length),tostring(pattern.length),
+      table.concat(pitches,","),table.concat(time)},"|")
   end
   return table.concat(lines,"\n").."\n"
 end
@@ -115,13 +103,14 @@ function M.read(song)
   return decode(raw or "")
 end
 
-function M.prepare(song,id,pattern,audio_mode)
+function M.prepare(song,id,pattern,output_policy)
   if not valid_id(id) then return nil,"invalid ACID phrase ID" end
+  output_policy=output_policy or "repeat"
   local previous,err=raw_data(song)
   if previous==nil and err then return nil,err end
   local entries,decode_error=decode(previous or "")
   if not entries then return nil,decode_error end
-  entries[id]={pattern=pattern,audio_mode=audio_mode}
+  entries[id]={pattern=pattern,output_policy=output_policy}
   local next_raw,encode_error=encode(entries)
   if not next_raw then return nil,encode_error end
   return {previous_raw=previous,raw=next_raw,id=id}
@@ -154,8 +143,8 @@ function M.restore(song,candidate)
   return true
 end
 
-function M.save(song,id,pattern,audio_mode)
-  local candidate,err=M.prepare(song,id,pattern,audio_mode)
+function M.save(song,id,pattern,output_policy)
+  local candidate,err=M.prepare(song,id,pattern,output_policy)
   if not candidate then return nil,err end
   return M.commit(song,candidate)
 end
@@ -192,7 +181,7 @@ function M.load(song,phrase)
   if not entry then return nil,"ACID source missing from song data" end
   local raw=assert(encode({[id]=entry}))
   local copied=assert(decode(raw))
-  return copied[id].pattern,copied[id].audio_mode
+  return copied[id].pattern,copied[id].output_policy
 end
 
 return M

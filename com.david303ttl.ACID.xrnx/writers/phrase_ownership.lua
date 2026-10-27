@@ -46,7 +46,7 @@ local function hash(phrase)
 end
 
 function M.id(phrase)
-  local id=(phrase.name or ""):match("^ACID 0%.1 #(%d+) %[v2:(%x%x%x%x%x%x%x%x)%]$")
+  local id=(phrase.name or ""):match("^ACID 0%.1 #(%d+) %[v3:(%x%x%x%x%x%x%x%x)%]$")
   if not id then return nil end
   local numeric=tonumber(id)
   return numeric and numeric>=1 and numeric<=2147483647 and numeric or nil
@@ -58,12 +58,12 @@ function M.make_name(phrase,id)
   end
   local seal,err=hash(phrase)
   if not seal then return nil,err end
-  return string.format("%s%d [v2:%s]",PREFIX,id,seal)
+  return string.format("%s%d [v3:%s]",PREFIX,id,seal)
 end
 
 function M.status(phrase)
   local name=phrase.name or ""
-  local seal=name:match("^ACID 0%.1 #%d+ %[v2:(%x%x%x%x%x%x%x%x)%]$")
+  local seal=name:match("^ACID 0%.1 #%d+ %[v3:(%x%x%x%x%x%x%x%x)%]$")
   if not seal or not name:match("^ACID 0%.1 #(%d+) ") then return "foreign" end
   local id=tonumber(name:match("^ACID 0%.1 #(%d+) "))
   if not id or id<1 or id>2147483647 then return "foreign" end

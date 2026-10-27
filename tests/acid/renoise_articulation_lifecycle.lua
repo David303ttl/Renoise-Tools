@@ -4,9 +4,8 @@ local path = debug.getinfo(1, "S").source:gsub("\\", "/")
 local root = assert(path:match("^@(.*)/tests/acid/renoise_articulation_lifecycle.lua$"),
   "Load this helper from its repository file path")
 local provenance = dofile(root .. "/tests/acid/capture_provenance.lua")
-local mode = assert(rawget(_G, "ACID_ARTICULATION_LIFECYCLE_MODE"),
-  'Set ACID_ARTICULATION_LIFECYCLE_MODE to "retrigger" or "slide"')
-assert(mode == "retrigger" or mode == "slide", "Lifecycle mode must be retrigger or slide")
+local output_policy = rawget(_G, "ACID_ARTICULATION_OUTPUT_POLICY") or "repeat"
+assert(output_policy == "repeat" or output_policy == "play_once", "Invalid phrase output policy")
 assert(renoise.tool() and renoise.tool().app_idle_observable
   and renoise.tool().app_new_document_observable,
   "Run in ACID's scripting context")
@@ -23,15 +22,16 @@ end
 local oracle = dofile(root .. "/tests/acid/fixture_json.lua").read(
   root .. "/" .. oracle_relative)
 local case_id = rawget(_G,"ACID_ARTICULATION_LIFECYCLE_CASE_ID") or
-  (mode == "slide" and "repeat_slide_seam_length_16" or "repeat_note_rest_seam_bpm_120")
+  (output_policy == "repeat" and "repeat_note_rest_seam_bpm_120" or "one_shot_tie_tail_bpm_120")
 local case
 for _, candidate in ipairs(oracle.cases) do
   if candidate.id == case_id then case = candidate;break end
 end
 assert(case and case.qualification.protocol_status == "ready",
   "Expected ready lifecycle fixture is missing")
-assert(case.playback.renderer=="acid-writer" and case.playback.looping==true,
-  "Lifecycle requires a ready repeating actual-writer fixture")
+assert(case.playback.renderer=="acid-writer"
+  and case.playback.looping==(output_policy=="repeat"),
+  "Lifecycle fixture does not match the selected phrase output policy")
 
 local instrument_index, instrument
 for index, candidate in ipairs(song.instruments) do
@@ -71,13 +71,13 @@ for name, entry in pairs({
 }) do
   module_sources[name]=provenance.describe(root,entry[1],entry[2])
 end
+local fixture_pitch=dofile(root.."/tests/acid/pitch_fixture.lua")
 
 local source = case.source
-local pattern = sequencer.new_pattern(source.length, source.entry_mode)
+local pattern = sequencer.new_pattern(source.length)
 pattern.pitch_length = source.pitch_length
-pattern.playback = case.playback.looping and "loop" or "one_shot"
 for index, note in ipairs(source.pitches) do
-  pattern.pitch_events[index] = {note=note,accent=false,slide=false}
+  pattern.pitch_events[index] = fixture_pitch(note)
 end
 for _, index in ipairs(source.accent_pitch_indices or {}) do
   pattern.pitch_events[index].accent = true
@@ -87,10 +87,9 @@ for _, index in ipairs(source.slide_pitch_indices or {}) do
 end
 for index, command in ipairs(source.time) do pattern.time_events[index] = command end
 
-local writer_mode = mode == "slide" and "slide" or "retrigger"
 local target = #instrument.phrases + 1
-local result_path = root .. "/tmp/acid-articulation/lifecycle_" .. mode .. "_" .. os.time() .. ".txt"
-local song_path = root .. "/tmp/acid-articulation/lifecycle_" .. mode .. "_" .. os.time() .. ".xrns"
+local result_path = root .. "/tmp/acid-articulation/lifecycle_" .. output_policy .. "_" .. os.time() .. ".txt"
+local song_path = root .. "/tmp/acid-articulation/lifecycle_" .. output_policy .. "_" .. os.time() .. ".xrns"
 local function unused(pathname)
   local file = io.open(pathname,"rb")
   if file then file:close();return false end
@@ -105,9 +104,8 @@ end
 record("format", "ACID-ARTICULATION-LIFECYCLE-1")
 record("case_id",case_id)
 record("oracle",oracle_relative)
-record("writer_mode",writer_mode)
 for name,source in pairs(module_sources) do record("loaded_"..name.."_source",source) end
-record("playback","loop")
+record("output_policy",output_policy)
 record("instrument_index",instrument_index)
 record("instrument_name",instrument_name)
 record("initial_phrase_count",#instrument.phrases)
@@ -116,24 +114,23 @@ record("live_edit_path","production model.live_regen with Renoise timers and pro
 
 local function pattern_equal(left,right)
   if not left or not right or left.length~=right.length or
-    left.entry_mode~=right.entry_mode or left.pitch_length~=right.pitch_length or
-    left.playback~=right.playback then return false end
+    left.pitch_length~=right.pitch_length then return false end
   for index=1,64 do
     local a,b=left.pitch_events[index],right.pitch_events[index]
     if not a or not b or a.note~=b.note or a.accent~=b.accent or a.slide~=b.slide then return false end
   end
-  for index=1,left.length do
+  for index=1,64 do
     if left.time_events[index]~=right.time_events[index] then return false end
   end
   return true
 end
 
-local function checked_source(current_song,current_instrument,phrase_index,expected,expected_mode)
+local function checked_source(current_song,current_instrument,phrase_index,expected,expected_policy)
   local phrase=assert(current_instrument.phrases[phrase_index], "Generated phrase is missing")
   assert(ownership.status(phrase)=="owned", "Generated phrase seal is invalid")
-  local restored,actual_mode=store.load(current_song,phrase)
-  assert(restored,actual_mode)
-  assert(actual_mode==expected_mode, "Persisted articulation mode changed")
+  local restored,actual_policy=store.load(current_song,phrase)
+  assert(restored,actual_policy)
+  assert(actual_policy==expected_policy, "Persisted phrase output policy changed")
   assert(pattern_equal(restored,expected), "Persisted source differs from the generated source")
   return phrase
 end
@@ -147,7 +144,7 @@ end
 local function save_and_reopen(expected)
   local current_song=renoise.song()
   local current_instrument=current_song.instruments[instrument_index]
-  local phrase=checked_source(current_song,current_instrument,target,expected,writer_mode)
+  local phrase=checked_source(current_song,current_instrument,target,expected,output_policy)
   record("pre_save_phrase_status","owned")
   record("pre_save_source_status","exact")
   record("pre_save_phrase_name",phrase.name)
@@ -169,7 +166,7 @@ local function save_and_reopen(expected)
       local reopened=assert(renoise.song(), "Song did not reopen")
       local reopened_instrument=assert(reopened.instruments[instrument_index], "Probe instrument missing after reopen")
       assert(reopened_instrument.name==instrument_name, "Instrument order/name changed during roundtrip")
-      local reopened_phrase=checked_source(reopened,reopened_instrument,target,expected,writer_mode)
+      local reopened_phrase=checked_source(reopened,reopened_instrument,target,expected,output_policy)
       assert(reopened_phrase.number_of_lines==layout.number_of_lines
         and reopened_phrase.looping==layout.looping
         and reopened_phrase.loop_start==layout.loop_start
@@ -177,7 +174,7 @@ local function save_and_reopen(expected)
         "Phrase loop layout changed after save/reopen")
       record("post_reopen_phrase_status","owned")
       record("post_reopen_source_status","exact")
-      record("post_reopen_audio_mode",writer_mode)
+      record("post_reopen_output_policy",output_policy)
       record("post_reopen_phrase_name",reopened_phrase.name)
     end)
     if ok then
@@ -205,19 +202,18 @@ local function save_and_reopen(expected)
 end
 
 local function run_live_edit()
-  local initial=checked_source(song,instrument,target,pattern,writer_mode)
+  local initial=checked_source(song,instrument,target,pattern,output_policy)
   record("generate_status","passed")
   record("generate_phrase_status",ownership.status(initial))
   local function clone_pattern(input,length)
-    local copy=sequencer.new_pattern(length or input.length,input.entry_mode)
+    local copy=sequencer.new_pattern(length or input.length)
     copy.pitch_length=input.pitch_length
-    copy.playback=input.playback
     for index=1,64 do
       local p=input.pitch_events[index]
       copy.pitch_events[index]={note=p.note,accent=p.accent,slide=p.slide,
         key=p.key,octave=p.octave}
     end
-    for index=1,math.min(input.length,copy.length) do copy.time_events[index]=input.time_events[index] end
+    for index=1,64 do copy.time_events[index]=input.time_events[index] end
     return copy
   end
   local edits={}
@@ -231,7 +227,9 @@ local function run_live_edit()
   else
     local edited=clone_pattern(pattern)
     for index=1,edited.pitch_length do
-      edited.pitch_events[index].note=edited.pitch_events[index].note+1
+      local note=edited.pitch_events[index].note
+      edited.pitch_events[index]=fixture_pitch(note==60 and note-1 or note+1,
+        edited.pitch_events[index].accent,edited.pitch_events[index].slide)
     end
     edits={{pattern=edited,label="Live Edit active PITCH span +1 semitone"}}
   end
@@ -248,7 +246,7 @@ local function run_live_edit()
         or message:find("Generation cancelled",1,true)==1 then
         finish(false,message)
       end
-    end,writer_mode,current_edit,target,{token=token,playback=current_edit.playback})
+    end,current_edit,target,{token=token,output_policy=output_policy})
   end,function(ok,message)
     if not ok then
       controller:stop()
@@ -258,7 +256,7 @@ local function run_live_edit()
     end
     local current_song=renoise.song()
     local current_instrument=current_song.instruments[instrument_index]
-    local phrase=checked_source(current_song,current_instrument,target,current_edit,writer_mode)
+    local phrase=checked_source(current_song,current_instrument,target,current_edit,output_policy)
     assert(ownership.status(phrase)=="owned", "Live Edit output lost its ownership seal")
     record("live_edit_stage_"..stage,edits[stage].label)
     record("live_edit_stage_"..stage.."_phrase_status","owned")
@@ -294,8 +292,8 @@ local ok,err=pcall(function()
       local generated=assert(instrument.phrases[target], "Generate did not append its phrase")
       local status=ownership.status(generated)
       assert(status=="owned", "Normal Generate did not create a valid ACID-owned phrase")
-      local restored,audio_mode=store.load(song,generated)
-      assert(restored and audio_mode==writer_mode and pattern_equal(restored,pattern),
+      local restored,saved_policy=store.load(song,generated)
+      assert(restored and saved_policy==output_policy and pattern_equal(restored,pattern),
         "Normal Generate source did not persist exactly")
       record("generate_status","passed")
       record("generate_phrase_status",status)
@@ -303,7 +301,7 @@ local ok,err=pcall(function()
     elseif message:find("GENERATION FAILED",1,true)==1 then
       finish_record("FAIL",message)
     end
-  end,writer_mode,pattern,target)
+  end,pattern,target,{output_policy=output_policy})
   if not started then error(reason) end
 end)
 if not ok then

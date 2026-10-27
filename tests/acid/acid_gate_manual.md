@@ -14,9 +14,10 @@ high-peak takes for current acceptance.
 
 The [evidence record](audio_capture_evidence.md) is authoritative for hashes,
 invalid takes, current boundaries and the separately qualified offline families.
-Repeat retrigger generation is profile-scoped at 90/120/150 BPM. Keep connected
-slide behavior separate from gate results and follow the measured glide support
-matrix.
+These measurements document the former profile-scoped renderer. M3.5 removes
+that runtime eligibility policy. Use the current [Gate S checklist](acid_m35_s_manual.md)
+for GUI and output-policy acceptance; retain this page as a record of the
+measured gate evidence.
 
 ## Authored sources and deadlines
 
@@ -51,7 +52,8 @@ not qualify unconnected gate playback.
    and calibration, and retain readback and original WAV hashes. Use the same
    declared normalization policy for controls and candidates.
 2. Select ACID's tool scripting context. Set `ACID_ARTICULATION_CASE_ID` to the
-   exact tempo-specific ID and `ACID_ARTICULATION_WRITER_MODE = "retrigger"`, then run
+   exact tempo-specific ID and set `ACID_ARTICULATION_OUTPUT_POLICY = "repeat"`
+   for Repeat cases (or `"play_once"` for one-shot cases), then run
    `tests/acid/renoise_articulation_writer.lua`. Do not use the generic application
    terminal: it lacks `renoise.tool().app_idle_observable`. Wait for the generated
    status and retain its metadata/readback. A refusal is a recorded unsupported
@@ -69,7 +71,7 @@ not qualify unconnected gate playback.
 5. The standard analyzer deliberately returns `unsupported` for these planned
    cases. Qualify its complete gate protocol and seeded-failure controls before
    promoting a case to ready. Never relabel a case merely to obtain a passing
-   report. Record route/profile, BPM, triggering, writer mode, take count, hashes,
+   report. Record route/profile, BPM, triggering, output policy, take count, hashes,
    measured edges and remaining limitations in the evidence record before
    changing runtime eligibility.
 

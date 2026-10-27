@@ -22,36 +22,46 @@ end
 local s={tool_data=nil,instruments={{phrases={}}}}
 local a=phrase()
 a.name=assert(ownership.make_name(a,1))
-assert(a.name:find("[v2:",1,true))
+assert(a.name:find("[v3:",1,true))
 s.instruments[1].phrases[1]=a
 assert(ownership.status(a)=="owned" and ownership.id(a)==1)
-local p=seq.new_pattern(17,"extended")
-p.pitch_length,p.playback=3,"loop"
+local p=seq.new_pattern(17)
+p.pitch_length=3
 for i=1,17 do p.time_events[i]="N" end
 p.pitch_events[2]=seq.new_pitch(3,1,true,true)
 p.pitch_events[40]=seq.new_pitch(4,0,true,false)
 p.time_events[16]="T"
 p.time_events[17]="R"
-local initial=assert(store.prepare(s,2,p,"slide"))
+p.time_events[64]="T"
+local initial=assert(store.prepare(s,2,p,"repeat"))
 assert(initial.previous_raw==nil)
 assert(store.commit(s,initial) and s.tool_data==initial.raw)
 assert(store.restore(s,initial) and s.tool_data==nil)
 assert(store.allocate(s)==2)
-assert(store.save(s,1,p,"slide"))
-local restored,mode=store.load(s,a)
-assert(restored and mode=="slide")
+assert(store.save(s,1,p,"play_once"))
+local restored,output_policy=store.load(s,a)
+assert(restored and output_policy=="play_once")
 assert(restored.length==17 and #restored.pitch_events==64)
-assert(restored.entry_mode=="extended" and restored.pitch_length==3 and restored.playback=="loop")
+assert(restored.pitch_length==3 and #restored.time_events==64)
 assert(restored.pitch_events[2].note==51)
 assert(restored.pitch_events[2].octave==1)
 assert(restored.pitch_events[2].accent and restored.pitch_events[2].slide)
 assert(restored.pitch_events[40].note==40 and restored.pitch_events[40].accent)
 assert(restored.time_events[16]=="T" and restored.time_events[17]=="R")
+assert(restored.time_events[64]=="T")
+restored.length=16
+assert(store.save(s,1,restored,"repeat"))
+local shortened=assert(store.load(s,a))
+assert(shortened.length==16 and shortened.time_events[17]=="R" and shortened.time_events[64]=="T")
+shortened.length=17
+assert(store.save(s,1,shortened,"repeat"))
+local expanded=assert(store.load(s,a))
+assert(expanded.length==17 and expanded.time_events[17]=="R" and expanded.time_events[64]=="T")
 restored.pitch_events[2].note=36
 local again=assert(store.load(s,a))
 assert(again.pitch_events[2].note==51)
 again.time_events[17]="N"
-local candidate=assert(store.prepare(s,1,again,"slide"))
+local candidate=assert(store.prepare(s,1,again,"play_once"))
 assert(candidate.previous_raw==s.tool_data and candidate.raw~=candidate.previous_raw)
 s.tool_data=candidate.raw.."external mutation"
 assert(not store.commit(s,candidate))
@@ -65,9 +75,9 @@ local b=phrase(40)
 b.name=assert(ownership.make_name(b,2))
 s.instruments[1].phrases[2]=b
 assert(store.allocate(s)==3)
-local p2=seq.new_pattern(64,"extended")
+local p2=seq.new_pattern(64)
 for i=1,64 do p2.time_events[i]="R" end
-assert(store.save(s,2,p2,"baseline"))
+assert(store.save(s,2,p2,"repeat"))
 assert(store.load(s,b).length==64)
 assert(store.load(s,a).length==17)
 local c=phrase(43)
@@ -75,18 +85,18 @@ c.name=assert(ownership.make_name(c,3))
 s.instruments[1].phrases[3]=c
 local original=seq.new_pattern()
 for i=1,16 do original.time_events[i]="R" end
-assert(store.save(s,3,original,"baseline"))
-local original_copy,original_audio=store.load(s,c)
-assert(original_audio=="baseline" and original_copy.entry_mode=="original")
-assert(original_copy.length==16 and original_copy.pitch_length==16 and original_copy.playback=="loop")
+assert(store.save(s,3,original,"repeat"))
+local original_copy,original_policy=store.load(s,c)
+assert(original_policy=="repeat")
+assert(original_copy.length==16 and original_copy.pitch_length==original.pitch_length)
 assert(#original_copy.pitch_events==64 and original_copy.pitch_events[64].note==36)
-original.playback="one_shot"
-assert(store.save(s,3,original,"baseline"))
-local one_shot_copy=assert(store.load(s,c))
-assert(one_shot_copy.playback=="one_shot")
+assert(store.save(s,3,original,"play_once"))
+local play_once_copy,play_once_policy=store.load(s,c)
+assert(play_once_policy=="play_once")
+assert(play_once_copy.length==original.length and play_once_copy.pitch_length==original.pitch_length)
 local valid_data=s.tool_data
-s.tool_data=valid_data:gsub("|extended|3|loop|17|","|original|16|loop|17|",1)
-assert(not store.read(s)) -- invalid Original length is rejected without throwing
+s.tool_data=valid_data:gsub("|repeat|", "|unsupported|", 1)
+assert(not store.read(s)) -- unsupported output policies are rejected
 s.tool_data=valid_data:gsub("36:0:0:00,","36:0:0:00,,",1)
 assert(not store.read(s)) -- empty pitch token is malformed
 s.tool_data=valid_data.."\n"
@@ -122,10 +132,20 @@ old.name="ACID 0.1 #3 [DEADBEEF]"
 assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
 old.name="ACID 0.1 #3 [v1:DEADBEEF]"
 assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
+old.name="ACID 0.1 #3 [v2:DEADBEEF]"
+assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
+s.tool_data="ACID-PITCH-TIME-2\n"
+assert(not store.read(s) and not store.save(s,3,p,"repeat"))
+assert(s.tool_data=="ACID-PITCH-TIME-2\n")
 s.tool_data="ACID-PITCH-TIME-1\n"
-assert(not store.read(s) and not store.save(s,3,p,"baseline"))
+assert(not store.read(s) and not store.save(s,3,p,"repeat"))
 assert(s.tool_data=="ACID-PITCH-TIME-1\n")
+s.tool_data=nil
+local note_only=seq.new_pattern(1)
+note_only.pitch_events[1]={note=36,accent=false,slide=false}
+assert(not store.save(s,4,note_only,"repeat"))
+assert(s.tool_data==nil)
 s.tool_data="unexpected external data"
-assert(not store.save(s,3,p,"baseline"))
+assert(not store.save(s,3,p,"repeat"))
 assert(s.tool_data=="unexpected external data")
 print("ACID source persistence and phrase ID checks passed")

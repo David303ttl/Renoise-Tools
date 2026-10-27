@@ -16,7 +16,7 @@ Keep the recognizable TB-303 sequencing ideas while labeling departures explicit
 - Original-style PITCH entries store a key, octave DOWN/NORMAL/UP, ACCENT, and SLIDE. The default key is **C**, normal octave, with ACCENT/SLIDE off.
 - TIME entries are **NOTE**, **TIE**, and **REST**. NOTE consumes one pitch entry; TIE and REST do not. Consecutive time and pitch positions are *not* interchangeable.
 - **LAST STEP = 1–64** is an ACID extension. Pages 01–16, 17–32, 33–48, and 49–64 belong to **one continuous sequence**, not four independent 16-step patterns.
-- Prioritize original behavior in new drafts; expose independent short PITCH-span cycling and longer patterns as explicit **Extended** functions under the same new interpreter. Both modes follow Roland's leading-TIE normalization and outgoing-SLIDE rules.
+- Keep one semantic source model: TIME length and active PITCH span are independent values from 1–64. Original-style conformance is informational and does not select a source mode.
 - ACID must never describe experimental native-sample glide, gate, velocity, or filter behavior as acoustically identical to a TB-303 without measurements.
 - No embedded DSP synth, mandatory VST, arbitrary MIDI-effect rack, or redesign of ARP.xrnx is part of this roadmap.
 - Every valid ACID source must compile to playable phrase events for any selected Renoise instrument slot: sample-based, plugin/VST, external MIDI, hybrid, or empty (empty targets generate a silent phrase with a warning).
@@ -82,7 +82,7 @@ The current source stores **64 valid C pitches** and carries an independent acti
 | Completed | M1 — Editable source, phrase output and Live Edit | Edit ACID patterns and regenerate native phrases | — |
 | Completed (implementation) | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
 | Completed (implementation); live acceptance open | **M3 — Articulation measurement and reference-profile renderer** | Scoped reference audio evidence; remaining host transport/live-playback checks | M2 semantic contracts |
-| **P0 — next after M3** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
+| **In progress (M3.5-S implementation complete; Renoise acceptance pending)** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
 | After M3.5 | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M3.5 renderer/timeline contract |
 | After M3.5 | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M3.5 editor and source guarantees |
 | Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5 |
@@ -390,7 +390,18 @@ Each behavior PR includes its specs, procedure and actual results; records are u
 
 ## 5A. M3.5 — Post-M3 sequencer-first correction (P0; blocks M4, M5 and M6)
 
-**Scope:** replace reference-test-limited production generation with general musical rendering. Preserve M2 source semantics and ownership/transaction safety. M3 audio fixtures remain regression and fidelity evidence, never user-input allowlists. **Status: planned; no code or verification claimed.**
+**Scope:** replace reference-test-limited production generation with general musical rendering. Preserve M2 source semantics and ownership/transaction safety. M3 audio fixtures remain regression and fidelity evidence, never user-input allowlists. **Status (2026-10-27):** M3.5-S implementation is complete on `feature/acid-m3.5-s`; local deterministic verification and package inspection pass. The Renoise checklist is not yet run, and M3.5-A through F remain pending.
+
+**M3.5-S second-pass record (2026-10-27):** `run_tests.ps1 -Tool ACID`
+passes all 24 Lua specs, including a GUI mock that switches the selected-position
+Program presentation and the paged Grid presentation without changing source
+or scheduling regeneration. The loop oracle passes 18 semantic cases and eight
+boundary lengths; the audio oracle validates 63 cases and rejects 11 mutations.
+Synthetic audio, normalization, host-lifecycle, moving-glide, native-effect,
+repeat-seam and successor-gate controls pass, including seeded-fault rejection.
+`package.ps1 -Tool ACID` builds an 18-file runtime archive with `main.lua` and
+`manifest.xml` at its root and no development files. These checks do not verify
+Renoise GUI interaction or playback. The manual checklist remains unrun.
 
 ### M3.5.0 — Normative contracts and failure taxonomy
 
@@ -573,7 +584,7 @@ M3.5-S precedes M3.5-A through F and freezes the new source/editor/output/render
 
 | Slice | Content | Merge gate |
 | --- | --- | --- |
-| **M3.5-S** | Program/Grid views, phrase output policy and single semantic renderer; hard delete of all four audio modes, associated code/storage/tests and any compatibility paths | Gate S; no deprecated mode identity or mode-selected generator remains |
+| **M3.5-S — implementation complete** | Program/Grid views, phrase output policy and single semantic renderer; hard delete of all four audio modes, associated code/storage/tests and any compatibility paths | Lua and static cutover checks pass; Renoise Gate S acceptance remains unverified |
 | M3.5-A | Contract/error types, target capability inspection, instrument-agnostic phrase creation, sample gate removal | All target classes generate canonical structural phrases without sample dependency |
 | M3.5-B | Universal semantic timeline, adaptive native operation planner, no reference-profile/layout/tempo admissions | Arbitrary valid sample-target sources compile; safe output or explicit approximation |
 | M3.5-C | Sample articulation and Repeat seam/connected-accent paths, alternative glide rates/line budgets | M3 reference fixtures remain sound; novel layouts/intervals don't block generation |
@@ -750,7 +761,7 @@ For every such decision, supply **reference + decision + test fixture + manual p
 | Priority | Action | Exit criterion |
 | --- | --- | --- |
 | 1 | Finish M3's remaining transport stop/start/seek and Live Edit-during-playback manual checks on its declared diagnostic profile. | Evidence recorded; no broader instrument or audio-fidelity claim. |
-| 2 | Start **M3.5-S** on a dedicated feature branch from the current integrated M3 head. | Gate S: Program/Grid and phrase output policy decoupled; deprecated audio modes fully deleted, including internal code, tests and persistence, with no migration. |
+| 2 | Complete Gate S Renoise manual acceptance on `feature/acid-m3.5-s`. | Program/Grid switching, output-policy regeneration, persistence and target behavior recorded; no playback claim from mocks. |
 | 3 | Implement **M3.5-A/B/C/D/E/F** with local Lua and Renoise receipts per slice. | No measured-case whitelist blocks normal musical editing; sample/plugin/MIDI and Live Edit acceptance passes. |
 | 4 | Begin M4/M5 only after M3.5's core correctness and instrument-independence gates pass. | No dependence on the discarded evidence-gated runtime policy. |
 

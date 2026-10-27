@@ -9,7 +9,6 @@ local ownership=require("writers.phrase_ownership")
 local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
-local REPEAT_HELP="Repeat: selective Retrigger + Gate at 90/120/150 BPM.\nSlides: moving 8/9-step + same-pitch 16 at 90/120/150; other same-pitch lengths 120."
 local dialog
 local generation=0
 local dialog_generation=-1
@@ -58,18 +57,19 @@ function M.show()
   if not song then renoise.app():show_warning("Open a song first.");return end
   local vb=renoise.ViewBuilder()
   local pattern=sequencer.new_pattern(16)
-  local setup_confirmed=false
-  local saved_time={}
+  for i=1,pattern.length do pattern.time_events[i]="N" end
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
   local updating=false
-  local preview_mode=1
+  local preview_cycle=1
   local update
   local opened=generation
-  local mode_values={"baseline","retrigger","slide"}
+  local output_policy="repeat"
+  local undo_source
+  local undo_output_policy
+  local undo_button
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
-  local mode_choice=1
-  local mode
+  local editor_view=1
   local labels={}
   for i,instrument in ipairs(song.instruments) do
     local name=instrument.name~="" and instrument.name or "(unnamed)"
@@ -77,22 +77,35 @@ function M.show()
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
   local status=vb:multiline_textfield{width=820,height=60,active=false,
-    font="bold",text="Set LAST STEP, then edit PITCH and TIME memories."}
-  local diagnostic=vb:text{width=820,font="bold",text=""}
-  local summary=vb:text{width=820,font="bold",text=""}
-  local map_text=vb:text{width=820,font="bold",text=""}
+    font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
+  local diagnostic=vb:text{id="acid_source_diagnostic",width=820,font="bold",text=""}
+  local summary=vb:text{id="acid_source_summary",width=820,font="bold",text=""}
+  local map_text=vb:text{id="acid_preview_summary",width=820,font="bold",text=""}
   local length_items={}
   for n=1,64 do length_items[n]=tostring(n) end
-  local length_popup=vb:popup{items=length_items,width=78,value=16}
-  length_popup.value=pattern.length
-  local length_items_mode="extended"
-  local entry_mode_popup=vb:popup{items={"Original","Extended"},width=105,value=1}
+  local last_step_box=vb:valuebox{width=78,min=1,max=64,steps={1,8},value=16,
+    tostring=function(value)return string.format("%d",math.floor(value+0.5))end,
+    tonumber=function(value)return tonumber(value)end}
+  local view_popup=vb:popup{id="acid_editor_view",items={"Program","Grid"},width=105,value=1,
+    notifier=function(value)
+      if updating then return end
+      editor_view=value
+      status.text=value==1 and "Program view: edit selected PITCH and TIME positions."
+        or "Grid view: edit PITCH and TIME memory pages directly."
+      update()
+    end}
+  local view_heading=vb:text{text="PROGRAM VIEW",font="bold"}
+  local view_hint=vb:text{text="Select one PITCH entry and TIME step to edit the shared source."}
+  local program_panel,grid_panel
+  local program_pitch_popup,program_time_popup,program_time_command
+  local program_pitch_summary,program_time_summary
+  local program_key_popup,program_octave_popup,program_accent,program_slide
   local pitch_length_popup=vb:popup{items=length_items,width=78,value=16}
-  local playback_popup=vb:popup{items={"One-shot","Repeat"},width=105,value=1}
+  local playback_popup=vb:popup{items={"Play Once","Repeat"},width=105,value=2}
   local preview_popup=vb:popup{items={"Start","Repeating"},width=105,value=1,
     notifier=function(value)
       if updating then return end
-      preview_mode=value
+      preview_cycle=value
       update()
     end}
   local step_division=vb:text{text="Straight 1/16 (triplet renderer not yet implemented)"}
@@ -128,19 +141,21 @@ function M.show()
   update=function()
     updating=true
     local projection=editor.project(pattern)
-    entry_mode_popup.value=pattern.entry_mode=="extended" and 2 or 1
+    view_heading.text=editor_view==1 and "PROGRAM VIEW" or "GRID VIEW"
+    view_hint.text=editor_view==1 and
+      "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
+      "Edit sixteen PITCH positions and TIME steps directly; use pages to reach 01–64."
+    if program_panel then program_panel.visible=editor_view==1 end
+    if grid_panel then grid_panel.visible=editor_view==2 end
     pitch_length_popup.value=pattern.pitch_length or 16
-    pitch_length_popup.active=setup_confirmed and pattern.entry_mode=="extended"
-    playback_popup.value=pattern.playback=="loop" and 2 or 1
-    playback_popup.active=setup_confirmed
-    preview_popup.value=preview_mode
-    preview_popup.active=setup_confirmed
-    if length_items_mode~=pattern.entry_mode then
-      length_popup.items=pattern.entry_mode=="original" and
-        {"1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16"} or length_items
-      length_items_mode=pattern.entry_mode
-    end
-    length_popup.value=pattern.length
+    pitch_length_popup.active=true
+    playback_popup.value=output_policy=="play_once" and 1 or 2
+    playback_popup.active=true
+    if undo_button then undo_button.active=undo_source~=nil end
+    preview_popup.value=preview_cycle
+    preview_popup.active=true
+    last_step_box.value=pattern.length
+    last_step_box.active=true
     for page=1,4 do
       local first=(page-1)*16+1
       local last=math.min(page*16,pattern.length)
@@ -154,7 +169,7 @@ function M.show()
       local i=editor.index_on_page(pitch_page,cell)
       local p=pitch_at(i)
       local b=pitch_cells[cell]
-      b.active=setup_confirmed
+      b.active=true
       b.text=view_label(i,p,projection)
       b.color=i==selected_pitch and colors.selected
         or (projection.used[i] and colors.used or colors.idle)
@@ -164,14 +179,14 @@ function M.show()
       local preview=preview_cells[cell]
       if step<=pattern.length then
         local cmd=pattern.time_events[step]
-        time.active=setup_confirmed
+        time.active=true
         time.value=cmd=="N" and 1 or cmd=="T" and 2 or 3
-        time_header.active=setup_confirmed
+        time_header.active=true
         time_header.text=string.format("STEP %02d",step)
         time_header.color=projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
           or (cmd=="N" and colors.note or cmd=="T" and colors.tie or colors.rest)
-        preview.text=string.format("%02d %s",step,editor.step_text(projection,step,preview_mode))
+        preview.text=string.format("%02d %s",step,editor.step_text(projection,step,preview_cycle))
         preview.color=projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
           or colors.idle
@@ -185,16 +200,31 @@ function M.show()
         preview.color=colors.idle
       end
     end
-    key_popup.active=setup_confirmed
-    octave_popup.active=setup_confirmed
-    accent.active=setup_confirmed
-    slide.active=setup_confirmed
+    key_popup.active=true
+    octave_popup.active=true
+    accent.active=true
+    slide.active=true
     local p=pitch_at(selected_pitch)
     local key,octave=sequencer.pitch_controls(p)
     key_popup.value=(key or 0)+1
     octave_popup.value=(octave or 0)+2
     accent.value=p.accent==true
     slide.value=p.slide==true
+    if program_pitch_popup then
+      program_pitch_popup.value=selected_pitch
+      program_time_popup.value=selected_step
+      local command=pattern.time_events[selected_step]
+      program_time_command.value=command=="N" and 1 or command=="T" and 2 or 3
+      program_time_command.active=selected_step<=pattern.length
+      program_pitch_summary.text=view_label(selected_pitch,p,projection)
+      program_time_summary.text=string.format("%s  %s",
+        selected_step<=pattern.length and "ACTIVE" or "OUTSIDE LAST STEP",
+        editor.step_text(projection,selected_step,preview_cycle))
+      program_key_popup.value=(key or 0)+1
+      program_octave_popup.value=(octave or 0)+2
+      program_accent.value=p.accent==true
+      program_slide.value=p.slide==true
+    end
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
     summary.text=string.format(
@@ -222,7 +252,7 @@ function M.show()
     selected_pitch=index
     pitch_page=editor.page_for(index)
     local projection=editor.project(pattern)
-    local mapping=preview_mode==2 and projection.repeat_mapping or projection.mapping
+    local mapping=preview_cycle==2 and projection.repeat_mapping or projection.mapping
     -- Highlight the earliest NOTE that consumes this pitch position;
     -- TIE holds do not consume another pitch.
     for step=1,pattern.length do
@@ -239,7 +269,7 @@ function M.show()
     selected_step=index
     time_page=editor.page_for(index)
     local projection=editor.project(pattern)
-    local mapping=preview_mode==2 and projection.repeat_mapping or projection.mapping
+    local mapping=preview_cycle==2 and projection.repeat_mapping or projection.mapping
     local event=mapping[index]
     if event and event.pitch_index then
       selected_pitch=event.pitch_index
@@ -251,28 +281,78 @@ function M.show()
     if live then live:changed() end
   end
   playback_popup:add_notifier(function(value)
-    if updating or not setup_confirmed then return end
-    pattern.playback=value==2 and "loop" or "one_shot"
-    if pattern.playback=="loop" then
-      status.text="Repeat selected. Retrigger + Gate at 90/120/150 BPM; moving 8/9-step and same-pitch 16-step slides at these tempos; other same-pitch lengths at 120 BPM."
-    else
-      status.text="One-shot playback selected."
-    end
+    if updating then return end
+    output_policy=value==2 and "repeat" or "play_once"
+    status.text=output_policy=="repeat" and "Repeat output selected for this phrase."
+      or "Play Once output selected for this phrase."
     update()
     changed()
   end)
-  local function change_pitch()
-    if updating or not setup_confirmed then return end
+  local function write_pitch(key,octave,is_accent,is_slide)
+    if updating then return end
     fill_to(selected_pitch)
     pattern.pitch_events[selected_pitch]=sequencer.new_pitch(
-      key_popup.value-1,octave_popup.value-2,accent.value,slide.value)
+      key,octave,is_accent,is_slide)
     update()
     changed()
+  end
+  local function change_pitch()
+    write_pitch(key_popup.value-1,octave_popup.value-2,accent.value,slide.value)
   end
   key_popup:add_notifier(change_pitch)
   octave_popup:add_notifier(change_pitch)
   accent:add_notifier(change_pitch)
   slide:add_notifier(change_pitch)
+  local pitch_items,time_items={},{}
+  for index=1,64 do
+    pitch_items[index]=string.format("P%02d",index)
+    time_items[index]=string.format("TIME %02d",index)
+  end
+  program_pitch_popup=vb:popup{id="acid_program_pitch_position",items=pitch_items,width=100,value=1,
+    notifier=function(value)
+      if not updating then choose_pitch(value) end
+    end}
+  program_time_popup=vb:popup{id="acid_program_time_position",items=time_items,width=110,value=1,
+    notifier=function(value)
+      if not updating then choose_time(value) end
+    end}
+  program_time_command=vb:popup{id="acid_program_time_command",items={"NOTE","TIE","REST"},width=100,value=1,
+    notifier=function(choice)
+      if updating or selected_step>pattern.length then return end
+      local command,reason=sequencer.set_time(pattern,selected_step,
+        ({"N","T","R"})[choice])
+      if not command then status.text=reason;return end
+      update()
+      changed()
+    end}
+  program_key_popup=vb:popup{id="acid_program_key_popup",items=keys,width=95,value=1,
+    notifier=function(value)
+      if not updating then
+        write_pitch(value-1,program_octave_popup.value-2,
+          program_accent.value,program_slide.value)
+      end
+    end}
+  program_octave_popup=vb:popup{id="acid_program_octave_popup",items=octave_names,width=135,value=2,
+    notifier=function(value)
+      if not updating then
+        write_pitch(program_key_popup.value-1,value-2,
+          program_accent.value,program_slide.value)
+      end
+    end}
+  program_accent=vb:checkbox{id="acid_program_accent",value=false,notifier=function(value)
+    if not updating then
+      write_pitch(program_key_popup.value-1,program_octave_popup.value-2,
+        value,program_slide.value)
+    end
+  end}
+  program_slide=vb:checkbox{id="acid_program_slide",value=false,notifier=function(value)
+    if not updating then
+      write_pitch(program_key_popup.value-1,program_octave_popup.value-2,
+        program_accent.value,value)
+    end
+  end}
+  program_pitch_summary=vb:text{id="acid_program_pitch_summary",text="P01",font="bold"}
+  program_time_summary=vb:text{id="acid_program_time_summary",text="TIME 01",font="bold"}
   local pitch_grid=vb:column{spacing=4}
   local time_grid=vb:column{spacing=4}
   local preview_grid=vb:column{spacing=4}
@@ -293,16 +373,16 @@ function M.show()
     local v_row=vb:row{spacing=4}
     for col=1,8 do
       local cell=(row-1)*8+col
-      pitch_cells[cell]=vb:button{width=98,height=38,text="--",notifier=function()
+      pitch_cells[cell]=vb:button{id=string.format("acid_grid_pitch_%02d",cell),width=98,height=38,text="--",notifier=function()
         choose_pitch(editor.index_on_page(pitch_page,cell)) end}
       time_headers[cell]=vb:button{width=98,height=22,text="--",
         notifier=function()
           local step=editor.index_on_page(time_page,cell)
-          if setup_confirmed and step<=pattern.length then choose_time(step) end
+          if step<=pattern.length then choose_time(step) end
         end}
-      time_cells[cell]=vb:popup{width=98,
+      time_cells[cell]=vb:popup{id=string.format("acid_grid_time_%02d",cell),width=98,
         items={"NOTE","TIE","REST"},value=3,notifier=function(choice)
-          if updating or not setup_confirmed then return end
+          if updating then return end
           local step=editor.index_on_page(time_page,cell)
           if step<=pattern.length then
             local command,reason=sequencer.set_time(pattern,step,( {"N","T","R"})[choice])
@@ -324,50 +404,25 @@ function M.show()
     time_grid:add_child(t_row)
     preview_grid:add_child(v_row)
   end
-  length_popup:add_notifier(function(n)
+  last_step_box:add_notifier(function(n)
     if updating then return end
     n=tonumber(n)
-    if pattern.entry_mode=="original" and n>16 then
-      status.text="Original entry is limited to 16 straight TIME steps; select Extended first."
-      update()
-      return
-    end
+    if not n then update();return end
+    n=math.max(1,math.min(64,math.floor(n+0.5)))
     pattern.length=n
-    if setup_confirmed then
-      for i=1,n do pattern.time_events[i]=saved_time[i] or pattern.time_events[i] or "N" end
-      for i=n+1,64 do
-        if pattern.time_events[i] then saved_time[i]=pattern.time_events[i] end
-        pattern.time_events[i]=nil
-      end
-    end
     if selected_step>n then selected_step=n end
     if editor.page_for(selected_step)~=time_page then
       time_page=editor.page_for(selected_step)
     end
     update()
-    if setup_confirmed then changed() end
-  end)
-  entry_mode_popup:add_notifier(function(value)
-    if updating then return end
-    local requested=value==1 and "original" or "extended"
-    local ok,reason=sequencer.set_entry_mode(pattern,requested)
-    if not ok then
-      status.text="Entry mode unchanged: "..reason
-      update()
-      return
-    end
-    status.text=requested=="original" and
-      "Original entry selected: straight TIME 1-16, PITCH span 16." or
-      "Extended entry selected: TIME and active PITCH span can be set independently."
-    update()
-    if setup_confirmed then changed() end
+    changed()
   end)
   pitch_length_popup:add_notifier(function(value)
-    if updating or pattern.entry_mode~="extended" then return end
+    if updating then return end
     local ok,reason=sequencer.set_pitch_length(pattern,tonumber(value))
     if not ok then status.text=reason end
     update()
-    if setup_confirmed and ok then changed() end
+    if ok then changed() end
   end)
   local inspect=vb:button{text="Inspect selected Renoise pattern (read only)",
     notifier=function()
@@ -392,27 +447,25 @@ function M.show()
     local instrument=song.instruments[selected_instrument]
     local target=phrase_targets[index]
     if target and target<=#instrument.phrases then
-      local source,mode_or_err=store.load(song,instrument.phrases[target])
+      local source,output_policy_or_error=store.load(song,instrument.phrases[target])
       if source then
-        pattern=source;setup_confirmed=true
-        saved_time={};selected_pitch=1;selected_step=1
+        pattern=source
+        output_policy=output_policy_or_error
+        selected_pitch=1;selected_step=1
         pitch_page=1;time_page=1
-        for i,v in ipairs(mode_values) do
-          if v==mode_or_err then
-            mode_choice=i
-            if mode then mode.value=i end
-            break
-          end
-        end
         status.text=string.format("Restored ACID source for phrase %02d.",target)
       else
-        pattern=sequencer.new_pattern(16);setup_confirmed=false
-        status.text="Source unavailable: "..tostring(mode_or_err)..
-          " | choose NEW PHRASE; existing audio is protected."
+        pattern=sequencer.new_pattern(16)
+        for i=1,pattern.length do pattern.time_events[i]="N" end
+        output_policy="repeat"
+        status.text="Source unavailable: "..tostring(output_policy_or_error)..
+          " | choose a new phrase; existing audio is protected."
       end
     else
-      pattern=sequencer.new_pattern(16);setup_confirmed=false
-      status.text="NEW PHRASE selected. Confirm LAST STEP and create pattern."
+      pattern=sequencer.new_pattern(16)
+      for i=1,pattern.length do pattern.time_events[i]="N" end
+      output_policy="repeat"
+      status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
     end
     update()
   end
@@ -441,17 +494,26 @@ function M.show()
     loading=false
     load_target(chosen)
   end
+  local function refresh_phrase_choices(preferred_target)
+    local chosen=phrase_choice.value
+    local options,targets=options_for_instrument()
+    phrase_targets=targets
+    if preferred_target then
+      for index,target in ipairs(targets) do
+        if target==preferred_target then chosen=index;break end
+      end
+    end
+    loading=true
+    phrase_choice.items=options
+    phrase_choice.value=math.min(chosen,#options)
+    loading=false
+  end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)select_instrument(n) end}
-  mode=vb:popup{width=210,items={"Baseline","Retrigger + Gate","Selective Slide + Gate"},
-    value=mode_choice,notifier=function(n)
-      mode_choice=n
-      changed()
-    end}
   local function live_target()
     local instrument=song.instruments[selected_instrument]
     local index=phrase_targets[phrase_choice.value]
-    if not setup_confirmed or not index or index>#instrument.phrases then
+    if not index or index>#instrument.phrases then
       return nil,"Live Edit needs an existing ACID phrase. Generate it manually first."
     end
     local phrase=instrument.phrases[index]
@@ -470,9 +532,8 @@ function M.show()
     if not target_index then return nil,reason end
     -- Freeze the source for the asynchronous renderer; subsequent UI edits
     -- are scheduled for another pass and cannot mutate the running job.
-    local copy=sequencer.new_pattern(pattern.length,pattern.entry_mode)
+    local copy=sequencer.new_pattern(pattern.length)
     copy.pitch_length=pattern.pitch_length
-    copy.playback=pattern.playback
     copy.pitch_events={}
     for i,p in ipairs(pattern.pitch_events) do
       local v={}
@@ -480,7 +541,6 @@ function M.show()
       copy.pitch_events[i]=v
     end
     for i,t in ipairs(pattern.time_events) do copy.time_events[i]=t end
-    local mode_now=mode_values[mode_choice]
     local success,reason=phrase_writer.generate(selected_instrument,
       function(message)
         if token and not token:is_current() then
@@ -492,7 +552,7 @@ function M.show()
         elseif message:find("GENERATION FAILED",1,true) then
           done(false,message)
         end
-      end,mode_now,copy,target_index,{token=token,playback=copy.playback})
+      end,copy,target_index,{token=token,output_policy=output_policy})
     return success,reason
   end,function(ok,message)
     if opened~=generation then return end
@@ -529,32 +589,50 @@ function M.show()
     end
   end}
   active_live_checkbox=live_checkbox
-  local content=vb:column{margin=12,spacing=7,
-    vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
-    vb:row{spacing=10,vb:text{text="LAST STEP"},length_popup,
-      step_division},
-    vb:row{spacing=8,vb:text{text="Entry mode"},entry_mode_popup,
-      vb:text{text="Active PITCH span"},pitch_length_popup,
-      vb:text{text="Extended: independent TIME/PITCH lengths."}},
-    vb:row{spacing=8,vb:text{text="Playback"},playback_popup,
-      vb:text{text="Preview"},preview_popup},
-    vb:row{vb:multiline_text{text=REPEAT_HELP,width=720,height=44}},
+  local function copy_source(source)
+    local copy=sequencer.new_pattern(source.length)
+    copy.pitch_length=source.pitch_length
+    copy.pitch_events={}
+    copy.time_events={}
+    for i,p in ipairs(source.pitch_events) do
+      local value={}
+      for key,item in pairs(p) do value[key]=item end
+      copy.pitch_events[i]=value
+    end
+    for i,command in ipairs(source.time_events) do copy.time_events[i]=command end
+    return copy
+  end
+  undo_button=vb:button{text="Undo Reset",active=false,notifier=function()
+    if undo_source then
+      pattern=undo_source
+      undo_source=nil
+      output_policy=undo_output_policy or "repeat"
+      undo_output_policy=nil
+      status.text="Reset undone; the prior source draft was restored."
+      update();changed()
+    end
+  end}
+  program_panel=vb:column{id="acid_program_panel",spacing=5,
+    vb:text{text="PROGRAM ENTRY | choose one shared PITCH position and TIME step",font="bold"},
+    vb:row{spacing=8,vb:text{text="PITCH POSITION"},program_pitch_popup,
+      program_pitch_summary},
+    vb:row{spacing=8,vb:text{text="KEY"},program_key_popup,
+      vb:text{text="OCTAVE"},program_octave_popup,
+      vb:text{text="ACCENT"},program_accent,
+      vb:text{text="SLIDE"},program_slide},
+    vb:row{spacing=8,vb:text{text="TIME STEP"},program_time_popup,
+      vb:text{text="COMMAND"},program_time_command,
+      program_time_summary},
     vb:row{spacing=8,
-      vb:button{text="Create / Reset Pattern",notifier=function()
-        -- Explicit initialization: changing LAST STEP alone never erases memory.
-        pattern=sequencer.new_pattern(length_popup.value,
-          entry_mode_popup.value==2 and "extended" or "original")
-        for i=1,pattern.length do pattern.time_events[i]="N" end
-        saved_time={}
-        setup_confirmed=true
-        selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
-        status.text="Pattern initialized: all 64 PITCH entries are C; active TIME steps start as NOTE."
-        update()
-        changed()
+      vb:button{text="Previous TIME",notifier=function()
+        if selected_step>1 then choose_time(selected_step-1) end
       end},
-      vb:text{text="Confirm LAST STEP first. Reset discards the current draft."}},
-    vb:text{text="64-step extension: four continuous pages of 16. Roland PITCH/TIME semantics remain separate."},
-    vb:text{text="PITCH MEMORY | select position, then edit keyboard, octave, accent and slide",font="bold"},
+      vb:button{text="Next TIME",notifier=function()
+        if selected_step<pattern.length then choose_time(selected_step+1) end
+      end}},
+    vb:text{text="Set LAST STEP to reach TIME positions beyond the active sequence."}}
+  grid_panel=vb:column{id="acid_grid_panel",spacing=5,
+    vb:text{text="PITCH MEMORY | select a position, then edit its controls",font="bold"},
     pitch_pages,pitch_grid,
     vb:row{spacing=10,vb:text{text="Keyboard"},key_popup,
       vb:text{text="Octave"},octave_popup,
@@ -562,16 +640,37 @@ function M.show()
     vb:text{text="TIME MEMORY | select NOTE, TIE or REST directly for each step",font="bold"},
     time_pages,time_grid,
     vb:text{text="DECODED SEQUENCE | compare Start and Repeating transitions",font="bold"},
-    preview_grid,summary,map_text,diagnostic,
-    vb:row{spacing=6,vb:text{text="Target instrument"},target,
-      vb:text{text="Audio test"},mode},
+    preview_grid}
+  local content=vb:column{margin=12,spacing=7,
+    vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
+    vb:row{spacing=10,vb:text{text="LAST STEP"},last_step_box,
+      step_division},
+    vb:row{spacing=8,vb:text{text="Editor view"},view_popup,
+      vb:text{text="Active PITCH span"},pitch_length_popup,
+      vb:text{text="Program and Grid edit the same source."}},
+    vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
+      vb:text{text="Preview"},preview_popup},
+    vb:row{spacing=8,
+      vb:button{text="Reset Source",notifier=function()
+        undo_source=copy_source(pattern)
+        undo_output_policy=output_policy
+        pattern=sequencer.new_pattern(last_step_box.value)
+        for i=1,pattern.length do pattern.time_events[i]="N" end
+        output_policy="repeat"
+        selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
+        status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
+        update();changed()
+      end},
+      undo_button,
+      vb:text{text="Undo Reset restores the previous source and output policy."}},
+    vb:text{text="64-step extension: four continuous pages of 16. Roland PITCH/TIME semantics remain separate."},
+    view_heading,view_hint,program_panel,grid_panel,
+    summary,map_text,diagnostic,
+    vb:row{spacing=6,vb:text{text="Target instrument"},target},
     vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
-        if not setup_confirmed then
-          status.text="Set LAST STEP and click Create / Reset Pattern first.";return
-        end
         if opened~=generation then
           status.text="Song changed. Close and reopen ACID.";return
         end
@@ -583,16 +682,25 @@ function M.show()
           status.text="Cannot generate: "..e.message
           return
         end
+        local requested_instrument=selected_instrument
+        local requested_choice=phrase_choice.value
+        local requested_target=phrase_targets[requested_choice]
         local ok,generated,err=pcall(phrase_writer.generate,
-          selected_instrument,function(message)
+          requested_instrument,function(message)
             if opened==generation then
               if message:find(" generated (",1,true) then
-                select_instrument(selected_instrument)
+                local result_target=tonumber(message:match("^Phrase (%d+) generated"))
+                local preferred_target
+                if selected_instrument==requested_instrument and
+                    phrase_choice.value==requested_choice then
+                  preferred_target=result_target
+                end
+                refresh_phrase_choices(preferred_target)
               end
               status.text=message
             end
-          end,mode_values[mode_choice],pattern,
-          phrase_targets[phrase_choice.value],{playback=pattern.playback})
+          end,pattern,
+          requested_target,{output_policy=output_policy})
         if not ok then status.text="ACID error: "..tostring(generated)
         elseif not generated then status.text=err or "Generation refused" end
       end},

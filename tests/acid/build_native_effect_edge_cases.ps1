@@ -11,7 +11,7 @@ $cases = [System.Collections.Generic.List[object]]::new()
 function New-BaseCase([string]$Id, [int]$Bpm, [int]$Length, [string]$Phrase, [string]$Purpose) {
   return [ordered]@{
     id = $Id
-    source = @{ entry_mode='extended'; length=$Length; pitch_length=2; pitches=@(48,52); slide_pitch_indices=@(1,2); accent_pitch_indices=@() }
+    source = @{ length=$Length; pitch_length=2; pitches=@(48,52); slide_pitch_indices=@(1,2); accent_pitch_indices=@() }
     phrase = $Phrase
     capture = @{ tpl=12; sample_rate=48000; minimum_tail_ms=500; song_lpb=8; bpm=$Bpm; channels='mono-or-dual-mono-stereo'; sample_format='PCM24' }
     analysis = @{ onset_floor_dbfs=-60; maximum_continuity_dip_db=6; maximum_continuity_dip_ms=4; minimum_pitch_window_ms=40; silence_dbfs=-60; onset_tolerance_ms=5; onset_refractory_ms=90; pitch_tolerance_cents=15 }

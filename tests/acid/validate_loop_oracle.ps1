@@ -172,8 +172,6 @@ foreach ($lengthCase in $boundary.length_cases) {
 }
 
 foreach ($entry in $oracle.entry_cases) {
-    $modes = if ($entry.ContainsKey('entry_modes')) { @($entry.entry_modes) } elseif ($entry.ContainsKey('entry_mode')) { @($entry.entry_mode) } else { @() }
-    foreach ($mode in $modes) { Assert-True (@('original', 'extended') -contains $mode) "$($entry.id): unsupported entry mode '$mode'" }
     if ($entry.operation -eq 'enter_time') {
         Assert-True ($entry.input_time.Count -eq $entry.length -and $entry.expected_time.Count -eq $entry.length) "$($entry.id): TIME length mismatch"
         $normalized = @($entry.input_time)
@@ -216,25 +214,17 @@ foreach ($entry in $oracle.entry_cases) {
         }
         Assert-Equal $computedFirstTransitions.ToArray() $entry.expected_first_transitions "$($entry.id) first transitions"
     }
-    if ($entry.id -eq 'noncanonical_leading_tie_is_rejected_in_both_modes') {
-        Assert-Equal $entry.entry_modes @('original', 'extended') 'Raw leading TIE must be rejected in both modes'
-        Assert-True ($entry.expected_error -eq 'leading_tie' -and $entry.source_unchanged) 'Raw leading TIE refusal must preserve source'
-    }
-    if ($entry.id -eq 'original_length_seventeen_requires_explicit_extended_choice') {
-        Assert-True ($entry.entry_mode -eq 'original' -and $entry.length -eq 17) 'Original TIME bound fixture is malformed'
-        Assert-True ($entry.expected_error -eq 'original_time_length' -and $entry.source_unchanged) 'Original TIME bound must refuse without editing source'
-    }
-    if ($entry.id -eq 'original_independent_short_pitch_span_requires_extended') {
-        Assert-True ($entry.entry_mode -eq 'original' -and $entry.length -eq 12 -and $entry.pitch_length -eq 3) 'Original PITCH span fixture is malformed'
-        Assert-True ($entry.expected_error -eq 'original_pitch_span' -and $entry.source_unchanged) 'Original PITCH span bound must refuse without editing source'
+    if ($entry.operation -eq 'validate_source') {
+        Assert-True ($entry.expected_error -eq 'leading_tie' -and $entry.source_unchanged -and
+            $entry.input_time[0] -eq 'T') 'Raw leading TIE refusal must preserve source'
     }
 }
 
-Assert-True (@($oracle.entry_cases | Where-Object operation -eq 'enter_time' | ForEach-Object entry_mode | Sort-Object -Unique) -contains 'original') 'Missing Original entry normalization case'
-Assert-True (@($oracle.entry_cases | Where-Object operation -eq 'enter_time' | ForEach-Object entry_mode | Sort-Object -Unique) -contains 'extended') 'Missing Extended entry normalization case'
+Assert-True (@($oracle.entry_cases | Where-Object operation -eq 'enter_time').Count -eq 1) 'Missing shared leading-TIE entry normalization case'
+Assert-True (@($oracle.entry_cases | Where-Object operation -eq 'validate_source').Count -eq 1) 'Missing shared raw leading-TIE validation case'
 Assert-True ($oracle.cutover_cases.Count -ge 2) 'Missing cutover fixtures'
 $sourceCutover = @($oracle.cutover_cases | Where-Object operation -eq 'load_source')
-Assert-True ($sourceCutover.Count -eq 1 -and $sourceCutover.source_format -eq 'ACID-PITCH-TIME-1') 'Missing unsupported development-format fixture'
+Assert-True ($sourceCutover.Count -eq 1 -and $sourceCutover.source_format -eq 'ACID-PITCH-TIME-2') 'Missing unsupported development-format fixture'
 Assert-True ($sourceCutover.expected_error -eq 'unsupported_source_format' -and $sourceCutover.imports -eq 0 -and $sourceCutover.writes_on_read -eq 0) 'Unsupported source read must refuse without importing or writing'
 $sealCutover = @($oracle.cutover_cases | Where-Object operation -eq 'check_ownership')
 Assert-True ($sealCutover.Count -eq 1 -and $sealCutover.expected_status -eq 'foreign' -and -not $sealCutover.adoption_allowed) 'Earlier development seal must not confer ownership or permit adoption'

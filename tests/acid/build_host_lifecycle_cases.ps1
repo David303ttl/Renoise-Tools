@@ -62,7 +62,6 @@ function New-HostLifecycleCase {
       host_release_deadline_ms = 10
     }
     source = @{
-      entry_mode = 'extended'
       length = 2
       time = @('N', 'R')
       pitches = @(48)

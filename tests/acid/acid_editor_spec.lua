@@ -16,7 +16,7 @@ for i=1,16 do
   assert(not fresh_view.mapping[i].accent and not fresh_view.mapping[i].slide)
 end
 assert(interpreter.compile_cycle(fresh).steps[16].note==36)
-local seam=seq.new_pattern(1,"extended")
+local seam=seq.new_pattern(1)
 seam.pitch_length=1
 seam.pitch_events[1]=seq.new_pitch(0,0,false,true)
 assert(seq.set_time(seam,1,"N")=="N")
@@ -27,7 +27,7 @@ assert(editor.step_text(seam_view,1,1):find("A",1,true))
 assert(editor.step_text(seam_view,1,2):find("S",1,true))
 
 for _,length in ipairs({1,16,17,32,33,48,49,64}) do
-  local p=seq.new_pattern(length,"extended")
+  local p=seq.new_pattern(length)
   assert(p.length==length)
   for i=1,length do p.time_events[i]=i%4==1 and "N" or i%4==2 and "T" or "R" end
   p.pitch_events[1]=seq.new_pitch(0,0,true,true)
@@ -54,23 +54,23 @@ for _,octave in ipairs({-1,0,1}) do
     local k,o=seq.pitch_controls(p)
     assert(k==key and o==octave)
     assert(p.note==36+key+12*octave)
-    local single=seq.new_pattern(1,"extended")
+    local single=seq.new_pattern(1)
     single.pitch_length=1
     single.pitch_events[1]=p
-    single.time_events={"N"}
+    for i,command in ipairs({"N"}) do single.time_events[i]=command end
     assert(seq.validate(single))
   end
 end
 local mismatched=seq.new_pitch(0,0)
 mismatched.note=37
-local mismatched_source=seq.new_pattern(1,"extended")
+local mismatched_source=seq.new_pattern(1)
 mismatched_source.pitch_length=1
 mismatched_source.pitch_events[1]=mismatched
-mismatched_source.time_events={"N"}
+for i,command in ipairs({"N"}) do mismatched_source.time_events[i]=command end
 local valid,diagnostic=seq.validate(mismatched_source)
 assert(not valid)
 assert(diagnostic=="pitch keyboard/octave does not match MIDI note at pitch entry 1")
-local bad=seq.new_pattern(17,"extended")
+local bad=seq.new_pattern(17)
 bad.pitch_events[1]=seq.new_pitch(0,0)
 bad.pitch_events[2]=seq.new_pitch(3,1)
 bad.pitch_length=2
@@ -92,7 +92,7 @@ assert(preview.error and preview.error.step==16, preview.error and preview.error
 bad.time_events[16]="Q"
 preview=editor.project(bad)
 assert(preview.error and preview.error.step==16)
-local off=seq.new_pattern(64,"extended")
+local off=seq.new_pattern(64)
 off.pitch_events[1]=seq.new_pitch(0,0)
 off.pitch_events[2]=seq.new_pitch(7,0)
 off.pitch_length=2

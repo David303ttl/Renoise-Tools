@@ -3,11 +3,10 @@ local gates=require("writers.gate_writer")
 local signals=require("model.control_signals")
 local seq=require("model.sequencer")
 local compiler=require("model.cycle_interpreter")
-local p=seq.new_pattern(2,"extended")
-p.playback="one_shot"
-p.time_events={"N","N"}
+local p=seq.new_pattern(2)
+for i,command in ipairs({"N","N"}) do p.time_events[i]=command end
 local semantic=assert(compiler.compile_cycle(p))
-local timeline=assert(signals.compile(p,{plan=semantic}))
+local timeline=assert(signals.compile(p,{plan=semantic,output_policy="play_once"}))
 local operations=assert(gates.plan(timeline,semantic))
 assert(operations.release_lines[2] and operations.release_lines[4])
 local cells={}

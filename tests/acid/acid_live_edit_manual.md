@@ -1,5 +1,9 @@
 # ACID Live Edit manual verification
 
+The Renoise result below is an M2-era UI receipt. Current cutover acceptance is
+tracked in [acid_m35_s_manual.md](acid_m35_s_manual.md); this procedure covers
+the remaining Live Edit lifecycle checks.
+
 Run `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID`
 locally in VS Code. No GitHub workflows.
 

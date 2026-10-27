@@ -1,27 +1,16 @@
-# ACID M1: reopening, song persistence and phrase destinations
+# ACID phrase destination checks
 
-Run locally in Renoise 3.5+ against the M1 branch. Do not run GitHub workflows.
+Use a disposable song in Renoise 3.5. Open ACID and edit the ready draft, then
+generate a new phrase. Change the source and output policy and regenerate the
+selected owned phrase. Confirm the source and phrase policy restore when the
+destination is selected again and after saving and reopening the XRNS.
 
-1. With a sample instrument containing no phrases, open ACID. Set LAST STEP=16;
-   Create Pattern; change P02 to D#, octave UP, accent ON; set TIME step 02
-   to TIE and step 04 to REST. Choose NEW PHRASE and generate.
-2. Close ACID and reopen it. The current instrument/phrase program should select
-   the generated ACID phrase automatically. Check that its original PITCH
-   memory, TIME states, LAST STEP, accent/slide and renderer mode all reappear.
-3. Save the XRNS, close/reopen Renoise and reload the song. Select this same
-   phrase and ensure its source is restored from song.tool_data.
-4. Choose NEW PHRASE, create a new pattern, set LAST STEP=17 and generate.
-   Verify a second phrase was appended without changing the first phrase.
-   Switch destination between phrases 01 and 02; each must reload its own
-   source, and the instrument phrase program must address the generated slot.
-5. Add a manually created phrase. Select it in ACID. It must be shown as
-   foreign and blocked from overwrite. ACID should require NEW PHRASE.
-6. Edit a sealed ACID phrase directly in Renoise. Its status should be
-   modified; ACID must refuse overwrite or restoration of stale source.
-7. Open an older ACID 0.1 phrase with no snapshot ID. Its original PITCH/TIME
-   state is not recoverable from rendered notes. Do not silently invent memory.
-8. Run the local Lua tests with
-   pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID
+Append a second phrase and confirm the first phrase remains unchanged. Select a
+foreign phrase and confirm it cannot be replaced. Manually edit an owned phrase
+and confirm ACID refuses to regenerate it. Rejected older snapshots and seals
+remain untouched; recreate their source in the current editor.
 
-Known boundary: this implementation persists the source when successfully
-generating a phrase; unsaved UI edits are not autosaved before generation.
+For the Program/Grid and Repeat/Play Once cutover checks, use the
+[current Renoise checklist](acid_m35_s_manual.md). The current-format
+save/reopen and ownership behavior has deterministic Lua coverage; native GUI,
+undo and playback acceptance must be recorded separately.

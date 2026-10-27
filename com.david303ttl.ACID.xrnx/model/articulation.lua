@@ -58,17 +58,18 @@ function M.plan(plan, lines_per_step, rate)
   return commands
 end
 
-function M.apply(phrase, plan, lines_per_step, rate, early_release)
+function M.apply(phrase, plan, lines_per_step, rate, options)
   if lines_per_step~=2 then return nil,"articulation output requires 2 lines per step" end
+  options=options or {}
+  if type(options)~="table" then return nil,"invalid articulation output options" end
   local commands,err=M.plan(plan,lines_per_step,rate)
   if not commands then return nil,err end
   local control=require("model.control_signals")
   local gates=require("writers.gate_writer")
-  local timeline={events={},steps=plan.length,gate_fraction=0.5}
-  if early_release then
-    timeline,err=control.compile({}, {plan=plan,playback="one_shot",gate_fraction=0.5})
-    if not timeline then return nil,err end
-  end
+  local timeline
+  timeline,err=control.compile({}, {plan=plan,successor=options.successor,
+    output_policy=options.output_policy or "repeat",gate_fraction=0.5})
+  if not timeline then return nil,err end
   local merged
   merged,err=gates.plan(timeline,plan,commands)
   if not merged then return nil,err end

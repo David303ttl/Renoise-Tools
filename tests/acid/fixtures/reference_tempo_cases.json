@@ -118,7 +118,6 @@
           50,
           51
         ],
-        "entry_mode": "extended",
         "pitch_length": 16
       },
       "phrase": "Grid calibration 17-step pitch-span wrap",
@@ -1225,7 +1224,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -1343,7 +1341,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           48
@@ -1462,7 +1459,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
@@ -1531,7 +1527,6 @@
           50,
           51
         ],
-        "entry_mode": "extended",
         "pitch_length": 16
       },
       "phrase": "Grid calibration 17-step pitch-span wrap",
@@ -2638,7 +2633,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48
         ],
@@ -2756,7 +2750,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           48
@@ -2875,7 +2868,6 @@
         }
       ],
       "source": {
-        "entry_mode": "extended",
         "pitches": [
           48,
           52
