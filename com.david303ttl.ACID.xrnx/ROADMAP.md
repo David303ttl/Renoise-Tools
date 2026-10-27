@@ -63,7 +63,7 @@ Implemented on `develop`:
 | Live Edit | Opt-in debounced (350 ms), serialized automatic regeneration; manual Generate/Regenerate retained |
 | Verification | User-confirmed local Lua regressions and in-Renoise testing for M1, phrase selection/persistence, and Live Edit |
 
-**Do not infer from the M1 baseline** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. M2 provides baseline Repeat phrase generation and has passed the recorded pitch/grid renders plus the available writer-cell, Live Edit, ownership, and source-persistence checks. Additional acoustic acceptance is deferred until a registered Renoise build is available. `0Gxx` and gate behavior remain experimental.
+**Do not infer from the M1 baseline** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. M2 provides baseline Repeat phrase generation and has passed the recorded pitch/grid renders plus the available writer-cell, Live Edit, ownership, and source-persistence checks. Additional acoustic acceptance remains unverified; M3 will first qualify a Demo-compatible loopback path. `0Gxx` and gate behavior remain experimental.
 
 ### Important model debt to address in M2
 
@@ -86,11 +86,11 @@ The current source stores **64 valid C pitches** and carries an independent acti
 
 ## 4. M2 — Continuous playback and loop correctness
 
-**Goal:** a phrase repeats predictably over successive cycles, including PITCH consumption and NOTE/TIE/REST behavior at the last-to-first boundary. The implementation and structural acceptance are closed; additional audio-level acceptance is deferred until a registered Renoise build is available.
+**Goal:** a phrase repeats predictably over successive cycles, including PITCH consumption and NOTE/TIE/REST behavior at the last-to-first boundary. The implementation and structural acceptance are closed; additional audio-level acceptance remains unverified and is carried into the M3 loopback harness.
 
 **Status (2026-10-27):** M2 implementation closed by user decision after code/spec coverage and available Renoise 3.5.4 Demo checks. This status does not claim sample-envelope fidelity or complete acoustic acceptance. See the [manual results](../tests/acid/acid_loop_manual.md), [Live Edit results](../tests/acid/acid_live_edit_manual.md), and [regeneration results](../tests/acid/acid_regeneration_manual.md). **Do not treat `looping = true` alone as evidence of audio behavior.**
 
-**Implementation and verification record:** [M2 blueprint](M2_BLUEPRINT.md), checked against original Roland documentation, the pinned OS-303 firmware and current ACID code. It defines Original/Extended entry, the cursor/voice contract, logical PITCH span, source/seal cutover, native-loop experiments, safety work and acceptance fixtures. Renoise Demo disabled new WAV rendering; release/cut-tail, voice-continuity, transport, keymapped-trigger, and remaining lifecycle checks are documented as deferred follow-up. No hardware fidelity is implied.
+**Implementation and verification record:** [M2 blueprint](M2_BLUEPRINT.md), checked against original Roland documentation, the pinned OS-303 firmware and current ACID code. It defines Original/Extended entry, the cursor/voice contract, logical PITCH span, source/seal cutover, native-loop experiments, safety work and acceptance fixtures. Renoise Demo disabled new offline WAV rendering; release/cut-tail, voice-continuity, transport, keymapped-trigger, and remaining lifecycle checks are documented as deferred follow-up. M3 qualifies loopback capture for the relevant audio checks; this does not retroactively pass them. No hardware fidelity is implied.
 
 ### M2.0 — Define the conformance oracle
 
@@ -234,7 +234,7 @@ Demo-specific rendering limits prevent additional audio verification now.
 M2 is closed as an implementation milestone by user decision. Release/cut-tail,
 held-voice continuity, cold-versus-steady articulation, request-level slide
 refusal, transport stop/start/seek, and keymapped triggering remain explicitly
-deferred until registered Renoise is available. Undo, failure injection, rapid
+unverified; M3 first qualifies loopback capture for its relevant audio checks. Undo, failure injection, rapid
 in-flight edits, and manual rejection of earlier formats/seals are also not
 claimed as passed. Passing M2 does not complete the original sequencer goal or
 establish TB-303 sound fidelity; M3–M5 requirements remain.
@@ -243,44 +243,94 @@ establish TB-303 sound fidelity; M3–M5 requirements remain.
 
 ## 5. M3 — Gate, accent and selective glide fidelity
 
-**Goal:** translate semantic articulation into predictable native-sample playback. A pitch-changing effect is not sufficient proof that the *same voice* glides without envelope retrigger.
+**Goal:** translate semantic articulation into predictable native-sample playback. Pitch movement alone does not establish envelope continuity. M2's source traversal, outgoing SLIDE, REST interruption, cold/steady distinction and exclusive loop-end sentinel remain authoritative.
+
+**Status:** planning only; no new audio acceptance is claimed. M2 implementation remains closed. Its deferred release, continuity and trigger checks become explicit M3 prerequisites where relevant; undo and lifecycle work outside this scope remains tracked for M6. Historical gate duration and analog accent response remain unverified.
+
+### M3.0 — Decisions, boundaries and blockers
+
+| Decision | Implementation contract |
+| --- | --- |
+| Native gate profile | For articulated modes, adopt 50% of the final held step as an explicit provisional ACID profile, not a measured TB-303 value. Replace the accidental test-only behavior with a complete cyclic scheduler; no new gate control or hardware claim. |
+| Timing | Straight sixteenths only: phrase LPB 8, two lines per step, song TPL 12 for the reference captures. One step is 15000/BPM ms; one line is 7500/BPM ms. No delay-column or tick commands in M3. Reject other output grids rather than round; rational/triplet conversion belongs to M4. |
+| Gate and glide independence | Gate work may proceed if the glide experiment fails. Slide-connected cases retain precise refusals until verified; no fallback to a fresh attack. |
+| Instrument boundary | Runtime generation never changes the user's sample, NNA, modulation, routing or Mono/Glide settings. A measured reference profile is a support prerequisite, not a promise for arbitrary instruments. |
+| Existing modes | Keep Baseline as the structural reference without claiming calibrated gates. Retrigger + Gate implements the gate profile and refuses connected slides it cannot render. Selective Slide + Gate combines verified gate/glide behavior. Do not promote experimental Mono to a distinct verified strategy while it uses the same local effect path. |
+| Defaults | Repeat remains the new-source default. Do not silently change renderer defaults or persisted settings; enabling a verified path must be explicit and covered by manual and Live Edit tests. |
+
+**Named blockers:** `writers/phrase_writer.lua` currently refuses every Repeat slide and every non-baseline Repeat mode. `model/control_signals.lua` only emits early OFF when it later sees a fresh NOTE: final held steps and the steady-to-steady seam lack successor scheduling. `model/articulation.lua` defaults to `0x02`, while the writer supplies `0x20`; these must become one explicit renderer policy. `renoise/sampler_audit.lua` reports counts only; it is not an instrument builder or a profile validator.
+
+**Order:** harness and calibration → isolated voice-continuity experiment (research item 3) → gate implementation and glide decision → supported glide integration → accent → acceptance record. Run the continuity experiment before investing in glide integration; gate implementation does not depend on its success.
 
 ### M3.1 — Establish a repeatable audio reference harness
 
-- Prepare a **disposable**, looping single-cycle sawtooth Renoise sample instrument with fixed sample mappings, amplification envelope, LPB and instrument settings.
-- Record controlled cases to WAV where needed; compare note-on transients, held portions, pitch motion and NOTE-OFF timing.
-- Build short A/B fixtures (slide on/off, accent on/off, NOTE vs TIE, NOTE vs REST, same-note vs octave glide).
-- Include accents within a slide chain and successive accented notes; separate PITCH flag changes from gate retrigger and from the resulting amp/filter response. Treat any accent accumulation or decay law as a measurement question.
-- Capture Renoise configuration, BPM/LPB, rendered phrase lines, audible observations and unresolved discrepancies; label observations distinct from historical claims.
+**Development deliverables** (outside the installable tool):
+
+- `tests/acid/renoise_articulation_probe.lua`, `renoise_articulation_trigger.lua`, `renoise_articulation_start.lua`, `renoise_articulation_flat_control.lua`, `renoise_articulation_probe_envelope.lua` and `renoise_articulation_probe_manual.md`: create a disposable named instrument, controlled phrases and a dedicated song-pattern host trigger, start the exact selected sequence position for capture, toggle a flat-envelope pitch/level control and the diagnostic envelope, reuse the safety conventions of the loop probes, and capture the actual ACID writer output as well as independent native controls. Refuse duplicate named probe objects; clean up only objects created by this run. Keep the existing sampler inspection read-only.
+- `tests/acid/fixtures/audio_cases.json`: authored, machine-readable acoustic oracle, separate from `loop_cases.json` semantic expectations.
+- `tests/acid/validate_audio_oracle.ps1`: validate schema, units, windows, references and case completeness without Renoise or WAVs.
+- `tests/acid/analyze_articulation_audio.ps1`: PowerShell 7 offline WAV analyzer with documented PCM decoding, alignment, RMS, onset and pitch algorithms; emit machine-readable results and a readable per-window report. No private application or audio-library dependency. Tests must include synthetic known-good signals and deliberate onset, drift, pitch, gap, clipping and retrigger failures; do not validate it only against ACID output.
+- `tests/acid/acid_articulation_manual.md`: configuration, evidence index, support matrix, negative results and unresolved decisions. Raw WAVs and scratch reports stay untracked; record SHA-256 hashes and portable artifact references so a retained capture can be checked again.
+
+**Reference instrument contract:** the probe builds the sample and profile; hand-built alternatives do not count until all settings match. Generate one deterministic 168-frame mono saw cycle at 44100 Hz, loop forward over the entire cycle, root note 48, mapping 0–119, no transpose/finetune, fixed interpolation and no sample FX, filter, randomization, velocity-to-filter or pitch modulation. Use linear interpolation and record the generated sample hash. Derive expected frequency from 44100/168 Hz at note 48 and the mapped semitone ratio, not equal-tempered C: this sample is approximately six cents sharp. Use NNA Cut, normal polyphonic playback and explicit OFF; compare native Mono/Glide only on a separate disposable variant. Set gain for captured peaks below -6 dBFS. Use a diagnostic amplitude envelope with 10 ms linear attack, 20 ms decay to 0.65 sustain, and 5 ms release after OFF. Disable envelope looping and all other modulation. This attack/decay signature makes a repeated envelope detectable. Measure the actual realized envelope: if Renoise's available envelope time base cannot express these values, stop, inspect the pinned API 6.2 definitions/offline docs, and record a representable profile and revised oracle before capturing acceptance. Never silently approximate it. Use a flat-envelope companion control to isolate pitch and level analysis. Record all mappings, envelope points/time base, gains, NNA, interpolation, modulation routing and trigger settings in the capture metadata.
+
+**Demo-compatible capture protocol:**
+
+1. Use Renoise WASAPI in shared mode and Audacity Windows WASAPI loopback on the exact same playback endpoint. This desktop exposes 48000 Hz for that endpoint through WASAPI; set Renoise, the Audacity project and export to 48000 Hz without resampling. Export unnormalized PCM24 WAV (PCM16 is accepted when PCM24 is unavailable). Keep the Windows system volume unchanged. Disable OS enhancements, spatial processing, auto gain, recorder effects and monitoring feedback. Mute other applications and unrelated Renoise tracks. OBS is an alternative only after its unprocessed lossless PCM path passes the same calibration; lossy capture is invalid.
+2. Record the Renoise build/edition, capture application/version, endpoint, driver, buffer size, BPM, song LPB/TPL, phrase LPB/layout, trigger mode and profile hash. Start recording at least one second before a single sustained host trigger. The probe trigger pattern is 224 lines (14 seconds), with its only note at line 1 and OFF at line 137; the 8.5-second phrase contains one cold pass and three steady passes. Capture at least two seconds beyond OFF, then stop before the song sequence wraps and retriggers. Do not periodically retrigger the host note.
+3. Run primary cases at 120 BPM, repeat gate/glide acceptance at 90 and 150 BPM. Timing derives from BPM, never recorder start time. Align once to the first detected onset; preserve all subsequent offsets. Do not align each cycle independently or time-stretch/resample to hide drift. All-rest cases require an independently captured synchronization marker followed by the measured silent region; do not infer their origin from silence.
+4. Before any A/B result counts, capture a known M2 grid/marker case from `loop_cases.json` through this exact path (17-step cold intro plus three steady 17-step cycles, with line 69 as the exclusive-end sentinel). Author its expected marker pitches/positions in the audio oracle. Require correct order, no missing/extra markers and every onset/period within 5 ms after single alignment. Freeze the -60 dBFS onset floor against the live route and synthetic positive/negative controls; if the first or later markers do not clear it, invalidate the capture instead of changing Windows volume or normalizing the WAV. Repeat calibration after changing endpoint, driver, profile or capture settings. Demo's disabled offline render is not a blocker for this protocol; an available offline renderer is an optional cross-check, not a replacement for loopback calibration.
+5. Capture each A/B pair three times with unchanged configuration. Reject clipping, channel mismatch, contamination, missing tail, failed calibration or excess drift as invalid capture. Keep invalid distinct from acoustic fail and unsupported; no invalid result counts as pass.
+
+**Oracle contract:** use schema identifier `ACID-AUDIO-ORACLE-1` with shared profile and capture requirements. Each case has a stable behavior-based ID, canonical source (PITCH/TIME, active span, length), playback/renderer/rate, BPM/LPB/TPL, trigger context, cycle count and explicit expected windows relative to the aligned origin. Store times in step fractions or milliseconds with declared units; expand them independently from the runtime scheduler. Specify expected attacks and forbidden-attack windows, OFF edges and release-tail deadlines, sustained/silent windows, pitch targets in Renoise note values with cents tolerances, glide direction/settling windows, and amplitude/continuity bounds. Distinguish cold, first steady and subsequent steady windows. Include separate A/B control IDs and the measurement each control validates. Expectations may not be generated by the code being tested.
+
+**Initial numerical acceptance policy:** onset and release-envelope edge tolerance ±5 ms; cycle drift at most 5 ms over the full capture after one alignment; stable pitch within ±15 cents in windows of at least 40 ms; silence RMS below -60 dBFS after the 5 ms release plus 5 ms tolerance. Analyze continuity/release RMS over 5 ms windows with 1 ms hops, and onsets over 10 ms windows to suppress low-pitch saw-cycle dips; require at least 20 ms of silence where a gap is expected. A requested attack must match the calibrated attack/decay signature; calibrate detection with deliberate retriggers, same-pitch holds and a silent negative control. For connected transitions, forbid that attack signature within ±20 ms of the target and forbid a dip greater than 6 dB lasting 4 ms relative to adjacent sustained RMS. Compare pitch-dependent RMS against the matching hold control, not raw waveform discontinuities. Ambiguous pitch/attack estimates are inconclusive and block support; passing continuity measures establishes observable behavior for this profile, not proof of Renoise's internal voice identity. Freeze detector thresholds against positive/negative controls before evaluating candidates; any revision requires rationale and rerunning all affected captures, never tuning only a failing candidate.
+
+**Required fixture families:** isolated NOTE; NOTE-TIE and NOTE-TIE-TIE; adjacent equal/different NOTES; NOTE-REST-NOTE; all-rest; ending REST; trailing TIE before fresh NOTE and before slide; one-step repeat; outgoing versus incoming flags; same-note/up/down/octave slides; short and tied-long slides; cold-to-steady and steady-to-steady slide seams; slide interrupted by REST; accents on/off, consecutive accents, accent changes within a slide chain. Exercise lengths 1/16/17/32/33/48/49/64 structurally and capture 1/16/17/64 with seam articulation. Test host OFF, fresh retrigger, stop/start and seek separately. Selective and keymapped triggering have separate support rows; coverage in one never enables the other.
 
 ### M3.2 — Correct gate and release semantics
 
-- Replace the **50% test gate** with a documented model of normal-note gate/retrigger, extended TIE, ending REST and slide-connected hold.
-- Decide how release can be represented in native phrase columns or delays/ticks without destructive collisions.
-- Use explicit scheduling at line/tick resolution only when the Renoise phrase engine can reproduce the intended timing.
-- Define gate behavior at pattern end and at repeated phrase boundary (depends on M2).
+**Chosen profile:** an isolated unconnected NOTE gates for half a step. A following TIE keeps the gate high through the preceding step; release occurs halfway through the final held NOTE/TIE step before a fresh NOTE. Thus NOTE-TIE lasts 1.5 steps and NOTE-TIE-TIE lasts 2.5 steps before a fresh attack. The resulting retrigger gap is half a step (62.5 ms at 120 BPM). A following REST overrides midpoint release and emits OFF exactly at the REST's start. A connected slide holds through the target without OFF. An outgoing flag with no next NOTE never creates a target or bypasses REST.
 
-**Tests:** note lengths for one-step NOTE, NOTE-TIE, NOTE-TIE-TIE, adjacent NOTE, REST, and loops; confirm correct release on every case.
+**Boundary policy:** evaluate the actual successor, not just the flattened cold+steady array. In Repeat, trailing TIE holds into an outgoing slide, releases at the final held-step midpoint before an unconnected first NOTE, or releases at the next REST boundary. Handle cold→steady and steady→steady explicitly. In one-shot, a final unconnected NOTE/TIE releases at its final held-step midpoint; an outgoing SLIDE with no successor does not sustain indefinitely. Do not write into the exclusive-end sentinel, add an unconditional end OFF or change the M2 pitch cursor contract. Host OFF/transport behavior is measured separately from scheduled releases.
+
+**Module map:** `model/control_signals.lua` owns pure gate edges in existing 256-units-per-step coordinates with explicit successor/playback context; `writers/gate_writer.lua` maps exact supported edges to cells; `writers/phrase_validator.lua` validates the complete merged note/OFF/effect/volume plan and rejects unexpected delay, panning, instrument and cut-command data; `writers/phrase_writer.lua` supplies cold/steady context, preflights support and commits only after validation. Keep semantic voice intent separate from physical gate state. Use a shared operation plan so gate and glide cannot independently overwrite each other.
+
+**Collision rules:** preflight all operations before mutation. Refuse missing cells, occupied note/delay/effect fields, nonrepresentable edges and contradictory OFF/target operations with TIME step, cycle and zero-based phrase-line diagnostics. Optional G00 may be omitted on OFF only if the probe verifies that omission; never silently drop a required operation. Preserve owned-phrase validation, temporary rendering, rollback, source commit and Live Edit serialization.
+
+**Gate:** pure specs cover every successor combination, one-shot tail and both Repeat seams, including 1-step/all-rest cases; writer/validator tests cover collisions and failure rollback. Calibrated captures verify gate widths, tail deadlines and no extra attack. Enable Repeat gate mode only for its passing matrix; retain refusal for slide-bearing cases pending M3.3.
 
 ### M3.3 — Selective glide without accidental retrigger
 
-- Test local `0Gxx` versus any native mono/glide alternative on the same fixed sample.
-- Verify directional interval, same-note slide, short/long slide, octave jumps, incoming vs outgoing slide flag, and loop-boundary glide.
-- Prove no unintended new attack or overlay occurs when legato is required; reject modes that cannot guarantee the selected semantics.
-- Ensure effect-column use and OFF placement remain collision-safe; do not overwrite user-owned cells.
+**Experiment first:** on independent native phrases compare a deliberate retrigger, TIE hold, local target `0Gxx` plus following `0G00`, and a disposable native Mono/Glide alternative. Keep the diagnostic envelope and control pitches identical. Establish whether target notes restart the envelope, whether effects persist beyond their intended window, and whether the existing G00 interpretation actually works. No instrument-wide strategy may introduce glide on unflagged transitions.
 
-**Tests:** semantic unit specs, effect placement/specs, native recorded A/B checks.
+**Rate policy:** `0x20` is the provisional writer rate; remove the inconsistent helper default when implementing. Treat it as a Renoise command amount, not a claimed duration in milliseconds. Sweep `0x08`, `0x20`, `0x40` in the experiment at 90/120/150 BPM; author per-rate settling windows from the native control evidence before integrating the writer. Require monotonic movement in the intended direction (within pitch-estimator tolerance) and target ±15 cents for at least 40 ms before the next required pitch change. Same-pitch connection requires continuity without a pitch excursion. If `0x20` cannot pass the declared short/octave cases, record a new single default or explicit supported interval/duration limits before integration; do not select a hidden rate per failing case. No UI rate feature is required.
+
+**Refusal relaxation:** replace the blanket Repeat refusal only for the exact renderer/profile/trigger/rate/interval-duration classes whose independent controls and actual writer captures pass. Require cold attack, cold→steady connection, at least three steady cycles including steady→steady connection, same-pitch, both directions, octave, TIE extension, REST interruption, effect cancellation and no detected overlapping tail under the declared analysis and listening checks. A mixed WAV alone does not prove internal voice count. Repeat default must be exercised through normal Generate and Live Edit, not only a probe bypass. A non-baseline-mode pass does not establish slide support, and a one-shot glide pass does not establish Repeat support. Unsupported cases retain pre-mutation diagnostics identifying mode, TIME step, cycle, phrase line and missing evidence. Do not encode support as an unchecked global boolean or infer a profile from sample count alone; profile-dependent eligibility must be checked read-only or explicitly acknowledged through a documented setup workflow before enabling it.
+
+**Fallback decision:** if no native method passes, retain precise refusals, publish the failed measurements and mark selective glide blocked. Gate/accent work can merge independently, but M3's full articulation goal remains incomplete unless the user explicitly accepts a reduced scope. Do not claim completion while every default Repeat slide is rejected.
+
+**Modules:** `model/articulation.lua`, `writers/phrase_writer.lua`, `writers/phrase_validator.lua`, the shared gate operation plan, and read-only profile checking where necessary. Preserve outgoing PITCH ownership, same-pitch connection and REST cancellation from the M2 interpreter; do not modify semantics to fit a failing renderer.
 
 ### M3.4 — Accent response
 
-- Keep PITCH-owned ACCENT as the canonical control, not a TIME attribute.
-- Specify provisional volume/velocity behavior separately from optional dedicated Renoise instrument modulation (amp/filter envelopes).
-- Do not claim the sample instrument duplicates a TB-303's analog accent/filter envelope; identify a verified preset/profile if required.
-- Preserve existing instrument configuration unless the user explicitly chooses a reversible setup operation.
+Retain PITCH-owned ACCENT and provisional event volumes **0.7 normal / 1.0 accent** in `writers/pattrns_writer.lua`. Add volume expectations to the final phrase validator; verify the emitted native values and captured response independently. On the flat-envelope, fixed-gain reference, compare equal-pitch settled windows: predict the level ratio from actual emitted/quantized volume cells, require measured delta within ±0.5 dB of that ratio and spread across three captures at most 0.5 dB. Do not assume the abstract 0.7 value maps linearly without checking the cells and response.
 
-### M3 merge gate
+Test alternating/consecutive accents, TIE retention, and accents entering/leaving slide chains using level-matched hold controls for continuity detection. Determine whether volume changes on a connected target apply without restarting the envelope; if not, refuse or clearly mark that combination unsupported rather than inventing accent accumulation. Filter-envelope emulation, analog accent decay and automatic edits to existing instruments remain outside M3 scope. Update UI/help limitations for the actual verified profile.
 
-In Renoise, notes, ties and rests have the expected release/attack behavior; slides are demonstrably connected when supported; accent changes are repeatable; all unsupported cases are identified rather than approximated silently. Normal regeneration, Live Edit, ownership and persistence remain intact.
+### M3 implementation packages and merge gates
+
+| Package | Scope / suggested commit | Exit gate |
+| --- | --- | --- |
+| M3-A | `test(acid): add calibrated articulation audio harness` | Probe/profile, oracle schema and authored cases, analyzer positive/negative tests, Demo loopback calibration and independent continuity experiment recorded; any profile/API uncertainty resolved before downstream audio acceptance |
+| M3-B | `fix(acid): schedule cyclic gate releases` | Full successor-aware model and shared operation validation, local specs, calibrated one-shot/Repeat gate captures; retain glide refusals |
+| M3-C | `feat(acid): enable verified selective glide playback` | Native strategy/rate decision and evidence matrix; actual writer passes, scoped refusals relaxed, default Repeat Generate/Live Edit checked; if blocked, record evidence instead of claiming feature delivery |
+| M3-D | `fix(acid): verify pitch-owned accent response` | Native volume validation, repeated captured level delta, explicit connected-accent support decision |
+| M3-E | `docs(acid): record articulation support and limitations` | Manual results, support matrix, DESIGN/README/current instructions agree; regression and package checks complete where required |
+
+Each behavior PR includes its specs, procedure and actual results; records are updated as evidence arrives, not postponed until the last package. Inspect relevant pinned API 6.2 definitions and offline docs before writing probe/profile or runtime API calls; SDK setup is a development prerequisite. Keep new code/fixture names behavior-based and all runtime dependencies inside ACID. No manifest/API bump or schema migration is implied.
+
+**Merge and completion gates:** run `./scripts/run_tests.ps1 -Tool ACID` after Lua changes; run all suites if shared scripts change and `./scripts/package.ps1 -Tool ACID` for runtime layout/package-input changes. Recheck normal regeneration, ownership rejection, source save/reopen and Live Edit for enabled modes. Record which tests ran, which captures passed, which trigger/profile combinations are supported and which remain unverified. Documentation/probe infrastructure may merge before acoustic support is established; renderer support cannot be enabled on mock tests alone. Full M3 acceptance requires verified gate, connected Repeat slide and repeatable accent behavior for the declared reference profile, or an explicit user-approved reduced scope with the missing goal still visible.
 
 ---
 
@@ -435,17 +485,14 @@ For every such decision, supply **reference + decision + test fixture + manual p
 
 ## 11. Immediate next work package
 
-**Start M2.0 + M2.1 + M2.2 first**, with *no simultaneous M3 sound changes*.
+**Start M3-A only:** implement the development harness, independent audio oracle and analyzer, then calibrate the Demo loopback path against a known M2 grid case. Do not change runtime articulation while capture validity is unknown.
 
-Suggested implementation order:
+1. Freeze the profile, fixture schema, expected windows and analyzer positive/negative controls from M3.1; inspect the pinned API 6.2 definitions for the disposable builder.
+2. Build and read back the disposable profile; document any representability issue before accepting audio results.
+3. Calibrate loopback and run the independent `0Gxx` continuity experiment first. Record a native strategy/rate decision or an explicit blocker.
+4. Implement M3-B's successor-aware gates independently. Implement M3-C only where the experiment supports it; keep unverified Repeat/profile combinations refused.
+5. Verify M3-D accent levels and connected-accent behavior, then finish the support/acceptance record in M3-E.
 
-1. Freeze R01–R04, Original entry fixtures and Extended cycle fixtures separately; document the provisional pitch cursor rule and original-memory uncertainty.
-2. Add multi-cycle interpreter tests covering three passes and logical pitch length, especially shorter-than-64 streams.
-3. Replace the development schema/seal contracts directly, including entry mode and explicit span; remove superseded decoders, behavioral branches and adoption paths.
-4. Implement native looping output once semantic expectations are passing.
-5. Resolve loop-boundary TIE/REST intent before attempting loop-boundary slide audio.
-6. Verify looping in Renoise (1, 16, 17, 32, 33, 48, 49, 64 steps), then integrate to `develop` only after manual pass.
+**Next PR success:** a reproducible Demo-compatible capture path, independent fixture validation, an analyzer that detects seeded failures, and recorded calibration/continuity results sufficient to decide the next runtime work. A blocked experiment is a useful result; it does not enable an unsupported renderer or complete M3.
 
-**Definition of success for the next PR:** multiple audible repeats follow exactly the intended PITCH/TIME traversal, page transitions are musically transparent, current-format sources roundtrip correctly, the clean cutover retains Extended functions, and Live Edit does not overwrite user-edited/foreign content.
-
-The ordering is intentional: **semantic correctness → repeatable native phrase output → articulation fidelity → timing fidelity → source editing and Renoise integration → hardened release**.
+The ordering remains **semantic correctness → repeatable native phrase output → articulation fidelity → timing fidelity → source editing and Renoise integration → hardened release**.
