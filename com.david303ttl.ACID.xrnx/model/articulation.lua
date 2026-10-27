@@ -14,7 +14,7 @@ function M.plan(plan, lines_per_step, rate)
     return nil, "invalid glide plan or step resolution"
   end
   rate=rate or M.DEFAULT_RATE
-  if not integer(rate,1,254) then return nil,"glide rate must be 01..FE" end
+  if not integer(rate,1,255) then return nil,"glide rate must be 01..FF" end
   local commands = {}
   for step=1,plan.length do
     local event = plan.steps[step]
@@ -32,7 +32,7 @@ function M.plan(plan, lines_per_step, rate)
       local interval=event.note-event.from_note
       -- Native Gxx advances xx sixteenths of a semitone per command line.
       -- This determines command coverage, not acoustic settling or continuity.
-      local span=math.max(1,math.ceil(math.abs(interval)*16/rate))
+      local span=rate==255 and 1 or math.max(1,math.ceil(math.abs(interval)*16/rate))
       local available=lines_per_step
       for successor=step+1,plan.length do
         local held=plan.steps[successor]

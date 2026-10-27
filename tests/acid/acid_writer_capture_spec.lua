@@ -17,6 +17,9 @@ local song = { instruments = { instrument }, transport = {} }
 renoise = { song = function() return song end, Instrument = { PHRASES_PLAY_SELECTIVE = 2 },
   tool = function() return { app_idle_observable = {} } end }
 local output, closed, callback, received, refusal, synchronous_failure
+local function completion(status, message)
+  return {kind="complete",status=status,message=message,diagnostics={}}
+end
 local original_open = io.open
 io.open = function(path, mode)
   if path:find("/tmp/acid-articulation/", 1, true) then
@@ -40,7 +43,7 @@ ACID_CAPTURE_WRITER_TEST = function(index, cb, source, target, options)
     output_policy=options.output_policy }
   callback = cb
   if synchronous_failure then
-    cb("GENERATION FAILED\nsynchronous native setup failure")
+    cb(completion("error","synchronous native setup failure"))
     return nil, "synchronous native setup failure"
   end
   if refusal then return nil, refusal end
@@ -58,10 +61,10 @@ assert(received.index == 1 and received.target == 8 and received.output_policy =
 assert(received.source.length == 17)
 assert(received.source.pitch_events[1].slide and received.source.time_events[17] == "T")
 assert(output:find("generation_result=pending", 1, true) and not closed)
-callback("GENERATION FAILED\nnative rendering error")
+callback(completion("error","native rendering error"))
 assert(closed and output:find("generation_result=failed", 1, true))
 local failed_output = output
-callback("GENERATION FAILED\nduplicate completion")
+callback(completion("error","duplicate completion"))
 assert(output == failed_output, "Late status changed the finalized metadata record")
 synchronous_failure = true
 run("isolated_note")
@@ -83,7 +86,7 @@ for _, id in ipairs({"one_shot_note_tail_bpm_120", "one_shot_tie_tail_bpm_120",
   local policy=id:find("^repeat_") and "repeat" or "play_once"
   run(id, policy)
   assert(received.output_policy == policy and received.source.pitch_events[1].note == 48)
-  callback("GENERATION FAILED\ncapture protocol test only")
+  callback(completion("error","capture protocol test only"))
   assert(closed, "Gate case metadata did not close after failure")
 end
 run("isolated_note")
@@ -94,7 +97,7 @@ function phrase:line()
     panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}} }
 end
 instrument.phrases[8] = phrase
-callback("Phrase 08 generated (1 notes, 0 OFF; 1 raw events). Instrument 00.")
+callback(completion("committed","Phrase 08 generated (1 notes, 0 OFF; 1 raw events). Instrument 00."))
 assert(closed and instrument.phrase_program == 8)
 assert(output:find("phrase.line.1=48,255,89,255,0,0,0", 1, true),
   "Readback did not retain native quantized volume")

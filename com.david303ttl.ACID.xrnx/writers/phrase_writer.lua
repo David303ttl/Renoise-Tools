@@ -7,6 +7,8 @@ local control = require("model.control_signals")
 local gates = require("writers.gate_writer")
 local ownership = require("writers.phrase_ownership")
 local store = require("model.pattern_store")
+local target_capabilities = require("model.target_capabilities")
+local sequencer = require("model.sequencer")
 local M = {}
 
 M.LPB = 8
@@ -14,6 +16,12 @@ M.PHRASE_NAME = "ACID 0.1 TEST"
 local busy = false
 local current = nil
 local MAX_PHRASE_LINES = 512
+
+local function failure(code, category, message, status)
+  message=tostring(message or "Phrase generation failed")
+  return {kind="complete",status=status or "error",code=code,category=category,
+    message=message,diagnostics={message}}
+end
 
 local function physical_plan(pattern, output_policy)
   output_policy=output_policy or "repeat"
@@ -50,22 +58,6 @@ local function physical_plan(pattern, output_policy)
       number_of_lines=length*2+1}
 end
 M.plan_output=physical_plan
-
-local function target_capabilities(instrument)
-  local sample=false
-  for _,item in ipairs(instrument.samples or {}) do
-    if item.sample_buffer and item.sample_buffer.has_sample_data then
-      sample=true
-      break
-    end
-  end
-  local plugin=instrument.plugin_properties and
-    instrument.plugin_properties.plugin_loaded==true or false
-  local midi_device=instrument.midi_output_properties and
-    instrument.midi_output_properties.device_name or ""
-  local midi=midi_device~=""
-  return {sample=sample,plugin=plugin,midi=midi}
-end
 
 local function slide_steps(plan)
   local steps,seen={},{}
@@ -105,7 +97,7 @@ local function articulation_plan(plan,capabilities,timeline)
         end
       end
     end
-    return {},approximations
+    return {},approximations,1
   end
   local early_releases,release_error=control.release_lines(timeline,2)
   if not early_releases then return nil,release_error end
@@ -133,16 +125,15 @@ local function articulation_plan(plan,capabilities,timeline)
       rate=math.max(rate,math.ceil(interval*16/available))
     end
   end
-  if not has_slide then return {},{} end
-  if rate>254 then
-    local places={}
-    for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
-    return {},{"TIME steps "..table.concat(places,",")..
-      ": slide interval exceeds native glide command capacity; ordered pitch events were retained"}
-  end
+  if not has_slide then return {},{},1 end
+  local minimum_rate=rate
+  if rate>254 then rate=255 end
   local commands,err=articulation.plan(plan,2,rate)
   if not commands then return nil,err end
-  local approximations={"native slide continuity and envelope response depend on the target instrument"}
+  local places={}
+  for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
+  local approximations={"TIME steps "..table.concat(places,",")..
+    ": native slide continuity and envelope response depend on the target instrument"}
   for index,event in ipairs(plan.steps) do
     if event.kind=="note" and event.transition=="slide" then
       local previous
@@ -158,7 +149,13 @@ local function articulation_plan(plan,capabilities,timeline)
       end
     end
   end
-  return commands,approximations
+  if rate==255 then
+    local places={}
+    for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
+    approximations[#approximations+1]="TIME steps "..table.concat(places,",")..
+      ": native glide duration exceeded the 01..FE command range; 0G FF instant transitions were emitted"
+  end
+  return commands,approximations,minimum_rate
 end
 
 local function copy_pattern(pattern)
@@ -244,6 +241,11 @@ local function context_valid(job)
     end
   end
   if not instrument_found then return false,"target instrument changed during generation" end
+  local capabilities,capability_error=target_capabilities.inspect(job.instrument)
+  if not capabilities then return false,capability_error end
+  if capabilities.signature~=job.capabilities.signature then
+    return false,"target output capabilities changed during generation"
+  end
   if not phrase_index(job.instrument,job.phrase) then
     return false,"staging phrase was removed during generation"
   end
@@ -271,7 +273,7 @@ local function unlink(job)
   job.on_commit, job.on_idle = nil, nil
 end
 
-local function complete(job, error_message, rendered_events)
+local function complete(job, error_message, rendered_events, failure_status)
   if current ~= job then return end
   unlink(job)
   busy = false
@@ -282,25 +284,43 @@ local function complete(job, error_message, rendered_events)
       pcall(function()job.phrase.name="ACID RECOVERY STAGING"end)
     end
     if job.backup and not job.keep_recovery then remove_phrase(job.instrument,job.backup) end
-    notify(job, "GENERATION FAILED\n" .. tostring(error_message) ..
-      ((job.swapped or job.keep_recovery) and "\nPhrase output or recovery state may have changed; inspect the destination before retrying." or
-        "\nPrevious ACID phrase remains unchanged."),true)
+    local message=tostring(error_message) ..
+      ((job.swapped or job.keep_recovery) and "; phrase output or recovery state may have changed; inspect the destination before retrying" or
+        "; previous ACID phrase remains unchanged")
+    local code=job.failure_code or
+      (failure_status=="suspended" and "safety.target_changed" or "transaction.render")
+    local category=job.failure_category or
+      (failure_status=="suspended" and "safety" or "transaction")
+    notify(job, {kind="complete",status=failure_status or "error",code=code,
+      category=category,message=message,
+      diagnostics={message},reason=failure_status=="suspended" and tostring(error_message) or nil,
+      target={instrument_index=job.instrument_index,
+        phrase_index=job.target_index}},true)
     return
   end
-  notify(job, string.format(
+  local message=string.format(
     "Phrase %02d generated (%d notes, %d OFF; %d raw events). Instrument %02X.",
     job.target_index, rendered_events.notes, rendered_events.offs,
     rendered_events.raw_events, job.instrument_index - 1) ..
     (job.target_warning and "\n"..job.target_warning or "") ..
     (job.approximations and #job.approximations>0 and
       "\nArticulation approximation: "..table.concat(job.approximations,"; ") or "") ..
-    (job.cleanup_warning and "\n"..job.cleanup_warning or ""))
+    (job.cleanup_warning and "\n"..job.cleanup_warning or "")
+  local diagnostics={}
+  if job.target_warning then diagnostics[#diagnostics+1]=job.target_warning end
+  for _,item in ipairs(job.approximations or {}) do diagnostics[#diagnostics+1]=item end
+  if job.cleanup_warning then diagnostics[#diagnostics+1]=job.cleanup_warning end
+  notify(job, {kind="complete",status=#diagnostics>0 and "approximate" or "committed",
+    code=#diagnostics>0 and "capability.approximate" or "phrase.committed",
+    category=#diagnostics>0 and "capability" or "transaction",
+    message=message,diagnostics=diagnostics,target={instrument_index=job.instrument_index,
+      phrase_index=job.target_index},counts=rendered_events},true)
 end
 
 local function finalize(job, event_count, skipped)
   if current ~= job then return end
   local context_ok,context_error=context_valid(job)
-  if not context_ok then complete(job,context_error);return end
+  if not context_ok then complete(job,context_error,nil,"suspended");return end
   if skipped ~= 0 then
     complete(job, "Renoise skipped " .. tostring(skipped) .. " event(s)")
     return
@@ -308,6 +328,8 @@ local function finalize(job, event_count, skipped)
   -- Pattrns may count no-output pulses among its raw rendered events.
   -- Inspect the *actual phrase cells* to validate musical note/off events.
   if type(event_count) ~= "number" or event_count < job.expected_events then
+    job.failure_code="phrase.render_count"
+    job.failure_category="phrase"
     complete(job, string.format(
       "Too few raw events: expected at least %d, received %s",
       job.expected_events, tostring(event_count)))
@@ -326,6 +348,8 @@ local function finalize(job, event_count, skipped)
   local result, validation_error = validator.verify(job.phrase, job.plan, 2,job.layout,
     {volumes=volumes})
   if not result then
+    job.failure_code="phrase.validation"
+    job.failure_category="phrase"
     complete(job, validation_error)
     return
   end
@@ -336,7 +360,12 @@ local function finalize(job, event_count, skipped)
     if not applied then complete(job,apply_error);return end
   end
   local final_result,final_validation_error=validator.verify(job.phrase,job.plan,2,job.layout,expected_articulation)
-  if not final_result then complete(job,final_validation_error);return end
+  if not final_result then
+    job.failure_code="phrase.validation"
+    job.failure_category="phrase"
+    complete(job,final_validation_error)
+    return
+  end
   local ok, error_message = pcall(function()
     -- Rendered lines are normal native phrase data (not a running script).
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
@@ -352,10 +381,13 @@ local function finalize(job, event_count, skipped)
     complete(job, error_message)
     return
   end
-  if not token_current(job) then complete(job,"generation was invalidated before commit");return end
+  if not token_current(job) then
+    complete(job,job.invalid_reason or "generation was invalidated before commit",nil,"suspended")
+    return
+  end
   local safe,swap_err=pcall(function()
     local valid,why=context_valid(job)
-    if not valid then error(why) end
+    if not valid then job.suspended_reason=why;error(why) end
     local backup
     if job.replace then
       backup=job.instrument:insert_phrase_at(#job.instrument.phrases+1)
@@ -478,7 +510,11 @@ local function finalize(job, event_count, skipped)
       job.temporary=false
     end
   end)
-  if not safe then complete(job,swap_err);return end
+  if not safe then
+    complete(job,job.suspended_reason or swap_err,nil,
+      job.suspended_reason and "suspended" or nil)
+    return
+  end
   result.raw_events = event_count
   complete(job, nil, result)
 end
@@ -496,7 +532,8 @@ local function render(job)
     return
   end
   job.render_started=true
-  notify(job, "ACID: rendering pattrns to native phrase...")
+  notify(job, {kind="status",status="rendering",message="Rendering native phrase...",
+    target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
   local ok, error_message = pcall(function()
     local started, start_error = script:render_to_pattern({
       lpb = M.LPB,
@@ -569,38 +606,45 @@ function M.cancel(token)
   current=nil
   busy=false
   if cleanup_error then
-    notify(job,"Generation cancelled; "..cleanup_error.." and recovery material was retained.",true)
-    return false
+    local message="Generation cancelled; "..cleanup_error.." and recovery material was retained."
+    local result={kind="complete",status="error",message=message,
+      diagnostics={message},recovery={staging=job.keep_recovery==true}}
+    notify(job,result,true)
+    return true,result
   end
   return true
 end
 
-function M.generate(instrument_index, callback, custom_pattern, target_index, options)
-  if busy then return nil, "ACID is already generating a phrase" end
+local function generate_impl(instrument_index, callback, custom_pattern, target_index, options)
+  if busy then return nil,failure("transaction.busy","transaction","ACID is already generating a phrase") end
   options=options or {}
-  if type(options)~="table" then return nil,"Invalid generation options" end
+  if type(options)~="table" then return nil,failure("source.options","source","Invalid generation options") end
   local output_policy=options.output_policy or "repeat"
   if output_policy~="repeat" and output_policy~="play_once" then
-    return nil,"Invalid phrase output policy"
+    return nil,failure("source.output_policy","source","Invalid phrase output policy")
   end
   if type(callback) ~= "function" then
-    return nil, "Status callback required"
+    return nil,failure("source.callback","source","Status callback required")
   end
   if type(custom_pattern)~="table" then
-    return nil,"A canonical ACID source is required"
+    return nil,failure("source.missing","source","A canonical ACID source is required")
+  end
+  local source_valid,source_error=sequencer.validate(custom_pattern)
+  if not source_valid then
+    return nil,failure("source.invalid","source",source_error)
   end
   local song = renoise.song()
-  if not song then return nil, "Open a song first" end
+  if not song then return nil,failure("safety.no_song","safety","Open a song first") end
   if type(instrument_index) ~= "number" or instrument_index % 1 ~= 0
     or instrument_index < 1 or instrument_index > #song.instruments then
-    return nil, "Choose a valid instrument slot"
+    return nil,failure("safety.instrument_missing","safety","Choose a valid instrument slot")
   end
   local instrument = song.instruments[instrument_index]
   local replace=false
   target_index=target_index or (#instrument.phrases>0 and 1 or #instrument.phrases+1)
   if type(target_index)~="number" or target_index%1~=0 or
       target_index<1 or target_index>#instrument.phrases+1 then
-    return nil,"Choose a valid existing phrase or New Phrase"
+    return nil,failure("safety.phrase_missing","safety","Choose a valid existing phrase or New Phrase")
   end
   local snapshot_id
   if target_index<=#instrument.phrases then
@@ -610,55 +654,74 @@ function M.generate(instrument_index, callback, custom_pattern, target_index, op
       replace=true
       snapshot_id=ownership.id(target)
     else
-      return nil,"Selected phrase is not safely ACID-owned (or was manually edited)"
+      return nil,failure("safety.ownership","safety","Selected phrase is not safely ACID-owned or was manually edited")
     end
   end
   if not snapshot_id then
     local id,err=store.allocate(song)
-    if not id then return nil,err end
+    if not id then return nil,failure("transaction.id_allocation","transaction",err) end
     snapshot_id=id
   end
   local records,record_err=store.read(song)
-  if not records then return nil,record_err end
+  if not records then return nil,failure("transaction.persistence_invalid","transaction",record_err) end
   if replace and ownership.id(instrument.phrases[target_index]) and
       not records[snapshot_id] then
-    return nil,"Selected ACID phrase has no saved source; cannot safely regenerate"
+    return nil,failure("safety.source_missing","safety","Selected ACID phrase has no saved source; cannot safely regenerate")
   end
   if replace and phrase_id_count(song,snapshot_id)~=1 then
-    return nil,"Selected ACID phrase ID is duplicated; cannot regenerate safely"
+    return nil,failure("safety.duplicate_id","safety","Selected ACID phrase ID is duplicated; cannot regenerate safely")
   end
   local capacity=renoise.Instrument.MAX_NUMBER_OF_PHRASES or 126
   local required_slots=replace and 2 or 1
   if #instrument.phrases+required_slots>capacity then
-    return nil,"Not enough phrase slots for staging and rollback backup"
+    return nil,failure("safety.phrase_capacity","safety","Not enough phrase slots for staging and rollback backup")
   end
-  local capabilities=target_capabilities(instrument)
+  local capabilities,capability_error=target_capabilities.inspect(instrument)
+  if not capabilities then return nil,failure("capability.inspect","capability",capability_error) end
   local fixture=copy_pattern(custom_pattern)
   local plan,layout_or_error=physical_plan(fixture,output_policy)
-  if not plan then return nil,layout_or_error end
+  if not plan then return nil,failure("source.invalid","source",layout_or_error) end
   local layout=layout_or_error
-  if layout.number_of_lines>MAX_PHRASE_LINES then return nil,"Rendered phrase exceeds Renoise's line limit" end
+  if layout.number_of_lines>MAX_PHRASE_LINES then return nil,failure("phrase.unrepresentable","phrase","Rendered phrase exceeds Renoise's line limit") end
   local meta
   local source
   source,meta=pattrns.emit(plan)
-  if not source then return nil,meta end
+  if not source then return nil,failure("phrase.unrepresentable","phrase",meta) end
   local timeline,timeline_error=control.compile(fixture,{gate_fraction=0.5,plan=plan,
     output_policy=output_policy,successor=plan.loop and plan.loop.steady})
-  if not timeline then return nil,timeline_error end
-  local commands,approximations=articulation_plan(plan,capabilities,timeline)
-  if not commands then return nil,approximations end
+  if not timeline then return nil,failure("source.invalid","source",timeline_error) end
+  local commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline)
+  if not commands then return nil,failure("phrase.unrepresentable","phrase",approximations) end
   local operations,operation_error=gates.plan(timeline,plan,commands)
   if not operations and #commands>0 then
-    operations,operation_error=gates.plan(timeline,plan,{})
-    if operations then
-      approximations[#approximations+1]=tostring(operation_error)..
-        "; native glide commands conflicted with gate timing, and ordered pitch events were retained"
-      commands={}
+    for candidate_rate=math.max(1,minimum_rate+1),255 do
+      local candidate_commands=articulation.plan(plan,2,candidate_rate)
+      if candidate_commands then
+        local candidate_operations=gates.plan(timeline,plan,candidate_commands)
+        if candidate_operations then
+          commands,operations=candidate_commands,candidate_operations
+          if candidate_rate==255 then
+            approximations[#approximations+1]="native glide placement required 0G FF instant transitions; continuity is approximate"
+          end
+          break
+        end
+      end
+    end
+    if not operations then
+      operations,operation_error=gates.plan(timeline,plan,{})
+      if operations then
+        local places={}
+        for _,step in ipairs(slide_steps(plan)) do places[#places+1]=string.format("%02d",step) end
+        approximations[#approximations+1]=tostring(operation_error)..
+          "; TIME steps "..table.concat(places,",")..
+          " glide commands conflicted with gate timing at all rates, and ordered pitch events were retained"
+        commands={}
+      end
     end
   end
-  if not operations then return nil,operation_error end
+  if not operations then return nil,failure("phrase.unrepresentable","phrase",operation_error) end
   local store_candidate,prepare_error=store.prepare(song,snapshot_id,fixture,output_policy)
-  if not store_candidate then return nil,prepare_error end
+  if not store_candidate then return nil,failure("transaction.persistence_prepare","transaction",prepare_error) end
   local target_phrase=replace and instrument.phrases[target_index] or nil
   local job = {
     instrument = instrument, instrument_index = instrument_index, song=song,
@@ -668,8 +731,8 @@ function M.generate(instrument_index, callback, custom_pattern, target_index, op
     expected_events = meta.note_count + meta.off_count,
     plan = plan, layout=layout, pattern=fixture, output_policy=output_policy,
     operations=operations,approximations=approximations,
-    target_warning=not capabilities.sample and not capabilities.plugin and not capabilities.midi and
-      "Target has no loaded sample, plugin, or MIDI output; the committed phrase will be silent until a generator is configured." or nil,
+    target_warning=capabilities.diagnostic,
+    capabilities=capabilities,
     replace=replace,target_index=target_index,temporary=true,token=options.token,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false
@@ -718,8 +781,20 @@ function M.generate(instrument_index, callback, custom_pattern, target_index, op
     end
     return nil, tostring(error_message)
   end
-  notify(job, "ACID: compiling phrase...")
+  notify(job, {kind="status",status="rendering",message="Compiling phrase...",
+    target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
   return true
+end
+
+function M.generate(instrument_index, callback, custom_pattern, target_index, options)
+  local started,detail,extra=generate_impl(instrument_index,callback,custom_pattern,
+    target_index,options)
+  if not started and type(detail)~="table" then
+    return nil,failure("transaction.render","transaction",detail)
+  elseif not started and detail.kind~="complete" then
+    return nil,failure("transaction.render","transaction",detail.message)
+  end
+  return started,detail,extra
 end
 
 return M

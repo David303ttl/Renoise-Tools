@@ -238,20 +238,17 @@ local function run_live_edit()
   local current_edit=edits[stage].pattern
   local controller
   controller=live.new(renoise.tool(),function(finish,token)
-    return writer.generate(instrument_index,function(message)
-      record("live_writer_status",message)
-      if message:find(" generated (",1,true) then
-        finish(true,message)
-      elseif message:find("GENERATION FAILED",1,true)==1
-        or message:find("Generation cancelled",1,true)==1 then
-        finish(false,message)
+    return writer.generate(instrument_index,function(result)
+      record("live_writer_status",type(result)=="table" and result.message or result)
+      if type(result)=="table" and result.kind=="complete" then
+        finish(result)
       end
     end,current_edit,target,{token=token,output_policy=output_policy})
-  end,function(ok,message)
-    if not ok then
+  end,function(result)
+    if result.status~="committed" and result.status~="approximate" then
       controller:stop()
-      finish_record("FAIL",message)
-      print("ACID lifecycle Live Edit failed: "..tostring(message).."; evidence: "..result_path)
+      finish_record("FAIL",result.message)
+      print("ACID lifecycle Live Edit failed: "..tostring(result.message).."; evidence: "..result_path)
       return
     end
     local current_song=renoise.song()
@@ -284,9 +281,10 @@ local ok,err=pcall(function()
   local existing,read_error=store.read(song)
   assert(existing,read_error)
   local done_initial=false
-  local started,reason=writer.generate(instrument_index,function(message)
-    record("generate_writer_status",message)
-    if message:find(" generated (",1,true) then
+  local started,reason=writer.generate(instrument_index,function(result)
+    record("generate_writer_status",type(result)=="table" and result.message or result)
+    if type(result)=="table" and result.kind=="complete" and
+        (result.status=="committed" or result.status=="approximate") then
       if done_initial then return end
       done_initial=true
       local generated=assert(instrument.phrases[target], "Generate did not append its phrase")
@@ -298,8 +296,8 @@ local ok,err=pcall(function()
       record("generate_status","passed")
       record("generate_phrase_status",status)
       run_live_edit()
-    elseif message:find("GENERATION FAILED",1,true)==1 then
-      finish_record("FAIL",message)
+    elseif type(result)=="table" and result.kind=="complete" then
+      finish_record("FAIL",result.message)
     end
   end,pattern,target,{output_policy=output_policy})
   if not started then error(reason) end

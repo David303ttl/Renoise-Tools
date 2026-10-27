@@ -115,12 +115,14 @@ end
 local function generate(pattern,policy,target_index,options,instrument_index)
   options=options or {}
   if policy~=nil then options.output_policy=policy end
-  local ok,err=writer.generate(instrument_index or 1,function(message) messages[#messages+1]=message end,
+  local ok,err=writer.generate(instrument_index or 1,function(value) messages[#messages+1]=value end,
     pattern,target_index,options)
   assert(ok,err)
   for _=1,6 do idle:fire() end
   local status=messages[#messages]
-  assert(status and status:find('generated',1,true),status)
+  assert(type(status)=='table' and status.kind=='complete', 'missing typed terminal result')
+  assert(status.status=='committed' or status.status=='approximate',status.message)
+  assert(status.message and status.message:find('generated',1,true),status.message)
   return instrument.phrases[target_index],status
 end
 
@@ -264,7 +266,7 @@ local slide_target=#instrument.phrases+1
 local slide_phrase,slide_status=generate(slide,'repeat',slide_target)
 assert(ownership.status(slide_phrase)=='owned')
 assert(slide_phrase.cells[1].note_value==35 and slide_phrase.cells[5].note_value==60)
-assert(slide_status:find('Articulation approximation:',1,true),
+assert(slide_status.message:find('Articulation approximation:',1,true),
   'slide or connected accent limitations must be reported as nonfatal')
 
 -- Capability inspection is read-only and all target classes receive a native phrase.
@@ -300,11 +302,11 @@ for _,item in ipairs(targets) do
     and instrument.phrase_editor_visible==before_editor,
     item.name..' target settings were changed')
   if item.name=='empty' then
-    assert(status:find('silent',1,true), 'empty target must report that playback is silent')
+    assert(status.message:find('silent',1,true), 'empty target must report that playback is silent')
   elseif item.name~='sample' then
     assert(not phrase.cells[5].effect_number_string,
       item.name..' target received a sample-only glide command')
-    assert(status:find('Articulation approximation:',1,true),
+    assert(status.message:find('Articulation approximation:',1,true),
       item.name..' target did not report reduced glide fidelity')
   end
 end

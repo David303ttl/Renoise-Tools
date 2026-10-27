@@ -1,8 +1,8 @@
-# ACID M3.5-S Renoise manual checklist
+# ACID M3.5 Renoise manual checklist
 
 **Results: not run in this workspace.** Run these checks in Renoise 3.5 with a
 disposable song. Record the Renoise version, target type and pass/fail/not-run
-for each item before treating Gate S as complete. A passing Lua mock is not a
+for each item before treating the functional gates as complete. A passing Lua mock is not a
 playback receipt.
 
 ## Program/Grid and source
@@ -17,8 +17,8 @@ playback receipt.
 3. Edit TIME 17, reduce LAST STEP 16, then restore 17. Confirm TIME 17 remains
    unchanged. Save and reopen the XRNS and repeat the check.
 4. Enter TIE at TIME 01. Confirm it is stored as NOTE. Click Reset Source once
-   and confirm the source resets immediately. Use Undo Reset and confirm the
-   previous source and output policy return.
+   and confirm the source resets immediately. Use Undo and Redo and confirm
+   the source and output policy follow each edit.
 
 ## Output policy and destination safety
 
@@ -59,13 +59,47 @@ midpoint OFF, and both the glide and OFF remain in the phrase.
 ## Save, reopen and Live Edit
 
 1. Save and reopen the XRNS. Confirm current source and Repeat/Play Once policy
-restore for each owned phrase. Earlier development source/seal formats should
-not be adopted; recreate those patterns.
+restore for each owned phrase.
 2. Enable Live Edit, make several rapid source edits, and confirm the final
    source is rendered once edits settle. Disable Live Edit during an in-flight
    render and confirm the destination remains consistent.
 3. Change songs while ACID is open, then close/reopen the tool. Confirm stale
    jobs are invalidated and no phrase in the new song is changed.
+4. Edit without generating, switch destinations and return, then close and
+   reopen ACID. Confirm the draft is restored. Save the XRNS with an ungenerated
+   edit, reopen the song and confirm the draft restores separately from the
+   last committed phrase. Generate and confirm the pending draft is cleared.
+5. Use Undo and Redo during Live Edit. Confirm source and output policy follow
+   the selected edit and the final generated phrase matches the source. Change
+   BPM, LPB/TPL and groove during playback, then stop/start/seek. Confirm Live
+   Edit remains armed and note/OFF order stays correct.
+6. Cause a recoverable render failure and confirm Live Edit stays enabled.
+   Correct the problem and use Retry Live Edit; confirm the last-good phrase
+   is preserved until the retry commits. Modify the destination externally and
+   confirm writes suspend until the destination is selected again.
+
+
+## Async generation and draft safety
+
+1. Generate a new phrase, edit its draft while rendering, then switch to a
+   different phrase or instrument before completion. Return to the generated
+   phrase and confirm the pending edit survives. Confirm the other destination
+   and its draft remain unchanged.
+2. Change plugin, MIDI route or sample availability while rendering. Confirm
+   the commit suspends, preserves the last-good phrase and reports the change.
+3. Reorder instruments and phrases, delete the selected target and duplicate an
+   owned ID. Confirm writes never reach a different destination. Recovering a
+   draft does not authorize overwriting a foreign or modified phrase.
+4. Make song tool data unwritable or corrupt in a disposable test. Confirm the
+   source remains recoverable in the editor, persistence failure is visible and
+   closing the song warns about any draft that could not be stored.
+
+## Diagnostics and Windows scaling
+
+At 125% and 150% scaling, inspect dirty, queued, rendering, committed,
+approximate, suspended and error states. Confirm target and cause are readable
+and diagnostic text can be selected. Use Go to source error and confirm the
+reported TIME/PITCH location is selected without modifying source.
 
 ## Result record
 
@@ -79,3 +113,5 @@ not be adopted; recreate those patterns.
 | Hybrid target | | Not run | |
 | Empty slot | | Not run | |
 | Save/reopen and recovery | | Not run | |
+| Async generation and draft safety | | Not run | |
+| Windows 125% / 150% scaling | | Not run | |

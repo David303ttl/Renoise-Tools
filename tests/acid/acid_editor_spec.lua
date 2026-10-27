@@ -4,6 +4,29 @@ local editor=require("model.editor_state")
 local interpreter=require("model.cycle_interpreter")
 local pattrns=require("writers.pattrns_writer")
 
+local history_source=seq.new_pattern(16)
+local history=editor.new_history(history_source,"repeat")
+history_source.pitch_events[1]=seq.new_pitch(4,1,true,true)
+history:record(history_source,"play_once")
+history_source.time_events[2]="R"
+history:record(history_source,"play_once")
+local undone,policy=history:undo()
+assert(undone.time_events[2]=="N" and undone.pitch_events[1].note==52)
+assert(policy=="play_once")
+undone,policy=history:undo()
+assert(undone.pitch_events[1].note==36 and policy=="repeat")
+local redone
+redone,policy=history:redo()
+assert(redone.pitch_events[1].note==52 and policy=="play_once")
+redone,policy=history:redo()
+assert(redone.time_events[2]=="R" and policy=="play_once")
+history_source=assert(history:undo())
+history_source.time_events[3]="T"
+history:record(history_source,"repeat")
+assert(not history:can_redo())
+local branched=assert(history:undo())
+assert(branched.time_events[3]=="N")
+
 -- A newly initialized 16-step pattern needs no manual PITCH entry.
 local fresh=seq.new_pattern(16)
 assert(#fresh.pitch_events==64)

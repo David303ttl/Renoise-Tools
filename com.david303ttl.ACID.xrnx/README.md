@@ -32,11 +32,17 @@ instrument's global phrase trigger settings. The decoded Start/Repeating
 preview is read-only.
 
 Manual Generate and Regenerate remain available. Live Edit optionally applies
-valid source edits after a short debounce. ACID protects foreign or modified
-phrases and uses staged rendering, ownership checks, source persistence and
-rollback before replacing an owned phrase. New current-format source records
-and seals use the v3 cutover. Earlier development snapshots and seals are not
-imported or adopted; recreate those phrases.
+valid source edits after a short debounce. Undo and Redo cover source edits and
+phrase output policy. A failed Live Edit remains armed; correct the source or
+use Retry Live Edit. If the destination changes, select it again before writing.
+Uncommitted drafts are stored separately from the last committed phrase in
+song tool data and recover after saving and reopening the XRNS. If a new draft
+has an ambiguous destination or persistence fails, it remains available in the
+open session and ACID reports the unsaved state. Give a new draft's instrument
+a unique name or generate its phrase before closing the song. ACID protects
+foreign or modified phrases and uses staged rendering, ownership checks, source persistence and
+rollback before replacing an owned phrase. Source records and ownership seals
+use the current v3 contract.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. It attempts native sample glide when the target has sample data. Plugin
@@ -49,7 +55,7 @@ can receive a silent phrase and are reported as needing a generator.
 Phrase generation has been checked with Lua mocks for the current renderer
 contract. Renoise playback and routing checks for Program/Grid switching,
 Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
-pending; see the [M3.5-S manual checklist](../tests/acid/acid_m35_s_manual.md).
+pending; see the [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md).
 The full M3.5 instrument and Live Edit gates remain tracked in
 [ROADMAP.md](ROADMAP.md). Triplet timing is not implemented.
 
@@ -67,6 +73,6 @@ Each Lua spec runs in a separate process. Semantic and mocked tests do not
 establish Renoise audio behavior. ACID's GUI and phrase-writer regression specs
 cover editable LAST STEP, Reset/Undo, selected-phrase regeneration, and sample
 slide commands scheduled before midpoint OFFs. Run the
-[M3.5-S manual checklist](../tests/acid/acid_m35_s_manual.md) in Renoise to
+[M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md) in Renoise to
 verify phrase playback and GUI behavior. The package has `manifest.xml` and
 `main.lua` at its root and excludes development files.

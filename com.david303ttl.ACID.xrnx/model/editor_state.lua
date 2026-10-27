@@ -93,4 +93,63 @@ function M.step_text(projection, step, cycle)
     event.accent and " ACC" or "",event.slide and " OUT" or "",transition)
 end
 
+local function copy_source(pattern)
+  local copy={length=pattern.length,pitch_length=pattern.pitch_length,
+    pitch_events={},time_events={}}
+  for i,pitch in ipairs(pattern.pitch_events) do
+    local item={}
+    for key,value in pairs(pitch) do item[key]=value end
+    copy.pitch_events[i]=item
+  end
+  for i,command in ipairs(pattern.time_events) do copy.time_events[i]=command end
+  return copy
+end
+
+local function same_state(a,b)
+  if a.output_policy~=b.output_policy or a.pattern.length~=b.pattern.length or
+      a.pattern.pitch_length~=b.pattern.pitch_length then return false end
+  for i=1,64 do
+    local x,y=a.pattern.pitch_events[i],b.pattern.pitch_events[i]
+    if x.note~=y.note or x.key~=y.key or x.octave~=y.octave or
+        x.accent~=y.accent or x.slide~=y.slide or
+        a.pattern.time_events[i]~=b.pattern.time_events[i] then return false end
+  end
+  return true
+end
+
+local function snapshot(pattern,output_policy)
+  return {pattern=copy_source(pattern),output_policy=output_policy}
+end
+
+function M.new_history(pattern,output_policy)
+  local history={states={snapshot(pattern,output_policy)},position=1}
+  function history:record(next_pattern,next_policy)
+    local next_state=snapshot(next_pattern,next_policy)
+    if same_state(self.states[self.position],next_state) then return false end
+    for i=#self.states,self.position+1,-1 do self.states[i]=nil end
+    self.states[#self.states+1]=next_state
+    self.position=#self.states
+    return true
+  end
+  function history:undo()
+    if self.position<=1 then return nil end
+    self.position=self.position-1
+    local state=self.states[self.position]
+    return copy_source(state.pattern),state.output_policy
+  end
+  function history:redo()
+    if self.position>=#self.states then return nil end
+    self.position=self.position+1
+    local state=self.states[self.position]
+    return copy_source(state.pattern),state.output_policy
+  end
+  function history:can_undo() return self.position>1 end
+  function history:can_redo() return self.position<#self.states end
+  function history:reset(current_pattern,current_policy)
+    self.states={snapshot(current_pattern,current_policy)}
+    self.position=1
+  end
+  return history
+end
+
 return M

@@ -133,10 +133,11 @@ if set_index > 0 then
   end
 end
 local target = #instrument.phrases + 1
-local ok, reason = writer.generate(instrument_index, function(message)
+local ok, reason = writer.generate(instrument_index, function(result)
   if not output then return end
-  record("writer_status", message)
-  if message:match("^Phrase %d+ generated") then
+  record("writer_status", type(result)=="table" and result.message or result)
+  if type(result)=="table" and result.kind=="complete" and
+      (result.status=="committed" or result.status=="approximate") then
     local phrase = assert(instrument.phrases[target], "Generated phrase is missing")
     for _, key in ipairs({"name", "number_of_lines", "lpb", "looping", "loop_start", "loop_end"}) do
       record("phrase." .. key, phrase[key])
@@ -153,8 +154,7 @@ local ok, reason = writer.generate(instrument_index, function(message)
     output = nil
     print("Writer phrase ready; metadata: tmp/acid-articulation/" .. output_name)
     print("Configure the host trigger duration separately, then capture without editing this phrase.")
-  elseif message:find("GENERATION FAILED", 1, true) == 1
-    or message:find("Generation cancelled", 1, true) == 1 then
+  elseif type(result)=="table" and result.kind=="complete" then
     record("generation_result", "failed; do not capture")
     output:close()
     output = nil

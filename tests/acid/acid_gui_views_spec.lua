@@ -36,10 +36,12 @@ end
 local tool={app_new_document_observable=observable(),app_idle_observable=observable()}
 function tool:add_timer() end
 function tool:remove_timer() end
-local instrument={name="Target",phrases={{name="ACID phrase 1"},
-  {name="ACID phrase 2"}},samples={},sample_modulation_sets={},
+local instrument={name="Target",phrases={{id=21,name="ACID phrase 1"},
+  {id=22,name="ACID phrase 2"}},samples={},sample_modulation_sets={},
   sample_device_chains={},phrase_program=1}
-local song={selected_instrument_index=1,instruments={instrument}}
+local instrument_two={name="Other target",phrases={{id=31,name="Other phrase"}},
+  samples={},sample_modulation_sets={},sample_device_chains={},phrase_program=1}
+local song={selected_instrument_index=1,instruments={instrument,instrument_two}}
 local builder=view_builder()
 local dialog
 local app={}
@@ -50,7 +52,7 @@ end
 function app:show_warning(message) error(message) end
 
 local render_calls,edit_notifications=0,0
-local generation_request
+local generation_request,generation_callback
 package.loaded["model.live_regen"]={new=function()
   return {
     changed=function() edit_notifications=edit_notifications+1 end,
@@ -63,20 +65,36 @@ package.loaded["writers.phrase_writer"]={
     render_calls=render_calls+1
     generation_request={instrument_index=instrument_index,target_index=target_index,
       pattern=pattern,options=options}
-    callback("Phrase 02 generated (3 notes, 1 OFF; 4 raw events). Instrument 00.")
+    generation_callback=callback
     return true
   end,
   cancel=function() return true end
 }
 package.loaded["writers.phrase_ownership"]={
   status=function() return "owned" end,
-  id=function(phrase) return phrase.name end
+  id=function(phrase) return phrase.id end
 }
+local persisted_drafts={}
 package.loaded["model.pattern_store"]={load=function()
   local source=require("model.sequencer").new_pattern(16)
   for i=1,source.length do source.time_events[i]="N" end
   return source,"repeat"
-end}
+end,
+  write_draft=function(_,index,phrase_id,name,pattern,policy)
+    persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,name=name}
+    return true
+  end,
+  read_draft=function(_,index,phrase_id,name)
+    local item=persisted_drafts[index..":"..phrase_id]
+    if not item then return nil end
+    assert(item.name==name)
+    return item.pattern,item.policy
+  end,
+  clear_draft=function(_,index,phrase_id)
+    persisted_drafts[index..":"..phrase_id]=nil
+    return true
+  end,
+  has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 renoise={
@@ -148,12 +166,18 @@ button("Reset Source"):fire()
 assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
 assert(output_popup.value==2,"Reset Source restores Repeat output")
-assert(button("Undo Reset").active)
-button("Undo Reset"):fire()
+assert(button("Undo").active)
+button("Undo"):fire()
 assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: REST",1,true))
 assert(builder.views.acid_program_key_popup.value==2)
-assert(output_popup.value==1,"Undo Reset restores the previous output policy")
+assert(output_popup.value==1,"Undo restores the previous output policy")
+assert(button("Redo").active)
+button("Redo"):fire()
+assert(output_popup.value==2 and builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
+button("Undo"):fire()
+builder.views.acid_program_time_command:fire(1)
+assert(not button("Redo").active,"new edits discard the redo branch")
 
 phrase_popup:fire(2)
 button("Generate / Regenerate ACID Phrase"):fire()
@@ -162,5 +186,31 @@ assert(generation_request.target_index==2,
   "generation must pass the selected phrase index")
 assert(phrase_popup.value==2,
   "successful generation must keep the selected destination phrase")
+generation_callback({kind="complete",status="committed",message="Phrase generated.",
+  diagnostics={},target={phrase_index=2}})
+
+phrase_popup:fire(3)
+builder.views.acid_program_key_popup:fire(3)
+button("Generate / Regenerate ACID Phrase"):fire()
+assert(generation_request.target_index==3,"new phrase generation targets append slot")
+builder.views.acid_program_key_popup:fire(4)
+local target_popup
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="popup" and node.width==290 then target_popup=node end
+end
+assert(target_popup,"target instrument selector was not created")
+target_popup:fire(2)
+local created_phrase={id=23,name="Generated phrase"}
+instrument.phrases[3]=created_phrase
+generation_callback({kind="complete",status="committed",message="Phrase generated.",
+  diagnostics={},target={phrase_index=3}})
+local draft_cache=require("model.draft_cache")
+local recovered,recovered_policy=draft_cache.get(song,instrument,created_phrase)
+assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat",
+  "the newest NEW PHRASE edit moves onto the phrase committed by its render")
+assert(not draft_cache.get(song,instrument,nil),
+  "the committed NEW PHRASE draft key is cleared after it moves")
+assert(not draft_cache.get(song,instrument_two,instrument_two.phrases[1]),
+  "completion never attaches an in-flight source draft to the current foreign target")
 
 print("ACID Program/Grid views share one source and switch presentation without regeneration")
