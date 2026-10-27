@@ -16,6 +16,8 @@ function Read-ArticulationWav([string]$Path) {
     $riffSize = $reader.ReadUInt32()
     $wave = [System.Text.Encoding]::ASCII.GetString($reader.ReadBytes(4))
     if ($riff -ne 'RIFF' -or $wave -ne 'WAVE') { throw 'Input is not a RIFF/WAVE file' }
+    $riffBoundary = [long]$riffSize + 8
+    if ($riffBoundary -ne $bytes.Length) { throw 'RIFF declared size differs from file length' }
 
     $format = $null
     $data = $null
@@ -26,6 +28,7 @@ function Read-ArticulationWav([string]$Path) {
         throw "Invalid WAV chunk '$chunkId' length"
       }
       if ($chunkId -eq 'fmt ') {
+        if ($null -ne $format -or $chunkLength -lt 16) { throw 'WAV requires one complete fmt chunk' }
         $chunk = $reader.ReadBytes($chunkLength)
         $format = [ordered]@{
           code = [BitConverter]::ToUInt16($chunk, 0)
@@ -36,6 +39,7 @@ function Read-ArticulationWav([string]$Path) {
           bits = [BitConverter]::ToUInt16($chunk, 14)
         }
       } elseif ($chunkId -eq 'data') {
+        if ($null -ne $data) { throw 'WAV contains multiple data chunks' }
         $data = $reader.ReadBytes($chunkLength)
       } else {
         [void]$reader.ReadBytes($chunkLength)
@@ -43,6 +47,7 @@ function Read-ArticulationWav([string]$Path) {
       if (($chunkLength % 2) -ne 0 -and $stream.Position -lt $stream.Length) { [void]$reader.ReadByte() }
     }
     if ($null -eq $format -or $null -eq $data) { throw 'WAV must contain fmt and data chunks' }
+    if ($format.sample_rate -le 0) { throw 'WAV sample rate must be positive' }
     if ($format.code -notin 1, 3) { throw "Unsupported WAV encoding $($format.code); use integer PCM or IEEE float" }
     if ($format.channels -notin 1, 2) { throw "Expected mono or stereo WAV; received $($format.channels) channels" }
     if ($format.bits -notin 16, 24, 32) { throw "Unsupported WAV bit depth $($format.bits); use 16, 24 or 32 bits" }
@@ -52,6 +57,8 @@ function Read-ArticulationWav([string]$Path) {
     }
     $bytesPerSample = [int]($format.bits / 8)
     if ($format.block_align -ne $bytesPerSample * $format.channels) { throw 'Unexpected WAV block alignment' }
+    if ($format.byte_rate -ne $format.sample_rate * $format.block_align) { throw 'Unexpected WAV byte rate' }
+    if ($data.Length -eq 0) { throw 'WAV contains no audio frames' }
     if (($data.Length % $format.block_align) -ne 0) { throw 'WAV data does not end on a complete frame' }
 
     $frameCount = [int]($data.Length / $format.block_align)
@@ -200,6 +207,17 @@ function Find-AudioOnsets(
   return ,$onsets.ToArray()
 }
 
+function Measure-AttackSignature([double[]]$Samples, [int]$SampleRate, [double]$OnsetMs) {
+  # Compare nonoverlapping envelope regions; carrier periods are averaged by RMS.
+  $early = Get-SampleRms $Samples $SampleRate $OnsetMs ($OnsetMs + 5.0)
+  $peak = Get-SampleRms $Samples $SampleRate ($OnsetMs + 8.0) ($OnsetMs + 18.0)
+  $sustain = Get-SampleRms $Samples $SampleRate ($OnsetMs + 32.0) ($OnsetMs + 52.0)
+  $riseRatio = if ($peak -gt 0) { $early / $peak } else { 0.0 }
+  $decayRatio = if ($peak -gt 0) { $sustain / $peak } else { 0.0 }
+  $complete = ($OnsetMs + 52.0) * $SampleRate / 1000.0 -le $Samples.Length
+  $matched = $complete -and $peak -gt 0.001 -and $riseRatio -lt 0.75 -and $decayRatio -ge 0.45 -and $decayRatio -le 0.90
+  return [pscustomobject]@{ onset_ms=$OnsetMs; early_to_peak=$riseRatio; sustain_to_peak=$decayRatio; matched=$matched; status=if ($matched) {'match'} else {'inconclusive'}; qualification='diagnostic only; native controls must qualify thresholds before acceptance' }
+}
 function Get-FundamentalHz([double[]]$Samples, [int]$SampleRate, [double]$StartMs, [double]$EndMs, [double]$MinimumMs = 40.0) {
   $start = [Math]::Max(0, [int][Math]::Floor($StartMs * $SampleRate / 1000.0))
   $end = [Math]::Min($Samples.Length, [int][Math]::Floor($EndMs * $SampleRate / 1000.0))
@@ -234,15 +252,20 @@ function Get-WindowMs($StepValue, [double]$StepMs) {
 function Measure-ArticulationCase($Audio, $Case) {
   $issues = [System.Collections.Generic.List[string]]::new()
   $measurements = [ordered]@{}
+  if ($Case.ContainsKey('status') -and $Case.status -ne 'ready') {
+    return [pscustomobject]@{ CaseId=[string]$Case.id; Status='unsupported'; Issues=@('case is planned and has no qualified analyzer protocol'); Measurements=$measurements; Audio=@{sha256=$Audio.Sha256} }
+  }
   if ($Audio.SampleRate -ne [int]$Case.capture.sample_rate) { $issues.Add("sample rate $($Audio.SampleRate) differs from expected $($Case.capture.sample_rate)") }
   if ($Audio.Channels -eq 2 -and $Audio.StereoDifferenceDb -gt -60.0) { $issues.Add(('stereo channels differ by {0:N1} dB; expected at most -60 dB' -f $Audio.StereoDifferenceDb)) }
   if ($Audio.PeakDbfs -gt -6.0) { $issues.Add(('peak {0:N2} dBFS exceeds the -6 dBFS ceiling' -f $Audio.PeakDbfs)) }
+  $captureInvalid = $issues.Count -gt 0
   $samples = $Audio.Left
   $stepMs = Get-StepMs $Case
   $onsetWindowMs = if ($Case.analysis['onset_window_ms']) { [int]$Case.analysis['onset_window_ms'] } else { 10 }
   $onsetRefractoryMs = if ($Case.analysis['onset_refractory_ms']) { [double]$Case.analysis['onset_refractory_ms'] } else { 40.0 }
   $onsets = [double[]](Find-AudioOnsets $samples $Audio.SampleRate ([double]$Case.analysis.onset_floor_dbfs) $onsetWindowMs $onsetRefractoryMs)
   $expectedOnsets = @($Case.expected.onsets)
+  if ($expectedOnsets.Count -gt 0 -and $onsets.Count -eq 0) { $captureInvalid = $true }
   $measurements.detected_onsets_ms = @($onsets | ForEach-Object { [Math]::Round($_, 3) })
   if ($expectedOnsets.Count -gt 0 -and $onsets.Count -lt $expectedOnsets.Count) {
     $issues.Add("detected $($onsets.Count) onsets; expected at least $($expectedOnsets.Count)")
@@ -271,6 +294,24 @@ function Measure-ArticulationCase($Audio, $Case) {
     $onsetResults.Add([pscustomobject]@{ at_step=$expected.at_step; expected_ms=[Math]::Round($expectedMs,3); measured_ms=if ($bestIndex -ge 0) {[Math]::Round($onsets[$bestIndex],3)} else {$null}; error_ms=if ($bestIndex -ge 0) {[Math]::Round($bestError,3)} else {$null}; passed=$passed })
   }
   $measurements.onsets = @($onsetResults)
+  $signatures = @($onsetResults | Where-Object { $null -ne $_.measured_ms } | ForEach-Object { Measure-AttackSignature $samples $Audio.SampleRate $_.measured_ms })
+  $measurements.attack_signatures = $signatures
+  # Repeated positions retain their offsets from the single initial alignment.
+  $driftResults = [System.Collections.Generic.List[object]]::new()
+  if ($Case.source.ContainsKey('length') -and [double]$Case.source.length -gt 0) {
+    $length = [double]$Case.source.length
+    $groups = @($onsetResults | Where-Object { $null -ne $_.measured_ms -and $_.error_ms -lt $stepMs / 4.0 } | Group-Object { [Math]::Round([double]$_.at_step % $length, 6) })
+    foreach ($group in $groups) {
+      $ordered = @($group.Group | Sort-Object { [double]$_.at_step })
+      if ($ordered.Count -lt 2) { continue }
+      $first = $ordered[0]; $last = $ordered[-1]
+      $offset = ($last.measured_ms - $last.expected_ms) - ($first.measured_ms - $first.expected_ms)
+      $passed = [Math]::Abs($offset) -le 5.0
+      if (-not $passed) { $captureInvalid=$true; $issues.Add(('cycle drift at source step {0} is {1:N2} ms; maximum is 5 ms' -f $group.Name,$offset)) }
+      $driftResults.Add([pscustomobject]@{ source_step=[double]$group.Name; first_step=$first.at_step; last_step=$last.at_step; drift_ms=[Math]::Round($offset,3); passed=$passed })
+    }
+  }
+  $measurements.cycle_drift = @($driftResults)
   if ($onsets.Count -gt $expectedOnsets.Count) {
     $extra = [System.Collections.Generic.List[double]]::new()
     for ($index = 0; $index -lt $onsets.Count; $index++) {
@@ -458,11 +499,11 @@ function Measure-ArticulationCase($Audio, $Case) {
 
   return [pscustomobject]@{
     CaseId = [string]$Case.id
-    Status = if ($issues.Count -eq 0) { 'pass' } else { 'fail' }
+    Status = if ($captureInvalid) { 'invalid' } elseif ($issues.Count -eq 0) { 'pass' } else { 'fail' }
     Issues = @($issues)
     Measurements = $measurements
     Audio = [ordered]@{ sha256=$Audio.Sha256; sample_rate=$Audio.SampleRate; channels=$Audio.Channels; bits_per_sample=$Audio.BitsPerSample; duration_ms=[Math]::Round($Audio.DurationMs,3); peak_dbfs=[Math]::Round($Audio.PeakDbfs,2); stereo_difference_db=if ($null -eq $Audio.StereoDifferenceDb) {$null} else {[Math]::Round($Audio.StereoDifferenceDb,2)} }
   }
 }
 
-Export-ModuleMember -Function Read-ArticulationWav,Get-SampleRms,Get-RmsSeries,Find-AudioOnsets,Get-FundamentalHz,Measure-ArticulationCase
+Export-ModuleMember -Function Measure-AttackSignature,Read-ArticulationWav,Get-SampleRms,Get-RmsSeries,Find-AudioOnsets,Get-FundamentalHz,Measure-ArticulationCase

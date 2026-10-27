@@ -90,7 +90,7 @@ local function configure_envelope(modulation_set)
   envelope.sustain_position = 31
   envelope.length = 37
   envelope:clear_points()
-  envelope.points = {
+  local expected_points = {
     { time = 1, value = 0.0, scaling = 0.0 },
     { time = 11, value = 1.0, scaling = 0.0 },
     { time = 31, value = 0.65, scaling = 0.0 },
@@ -98,6 +98,7 @@ local function configure_envelope(modulation_set)
     { time = 36, value = 0.0, scaling = 0.0 },
     { time = 37, value = 0.0, scaling = 0.0 },
   }
+  envelope.points = expected_points
   local desired_points = { [1] = true, [11] = true, [31] = true, [32] = true, [36] = true, [37] = true }
   for _, point in ipairs(envelope.points) do
     if not desired_points[point.time] then envelope:remove_point_at(point.time) end
@@ -110,8 +111,15 @@ local function configure_envelope(modulation_set)
   assert(envelope.length == 37, "Volume envelope length did not read back as 37 ms")
   assert(#envelope.points == 6,
     "Volume envelope point count did not read back as expected: " .. tostring(#envelope.points))
-  assert(envelope.points[2].time == 11 and envelope.points[2].value == 1.0,
-    "Volume envelope attack point did not read back as expected")
+  assert(envelope.play_mode == renoise.SampleEnvelopeModulationDevice.PLAYMODE_LINES
+    and envelope.loop_mode == renoise.SampleEnvelopeModulationDevice.LOOP_MODE_OFF,
+    "Volume envelope interpolation or loop mode did not stick")
+  for index, expected in ipairs(expected_points) do
+    local actual = envelope.points[index]
+    assert(actual.time == expected.time and math.abs(actual.value - expected.value) < 0.000001
+      and math.abs(actual.scaling - expected.scaling) < 0.000001,
+      "Volume envelope point " .. tostring(index) .. " did not read back as expected")
+  end
   return envelope
 end
 
@@ -142,6 +150,13 @@ local ok, err = pcall(function()
   instrument.volume = 1.0
   instrument.transpose = 0
   instrument.sample_mapping_overlap_mode = renoise.Instrument.OVERLAP_MODE_ALL
+  instrument.trigger_options.monophonic = false
+  instrument.trigger_options.monophonic_glide = 0
+  instrument.trigger_options.quantize = renoise.InstrumentTriggerOptions.QUANTIZE_NONE
+  assert(not instrument.trigger_options.monophonic
+    and instrument.trigger_options.monophonic_glide == 0
+    and instrument.trigger_options.quantize == renoise.InstrumentTriggerOptions.QUANTIZE_NONE,
+    "Probe polyphonic trigger settings did not stick")
 
   if #instrument.samples == 0 then instrument:insert_sample_at(1) end
   assert(#instrument.samples == 1, "Fresh probe instrument must contain exactly one sample slot")

@@ -5,6 +5,7 @@ param(
   [Parameter(Mandatory=$true)][string]$CaseId,
   [string]$OraclePath = (Join-Path $PSScriptRoot 'fixtures\audio_cases.json'),
   [string]$OutputPath,
+  [string]$NormalizationProvenancePath,
   [switch]$Json
 )
 
@@ -14,9 +15,27 @@ $oracle = Get-Content -LiteralPath $OraclePath -Raw | ConvertFrom-Json -AsHashta
 if ($oracle.format -cne 'ACID-AUDIO-ORACLE-1') { throw "Unsupported audio oracle format '$($oracle.format)'" }
 $case = @($oracle.cases | Where-Object { $_.id -ceq $CaseId }) | Select-Object -First 1
 if ($null -eq $case) { throw "Unknown audio case '$CaseId'" }
+if ($case.ContainsKey('status') -and $case.status -ne 'ready') {
+  $unsupported = [ordered]@{ format='ACID-AUDIO-RESULT-1'; case_id=$CaseId; status='unsupported'; issues=@('case is planned and has no qualified analyzer protocol'); audio=@{path=$WavPath} }
+  if ($OutputPath) {
+    if (Test-Path -LiteralPath $OutputPath) { throw "Refusing to overwrite analysis result '$OutputPath'" }
+    Set-Content -LiteralPath $OutputPath -Value (ConvertTo-Json -InputObject $unsupported -Depth 30) -Encoding utf8
+  }
+  if ($Json) { ConvertTo-Json -InputObject $unsupported -Depth 30 } else { Write-Output "${CaseId}: UNSUPPORTED — $($unsupported.issues[0])" }
+  exit 2
+}
 
 try {
   $audio = Read-ArticulationWav $WavPath
+  $normalization = $null
+  if ($NormalizationProvenancePath) {
+    $normalization = Get-Content -LiteralPath $NormalizationProvenancePath -Raw | ConvertFrom-Json -AsHashtable
+    if ($normalization.format -cne 'ACID-AUDIO-NORMALIZATION-1') { throw 'Unsupported normalization provenance format' }
+    if ($normalization.output.sha256 -cne $audio.Sha256) { throw 'Normalized WAV SHA-256 differs from provenance' }
+    $provenanceDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $NormalizationProvenancePath).Path
+    $originalPath = Join-Path $provenanceDirectory $normalization.source.path
+    if ((Get-FileHash -LiteralPath $originalPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $normalization.source.sha256) { throw 'Original WAV SHA-256 differs from normalization provenance' }
+  }
 } catch {
   $invalid = [ordered]@{
     format='ACID-AUDIO-RESULT-1'
@@ -94,6 +113,7 @@ $report = [ordered]@{
   measurements=$result.Measurements
   audio=$result.Audio
   capture=@{ bpm=[double]$case.capture.bpm; song_lpb=[int]$case.capture.song_lpb; tpl=[int]$case.capture.tpl; profile_id=[string]$case.profile.id }
+  normalization=$normalization
 }
 if ($OutputPath) {
   if (Test-Path -LiteralPath $OutputPath) { throw "Refusing to overwrite analysis result '$OutputPath'" }
@@ -108,6 +128,15 @@ if ($Json) {
   Write-Output ("{0}: {1} — {2} Hz, {3} ch, peak {4}" -f $CaseId,$result.Status.ToUpperInvariant(),$audio.SampleRate,$audio.Channels,$peakText)
   foreach ($issue in $result.Issues) { Write-Output "  FAIL: $issue" }
   Write-Output ("  Onsets: {0}; pitch windows: {1}; silence windows: {2}; continuity windows: {3}" -f @($result.Measurements.onsets).Count,@($result.Measurements.pitch_windows).Count,@($result.Measurements.silence_windows).Count,@($result.Measurements.continuity_windows).Count)
+  foreach ($kind in 'onsets','pitch_windows','silence_windows','no_attack_windows','continuity_windows') {
+    foreach ($window in @($result.Measurements[$kind])) {
+      if ($null -ne $window) { Write-Output ("  {0}: {1}" -f $kind,($window | ConvertTo-Json -Compress -Depth 8)) }
+    }
+  }
+  foreach ($kind in 'glide_trajectory','glide_settle','release') {
+    if ($result.Measurements.Contains($kind)) { Write-Output ("  {0}: {1}" -f $kind,($result.Measurements[$kind] | ConvertTo-Json -Compress -Depth 8)) }
+  }
   if ($OutputPath) { Write-Output "  Machine-readable result: $OutputPath" }
 }
+if ($result.Status -in 'invalid','unsupported') { exit 2 }
 if ($result.Status -ne 'pass') { exit 1 }

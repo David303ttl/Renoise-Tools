@@ -26,6 +26,46 @@ $calibrationCount = 0
 foreach ($case in $oracle.cases) {
   $id = [string]$case.id
   if ([string]::IsNullOrWhiteSpace($id) -or -not $ids.Add($id)) { throw "Missing or duplicate case ID '$id'" }
+  if ($case.status -cnotin @('ready', 'planned')) { throw "$id`: missing qualification status" }
+  if ($case.status -ceq 'planned') {
+    if ($case.qualification.protocol_status -cnotin @('authored', 'blocked') -or
+        $case.qualification.acoustic_status -cne 'unverified' -or
+        @($case.qualification.blockers).Count -eq 0) {
+      throw "$id`: planned protocol requires explicit qualification blockers"
+    }
+  }
+  $source = $case.source
+  if ($source.entry_mode -cnotin @('original', 'extended') -or
+      $source.length -lt 1 -or $source.length -gt 64 -or
+      @($source.time).Count -ne $source.length -or
+      $source.pitch_length -lt 1 -or $source.pitch_length -gt 64 -or
+      @($source.pitches).Count -lt $source.pitch_length) { throw "$id`: invalid canonical source" }
+  foreach ($command in $source.time) {
+    if ($command -cnotin @('N', 'T', 'R')) { throw "$id`: invalid TIME command" }
+  }
+  if ($source.time[0] -ceq 'T') { throw "$id`: source cannot begin with TIE" }
+  foreach ($note in $source.pitches) {
+    if ($null -eq $note -or $note -is [string] -or -not [double]::IsFinite([double]$note) -or
+        $note -lt 0 -or $note -gt 119 -or [double]$note -ne [int]$note) { throw "$id`: invalid PITCH note" }
+  }
+  if ($case.profile.id -cne $oracle.profile.id) { throw "$id`: reference profile mismatch" }
+  if ($case.playback.trigger_mode -cnotin @('selective', 'keymapped') -or
+      [string]::IsNullOrWhiteSpace($case.playback.renderer) -or
+      [string]::IsNullOrWhiteSpace($case.trigger)) { throw "$id`: playback/trigger context is required" }
+  foreach ($group in @('onsets', 'pitch_windows', 'silence_windows')) {
+    if (-not $case.expected.ContainsKey($group)) { throw "$id`: missing expected $group" }
+  }
+  foreach ($group in @('onsets', 'pitch_windows', 'silence_windows', 'continuity_windows', 'no_attack_windows')) {
+    foreach ($window in @($case.expected[$group] | Where-Object { $null -ne $_ })) {
+      $fields = if ($group -eq 'onsets') { @('at_step', 'note', 'tolerance_ms') } else { @('start_step', 'end_step') }
+      foreach ($field in $fields) {
+        $value = $window[$field]
+        if ($null -eq $value -or $value -is [string] -or -not [double]::IsFinite([double]$value) -or $value -lt 0) {
+          throw "$id`: $group.$field must be a finite nonnegative number"
+        }
+      }
+    }
+  }
   if ([double]$case.capture.bpm -le 0) { throw "$id`: BPM must be positive" }
   if ([int]$case.capture.sample_rate -ne $captureSampleRate) { throw "$id`: capture sample rate must match the shared oracle requirement ($captureSampleRate Hz)" }
   if ([int]$case.profile.sample_frames -ne 168 -or [int]$case.profile.root_note -ne 48) { throw "$id`: unexpected reference sample geometry" }
@@ -47,6 +87,10 @@ foreach ($case in $oracle.cases) {
   }
   foreach ($window in @($case.expected.silence_windows)) {
     if ([double]$window.end_step -le [double]$window.start_step) { throw "$id`: invalid silence window" }
+    foreach ($onset in @($case.expected.onsets)) {
+      if ([double]$onset.at_step -ge [double]$window.start_step -and
+          [double]$onset.at_step -lt [double]$window.end_step) { throw "$id`: silence window overlaps expected onset" }
+    }
   }
   foreach ($window in @($case.expected.continuity_windows | Where-Object { $null -ne $_ })) {
     if ([double]$window.end_step -le [double]$window.start_step -or
@@ -102,5 +146,33 @@ foreach ($case in $oracle.cases) {
 if (-not $ids.Contains($calibrationId)) { throw "Calibration case '$calibrationId' is missing" }
 if (@($oracle.cases | Where-Object { $_.expected.glide_window }).Count -ne 3) { throw 'Expected the three authored 0G08/0G20/0G40 glide experiments' }
 if (@($oracle.cases | Where-Object { $_.expected.release }).Count -lt 3) { throw 'Expected release, retrigger and REST controls' }
+foreach ($required in @('isolated_note', 'note_tie', 'note_tie_tie', 'adjacent_equal_notes',
+    'adjacent_different_notes', 'all_rest', 'ending_rest', 'trailing_tie_fresh_note',
+    'trailing_tie_slide', 'one_step_repeat', 'outgoing_slide_flag', 'incoming_slide_flag',
+    'same_note_slide', 'up_slide', 'down_slide', 'octave_slide', 'short_slide',
+    'tied_long_slide', 'slide_interrupted_rest', 'alternating_accents',
+    'consecutive_accents', 'connected_accent_change', 'host_off', 'fresh_retrigger',
+    'transport_stop_start', 'transport_seek', 'keymapped_trigger')) {
+  if (-not $ids.Contains($required)) { throw "Required articulation case '$required' is missing" }
+}
+foreach ($length in @(1, 16, 17, 32, 33, 48, 49, 64)) {
+  if ($length -notin @($oracle.cases | ForEach-Object { $_.source.length })) { throw "Required structural length $length is missing" }
+}
+
+foreach ($case in $oracle.cases) {
+  foreach ($control in @($case.controls)) {
+    if (-not $ids.Contains([string]$control.id) -or [string]::IsNullOrWhiteSpace($control.measurement)) {
+      throw "$($case.id): unresolved control reference or missing measurement"
+    }
+  }
+  if ($case.source.reference_fixture) {
+    $parts = $case.source.reference_fixture -split '#', 2
+    $repositoryRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+    $fixturePath = Join-Path $repositoryRoot $parts[0]
+    if ($parts.Count -ne 2 -or -not (Test-Path -LiteralPath $fixturePath)) { throw 'Invalid semantic fixture reference' }
+    $semantic = Get-Content -LiteralPath $fixturePath -Raw | ConvertFrom-Json
+    if ($parts[1] -cnotin @($semantic.cases.id)) { throw 'Semantic fixture ID does not exist' }
+  }
+}
 
 Write-Output "Audio oracle valid: $($oracle.cases.Count) cases; $calibrationCount explicit calibration onsets."

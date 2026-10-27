@@ -1,6 +1,6 @@
 {
   "format": "ACID-AUDIO-ORACLE-1",
-  "status": "authored independent windows; full grid loopback calibration passed for the recorded desktop route; native articulation experiments remain pending; see tests/acid/audio_capture_evidence.md",
+  "status": "Independent semantic acoustic windows authored; native-dependent settling, accent controls, synchronization and lifecycle protocols explicitly blocked. No runtime acceptance claim; see tests/acid/audio_capture_evidence.md.",
   "index_base": 0,
   "step_unit": "one straight TIME sixteenth; 1 step = 2 phrase lines at phrase LPB 8",
   "capture_requirements": {
@@ -17,10 +17,26 @@
       24,
       32
     ],
-    "no_normalization": true,
+    "no_normalization": false,
     "peak_ceiling_dbfs": -6,
     "preferred_pcm_bits": 24,
-    "calibration_case": "grid_calibration_all_note_pitch_span_16"
+    "calibration_case": "grid_calibration_all_note_pitch_span_16",
+    "normalization": {
+      "comparisons": "recalibrate under the same documented normalization policy; match A/B gain where possible and compensate measured ratios for actual gains",
+      "receipt_required": true,
+      "receipt_fields": [
+        "source.sha256",
+        "output.sha256",
+        "gain_linear",
+        "gain_db",
+        "source.peak_dbfs",
+        "output.peak_dbfs"
+      ],
+      "method": "one positive scalar applied equally to every sample and channel; optional explicitly recorded mono average only when source stereo difference is <= -40 dB; no time edits, resampling, compression, denoising or limiting",
+      "policy": "explicit analysis copies only; retain unchanged original WAV",
+      "target_peak_dbfs": -6.1,
+      "optional_mono": "recorded arithmetic mean of L/R, source stereo difference <= -40 dB; mono-copy evidence does not qualify original stereo channel agreement"
+    }
   },
   "profile": {
     "sample_rate": 44100,
@@ -128,7 +144,9 @@
         "exclusive_end_sentinel": true,
         "phrase_lpb": 8,
         "calibration_marker_gate_fraction": 0.5,
-        "calibration_marker": "OFF on each step second line (50% marker gate); capture-only timing marker, not M3 gate evidence"
+        "calibration_marker": "OFF on each step second line (50% marker gate); capture-only timing marker, not M3 gate evidence",
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective"
       },
       "id": "grid_calibration_all_note_pitch_span_16",
       "trigger": "one sustained host note starts the calibration phrase; each calibration NOTE is cut by a calibration-only OFF at the half-step point; capture one cold pass and three steady repeats",
@@ -1101,7 +1119,18 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "calibration"
+      "purpose": "calibration",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ]
     },
     {
       "phrase": "reference held note",
@@ -1127,7 +1156,11 @@
         "phrase_lpb": 8,
         "note_off_step": 5,
         "lines_per_step": 2,
-        "looping": false
+        "looping": false,
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "steady_cycles": 0
       },
       "id": "held_note_reference",
       "trigger": "single cold trigger, no host retrigger",
@@ -1167,7 +1200,38 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "control-or-experiment"
+      "purpose": "control-or-experiment",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 8,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "R",
+          "R",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      }
     },
     {
       "phrase": "same-pitch retrigger positive control",
@@ -1193,7 +1257,11 @@
         "phrase_lpb": 8,
         "note_off_step": 5,
         "lines_per_step": 2,
-        "looping": false
+        "looping": false,
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "steady_cycles": 0
       },
       "id": "same_pitch_retrigger_control",
       "trigger": "single cold trigger, no host retrigger",
@@ -1243,7 +1311,39 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "control-or-experiment"
+      "purpose": "control-or-experiment",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          48
+        ],
+        "length": 8,
+        "accent_pitch_indices": [],
+        "pitch_length": 2,
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "R",
+          "R",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      }
     },
     {
       "phrase": "REST release control",
@@ -1269,7 +1369,11 @@
         "phrase_lpb": 8,
         "note_off_step": 2,
         "lines_per_step": 2,
-        "looping": false
+        "looping": false,
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "steady_cycles": 0
       },
       "id": "rest_release_control",
       "trigger": "single cold trigger, no host retrigger",
@@ -1319,7 +1423,39 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "control-or-experiment"
+      "purpose": "control-or-experiment",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ],
+        "length": 8,
+        "accent_pitch_indices": [],
+        "pitch_length": 2,
+        "time": [
+          "N",
+          "T",
+          "R",
+          "N",
+          "T",
+          "T",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      }
     },
     {
       "phrase": "0G08 candidate",
@@ -1345,7 +1481,11 @@
         "phrase_lpb": 8,
         "note_off_step": 5,
         "lines_per_step": 2,
-        "looping": false
+        "looping": false,
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "steady_cycles": 0
       },
       "id": "slide_rate_08",
       "trigger": "single cold trigger, no host retrigger",
@@ -1417,7 +1557,41 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "control-or-experiment"
+      "purpose": "control-or-experiment",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "R",
+          "R",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 8
+      }
     },
     {
       "phrase": "0G20 candidate",
@@ -1443,7 +1617,11 @@
         "phrase_lpb": 8,
         "note_off_step": 5,
         "lines_per_step": 2,
-        "looping": false
+        "looping": false,
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "steady_cycles": 0
       },
       "id": "slide_rate_20",
       "trigger": "single cold trigger, no host retrigger",
@@ -1515,7 +1693,41 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "control-or-experiment"
+      "purpose": "control-or-experiment",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "R",
+          "R",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 8
+      }
     },
     {
       "phrase": "0G40 candidate",
@@ -1541,7 +1753,11 @@
         "phrase_lpb": 8,
         "note_off_step": 5,
         "lines_per_step": 2,
-        "looping": false
+        "looping": false,
+        "renderer": "independent-native-control",
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "steady_cycles": 0
       },
       "id": "slide_rate_40",
       "trigger": "single cold trigger, no host retrigger",
@@ -1613,7 +1829,4890 @@
         "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
         "base_frequency_hz": 262.5
       },
-      "purpose": "control-or-experiment"
+      "purpose": "control-or-experiment",
+      "status": "ready",
+      "controls": [
+        {
+          "measurement": "pitch-matched sustained RMS and diagnostic envelope",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "deliberate amplitude-envelope restart",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "N",
+          "T",
+          "T",
+          "R",
+          "R",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 8
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "isolated_note",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 1,
+            "silence_starts_at_step": 1.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 1,
+          "silence_starts_at_step": 1.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 1.08,
+            "end_step": 1.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "note_tie",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.52,
+            "end_step": 1.92,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.92
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "note_tie_tie",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 2.52,
+            "end_step": 2.92,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 2.92
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 3,
+            "silence_starts_at_step": 3.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 3,
+          "silence_starts_at_step": 3.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 3.08,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 4,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "adjacent_equal_notes",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 0.5,
+            "silence_starts_at_step": 0.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 0.9
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 1,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 2,
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "adjacent_different_notes",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 52
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 0.5,
+            "silence_starts_at_step": 0.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 0.9
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 1,
+            "note": 52
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48,
+          52
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 2,
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "all_rest",
+      "status": "planned",
+      "trigger": "independent synchronization marker before silent region",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Complete transition, release, accent and seam windows after independent native strategy qualification; this initial window cannot establish case acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "silence_windows": [
+          {
+            "start_step": 0.1,
+            "end_step": 1.9
+          }
+        ],
+        "onsets": [],
+        "continuity_windows": [],
+        "pitch_windows": []
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "R",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "qualification": {
+        "blockers": [
+          "A silent case has no onset origin; author a separately captured synchronization marker and analyzer support before acceptance."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "ending_rest",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.52,
+            "end_step": 1.92,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.92
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 3,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "trailing_tie_fresh_note",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.02,
+            "end_step": 1.42,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4,
+            "note": 48
+          },
+          {
+            "start_step": 3.02,
+            "end_step": 3.42,
+            "note": 48
+          },
+          {
+            "start_step": 4.08,
+            "end_step": 4.4,
+            "note": 48
+          },
+          {
+            "start_step": 5.02,
+            "end_step": 5.42,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.4,
+            "note": 48
+          },
+          {
+            "start_step": 7.02,
+            "end_step": 7.42,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.5,
+            "end_step": 1.42
+          },
+          {
+            "start_step": 2.5,
+            "end_step": 3.42
+          },
+          {
+            "start_step": 4.5,
+            "end_step": 5.42
+          },
+          {
+            "start_step": 6.5,
+            "end_step": 7.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 1.5,
+            "silence_starts_at_step": 1.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 3.5,
+            "silence_starts_at_step": 3.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 5.5,
+            "silence_starts_at_step": 5.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 7.5,
+            "silence_starts_at_step": 7.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 7.5,
+          "silence_starts_at_step": 7.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 1.58,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 3.58,
+            "end_step": 3.9
+          },
+          {
+            "start_step": 5.58,
+            "end_step": 5.9
+          },
+          {
+            "start_step": 7.58,
+            "end_step": 8.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 2,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 4,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 6,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "T"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "trailing_tie_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4,
+            "note": 48
+          },
+          {
+            "start_step": 4.08,
+            "end_step": 4.4,
+            "note": 48
+          },
+          {
+            "start_step": 6.08,
+            "end_step": 6.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          },
+          {
+            "start_step": 3.84,
+            "end_step": 4.16
+          },
+          {
+            "start_step": 5.84,
+            "end_step": 6.16
+          },
+          {
+            "start_step": 6.5,
+            "end_step": 7.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 7.5,
+            "silence_starts_at_step": 7.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 7.5,
+          "silence_starts_at_step": 7.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 7.58,
+            "end_step": 8.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 1.84,
+            "end_step": 2.16,
+            "baseline_start_step": 1.4,
+            "baseline_end_step": 1.8
+          },
+          {
+            "start_step": 3.84,
+            "end_step": 4.16,
+            "baseline_start_step": 3.4,
+            "baseline_end_step": 3.8
+          },
+          {
+            "start_step": 5.84,
+            "end_step": 6.16,
+            "baseline_start_step": 5.4,
+            "baseline_end_step": 5.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 2
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "one_step_repeat",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 0.5,
+            "silence_starts_at_step": 0.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 1.5,
+            "silence_starts_at_step": 1.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 2.5,
+            "silence_starts_at_step": 2.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 3.5,
+            "silence_starts_at_step": 3.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 3.5,
+          "silence_starts_at_step": 3.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 0.9
+          },
+          {
+            "start_step": 1.58,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 2.58,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 3.58,
+            "end_step": 4.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 1,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 2,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 3,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 1,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N"
+        ],
+        "slide_pitch_indices": []
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping.",
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "authored"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "outgoing_slide_flag",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "incoming_slide_flag",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 55
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 0.5,
+            "silence_starts_at_step": 0.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 0.9
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 1,
+            "note": 55
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          2
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "same_note_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "up_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "down_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 55
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 55
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          55,
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "octave_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          60
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "short_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 2,
+            "silence_starts_at_step": 2.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 2,
+          "silence_starts_at_step": 2.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 2.08,
+            "end_step": 2.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 3
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "tied_long_slide",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 2.84,
+            "end_step": 3.16
+          },
+          {
+            "start_step": 3.5,
+            "end_step": 4.92
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 5,
+            "silence_starts_at_step": 5.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 5,
+          "silence_starts_at_step": 5.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 5.08,
+            "end_step": 5.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 2.84,
+            "end_step": 3.16,
+            "baseline_start_step": 2.4,
+            "baseline_end_step": 2.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "N",
+          "T",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 6
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "slide_interrupted_rest",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4,
+            "note": 55
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 1,
+            "silence_starts_at_step": 1.08,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 3,
+            "silence_starts_at_step": 3.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 3,
+          "silence_starts_at_step": 3.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 1.08,
+            "end_step": 1.4
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 2,
+            "note": 55
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "R",
+          "N",
+          "R"
+        ],
+        "pitch_length": 2,
+        "pitches": [
+          48,
+          55
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 4
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "alternating_accents",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4,
+            "note": 48
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 0.5,
+            "silence_starts_at_step": 0.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 1.5,
+            "silence_starts_at_step": 1.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 2.5,
+            "silence_starts_at_step": 2.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 4,
+            "silence_starts_at_step": 4.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 4,
+          "silence_starts_at_step": 4.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 0.9
+          },
+          {
+            "start_step": 1.58,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 2.58,
+            "end_step": 2.9
+          },
+          {
+            "start_step": 4.08,
+            "end_step": 4.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 1,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 2,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 3,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 4,
+        "pitches": [
+          48,
+          48,
+          48,
+          48
+        ],
+        "slide_pitch_indices": [],
+        "accent_pitch_indices": [
+          2,
+          4
+        ],
+        "entry_mode": "extended",
+        "length": 5
+      },
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed.",
+          "Read emitted quantized volume cells and freeze gain-compensated equal-pitch A/B windows and predicted ratio; require +/-0.5 dB and three-capture spread <=0.5 dB."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "consecutive_accents",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 1.08,
+            "end_step": 1.4,
+            "note": 48
+          },
+          {
+            "start_step": 2.08,
+            "end_step": 2.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [],
+        "release_edges": [
+          {
+            "off_at_step": 0.5,
+            "silence_starts_at_step": 0.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 1.5,
+            "silence_starts_at_step": 1.58,
+            "maximum_tail_ms": 10
+          },
+          {
+            "off_at_step": 3,
+            "silence_starts_at_step": 3.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 3,
+          "silence_starts_at_step": 3.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 0.58,
+            "end_step": 0.9
+          },
+          {
+            "start_step": 1.58,
+            "end_step": 1.9
+          },
+          {
+            "start_step": 3.08,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 1,
+            "note": 48
+          },
+          {
+            "tolerance_ms": 5,
+            "at_step": 2,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 3,
+        "pitches": [
+          48,
+          48,
+          48
+        ],
+        "slide_pitch_indices": [],
+        "accent_pitch_indices": [
+          2,
+          3
+        ],
+        "entry_mode": "extended",
+        "length": 4
+      },
+      "qualification": {
+        "blockers": [
+          "Actual writer capture and calibrated independent native controls have not passed.",
+          "Read emitted quantized volume cells and freeze gain-compensated equal-pitch A/B windows and predicted ratio; require +/-0.5 dB and three-capture spread <=0.5 dB."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "connected_accent_change",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16
+          },
+          {
+            "start_step": 1.84,
+            "end_step": 2.16
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 3,
+            "silence_starts_at_step": 3.08,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 3,
+          "silence_starts_at_step": 3.08,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 3.08,
+            "end_step": 3.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 0.84,
+            "end_step": 1.16,
+            "baseline_start_step": 0.4,
+            "baseline_end_step": 0.8
+          },
+          {
+            "start_step": 1.84,
+            "end_step": 2.16,
+            "baseline_start_step": 1.4,
+            "baseline_end_step": 1.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "N",
+          "N",
+          "R"
+        ],
+        "pitch_length": 3,
+        "pitches": [
+          48,
+          55,
+          48
+        ],
+        "slide_pitch_indices": [
+          1,
+          2
+        ],
+        "accent_pitch_indices": [
+          2
+        ],
+        "entry_mode": "extended",
+        "length": 4
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only.",
+          "Read emitted quantized volume cells and freeze gain-compensated equal-pitch A/B windows and predicted ratio; require +/-0.5 dB and three-capture spread <=0.5 dB."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_16",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 16.08,
+            "end_step": 16.4,
+            "note": 48
+          },
+          {
+            "start_step": 32.08,
+            "end_step": 32.4,
+            "note": 48
+          },
+          {
+            "start_step": 48.08,
+            "end_step": 48.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 15.84,
+            "end_step": 16.16
+          },
+          {
+            "start_step": 31.84,
+            "end_step": 32.16
+          },
+          {
+            "start_step": 47.84,
+            "end_step": 48.16
+          },
+          {
+            "start_step": 48.5,
+            "end_step": 63.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 63.5,
+            "silence_starts_at_step": 63.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 63.5,
+          "silence_starts_at_step": 63.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 63.58,
+            "end_step": 64.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 15.84,
+            "end_step": 16.16,
+            "baseline_start_step": 15.4,
+            "baseline_end_step": 15.8
+          },
+          {
+            "start_step": 31.84,
+            "end_step": 32.16,
+            "baseline_start_step": 31.4,
+            "baseline_end_step": 31.8
+          },
+          {
+            "start_step": 47.84,
+            "end_step": 48.16,
+            "baseline_start_step": 47.4,
+            "baseline_end_step": 47.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 16
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_17",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 17.08,
+            "end_step": 17.4,
+            "note": 48
+          },
+          {
+            "start_step": 34.08,
+            "end_step": 34.4,
+            "note": 48
+          },
+          {
+            "start_step": 51.08,
+            "end_step": 51.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 16.84,
+            "end_step": 17.16
+          },
+          {
+            "start_step": 33.84,
+            "end_step": 34.16
+          },
+          {
+            "start_step": 50.84,
+            "end_step": 51.16
+          },
+          {
+            "start_step": 51.5,
+            "end_step": 67.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 67.5,
+            "silence_starts_at_step": 67.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 67.5,
+          "silence_starts_at_step": 67.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 67.58,
+            "end_step": 68.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 16.84,
+            "end_step": 17.16,
+            "baseline_start_step": 16.4,
+            "baseline_end_step": 16.8
+          },
+          {
+            "start_step": 33.84,
+            "end_step": 34.16,
+            "baseline_start_step": 33.4,
+            "baseline_end_step": 33.8
+          },
+          {
+            "start_step": 50.84,
+            "end_step": 51.16,
+            "baseline_start_step": 50.4,
+            "baseline_end_step": 50.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 17
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_32",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 32.08,
+            "end_step": 32.4,
+            "note": 48
+          },
+          {
+            "start_step": 64.08,
+            "end_step": 64.4,
+            "note": 48
+          },
+          {
+            "start_step": 96.08,
+            "end_step": 96.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 31.84,
+            "end_step": 32.16
+          },
+          {
+            "start_step": 63.84,
+            "end_step": 64.16
+          },
+          {
+            "start_step": 95.84,
+            "end_step": 96.16
+          },
+          {
+            "start_step": 96.5,
+            "end_step": 127.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 127.5,
+            "silence_starts_at_step": 127.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 127.5,
+          "silence_starts_at_step": 127.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 127.58,
+            "end_step": 128.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 31.84,
+            "end_step": 32.16,
+            "baseline_start_step": 31.4,
+            "baseline_end_step": 31.8
+          },
+          {
+            "start_step": 63.84,
+            "end_step": 64.16,
+            "baseline_start_step": 63.4,
+            "baseline_end_step": 63.8
+          },
+          {
+            "start_step": 95.84,
+            "end_step": 96.16,
+            "baseline_start_step": 95.4,
+            "baseline_end_step": 95.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 32
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_33",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 33.08,
+            "end_step": 33.4,
+            "note": 48
+          },
+          {
+            "start_step": 66.08,
+            "end_step": 66.4,
+            "note": 48
+          },
+          {
+            "start_step": 99.08,
+            "end_step": 99.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 32.84,
+            "end_step": 33.16
+          },
+          {
+            "start_step": 65.84,
+            "end_step": 66.16
+          },
+          {
+            "start_step": 98.84,
+            "end_step": 99.16
+          },
+          {
+            "start_step": 99.5,
+            "end_step": 131.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 131.5,
+            "silence_starts_at_step": 131.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 131.5,
+          "silence_starts_at_step": 131.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 131.58,
+            "end_step": 132.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 32.84,
+            "end_step": 33.16,
+            "baseline_start_step": 32.4,
+            "baseline_end_step": 32.8
+          },
+          {
+            "start_step": 65.84,
+            "end_step": 66.16,
+            "baseline_start_step": 65.4,
+            "baseline_end_step": 65.8
+          },
+          {
+            "start_step": 98.84,
+            "end_step": 99.16,
+            "baseline_start_step": 98.4,
+            "baseline_end_step": 98.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 33
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_48",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 48.08,
+            "end_step": 48.4,
+            "note": 48
+          },
+          {
+            "start_step": 96.08,
+            "end_step": 96.4,
+            "note": 48
+          },
+          {
+            "start_step": 144.08,
+            "end_step": 144.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 47.84,
+            "end_step": 48.16
+          },
+          {
+            "start_step": 95.84,
+            "end_step": 96.16
+          },
+          {
+            "start_step": 143.84,
+            "end_step": 144.16
+          },
+          {
+            "start_step": 144.5,
+            "end_step": 191.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 191.5,
+            "silence_starts_at_step": 191.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 191.5,
+          "silence_starts_at_step": 191.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 191.58,
+            "end_step": 192.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 47.84,
+            "end_step": 48.16,
+            "baseline_start_step": 47.4,
+            "baseline_end_step": 47.8
+          },
+          {
+            "start_step": 95.84,
+            "end_step": 96.16,
+            "baseline_start_step": 95.4,
+            "baseline_end_step": 95.8
+          },
+          {
+            "start_step": 143.84,
+            "end_step": 144.16,
+            "baseline_start_step": 143.4,
+            "baseline_end_step": 143.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 48
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_49",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 49.08,
+            "end_step": 49.4,
+            "note": 48
+          },
+          {
+            "start_step": 98.08,
+            "end_step": 98.4,
+            "note": 48
+          },
+          {
+            "start_step": 147.08,
+            "end_step": 147.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 48.84,
+            "end_step": 49.16
+          },
+          {
+            "start_step": 97.84,
+            "end_step": 98.16
+          },
+          {
+            "start_step": 146.84,
+            "end_step": 147.16
+          },
+          {
+            "start_step": 147.5,
+            "end_step": 195.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 195.5,
+            "silence_starts_at_step": 195.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 195.5,
+          "silence_starts_at_step": 195.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 195.58,
+            "end_step": 196.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 48.84,
+            "end_step": 49.16,
+            "baseline_start_step": 48.4,
+            "baseline_end_step": 48.8
+          },
+          {
+            "start_step": 97.84,
+            "end_step": 98.16,
+            "baseline_start_step": 97.4,
+            "baseline_end_step": 97.8
+          },
+          {
+            "start_step": 146.84,
+            "end_step": 147.16,
+            "baseline_start_step": 146.4,
+            "baseline_end_step": 146.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 49
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 3,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": true
+      },
+      "id": "repeat_slide_seam_length_64",
+      "status": "planned",
+      "trigger": "single sustained host note",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Authored timing, attack, silence and continuity constraints do not establish native acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "pitch_windows": [
+          {
+            "start_step": 0.08,
+            "end_step": 0.4,
+            "note": 48
+          },
+          {
+            "start_step": 64.08,
+            "end_step": 64.4,
+            "note": 48
+          },
+          {
+            "start_step": 128.08,
+            "end_step": 128.4,
+            "note": 48
+          },
+          {
+            "start_step": 192.08,
+            "end_step": 192.4,
+            "note": 48
+          }
+        ],
+        "no_attack_windows": [
+          {
+            "start_step": 63.84,
+            "end_step": 64.16
+          },
+          {
+            "start_step": 127.84,
+            "end_step": 128.16
+          },
+          {
+            "start_step": 191.84,
+            "end_step": 192.16
+          },
+          {
+            "start_step": 192.5,
+            "end_step": 255.42
+          }
+        ],
+        "release_edges": [
+          {
+            "off_at_step": 255.5,
+            "silence_starts_at_step": 255.58,
+            "maximum_tail_ms": 10
+          }
+        ],
+        "release": {
+          "off_at_step": 255.5,
+          "silence_starts_at_step": 255.58,
+          "maximum_tail_ms": 10
+        },
+        "silence_windows": [
+          {
+            "start_step": 255.58,
+            "end_step": 256.4
+          }
+        ],
+        "continuity_windows": [
+          {
+            "start_step": 63.84,
+            "end_step": 64.16,
+            "baseline_start_step": 63.4,
+            "baseline_end_step": 63.8
+          },
+          {
+            "start_step": 127.84,
+            "end_step": 128.16,
+            "baseline_start_step": 127.4,
+            "baseline_end_step": 127.8
+          },
+          {
+            "start_step": 191.84,
+            "end_step": 192.16,
+            "baseline_start_step": 191.4,
+            "baseline_end_step": 191.8
+          }
+        ],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "at_step": 0,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "time": [
+          "N",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T",
+          "T"
+        ],
+        "pitch_length": 1,
+        "pitches": [
+          48
+        ],
+        "slide_pitch_indices": [
+          1
+        ],
+        "accent_pitch_indices": [],
+        "entry_mode": "extended",
+        "length": 64
+      },
+      "qualification": {
+        "blockers": [
+          "Native strategy and rate have not passed independent controls; freeze directional glide and >=40 ms settled target windows from that evidence.",
+          "Pitch-dependent continuity requires matching hold controls; current baseline is a semantic timing constraint only."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      },
+      "expectation_context": "Frozen semantic acoustic requirements at 120 BPM, independent of runtime output. REST releases at its boundary; disconnected successor/final tail releases at final held-step midpoint. Cold plus three steady cycles where looping."
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "host_off",
+      "status": "planned",
+      "trigger": "host_off",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Complete transition, release, accent and seam windows after independent native strategy qualification; this initial window cannot establish case acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "silence_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "continuity_windows": [],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "qualification": {
+        "blockers": [
+          "Freeze host event times, restart/seek origin and trigger mapping from an independent native lifecycle capture; current source alone does not specify these events."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "fresh_retrigger",
+      "status": "planned",
+      "trigger": "fresh_retrigger",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Complete transition, release, accent and seam windows after independent native strategy qualification; this initial window cannot establish case acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "silence_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "continuity_windows": [],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "qualification": {
+        "blockers": [
+          "Freeze host event times, restart/seek origin and trigger mapping from an independent native lifecycle capture; current source alone does not specify these events."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "transport_stop_start",
+      "status": "planned",
+      "trigger": "transport_stop_start",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Complete transition, release, accent and seam windows after independent native strategy qualification; this initial window cannot establish case acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "silence_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "continuity_windows": [],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "qualification": {
+        "blockers": [
+          "Freeze host event times, restart/seek origin and trigger mapping from an independent native lifecycle capture; current source alone does not specify these events."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "selective",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "transport_seek",
+      "status": "planned",
+      "trigger": "transport_seek",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Complete transition, release, accent and seam windows after independent native strategy qualification; this initial window cannot establish case acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "silence_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "continuity_windows": [],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "qualification": {
+        "blockers": [
+          "Freeze host event times, restart/seek origin and trigger mapping from an independent native lifecycle capture; current source alone does not specify these events."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      }
+    },
+    {
+      "capture": {
+        "sample_rate": 48000,
+        "sample_format": "PCM24",
+        "channels": "mono-or-dual-mono-stereo",
+        "tpl": 12,
+        "song_lpb": 8,
+        "bpm": 120,
+        "minimum_tail_ms": 500
+      },
+      "playback": {
+        "steady_cycles": 0,
+        "trigger_mode": "keymapped",
+        "cold_cycles": 1,
+        "lines_per_step": 2,
+        "renderer": "acid-writer",
+        "phrase_lpb": 8,
+        "looping": false
+      },
+      "id": "keymapped_trigger",
+      "status": "planned",
+      "trigger": "keymapped_trigger",
+      "profile": {
+        "id": "acid-reference-168-frame-saw",
+        "root_note": 48,
+        "sample_rate": 44100,
+        "sample_frames": 168,
+        "envelope": "attack 10 ms, decay 20 ms to 0.65 sustain, release 5 ms",
+        "base_frequency_hz": 262.5
+      },
+      "unverified_requirements": "Complete transition, release, accent and seam windows after independent native strategy qualification; this initial window cannot establish case acceptance.",
+      "purpose": "writer-articulation",
+      "expected": {
+        "silence_windows": [],
+        "onsets": [
+          {
+            "tolerance_ms": 5,
+            "note": 48,
+            "at_step": 0
+          }
+        ],
+        "continuity_windows": [],
+        "pitch_windows": [
+          {
+            "end_step": 0.72,
+            "start_step": 0.32,
+            "note": 48
+          }
+        ]
+      },
+      "controls": [
+        {
+          "measurement": "settled pitch and sustained RMS",
+          "id": "held_note_reference"
+        },
+        {
+          "measurement": "attack signature",
+          "id": "same_pitch_retrigger_control"
+        }
+      ],
+      "analysis": {
+        "pitch_tolerance_cents": 15,
+        "minimum_pitch_window_ms": 40,
+        "maximum_continuity_dip_ms": 4,
+        "maximum_continuity_dip_db": 6,
+        "onset_floor_dbfs": -60,
+        "silence_dbfs": -60,
+        "onset_tolerance_ms": 5
+      },
+      "source": {
+        "entry_mode": "extended",
+        "pitches": [
+          48
+        ],
+        "length": 2,
+        "accent_pitch_indices": [],
+        "pitch_length": 1,
+        "time": [
+          "N",
+          "R"
+        ],
+        "slide_pitch_indices": []
+      },
+      "qualification": {
+        "blockers": [
+          "Freeze host event times, restart/seek origin and trigger mapping from an independent native lifecycle capture; current source alone does not specify these events."
+        ],
+        "acoustic_status": "unverified",
+        "protocol_status": "blocked"
+      }
     }
-  ]
+  ],
+  "expectation_scope": "The ready cases reproduce independent native probe controls. Planned cases freeze acoustic requirements for downstream writer work; they are unsupported until their profile, trigger and emitted cells are captured. Expectations are authored without runtime scheduling."
 }

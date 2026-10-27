@@ -173,6 +173,8 @@ function Invoke-SyntheticCase(
   [switch]$AddGlideRetrigger,
   [switch]$InstantGlide,
   [double]$InstantGlideOffsetMs = 0.0,
+  [int]$BitDepth = 24,
+  [switch]$OmitLastOnset,
   [bool]$ExpectPass
 ) {
   $case = Get-Case $CaseId
@@ -191,6 +193,10 @@ function Invoke-SyntheticCase(
   $frames = [int][Math]::Ceiling(($originMs + $expectedEndStep * $stepMs + $tailMs + 50.0) * $sampleRate / 1000.0)
   $onsetSteps = [double[]]@($case.expected.onsets | ForEach-Object { [double]$_.at_step })
   $onsetNotes = [int[]]@($case.expected.onsets | ForEach-Object { [int]$_.note })
+  if ($OmitLastOnset) {
+    $onsetSteps = $onsetSteps[0..($onsetSteps.Length - 2)]
+    $onsetNotes = $onsetNotes[0..($onsetNotes.Length - 2)]
+  }
   $offAtMs = if ($case.expected.release) { $originMs + [double]$case.expected.release.off_at_step * $stepMs + $ReleaseOffsetMs } else { -1.0 }
   $gapStartMs = -1.0
   $gapEndMs = -1.0
@@ -205,7 +211,7 @@ function Invoke-SyntheticCase(
   $path = Join-Path $testDirectory "$Label.wav"
 
   [AcidSyntheticWave]::Write(
-    $path, $sampleRate, $frames, 24, $originMs, $stepMs, $onsetSteps, $onsetNotes,
+    $path, $sampleRate, $frames, $BitDepth, $originMs, $stepMs, $onsetSteps, $onsetNotes,
     [double]$case.profile.base_frequency_hz, [int]$case.profile.root_note,
     $PitchOffsetCents, $DriftMsPerEvent, $offAtMs, $AmplitudeScale,
     $gapStartMs, $gapEndMs, $glideStartMs, $glideEndMs, $glideFrom, $glideTo,
@@ -216,7 +222,8 @@ function Invoke-SyntheticCase(
   if ($ExpectPass -and $result.Status -ne 'pass') {
     throw "$Label should pass but failed: $($result.Issues -join '; '). Detected onsets: $($result.Measurements.detected_onsets_ms -join ', ')"
   }
-  if (-not $ExpectPass -and $result.Status -ne 'fail') {
+  $expectedFailureStatus = if ($Label -in 'negative_clipping','negative_silent','negative_drift') { 'invalid' } else { 'fail' }
+  if (-not $ExpectPass -and $result.Status -ne $expectedFailureStatus) {
     throw "$Label should fail but returned '$($result.Status)'"
   }
   if ($Label -eq 'positive_glide') {
@@ -263,12 +270,27 @@ try {
     }
   }
   Write-Output 'Held saw onset controls: PASS (20 pitches)'
+  foreach ($shape in 'attack_decay','flat','attack_only','truncated') {
+    $signal = [double[]]::new($(if ($shape -eq 'truncated') { 2000 } else { 4800 }))
+    for ($frame=0; $frame -lt $signal.Length; $frame++) {
+      $age = $frame / 48.0
+      $envelope = if ($shape -eq 'flat') { 0.65 } elseif ($age -lt 10) { $age / 10.0 } elseif ($shape -eq 'attack_only') { 1.0 } elseif ($age -lt 30) { 1.0 - 0.35 * ($age - 10.0) / 20.0 } else { 0.65 }
+      $signal[$frame] = 0.3 * $envelope * [Math]::Sin(2.0 * [Math]::PI * 240.0 * $frame / 48000.0)
+    }
+    $signature = Measure-AttackSignature $signal 48000 0
+    if ($signature.matched -ne ($shape -eq 'attack_decay')) { throw "Attack signature misclassified $shape" }
+    if (-not $signature.matched -and $signature.status -ne 'inconclusive') { throw 'Ambiguous attack signature was not inconclusive' }
+  }
+  Write-Output 'Attack signature controls: PASS (attack/decay, flat hold, missing decay, truncated)'
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'positive_calibration' -ExpectPass $true
+  Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'positive_pcm16' -BitDepth 16 -ExpectPass $true
   Invoke-SyntheticCase 'same_pitch_retrigger_control' 'positive_retrigger_control' -ExpectPass $true
   Invoke-SyntheticCase 'held_note_reference' 'positive_release' -ExpectPass $true
   Invoke-SyntheticCase 'slide_rate_20' 'positive_glide' -ExpectPass $true
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_pitch' -PitchOffsetCents 70 -ExpectPass $false
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_drift' -DriftMsPerEvent 0.15 -ExpectPass $false
+  Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_missing_onset' -OmitLastOnset -ExpectPass $false
+  Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_silent' -AmplitudeScale 0 -ExpectPass $false
   Invoke-SyntheticCase 'grid_calibration_all_note_pitch_span_16' 'negative_clipping' -AmplitudeScale 4 -ExpectPass $false
   Invoke-SyntheticCase 'slide_rate_20' 'negative_retrigger' -AddGlideRetrigger -ExpectPass $false
   Invoke-SyntheticCase 'slide_rate_20' 'negative_gap' -GapOffsetStep 2.02 -GapDurationMs 18 -ExpectPass $false
@@ -278,7 +300,23 @@ try {
   foreach ($jumpOffset in @(20, 35, 50)) {
     Invoke-SyntheticCase 'slide_rate_20' "negative_delayed_jump_$jumpOffset" -InstantGlide -InstantGlideOffsetMs $jumpOffset -ExpectPass $false
   }
-  Write-Output 'Audio analyzer synthetic acceptance passed: 4 positive controls, 20 held pitches, and 11 seeded failures.'
+  $goodBytes = [System.IO.File]::ReadAllBytes((Join-Path $testDirectory 'positive_pcm16.wav'))
+  foreach ($corruption in 'riff_size','zero_sample_rate','byte_rate','incomplete_fmt') {
+    $badBytes = [byte[]]$goodBytes.Clone()
+    switch ($corruption) {
+      'riff_size' { [BitConverter]::GetBytes([uint32]4).CopyTo($badBytes,4) }
+      'zero_sample_rate' { [BitConverter]::GetBytes([uint32]0).CopyTo($badBytes,24) }
+      'byte_rate' { [BitConverter]::GetBytes([uint32]1).CopyTo($badBytes,28) }
+      'incomplete_fmt' { [BitConverter]::GetBytes([uint32]8).CopyTo($badBytes,16) }
+    }
+    $badPath = Join-Path $testDirectory "$corruption.wav"
+    [System.IO.File]::WriteAllBytes($badPath,$badBytes)
+    $rejected = $false
+    try { $null = Read-ArticulationWav $badPath } catch { $rejected = $true }
+    if (-not $rejected) { throw "Malformed WAV $corruption was accepted" }
+  }
+  Write-Output 'Malformed WAV controls: PASS (4 headers)'
+  Write-Output 'Audio analyzer synthetic acceptance passed: 5 positive controls, 20 held pitches, and 13 seeded failures.'
 } finally {
   $resolvedTestDirectory = [System.IO.Path]::GetFullPath($testDirectory)
   $tempPrefix = $tempRoot.TrimEnd([System.IO.Path]::DirectorySeparatorChar,[System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar

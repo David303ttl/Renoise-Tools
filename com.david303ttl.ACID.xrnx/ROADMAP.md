@@ -264,6 +264,19 @@ establish TB-303 sound fidelity; M3–M5 requirements remain.
 
 ### M3.1 — Establish a repeatable audio reference harness
 
+**Implementation record (2026-10-27):** the development probe, tempo-aware
+trigger/start helpers, actual-writer capture/read-back helper, strict oracle
+validation, offline analyzer and normalization/provenance tests are implemented.
+See [articulation verification](../tests/acid/acid_articulation_manual.md) and
+[capture evidence](../tests/acid/audio_capture_evidence.md). The oracle contains
+seven executable independent protocols and 34 planned writer cases with
+authored deterministic semantic windows and explicit native-dependent
+qualification blockers. This does not pass the acoustic exit gate. Raw desktop
+grid calibration passed again; held/retrigger/0G20 controls were recorded, with
+raw control analyses invalid. User-authorized normalized-copy recalibration
+exposes failed silence windows, so downstream native acceptance remains blocked.
+No renderer support or manifest version changed.
+
 **Development deliverables** (outside the installable tool):
 
 - `tests/acid/renoise_articulation_probe.lua`, `renoise_articulation_trigger.lua`, `renoise_articulation_start.lua`, `renoise_articulation_flat_control.lua`, `renoise_articulation_probe_envelope.lua` and `renoise_articulation_probe_manual.md`: create a disposable named instrument, controlled phrases and a dedicated song-pattern host trigger, start the exact selected sequence position for capture, toggle a flat-envelope pitch/level control and the diagnostic envelope, reuse the safety conventions of the loop probes, and capture the actual ACID writer output as well as independent native controls. Refuse duplicate named probe objects; clean up only objects created by this run. Keep the existing sampler inspection read-only.
@@ -279,7 +292,7 @@ establish TB-303 sound fidelity; M3–M5 requirements remain.
 1. Use Renoise WASAPI in shared mode and Audacity Windows WASAPI loopback on the exact same playback endpoint. This desktop exposes 48000 Hz for that endpoint through WASAPI; set Renoise, the Audacity project and export to 48000 Hz without resampling. Export unnormalized PCM24 WAV (PCM16 is accepted when PCM24 is unavailable). Keep the Windows system volume unchanged. Disable OS enhancements, spatial processing, auto gain, recorder effects and monitoring feedback. Mute other applications and unrelated Renoise tracks. OBS is an alternative only after its unprocessed lossless PCM path passes the same calibration; lossy capture is invalid.
 2. Record the Renoise build/edition, capture application/version, endpoint, driver, buffer size, BPM, song LPB/TPL, phrase LPB/layout, trigger mode and profile hash. Start recording at least one second before a single sustained host trigger. The probe trigger pattern is 224 lines (14 seconds), with its only note at line 1 and OFF at line 137; the 8.5-second phrase contains one cold pass and three steady passes. Capture at least two seconds beyond OFF, then stop before the song sequence wraps and retriggers. Do not periodically retrigger the host note.
 3. Run primary cases at 120 BPM, repeat gate/glide acceptance at 90 and 150 BPM. Timing derives from BPM, never recorder start time. Align once to the first detected onset; preserve all subsequent offsets. Do not align each cycle independently or time-stretch/resample to hide drift. All-rest cases require an independently captured synchronization marker followed by the measured silent region; do not infer their origin from silence.
-4. Before any A/B result counts, capture a known M2 grid/marker case from `loop_cases.json` through this exact path (17-step cold intro plus three steady 17-step cycles, with line 69 as the exclusive-end sentinel). Author its expected marker pitches/positions in the audio oracle. Require correct order, no missing/extra markers and every onset/period within 5 ms after single alignment. Freeze the -60 dBFS onset floor against the live route and synthetic positive/negative controls; if the first or later markers do not clear it, invalidate the capture instead of changing Windows volume or normalizing the WAV. Repeat calibration after changing endpoint, driver, profile or capture settings. Demo's disabled offline render is not a blocker for this protocol; an available offline renderer is an optional cross-check, not a replacement for loopback calibration.
+4. Before any A/B result counts, capture a known M2 grid/marker case from `loop_cases.json` through this exact path (17-step cold intro plus three steady 17-step cycles, with line 69 as the exclusive-end sentinel). Author its expected marker pitches/positions in the audio oracle. Require correct order, no missing/extra markers and every onset/period within 5 ms after single alignment. Freeze the -60 dBFS onset floor against the live route and synthetic positive/negative controls. The user permits explicit normalized analysis copies: retain originals, record source/output hashes and applied gain, and rerun calibration and controls under the same gain policy; never silently normalize a failing candidate. Optional mono averaging must be explicit in its receipt and qualifies a separate mono analysis path. Keep Windows volume unchanged. Repeat calibration after changing endpoint, driver, profile or capture settings. Demo's disabled offline render is not a blocker for this protocol; an available offline renderer is an optional cross-check, not a replacement for loopback calibration.
 5. Capture each A/B pair three times with unchanged configuration. Reject clipping, channel mismatch, contamination, missing tail, failed calibration or excess drift as invalid capture. Keep invalid distinct from acoustic fail and unsupported; no invalid result counts as pass.
 
 **Oracle contract:** use schema identifier `ACID-AUDIO-ORACLE-1` with shared profile and capture requirements. Each case has a stable behavior-based ID, canonical source (PITCH/TIME, active span, length), playback/renderer/rate, BPM/LPB/TPL, trigger context, cycle count and explicit expected windows relative to the aligned origin. Store times in step fractions or milliseconds with declared units; expand them independently from the runtime scheduler. Specify expected attacks and forbidden-attack windows, OFF edges and release-tail deadlines, sustained/silent windows, pitch targets in Renoise note values with cents tolerances, glide direction/settling windows, and amplitude/continuity bounds. Distinguish cold, first steady and subsequent steady windows. Include separate A/B control IDs and the measurement each control validates. Expectations may not be generated by the code being tested.
@@ -485,7 +498,12 @@ For every such decision, supply **reference + decision + test fixture + manual p
 
 ## 11. Immediate next work package
 
-**Start M3-A only:** implement the development harness, independent audio oracle and analyzer, then calibrate the Demo loopback path against a known M2 grid case. Do not change runtime articulation while capture validity is unknown.
+**Continue M3-A acceptance:** the development harness and automated checks are
+implemented. Complete the remaining authored protocols and resolve the
+normalized grid/control measurements recorded in the evidence index before
+selecting a native glide strategy. Do not change runtime articulation while
+capture/profile validity is unknown. The original low-level grid pass does not
+qualify normalized silence or envelope-edge measurements.
 
 1. Freeze the profile, fixture schema, expected windows and analyzer positive/negative controls from M3.1; inspect the pinned API 6.2 definitions for the disposable builder.
 2. Build and read back the disposable profile; document any representability issue before accepting audio results.
