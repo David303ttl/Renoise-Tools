@@ -194,3 +194,23 @@ Actual unmodified `retrigger` writer output was generated through a disposable t
 | `writer_tail_acceptance_6.wav` | pass | 6 | `3c4b40575d62c6ec5a1fbf1d3435f1e2f0fb124b822a042f7c23a343aed0151a` |
 
 `writer_tail_acceptance_1.wav` contains an extra onset and remains invalid for acceptance; it was not trimmed. Runs4–6 are the fresh unchanged three-run set. Tied tails, Repeat/tempo matrices, connected glide/accent and lifecycle verification remain open.
+
+## Tied tails and profile-qualified Repeat gate path — 2026-10-27
+
+The nine independently authored NOTE/TIE/TIE-TIE one-shot tail protocols at90/120/150BPM now have executable synthetic positives and25ms early/late negatives. Native acoustic acceptance is separate: at120BPM all three one-TIE writer captures pass; two of three two-TIE captures pass and take2 exceeds the peak ceiling(-5.50dBFS), so the two-TIE three-run acoustic gate is still open.
+
+The runtime Repeat retrigger path now checks the exact diagnostic reference profile read-only, selective triggering,120BPM,LPB8,TPL12 and groove disabled. It retains refusals for other profiles/tempos/modes and every Repeat slide. The same profile is checked again before committing the asynchronous render. Integration tests prove mismatched profiles and unsupported tempos refuse before mutation, and a profile changing during rendering cancels the temporary phrase without changing persisted source or destination. Generic instruments are never changed to meet the profile.
+
+Three actual unchanged Repeat NOTE/REST writer captures pass at120BPM: four attacks across cold plus three steady cycles, four matching pitch windows, four silence windows, and all four release edges. Hold was eight TIME steps with host OFF after the fourth pass; capture stopped before sequence wrap. Generated phrase retains the exclusive-end sentinel. This is one Repeat family, not full Repeat acceptance or a glide/accent claim.
+
+| Artifact under `tmp/acid-articulation/` | Formal result | WAV SHA-256 |
+| --- | --- | --- |
+| `writer_tie_tail_1.wav` | pass | `cafa29da024fa5bfe48c5d24b9f3af615f7305d94cc1b8d85bd54cda9e94336b` |
+| `writer_tie_tail_2.wav` | pass | `c5e8cea263b6592fb18b66284d506032f865035d371a004d020648c3bb9e6438` |
+| `writer_tie_tail_3.wav` | pass | `32bb312aa58bd55b7285414058712e26b433d69f36f45ede5ef599707389bf56` |
+| `writer_two_ties_tail_1.wav` | pass | `aebe57d507b1ba89234e679a40da3785ba8947f0c0adbeb318d634fcbc04d385` |
+| `writer_two_ties_tail_2.wav` | invalid | `3cb19373fc6e2d1cad5c9803773aaeebab9e2af25fc9b2ca186c39e823349d4e` |
+| `writer_two_ties_tail_3.wav` | pass | `34cc556b029e4eb6d00d7aa3ddb1b15677381c72ae6f3d4ce879380bf9232d63` |
+| `writer_repeat_rest_1.wav` | pass | `27339e4aaf5c8d00468e4ce559bc7edf54cb4e6691217e1968213616f40242d1` |
+| `writer_repeat_rest_2.wav` | pass | `c82b431d2097e3483c22fc5481db2c80dae721674e5e7a42b427ad3e6741abd4` |
+| `writer_repeat_rest_3.wav` | pass | `f68bc8b509d3fa5fda0347ccb8e9bcd51a4123b4ab7ad8837cf312b889ccea80` |

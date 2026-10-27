@@ -7,6 +7,9 @@ $validator = Join-Path $PSScriptRoot 'validate_audio_oracle.ps1'
 $original = Get-Content -LiteralPath $oraclePath -Raw
 $temporaryPath = Join-Path ([System.IO.Path]::GetTempPath()) ('acid-oracle-' + [guid]::NewGuid().ToString('N') + '.json')
 $mutations = @(
+  @{ name='release missing coordinate'; change={param($o) ($o.cases|Where-Object id -eq 'isolated_note').expected.release_edges[0].Remove('off_at_step')};error='release edge off_at_step must be finite' },
+  @{ name='release premature silence'; change={param($o) ($o.cases|Where-Object id -eq 'isolated_note').expected.release_edges[0].silence_starts_at_step=1};error='release edge silence starts before' },
+  @{ name='release duplicate edge'; change={param($o) $c=$o.cases|Where-Object id -eq 'tie_before_fresh_note_bpm_120';$c.expected.release_edges[1].off_at_step=$c.expected.release_edges[0].off_at_step};error='release edges must be strictly ordered' },
   @{ name = 'missing qualification'; change = { param($o) ($o.cases | Where-Object id -eq 'up_slide').Remove('qualification') }; error = 'explicit qualification blockers' },
   @{ name = 'silence across attack'; change = { param($o) $o.cases[0].expected.silence_windows[0].start_step = 0 }; error = 'silence window overlaps expected onset' },
   @{ name = 'premature calibration silence'; change = { param($o) ($o.cases | Where-Object id -eq $o.capture_requirements.calibration_case).expected.silence_windows[0].start_step = 0.54 }; error = 'start silence after the release-tail deadline' },

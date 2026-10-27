@@ -214,6 +214,53 @@ local nonbaseline,mode_diagnostic=writer.generate(1,function() end,'retrigger',s
 assert(not nonbaseline and mode_diagnostic:find("audio mode 'retrigger' is unverified",1,true))
 assert(mode_diagnostic:find('TIME step',1,true) and mode_diagnostic:find('phrase line',1,true))
 
+-- Reference eligibility gates the real transactional Repeat path before mutation.
+local profiles=require('renoise.articulation_profile')
+local original_check=profiles.check
+local original_transport=song.transport
+local original_program=instrument.phrase_playback_mode
+local profile_checks=0
+profiles.check=function(candidate,name,options)
+  profile_checks=profile_checks+1
+  assert(candidate==instrument and name=='reference_diagnostic' and options.fade_amount>765)
+  return {profile=name}
+end
+song.transport={bpm=120,lpb=8,tpl=12,groove_enabled=false}
+instrument.phrase_playback_mode=renoise.Instrument.PHRASES_PLAY_SELECTIVE
+local gate_source=source(2)
+gate_source.pitch_length=1;gate_source.pitch_events[1]={note=48,accent=false,slide=false}
+gate_source.time_events={'N','R'}
+local target=#instrument.phrases+1
+assert(writer.generate(1,function(message)messages[#messages+1]=message end,
+ 'retrigger',gate_source,target))
+for _=1,6 do idle:fire() end
+local gated=instrument.phrases[target]
+assert(gated and ownership.status(gated)=='owned' and gated.looping)
+assert(gated.cells[3].note_value==120 and gated.cells[7].note_value==120)
+assert(gated.cells[9].note_value==121 and profile_checks==2)
+for _,tempo in ipairs({90,150}) do
+ song.transport.bpm=tempo
+ local count=#instrument.phrases
+ assert(not writer.generate(1,function()end,'retrigger',gate_source,count+1))
+ assert(#instrument.phrases==count)
+end
+song.transport.bpm=120
+profiles.check=function()return nil,'mismatched profile' end
+assert(not writer.generate(1,function()end,'retrigger',gate_source,#instrument.phrases+1))
+local checked=0
+profiles.check=function()
+ checked=checked+1
+ if checked==1 then return {profile='reference_diagnostic'} end
+ return nil,'profile changed during rendering'
+end
+local unchanged_count,unchanged_store=#instrument.phrases,song.tool_data
+assert(writer.generate(1,function(message)messages[#messages+1]=message end,
+ 'retrigger',gate_source,unchanged_count+1))
+for _=1,6 do idle:fire() end
+assert(checked==2 and #instrument.phrases==unchanged_count and song.tool_data==unchanged_store)
+assert(messages[#messages]:find('GENERATION FAILED',1,true))
+profiles.check=original_check;song.transport=original_transport
+instrument.phrase_playback_mode=original_program
 -- If invalidated while rendering is pending, the phrase and store both remain
 -- unchanged and the staging phrase is removed after the delayed callback.
 local delayed=source(16)

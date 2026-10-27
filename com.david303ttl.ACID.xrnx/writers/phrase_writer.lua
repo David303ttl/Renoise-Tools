@@ -6,6 +6,7 @@ local validator = require("writers.phrase_validator")
 local articulation = require("model.articulation")
 local control = require("model.control_signals")
 local gates = require("writers.gate_writer")
+local profiles = require("renoise.articulation_profile")
 local ownership = require("writers.phrase_ownership")
 local store = require("model.pattern_store")
 local M = {}
@@ -60,7 +61,7 @@ local function repeat_location(plan, predicate)
   return nil
 end
 
-local function repeat_preflight(plan, mode)
+local function repeat_preflight(plan, mode, instrument, transport)
   local step,cycle,line=repeat_location(plan,function(event)
     return event.transition=="slide"
   end)
@@ -74,6 +75,12 @@ local function repeat_preflight(plan, mode)
       return event.kind=="note"
     end)
     if not step then step,cycle,line=1,1,0 end
+    if mode=="retrigger" and transport and transport.bpm==120 and transport.lpb==8
+      and transport.tpl==12 and transport.groove_enabled==false
+      and instrument.phrase_playback_mode==renoise.Instrument.PHRASES_PLAY_SELECTIVE then
+      local profile=profiles.check(instrument,"reference_diagnostic",{fade_amount=765.76501464844})
+      if profile then return true end
+    end
     return nil,string.format(
       "Repeat audio mode '%s' is unverified at TIME step %02d, cycle %d, phrase line 0x%02X",
       mode,step,cycle,line)
@@ -224,8 +231,9 @@ local function complete(job, error_message, rendered_events)
     rendered_events.raw_events, job.instrument_index - 1) ..
     (job.mode=="baseline" and "" or
      " | "..job.mode.." articulation applied") ..
-    (job.layout.looping and
-      "\nRepeat uses baseline NOTE/TIE/REST; selective slide and other audio modes are unsupported." or "") ..
+    (job.layout.looping and (job.mode=="baseline" and
+      "\nRepeat uses baseline NOTE/TIE/REST; selective slide and other audio modes are unsupported." or
+      "\nRepeat gate uses the reference diagnostic profile at 120 BPM; selective slide is unsupported.") or "") ..
     (job.cleanup_warning and "\n"..job.cleanup_warning or ""))
 end
 
@@ -252,6 +260,10 @@ local function finalize(job, event_count, skipped)
     job.phrase.loop_start=job.layout.loop_start
   end)
   if not layout_ok then complete(job,layout_error);return end
+  if job.layout.looping then
+    local eligible,reason=repeat_preflight(job.plan,job.mode,job.instrument,job.song.transport)
+    if not eligible then complete(job,reason);return end
+  end
   local volumes, volume_error = pattrns.expected_volumes(job.plan, 2,
     job.layout.number_of_lines, job.phrase.visible_note_columns or 1)
   if not volumes then complete(job, volume_error);return end
@@ -587,7 +599,7 @@ function M.generate(instrument_index, callback, mode, custom_pattern, target_ind
   local layout=layout_or_error
   if layout.number_of_lines>MAX_PHRASE_LINES then return nil,"Rendered phrase exceeds Renoise's line limit" end
   if layout.looping then
-    local eligible,repeat_error=repeat_preflight(plan,mode)
+    local eligible,repeat_error=repeat_preflight(plan,mode,instrument,song.transport)
     if not eligible then return nil,repeat_error end
   end
   local meta

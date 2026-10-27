@@ -8911,7 +8911,7 @@
         "looping": true
       },
       "id": "repeat_note_rest_seam_bpm_120",
-      "status": "planned",
+      "status": "ready",
       "trigger": "single sustained host note",
       "profile": {
         "id": "acid-reference-168-frame-saw",
@@ -9052,10 +9052,10 @@
       "expectation_context": "Independently authored successor gate oracle; midpoint release for disconnected NOTE/tail, exact REST boundary override. One cold plus three steady cycles for Repeat.",
       "qualification": {
         "blockers": [
-          "Calibrated route/profile and actual writer captures have not passed; capture refusal is not acceptance."
+          "Independent profile-qualified repeated actual writer captures tracked separately."
         ],
         "acoustic_status": "unverified",
-        "protocol_status": "authored"
+        "protocol_status": "ready"
       }
     },
     {

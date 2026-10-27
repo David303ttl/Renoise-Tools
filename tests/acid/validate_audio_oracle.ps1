@@ -117,6 +117,23 @@ foreach ($case in $oracle.cases) {
       throw "$id`: glide needs a 40 ms target-pitch window at the settled note"
     }
   }
+  $lastOff=-1.0
+  foreach ($edge in @($case.expected.release_edges | Where-Object { $null -ne $_ })) {
+    foreach ($key in 'off_at_step','silence_starts_at_step','maximum_tail_ms') {
+      if (-not $edge.ContainsKey($key) -or $null -eq $edge[$key] -or
+          -not [double]::IsFinite([double]$edge[$key]) -or [double]$edge[$key] -lt 0) {
+        throw "$id`: release edge $key must be finite and nonnegative"
+      }
+    }
+    if ([double]$edge.off_at_step -le $lastOff -or [double]$edge.maximum_tail_ms -le 0) {
+      throw "$id`: release edges must be strictly ordered with positive tails"
+    }
+    $lastOff=[double]$edge.off_at_step
+    $deadline=$lastOff+[double]$edge.maximum_tail_ms*[double]$case.capture.bpm*4/60000
+    if ([double]$edge.silence_starts_at_step+0.000001 -lt $deadline) {
+      throw "$id`: release edge silence starts before its deadline"
+    }
+  }
   if ($case.expected.release) {
     $release = $case.expected.release
     if ([double]$release.off_at_step -le 0 -or [double]$release.maximum_tail_ms -le 0 -or
