@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Emit finite pattrns scripts from semantic note and timing events.
 -- Glide and release-gate effects are applied separately to the rendered phrase.
 local interpreter = require('model.cycle_interpreter')

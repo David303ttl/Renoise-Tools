@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- ACID pitch/time memory. Drafts can be partially entered.
 -- Pitch and time memories have independent contents and 64-slot capacity.
 local M = {}

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Emit overlapping native notes for receiver-controlled legato portamento.
 local M={}
 

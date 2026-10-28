@@ -7,7 +7,7 @@ Packages Renoise tool directories as installable .xrnx archives.
 .DESCRIPTION
 Reads each tool's ID and version from its root manifest.xml. Archives contain
 manifest.xml, Lua files, and supported runtime assets. Markdown and development
-files are left out. Supported runtime assets are XML, TXT, JSON, SVG, common
+files are left out; each archive includes its tool's full GPLv3 LICENSE. Supported runtime assets are XML, TXT, JSON, SVG, common
 image/audio formats, and BIN files; extend $runtimeExtensions when a tool adds
 another runtime file type.
 
@@ -78,8 +78,12 @@ foreach ($toolDirectory in $toolDirectories) {
   $toolRoot = [System.IO.Path]::GetFullPath($toolDirectory.FullName).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   $manifestPath = Join-Path $toolDirectory.FullName 'manifest.xml'
   $mainPath = Join-Path $toolDirectory.FullName 'main.lua'
+  $licensePath = Join-Path $toolDirectory.FullName 'LICENSE'
   if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf) -or -not (Test-Path -LiteralPath $mainPath -PathType Leaf)) {
     throw "Tool '$($toolDirectory.Name)' must contain manifest.xml and main.lua at its root."
+  }
+  if (-not (Test-Path -LiteralPath $licensePath -PathType Leaf)) {
+    throw "Tool '$($toolDirectory.Name)' must contain LICENSE at its root."
   }
 
   $settings = [System.Xml.XmlReaderSettings]::new()
@@ -107,6 +111,7 @@ foreach ($toolDirectory in $toolDirectories) {
     $_.Name -ne 'manifest.xml' -and $runtimeExtensions -contains $_.Extension.ToLowerInvariant()
   })
   $files += Get-Item -LiteralPath $manifestPath
+  $files += Get-Item -LiteralPath $licensePath
   if (-not ($files | Where-Object { $_.FullName -eq [System.IO.Path]::GetFullPath($mainPath) })) {
     throw "Tool '$($toolDirectory.Name)' has no packageable main.lua."
   }
@@ -127,8 +132,8 @@ foreach ($toolDirectory in $toolDirectories) {
   if ($duplicatePaths.Count -gt 0) {
     throw "Tool '$($toolDirectory.Name)' contains duplicate package paths: $($duplicatePaths.Name -join ', ')."
   }
-  if (-not ($entries | Where-Object Path -eq 'manifest.xml') -or -not ($entries | Where-Object Path -eq 'main.lua')) {
-    throw "Package for '$($toolDirectory.Name)' must put manifest.xml and main.lua at archive root."
+  if (-not ($entries | Where-Object Path -eq 'manifest.xml') -or -not ($entries | Where-Object Path -eq 'main.lua') -or -not ($entries | Where-Object Path -eq 'LICENSE')) {
+    throw "Package for '$($toolDirectory.Name)' must put manifest.xml, main.lua and LICENSE at archive root."
   }
 
   $archiveName = "${id}_${version}.xrnx"
@@ -167,7 +172,7 @@ foreach ($package in $packages) {
       $check = [System.IO.Compression.ZipFile]::OpenRead($tempPath)
       try {
         $names = @($check.Entries | ForEach-Object FullName)
-        if ($names -notcontains 'manifest.xml' -or $names -notcontains 'main.lua') {
+        if ($names -notcontains 'manifest.xml' -or $names -notcontains 'main.lua' -or $names -notcontains 'LICENSE') {
           throw "Created archive '$($package.ArchivePath)' failed root-entry validation."
         }
         if (@($names | Where-Object { $_.StartsWith('/') -or $_ -match '(^|/)\.\.(/|$)' }).Count -gt 0) {

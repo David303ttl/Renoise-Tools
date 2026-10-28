@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Render native phrases with guarded replacement and source persistence.
 local pattrns = require("writers.pattrns_writer")
 local compiler = require("model.cycle_interpreter")

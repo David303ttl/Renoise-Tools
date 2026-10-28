@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- main.lua
 -- This script provides the Graphical User Interface (GUI) and integrates the
 -- Digitakt Sample Chain tool into Renoise.

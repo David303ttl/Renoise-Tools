@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Ownership snapshots keyed by pattern line and note column.
 -- Reads ARP04 single-column records and writes ARP05 records. Tool data
 -- is scoped to this XRNX bundle by Renoise (not shared with other tools).

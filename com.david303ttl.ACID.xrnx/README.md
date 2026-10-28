@@ -86,3 +86,8 @@ slide commands scheduled before midpoint OFFs. Run the
 [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md) in Renoise to
 verify phrase playback and GUI behavior. The package has `manifest.xml` and
 `main.lua` at its root and excludes development files.
+
+## License
+
+Copyright (C) 2026 David303ttl. Licensed under GNU GPL version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.

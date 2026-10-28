@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Resolve complete TIME traversals without relying on Renoise playback.
 local sequencer = require("model.sequencer")
 local M = { MAX_CYCLES = 128 }

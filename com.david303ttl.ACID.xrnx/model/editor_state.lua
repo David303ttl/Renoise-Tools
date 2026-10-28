@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Pure projection of canonical ACID memories into the paged editor.
 local seq = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")

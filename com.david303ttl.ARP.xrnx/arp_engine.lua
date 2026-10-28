@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Pure-Lua note ordering and timing planner.
 local M = {}
 

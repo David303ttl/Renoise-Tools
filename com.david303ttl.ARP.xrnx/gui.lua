@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Renoise GUI. Song objects do not support Lua's __eq operator.
 local M = {}
 local writer = require("pattern_writer")

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Summarize independent pitch/time memory usage.
 local M={}
 function M.inspect(pattern)

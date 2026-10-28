@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Sparse plugin/MIDI NOTE/OFF plan for connected phrase transitions.
 local M = { MAX_COLUMNS=3, EMPTY=121, OFF=120 }
 

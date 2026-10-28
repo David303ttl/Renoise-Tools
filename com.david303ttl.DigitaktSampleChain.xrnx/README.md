@@ -32,3 +32,7 @@ Renoise tool designed to export selected instrument samples into a single, monop
     * You will be prompted to choose a filename and location for your exported WAV file.
     * After export, the dialog will display the duration of a single slot and the total chain duration.
 
+## License
+
+Copyright (C) 2026 David303ttl. Licensed under GNU GPL version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.

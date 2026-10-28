@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Song-persistent drafts with detached session cache for active editor objects.
 local sequencer = require("model.sequencer")
 local store = require("model.pattern_store")

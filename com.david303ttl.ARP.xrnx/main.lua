@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- ARP.xrnx entry point. Pattern generation is available from the GUI.
 local gui = require("gui")
 

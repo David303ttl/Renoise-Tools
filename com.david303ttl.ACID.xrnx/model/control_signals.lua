@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Physical gate edges in 256 subdivisions per sequencer step.
 local compiler=require("model.cycle_interpreter")
 local M={}

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- ACID.xrnx entry point. Register the ACID tools menus.
 local gui = require("gui")
 

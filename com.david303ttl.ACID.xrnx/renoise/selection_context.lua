@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Describe the selected pattern and track without modifying the song.
 local M = {}
 

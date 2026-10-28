@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Place note-column glide effects; sample voice continuity is not guaranteed.
 local M = {}
 M.DEFAULT_RATE = 0x20

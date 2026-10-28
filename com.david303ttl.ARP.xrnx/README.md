@@ -128,3 +128,8 @@ Run the regression spec directly: `lua tests/arp/arp_writer_spec.lua`.
 ### End-of-pattern release check
 
 At LPB 3, Rate 1/8 and Gate 75%, the last note in a 16-line pattern starts at zero-based line 15 and its OFF would fall at line 16 + 20 hex (past the boundary). Use an 18-line test pattern to fit that final release. The tool refuses any OFF outside the current pattern rather than clipping or silently truncating it.
+
+## License
+
+Copyright (C) 2026 David303ttl. Licensed under GNU GPL version 3 only
+(`GPL-3.0-only`). See [LICENSE](LICENSE) for the full terms.

@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Read-only description of the current Renoise instrument output layers.
 local M = {}
 

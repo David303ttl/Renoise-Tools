@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- chain_exporter.lua
 -- This script handles the core logic for exporting selected instrument samples from Renoise.
 -- It processes them into a single, monophonic .wav file, formatted as a sample chain

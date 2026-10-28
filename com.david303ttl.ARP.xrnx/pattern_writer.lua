@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Sub-line scheduling with protected multi-column regeneration.
 local M={}
 local engine=require("arp_engine")

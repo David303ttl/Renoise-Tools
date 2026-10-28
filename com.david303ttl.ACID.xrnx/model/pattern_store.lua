@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Exact, song-local storage for canonical ACID sources and phrase output policy.
 local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")

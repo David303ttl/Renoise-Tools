@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Inspect sampler configuration without changing instruments or effect chains.
 local M={}
 function M.describe(instrument)

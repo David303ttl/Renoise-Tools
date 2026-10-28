@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Immediate, serialized Live Edit regeneration with invalidatable jobs.
 local M = {}
 

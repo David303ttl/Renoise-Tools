@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Merge gate and glide operations before touching native phrase cells.
 local control=require("model.control_signals")
 local M={}

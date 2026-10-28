@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Content seal for current ACID generated phrases; this is not a security token.
 local M={}
 local PREFIX="ACID 0.1 #"

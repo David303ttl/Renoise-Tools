@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Native ViewBuilder PITCH/TIME editor.
 local M = {}
 local sequencer=require("model.sequencer")

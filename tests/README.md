@@ -42,3 +42,9 @@ and follow the relevant guides:
 Keep the existing DigitaktSampleChain tool installed and confirm it still opens
 after reloading tools. Real Renoise integration, playback, undo, and save/reload
 behavior require manual validation.
+
+## Package license checks
+
+Run `./tests/package_license_spec.ps1` with PowerShell 7 to build all XRNX
+archives into a temporary directory and verify that each contains the
+identical, full GPLv3 LICENSE at archive root.
