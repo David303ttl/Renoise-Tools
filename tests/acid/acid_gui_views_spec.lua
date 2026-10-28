@@ -277,8 +277,8 @@ assert(phrase_popup.value==2,
   "successful generation must keep the selected destination phrase")
 generation_callback({kind="complete",status="committed",message="Phrase generated.",
   diagnostics={},target={phrase_index=2}})
-assert(song.selected_phrase==instrument.phrases[1] and instrument.phrase_program==1,
-  "manual generation preserves a different native phrase selection")
+assert(song.selected_phrase==instrument.phrases[2] and instrument.phrase_program==1,
+  "manual generation preserves the selected destination without changing playback")
 local draft_warning
 for _,node in ipairs(builder.nodes) do
   if type(node.text)=="string" and node.text:find("DRAFT WARNING",1,true) then
@@ -350,17 +350,32 @@ assert(phrase_popup.value==4 and render_calls==5,
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==2 and pb_range_popup.value==4,
   "native Phrase Editor selection rebinds ACID to that phrase on idle")
+assert(render_calls==5 and song.selected_phrase==instrument.phrases[2],
+  "switching to a saved phrase does not regenerate or disturb its selection")
+phrase_popup:fire(1)
+assert(phrase_popup.value==1 and render_calls==5 and song.selected_phrase==instrument.phrases[1],
+  "choosing phrase 01 in Destination stays selected without regenerating")
+phrase_popup:fire(2)
+assert(phrase_popup.value==2 and render_calls==5 and song.selected_phrase==instrument.phrases[2],
+  "choosing phrase 02 in Destination stays selected without regenerating")
+builder.views.acid_program_key_popup:fire(5)
 assert(render_calls==6 and generation_request.target_index==2,
-  "Live Edit after a native phrase switch targets the selected phrase")
+  "an edit after a native phrase switch targets the selected phrase")
+instrument.phrase_program=2
+instrument.phrase_program_observable:fire()
 generation_callback({kind="complete",status="committed",message="Native phrase selection regenerated.",
   diagnostics={},target={instrument_index=1,phrase_index=2}})
-assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
-  "Live Edit restores the native phrase selected before rendering")
+assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==2,
+  "Live Edit preserves a playback program change made during rendering")
 builder.views.acid_program_key_popup:fire(6)
 assert(render_calls==7 and generation_request.target_index==2,
   "subsequent PITCH edits keep regenerating the phrase selected in Renoise")
+instrument.phrase_program=1
+instrument.phrase_program_observable:fire()
 generation_callback({kind="complete",status="committed",message="Selected phrase regenerated again.",
   diagnostics={},target={instrument_index=1,phrase_index=2}})
+assert(instrument.phrase_program==1,
+  "Live Edit also preserves a playback program change back to phrase 01")
 assert(#instrument.phrases==4,"native phrase selection must not create another destination")
 
 live_checkbox:fire(false)
@@ -372,13 +387,16 @@ assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native
 live_checkbox:fire(true)
 assert(render_calls==8 and generation_request.target_index==1,
   "arming Live Edit after selecting phrase 01 targets phrase 01 after phrase 02 was generated")
+generation_request.options.phrase_mutation(function()
+  select_native_phrase(2)
+end)
 generation_callback({kind="complete",status="committed",message="Live phrase 01 regenerated.",
   diagnostics={},target={instrument_index=1,phrase_index=1}})
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1 and generation_request.target_index==1,
   "ACID generation cannot redirect its selected phrase through native phrase notifications")
-assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
-  "regenerating ACID phrase 01 keeps Renoise's independently selected phrase 02")
+assert(song.selected_phrase==instrument.phrases[1] and song.selected_phrase_index==1 and instrument.phrase_program==1,
+  "regenerating ACID phrase 01 restores its native selection")
 
 -- Cancelling a live render must not block subsequent native selections.
 builder.views.acid_program_key_popup:fire(7)

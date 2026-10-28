@@ -112,6 +112,18 @@ modified or deleted phrase targets, preserving unrelated content. A hard API or
 persistence failure reports an error while keeping the editor armed.
 Dialog close and song changes invalidate outstanding work.
 
+For the selected Renoise instrument, an existing destination selected in ACID
+also becomes the Phrase Editor selection. Native selection of an owned phrase
+loads its ACID source; foreign selections do not redirect the destination.
+Selecting a saved phrase alone does not schedule regeneration, while recovered
+drafts do. Synchronous temporary phrase insertions and removals suppress their
+own selection notifications; user selections between those operations remain
+observable. The playback program is independent of the editor selection.
+
+The bundled API 6.2 definitions describe `selected_phrase_index` as read-only,
+but assignment was verified in Renoise 3.5.4. ACID guards the assignment and
+does not assume it succeeds on other hosts.
+
 Uncommitted drafts are stored separately from committed source in song tool
 data. Owned phrase drafts resolve by ownership ID. New phrase drafts require an
 unambiguous instrument destination. Persistence failures preserve the session

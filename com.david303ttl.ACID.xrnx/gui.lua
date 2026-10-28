@@ -580,7 +580,7 @@ function M.show()
     end
     history:reset(pattern,output_policy,pb_range)
     update()
-    if was_armed then live:changed() end
+    if was_armed and (not bound_phrase or draft) then live:changed() end
     if update_live_state then update_live_state() end
   end
   local phrase_names
@@ -589,6 +589,13 @@ function M.show()
     value=#phrase_names,notifier=function(n)
       if not loading then
         pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
+        local instrument=song.instruments[selected_instrument]
+        local index=phrase_targets[n]
+        if rawequal(song.selected_instrument,instrument) and index and instrument.phrases[index] then
+          restoring_native_selection=true
+          pcall(function() song.selected_phrase_index=index end)
+          restoring_native_selection=false
+        end
         load_target(n)
       end
     end}
@@ -736,8 +743,15 @@ function M.show()
     local phrase=selected and song.selected_phrase or nil
     return {instrument=instrument,phrase=phrase,
       selected_phrase_index=selected and song.selected_phrase_index or nil,
-      selection_revision=native_selection_revision,
-      phrase_program=instrument.phrase_program,selected=selected}
+      selection_revision=native_selection_revision,selected=selected}
+  end
+  local function mutate_phrases(action)
+    local previous=restoring_native_selection
+    restoring_native_selection=true
+    local ok,result=pcall(action)
+    restoring_native_selection=previous
+    if not ok then error(result) end
+    return result
   end
   local function restore_native_phrase_state(state)
     if not state then return end
@@ -749,12 +763,6 @@ function M.show()
         restoring_native_selection=true
         pcall(function() song.selected_phrase_index=index end)
         restoring_native_selection=false
-      end
-    end
-    if state.selection_revision==native_selection_revision then
-      local ok,current=pcall(function() return instrument.phrase_program end)
-      if ok and current~=state.phrase_program then
-        pcall(function() instrument.phrase_program=state.phrase_program end)
       end
     end
   end
@@ -849,7 +857,7 @@ function M.show()
           end
         end
         done(result)
-      end,copy,target_index,{token=token,output_policy=output_policy,
+      end,copy,target_index,{token=token,output_policy=output_policy,phrase_mutation=mutate_phrases,
         pb_range=requested_pb_range})
     if not called then
       restore_native_phrase_state(requested_native_phrase_state)
@@ -1057,7 +1065,8 @@ function M.show()
               status.text=describe_live_result(result):gsub("^LIVE EDIT ","GENERATION ")
             end
           end,pattern,
-          requested_target,{output_policy=output_policy,pb_range=requested_pb_range})
+          requested_target,{output_policy=output_policy,pb_range=requested_pb_range,
+            phrase_mutation=mutate_phrases})
         if not ok or not generated then
           restore_native_phrase_state(requested_native_phrase_state)
         end

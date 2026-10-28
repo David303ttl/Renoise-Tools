@@ -31,6 +31,13 @@ owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
 instrument's global phrase trigger settings. The decoded Start/Repeating
 preview is read-only.
 
+For the instrument selected in Renoise, choosing an existing Destination phrase
+also selects it in Renoise's Phrase Editor. Selecting an ACID-owned phrase in
+the Phrase Editor loads its source and PB Range into ACID. If ACID targets a
+different instrument, Renoise continues to show its currently selected instrument.
+With Live Edit enabled, selecting a saved phrase loads it without regenerating;
+an existing recovered draft is applied automatically, as are subsequent edits.
+
 Manual Generate and Regenerate remain available. Live Edit optionally applies
 each valid source edit immediately, with one render in flight. Edits made during
 rendering apply automatically as soon as that render finishes. Undo and Redo cover source edits and
