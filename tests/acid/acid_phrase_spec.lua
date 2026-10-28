@@ -456,6 +456,29 @@ script.render_to_pattern=original_render
 assert(triplet_status.status=='error',triplet_status.message)
 assert(instrument.phrases[triplet_target]==triplet_phrase and triplet_phrase.cells[1].note_value==triplet_first)
 assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
+-- A silent copy defect must be detected after staging and rolled back.
+for _,field in ipairs({"note", "lpb", "shuffle"}) do
+  local copy=triplet_phrase.copy_from
+  local original_name=triplet_phrase.name
+  function triplet_phrase:copy_from(other)
+    copy(self,other)
+    if other.name==writer.PHRASE_NAME then
+      if field=="note" then self.cells[1].note_value=37
+      elseif field=="lpb" then self.lpb=8
+      else self.shuffle=1 end
+    end
+  end
+  script.render_to_pattern=render_triplet
+  assert(generate(function(value)triplet_status=value end,triplet_source,triplet_target))
+  idle:fire();idle:fire();idle:fire()
+  triplet_phrase.copy_from=copy
+  assert(triplet_status.status=='error' and triplet_status.message:find('Copied phrase validation failed',1,true),
+    triplet_status.message)
+  assert(instrument.phrases[triplet_target]==triplet_phrase and #instrument.phrases==triplet_target)
+  assert(triplet_phrase.name==original_name and triplet_phrase.cells[1].note_value==triplet_first)
+  assert(triplet_phrase.lpb==6 and triplet_phrase.shuffle==0 and song.tool_data==triplet_store)
+end
+script.render_to_pattern=original_render
 -- Reported host limits are checked before replacing an owned destination.
 for _,limit in ipairs({"MAX_NUMBER_OF_LINES","MAX_NUMBER_OF_NOTE_COLUMNS"}) do
   local saved=renoise.InstrumentPhrase[limit]
@@ -466,4 +489,16 @@ for _,limit in ipairs({"MAX_NUMBER_OF_LINES","MAX_NUMBER_OF_NOTE_COLUMNS"}) do
   assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
   renoise.InstrumentPhrase[limit]=saved
 end
+local bend_source=source_fixture()
+bend_source.timing_mode="triplet"
+bend_source.pitch_events[1].slide=true
+instrument.plugin_properties={plugin_loaded=true}
+local saved_effect_limit=renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS
+renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=0
+local accepted,reason=generate(function(value)triplet_status=value end,bend_source,triplet_target,{pb_range=12})
+assert(not accepted and reason and reason.code=='phrase.unrepresentable', 'effect column limit was ignored')
+assert(instrument.phrases[triplet_target]==triplet_phrase and triplet_phrase.cells[1].note_value==triplet_first)
+assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
+renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=saved_effect_limit
+instrument.plugin_properties=nil
 print("ACID triplet renderer metadata and transaction checks passed")
