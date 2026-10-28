@@ -605,11 +605,11 @@ not run in this workspace; functional acceptance remains open.
 
 ## 5B. M3.6 — Plugin/MIDI pitch-bend slide (small follow-up; before M4)
 
-**Status:** planned. **Baseline:** \`develop\` at \`4f1e9881640de3714e58dcf8ec04adc889447d24\`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
+**Status:** planned. **Baseline:** `develop` at `4f1e9881640de3714e58dcf8ec04adc889447d24`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
 
 ### M3.6.0 — Product contract and limits
 
-- Keep the current automatic sample \`0Gxx\` path and plugin/MIDI overlapping-NOTE legato as they are. **Do not** reinstate Baseline/Retrigger/Slide modes.
+- Keep the current automatic sample `0Gxx` path and plugin/MIDI overlapping-NOTE legato as they are. **Do not** reinstate Baseline/Retrigger/Slide modes.
 - Add exactly one unobtrusive **PB Range** dropdown next to the selected instrument: **Off (default), ±2, ±12, ±24, ±48 semitones**. Off preserves existing overlap/receiver-portamento behavior. Non-Off asks ACID to generate a bend-controlled connected SLIDE for the plugin/MIDI receiver.
 - A selected value is **ACID's assumed range**, not a command that sets a VST's bend range. User sets the matching range in the chosen instrument; do not discover VST parameters, install presets, change instrument/plugin state, or claim the range has been verified.
 - Store the PB selection only as target/owned-phrase **render settings**, separate from canonical PITCH/TIME memory and the source ownership hash. Selecting another phrase restores that phrase's saved setting; changing the value schedules normal guarded regeneration and supports existing Undo/Redo/Live Edit behavior. For this WIP, replace the current output-setting format directly where required: **no migration or backward-compatibility code**.
@@ -618,7 +618,7 @@ not run in this workspace; functional acceptance remains open.
 
 ### M3.6.1 — Reuse native Renoise MIDI commands; one feasibility check
 
-1. Use the documented Renoise **M1 pitch-bend MIDI command** as the first implementation target, not sample-only \`0Gxx\`. The Renoise manual specifies \`M1\` in the **rightmost note column's panning field**, a valid target instrument number, and the paired hexadecimal MIDI value in the associated effect field. Verify the exact phrase API cell-property mapping against the pinned Renoise 3.5/API 6.2 SDK before modifying \`legato_writer.lua\` or \`phrase_validator.lua\`.
+1. Use the documented Renoise **M1 pitch-bend MIDI command** as the first implementation target, not sample-only `0Gxx`. The Renoise manual specifies `M1` in the **rightmost note column's panning field**, a valid target instrument number, and the paired hexadecimal MIDI value in the associated effect field. Verify the exact phrase API cell-property mapping against the pinned Renoise 3.5/API 6.2 SDK before modifying `legato_writer.lua` or `phrase_validator.lua`.
 2. **Single bounded in-Renoise check:** with one available VST responding to bend (suggested: Surge XT), set its bend range to ±12 and turn its own glide off; manually enter a held C note plus noncenter/center M1 commands inside a triggered native Renoise instrument phrase. Confirm audible pitch change **and reset**, and the intended MIDI target. This is a go/no-go integration check, not an audio-calibration program.
 3. If phrase-contained M1 does not reach plugins through the current host/phrase route, record the specific limitation and **do not** add or silently reconfigure an Instrument MIDI Control device or track automation. Keep the existing overlap route and nonfatal limitation warning; reconsider explicit routing separately only if genuinely needed.
 4. Keep target verification limited to this available reference VST and ordinary note/MIDI checks. Do not require testing dozens of synthesizers or proving compatibility across the VST ecosystem.
@@ -629,7 +629,7 @@ not run in this workspace; functional acceptance remains open.
 
 1. Implement a small deterministic phrase-cell pitch-bend emitter reusing **model/control_signals.lua**'s semantic NOTE/TIE/REST/SLIDE timeline and the existing protected phrase writer. Extend the current legato writer/validator where practical; avoid a new engine.
 2. With PB **Off**, retain the existing NOTE-before-delayed-OFF legato method; with PB **On**, keep a *single active receiver note* and bend it smoothly to each connected SLIDE target. No target NOTE-on or envelope restart is requested at the connected boundary.
-3. Treat a selected ±R as mapping \`-R..+R\` semitones onto MIDI 14-bit pitch bend \`0..16383\` with center \`8192\`. Calculate from the **held note's pitch anchor**, including accumulated connected transitions, rather than independently centering every target. Ensure complete target pitch and bend endpoint when representable; never wrap, clamp silently or jump past the chosen range.
+3. Treat a selected ±R as mapping `-R..+R` semitones onto MIDI 14-bit pitch bend `0..16383` with center `8192`. Calculate from the **held note's pitch anchor**, including accumulated connected transitions, rather than independently centering every target. Ensure complete target pitch and bend endpoint when representable; never wrap, clamp silently or jump past the chosen range.
 4. Generate a short **linear** series of pitch-bend points across the available connected-step interval using the **existing phrase timing resolution**. No additional glide-time, easing or precision controls. Preserve NOTE/TIE/REST order and source-step mapping.
 5. A fresh NOTE, REST, Play Once tail, normal release, or safe loop reset must stop the old note as required and restore bend to center **before the next unrelated attack**. Handle cold→steady and steady→steady phrase loops explicitly; do not issue an incorrect center reset while a connected held note is crossing the seam.
 6. A same-pitch connected SLIDE holds the receiver note without a second attack. Preserve ACCENT in the source; if connected velocity/expressivity cannot change on the already-held voice, show a nonfatal warning.
@@ -652,7 +652,7 @@ not run in this workspace; functional acceptance remains open.
 | Plugin/MIDI unavailable | Generation and editor continue with actionable warning |
 | Existing tests | ACID Lua suite, packaging and one in-Renoise reference check pass; no GitHub workflows |
 
-**Delivery:** one focused implementation PR after M3.5, with matching local Lua specs and a short addition to \`tests/acid/acid_m35_s_manual.md\`. If the M1 go/no-go check fails, document the blocker and close the spike without building a MIDI routing subsystem. Do not postpone M4 for open-ended testing.
+**Delivery:** one focused implementation PR after M3.5, with matching local Lua specs and a short addition to `tests/acid/acid_m35_s_manual.md`. If the M1 go/no-go check fails, document the blocker and close the spike without building a MIDI routing subsystem. Do not postpone M4 for open-ended testing.
 
 **M3.6 done when:** users can select PB Off or an assumed bend range, ACID writes correct validated phrase commands where supported, existing sample/plugin pathways remain intact, and the single reference-VST playback check establishes working bend/reset behavior. Do not promise identical glide from all VST instruments.
 
