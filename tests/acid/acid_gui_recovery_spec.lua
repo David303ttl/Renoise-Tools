@@ -262,7 +262,7 @@ fail_draft_clear=false
 
 phrase_choice:fire(2)
 assert(live_checkbox.value and #render_callbacks==4,
-  "owned-to-owned destination selection keeps Live Edit armed and resumes")
+  "selecting a destination with a recovered draft resumes Live Edit")
 assert(tool.writer_calls[4].options.pb_range==48,
   "Live Edit restores and passes the newly selected phrase's PB Range")
 render_callbacks[4]({kind="complete",status="committed",message="owned phrase rebound"})

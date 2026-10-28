@@ -216,10 +216,16 @@ local function phrase_index(instrument, phrase)
   return found
 end
 
-local function remove_phrase(instrument, phrase)
+local function mutate_phrases(job,action)
+  if job.phrase_mutation then return job.phrase_mutation(action) end
+  return action()
+end
+
+local function remove_phrase(job, phrase)
+  local instrument=job.instrument
   local index=phrase_index(instrument,phrase)
   if not index then return false end
-  local ok=pcall(function()instrument:delete_phrase_at(index)end)
+  local ok=pcall(function() mutate_phrases(job,function() instrument:delete_phrase_at(index) end) end)
   return ok and phrase_index(instrument,phrase)==nil
 end
 
@@ -288,11 +294,11 @@ local function complete(job, error_message, rendered_events, failure_status)
   busy = false
   current = nil
   if error_message then
-    if job.temporary and not remove_phrase(job.instrument,job.phrase) then
+    if job.temporary and not remove_phrase(job,job.phrase) then
       job.keep_recovery=true
       pcall(function()job.phrase.name="ACID RECOVERY STAGING"end)
     end
-    if job.backup and not job.keep_recovery then remove_phrase(job.instrument,job.backup) end
+    if job.backup and not job.keep_recovery then remove_phrase(job,job.backup) end
     local message=tostring(error_message) ..
       ((job.swapped or job.keep_recovery) and "; phrase output or recovery state may have changed; inspect the destination before retrying" or
         "; previous ACID phrase remains unchanged")
@@ -404,11 +410,11 @@ local function finalize(job, event_count, skipped)
     if not valid then job.suspended_reason=why;error(why) end
     local backup
     if job.replace then
-      backup=job.instrument:insert_phrase_at(#job.instrument.phrases+1)
+      backup=mutate_phrases(job,function() return job.instrument:insert_phrase_at(#job.instrument.phrases+1) end)
       job.backup=backup
       local backup_ok,backup_error=pcall(function()backup:copy_from(job.target_phrase)end)
       if not backup_ok then
-        if not remove_phrase(job.instrument,backup) then
+        if not remove_phrase(job,backup) then
           backup.name="ACID RECOVERY BACKUP"
           job.keep_recovery=true
         else job.backup=nil end
@@ -433,7 +439,7 @@ local function finalize(job, event_count, skipped)
           backup.name="ACID RECOVERY BACKUP"
           error("Phrase replacement failed and rollback failed; recovery phrase retained: "..tostring(restore_error))
         end
-        if remove_phrase(job.instrument,backup) then job.backup=nil
+        if remove_phrase(job,backup) then job.backup=nil
         else backup.name="ACID RECOVERY BACKUP";job.keep_recovery=true end
         error("Phrase replacement rolled back: "..tostring(copy_error))
       end
@@ -455,11 +461,11 @@ local function finalize(job, event_count, skipped)
           backup.name="ACID RECOVERY BACKUP"
           return nil,"destination rollback failed: "..tostring(restore_error)
         end
-        if remove_phrase(job.instrument,backup) then job.backup=nil
+        if remove_phrase(job,backup) then job.backup=nil
         else backup.name="ACID RECOVERY BACKUP";job.keep_recovery=true end
         return true
       end
-      if remove_phrase(job.instrument,job.phrase) then job.temporary=false;return true end
+      if remove_phrase(job,job.phrase) then job.temporary=false;return true end
       job.keep_recovery=true
       pcall(function()job.phrase.name="ACID RECOVERY STAGING"end)
       return nil,"append rollback failed; recovery phrase retained"
@@ -509,14 +515,14 @@ local function finalize(job, event_count, skipped)
       error("Final phrase/source verification failed; changes rolled back: "..tostring(verify_error))
     end
     if backup then
-      if not remove_phrase(job.instrument,backup) then
+      if not remove_phrase(job,backup) then
         backup.name="ACID RECOVERY BACKUP"
         job.cleanup_warning="Committed output; recovery backup remains in the instrument."
       end
       job.backup=nil
     end
     if job.replace then
-      if remove_phrase(job.instrument,job.phrase) then job.temporary=false
+      if remove_phrase(job,job.phrase) then job.temporary=false
       else
         job.phrase.name="ACID RECOVERY STAGING"
         job.cleanup_warning="Committed output; staging phrase remains in the instrument."
@@ -602,7 +608,7 @@ function M.cancel(token)
   job.cancelled=true
   local cleanup_error
   if job.temporary then
-    if not remove_phrase(job.instrument,job.phrase) then
+    if not remove_phrase(job,job.phrase) then
       job.keep_recovery=true
       cleanup_error="staging phrase cleanup failed"
       pcall(function()job.phrase.name="ACID RECOVERY STAGING"end)
@@ -610,7 +616,7 @@ function M.cancel(token)
       job.temporary=false
     end
   end
-  if job.backup and not remove_phrase(job.instrument,job.backup) then
+  if job.backup and not remove_phrase(job,job.backup) then
     job.keep_recovery=true
     cleanup_error=(cleanup_error and cleanup_error.." and " or "").."backup cleanup failed"
     pcall(function()job.backup.name="ACID RECOVERY BACKUP"end)
@@ -780,13 +786,14 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     target_warning=capabilities.diagnostic,
     capabilities=capabilities,
     replace=replace,target_index=target_index,temporary=true,token=options.token,
+    phrase_mutation=options.phrase_mutation,
     callback = callback, committed = false, commit_tick = 0,
     cancelled = false
   }
 
   local ok, error_message = pcall(function()
     -- Render into an append-only temporary phrase, never a user phrase.
-    job.phrase = instrument:insert_phrase_at(#instrument.phrases+1)
+    job.phrase = mutate_phrases(job,function() return instrument:insert_phrase_at(#instrument.phrases+1) end)
     job.phrase.name = M.PHRASE_NAME
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
     local script = job.phrase.script
@@ -821,7 +828,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     else
       pcall(function()
         if job.phrase and rawequal(instrument.phrases[#instrument.phrases],job.phrase) then
-          instrument:delete_phrase_at(#instrument.phrases)
+          mutate_phrases(job,function() instrument:delete_phrase_at(#instrument.phrases) end)
         end
       end)
     end
