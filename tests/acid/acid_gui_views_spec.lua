@@ -55,14 +55,25 @@ local instrument_two={name="Other target",phrases={{id=31,name="Other phrase"}},
 local song={selected_instrument_index=1,selected_instrument=instrument,
   selected_phrase=instrument.phrases[1],selected_phrase_observable=observable(),
   instruments={instrument,instrument_two}}
+rawset(song,"_selected_phrase_index",1)
+setmetatable(song,{
+  __index=function(t,key)
+    if key=="selected_phrase_index" then return rawget(t,"_selected_phrase_index") end
+  end,
+  __newindex=function(t,key,value)
+    if key=="selected_phrase_index" then
+      rawset(t,"_selected_phrase_index",value)
+      song.selected_phrase=instrument.phrases[value]
+      song.selected_phrase_observable:fire()
+    else rawset(t,key,value) end
+  end
+})
 instrument.phrase_program=1
 instrument_two.phrase_program=1
 local function select_native_phrase(index)
   song.selected_phrase_index=index
-  song.selected_phrase=instrument.phrases[index]
-  song.selected_phrase_observable:fire()
+  assert(song.selected_phrase==instrument.phrases[index])
 end
-song.selected_phrase_index=1
 local builder=view_builder()
 local dialog
 local app={}
@@ -115,8 +126,7 @@ package.loaded["writers.phrase_writer"]={
     if instrument_index==1 and target_index<=#target_instrument.phrases then
       -- Staging changes the editor selection without touching the playback program.
       song.selected_phrase_index=#target_instrument.phrases+1
-      song.selected_phrase=nil
-      song.selected_phrase_observable:fire()
+      assert(song.selected_phrase==nil)
     end
     generation_callback=callback
     return true
