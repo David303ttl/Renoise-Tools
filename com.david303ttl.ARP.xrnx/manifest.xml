@@ -7,4 +7,6 @@
   <Name>ARP</Name>
   <Category>Sequencer</Category>
   <Description>Experimental LPB-independent ARP with safe regeneration</Description>
+  <License>GPL-3.0-only</License>
+  <LicensePath>LICENSE</LicensePath>
 </RenoiseScriptingTool>

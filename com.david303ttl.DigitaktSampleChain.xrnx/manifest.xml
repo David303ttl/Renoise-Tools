@@ -7,6 +7,8 @@
   <Name>DigitaktSampleChain</Name>
   <Category>Sample Export</Category>
   <Description>Export tool for Digitakt</Description>
+  <License>GPL-3.0-only</License>
+  <LicensePath>LICENSE</LicensePath>
   <ScriptProperties>
     <SupportSampleEditor>true</SupportSampleEditor>
   </ScriptProperties>

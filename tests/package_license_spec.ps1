@@ -25,6 +25,10 @@ try {
       throw "LICENSE differs from root text in $($toolDir.Name)"
     }
     [xml] $manifest = Get-Content -LiteralPath (Join-Path $toolDir.FullName 'manifest.xml') -Raw
+    if ($manifest.RenoiseScriptingTool.License -cne 'GPL-3.0-only' -or
+        $manifest.RenoiseScriptingTool.LicensePath -cne 'LICENSE') {
+      throw "Missing GPL-3.0-only license metadata in $($toolDir.Name)"
+    }
     $id = $manifest.RenoiseScriptingTool.Id
     $version = $manifest.RenoiseScriptingTool.Version
     $package = Join-Path $tempDir ($id + '_' + $version + '.xrnx')
@@ -33,6 +37,15 @@ try {
     }
     $archive = [System.IO.Compression.ZipFile]::OpenRead($package)
     try {
+      $manifestEntry = $archive.GetEntry('manifest.xml')
+      if ($null -eq $manifestEntry) { throw "Missing manifest.xml in $package" }
+      $manifestReader = [System.IO.StreamReader]::new($manifestEntry.Open(), [System.Text.Encoding]::UTF8)
+      try { [xml] $packagedManifest = $manifestReader.ReadToEnd() }
+      finally { $manifestReader.Dispose() }
+      if ($packagedManifest.RenoiseScriptingTool.License -cne 'GPL-3.0-only' -or
+          $packagedManifest.RenoiseScriptingTool.LicensePath -cne 'LICENSE') {
+        throw "Missing GPL-3.0-only license metadata in packaged manifest $package"
+      }
       $entry = $archive.GetEntry('LICENSE')
       if ($null -eq $entry) { throw "Missing archive-root LICENSE in $package" }
       $reader = [System.IO.StreamReader]::new($entry.Open(), [System.Text.Encoding]::UTF8)

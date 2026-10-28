@@ -7,4 +7,6 @@
   <Name>ACID</Name>
   <Category>Sequencing</Category>
   <Description>ACID pitch/time sequencer with experimental native phrase output</Description>
+  <License>GPL-3.0-only</License>
+  <LicensePath>LICENSE</LicensePath>
 </RenoiseScriptingTool>
