@@ -380,6 +380,29 @@ assert(phrase_popup.value==1 and generation_request.target_index==1,
 assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
   "regenerating ACID phrase 01 keeps Renoise's independently selected phrase 02")
 
+-- Cancelling a live render must not block subsequent native selections.
+builder.views.acid_program_key_popup:fire(7)
+assert(render_calls==9,"a fresh Live Edit render is running before cancellation")
+live_checkbox:fire(false)
+select_native_phrase(2)
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==2,"cancelled renders must not suppress native phrase selection")
+local after_cancel=render_calls
+
+-- Passive selection of a foreign phrase must never start a new render.
+instrument.phrases[3].foreign=true
+package.loaded["writers.phrase_ownership"].status=function(phrase)
+  return phrase.foreign and "foreign" or "owned"
+end
+select_native_phrase(3)
+tool.app_idle_observable:fire()
+assert(render_calls==after_cancel and phrase_popup.value==2,
+  "foreign phrase selection does not append or redirect the ACID destination")
+instrument.phrases[3].foreign=nil
+select_native_phrase(1)
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==1,"owned phrase selection still synchronizes after cancellation")
+
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")
 dialog.visible=false
