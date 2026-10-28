@@ -11,6 +11,15 @@ measured playback duration and the remaining checks below have not been fully
 verified. Later targeted readback and playback measurements are recorded below.
 Lua mocks do not establish playback or receiver behavior.
 
+On 2026-10-28, a further interactive check in Renoise 3.5.4 used an
+untitled song, Surge XT and a new 16-step all-NOTE draft. In Program view,
+selecting Triplet changed the displayed division and cycle from 1/16 and
+16/4 beats to 1/8 triplet and 16/3 beats. Undo restored Straight and Redo
+restored Triplet. With Live Edit off, Generate committed a new owned phrase
+and the editor reported 32 notes and 32 OFF events. The host warned that the
+phrase program was off. This check did not measure playback, test Grid or
+exercise the remaining source and target-switching cases below.
+
 The user subsequently confirmed that the 12-step Triplet Repeat phrase was
 audible and repeated evenly when triggered. Its duration against a beat
 reference, transport changes, groove and pitch-bend playback remain unchecked.

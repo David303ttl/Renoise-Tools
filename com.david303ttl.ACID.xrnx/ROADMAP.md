@@ -681,7 +681,7 @@ remain the integration gate. M3.6 is not playback-accepted until that check pass
 
 ## 6. M4 — Exact timing modes and tempo-independent phrase output
 
-**Status:** implementation-ready contract on `feature/M4`; no runtime timing changes are implemented by this document. **Goal:** straight sixteenth steps and eighth-note-triplet steps must render as exact musical durations, independently of song BPM, song LPB and bar grouping, while retaining the existing NOTE/TIE/REST, SLIDE, PB, Repeat/Play Once, ownership and Live Edit guarantees.
+**Status:** timing implementation and local regression coverage are present on `feature/M4`; Renoise acceptance remains open. **Goal:** straight sixteenth steps and eighth-note-triplet steps must render as exact musical durations, independently of song BPM, song LPB and bar grouping, while retaining the existing NOTE/TIE/REST, SLIDE, PB, Repeat/Play Once, ownership and Live Edit guarantees.
 
 ### M4.0 — Fixed product and API contract (P0; decisions closed)
 
