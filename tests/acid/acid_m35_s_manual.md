@@ -1,9 +1,12 @@
 # ACID M3.5 Renoise manual checklist
 
-**Results: not run in this workspace.** Run these checks in Renoise 3.5 with a
-disposable song. Record the Renoise version, target type and pass/fail/not-run
-for each item before treating the functional gates as complete. A passing Lua mock is not a
-playback receipt.
+**Acceptance status (2026-10-28): partial.** Renoise 3.5.4 checks in a
+disposable song verified installed-writer Repeat generation and measured the
+M4 timing fixtures; the bounded Surge XT phrase bend/reset check also passed.
+The broader M3.5 target, source, persistence, ownership and Live Edit checklist
+below remains incomplete. Record Renoise version, target type and
+pass/fail/not-run for each item before treating those gates as complete. A
+passing Lua mock is not a playback receipt.
 
 ## Program/Grid and source
 
@@ -217,10 +220,11 @@ reported TIME/PITCH location is selected without modifying source.
 
 | Check | Target / Renoise version | Result | Notes |
 | --- | --- | --- | --- |
-| Program/Grid and source | | Not run | |
-| Repeat / Play Once | | Not run | |
-| Sample target | | Not run | |
-| Plugin-only target and legato SLIDE | | Not run | |
+| Program/Grid and source | Renoise 3.5.4, disposable probe | Partial | Timing selection and Program-view Generate were exercised; Grid roundtrip and source-preservation cases remain unrun |
+| Repeat / Play Once | Renoise 3.5.4, disposable probe | Partial | Repeat phrase generation/readback and audio timing passed; full Play Once and output-policy matrix remains unrun |
+| M4 static timing audio | Renoise 3.5.4, native sample probe | Pass for scoped fixtures | 48 BPM/LPB matrix renders and the six required cycle fixtures passed; see [timing measurements](acid_timing_manual.md#measured-phrase-period-and-bpmlpb-acceptance) |
+| Sample target | Renoise 3.5.4, 168-frame saw | Partial | Bounded connected slide and REST captures at phrase LPB 8 and 6 are recorded in the [timing checklist](acid_timing_manual.md#targeted-glide-and-bend-playback); other sample articulations remain unrun |
+| Plugin-only target and legato SLIDE | Renoise 3.5.4, Surge XT slot `03` | Partial | Bounded ±12 phrase bend/reset and short-slide captures passed; general overlap/receiver matrix remains unrun |
 | External MIDI target and legato SLIDE | | Not run | |
 | Hybrid target | | Not run | |
 | Empty slot | | Not run | |

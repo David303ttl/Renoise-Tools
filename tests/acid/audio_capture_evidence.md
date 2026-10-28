@@ -1,6 +1,6 @@
 # Articulation audio capture evidence
 
-## Current evidence status — 2026-10-27
+## Current evidence status — 2026-10-28
 
 The current desktop has licensed Renoise 3.5.4 and uses offline WAV rendering;
 it has a different soundcard from the earlier Audacity WASAPI loopback setup.
@@ -15,6 +15,24 @@ chains remain explicitly refused. Manual transport stop/start, seek and Live
 Edit during playback are still unverified, so M3 is not complete. Earlier entries retain
 the dated findings from the prior Demo/loopback setup; later sections identify
 which conclusions they supersede.
+
+## Current-desktop route probe — 2026-10-28
+
+The RME route was checked after the previous PHL24 endpoint was found to be
+unavailable on this desktop. This is route evidence only; no current-desktop
+grid calibration or articulation result is claimed.
+
+| Probe | Result | Raw WAV |
+| --- | --- | --- |
+| Renoise ASIO Hammerfall DSP → Audacity RME WASAPI loopback | **Invalid for playback analysis:** 16.23 s, stereo PCM24 at 48 kHz, peak integer sample 10 (about −118.5 dBFS), effectively silent | `tmp/acid-m4-acceptance/rme-loopback-route-probe-20261028.wav`; SHA-256 `CE9331D5BFD3427CDF904E289124DC99BDDD1E724302F766F398C6366235A0D5` |
+| Renoise shared WASAPI Analog 1+2 → Audacity RME WASAPI loopback | **Route-only pass:** one host NOTE/OFF probe was audible; 6.26 s, stereo PCM24 at 48 kHz, peak −6.81 dBFS, RMS −22.83 dBFS | `tmp/acid-m4-acceptance/rme-wasapi-route-probe-20261028.wav`; SHA-256 `317F66E3D6709335C2C7061419CC71C2D93E44A1AA5840D0BD8BD57795901D85` |
+
+The shared-WASAPI setting was temporary. Renoise was restored to ASIO
+Hammerfall DSP at 48 kHz, 256 samples (5.3 ms), with dithering enabled. The
+route probe does not replace the required 68-event calibration. A follow-up
+grid take reached the 14-second host-pattern wrap and retriggered, so it was
+invalid for calibration and was not analyzed or exported. No valid current-
+desktop timing/articulation capture is retained; acceptance remains **Not Run**.
 
 ## Desktop grid calibration — 2026-10-27
 
@@ -573,3 +591,77 @@ SHA-256 `f87c62fbc0c0f9255f914f72764140e3bbd2b2e04e10037ee05c2c25c5590360`.
 Its audible C→G NOTE route provided a bounded fallback check before the support
 gate was enabled. This is not an unsafe-Repeat-seam playback receipt; that
 whole-phrase fallback still requires its separate musical-usability check.
+
+## M4 phrase timing audio receipts (2026-10-28)
+
+All captures used Renoise **3.5.4**, the disposable
+`tmp/acid-m4-acceptance/probe_song.xrns`, the installed ACID writer, Selective
+phrase triggering in instrument slot `01`, phrase program `08`, a 168-frame
+looping saw, 48 kHz stereo PCM24, precise interpolation and no normalization.
+The single host NOTE held the ACID Repeat phrase through four traversals, then
+one host OFF ended it. Each capture included a silent pre-roll. Straight phrase
+LPB was 8; Triplet LPB was 6; shuffle was 0. The source pitch was Renoise note
+value 36. The tested source revision was
+`0df7d907bc531eecb07d026bd1d98a88cff05893`.
+
+The required fixtures measured as follows; each WAV has a matching Renoise
+render sidecar, single-trigger receipt and full onset report under
+`tmp/acid-m4-acceptance/`.
+
+| Fixture | Timing / steps | Expected cycle | Measured cycle intervals | Attacks | Maximum onset error | WAV SHA-256 |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| T01 | Straight 16 | 4 beats / 2,000 ms | 2,000 / 2,000 / 2,000 ms | 64 | 0 ms | `8edf60f1a85159335c98b0e94de0903d6047f549dad12ab5babd0afbd55ef167` |
+| T02 | Triplet 12 | 4 beats / 2,000 ms | 2,000 / 2,000 / 2,000 ms | 48 | 0.667 ms | `4bcdda705cfaebbe0be524a39267b1c6db0c5becbdeffafce11cdb1947a82f41` |
+| T03 | Straight 12 | 3 beats / 1,500 ms | 1,500 / 1,500 / 1,500 ms | 48 | 0 ms | `63b4fe229ab70ceba832840c8dfbef13e926c9d652aa1b3ebe6c12e176ee768e` |
+| T04 | Triplet 9 | 3 beats / 1,500 ms | 1,500 / 1,500 / 1,500 ms | 36 | 0.667 ms | `7f721a09b6590457414647036708a06b6a4c488eda40af8f2f410e77019defc6` |
+| T05 | Triplet 15 | 5 beats / 2,500 ms | 2,500 / 2,500 / 2,500 ms | 60 | 0.667 ms | `4c86a8fcf2a534f54a05b1d676b65d7ca3ca6527c4b887c870adf15798acf913` |
+| T06 | Triplet 64 | 64/3 beats / 10,666.667 ms | 10,666 / 10,667 / 10,667 ms | 256 | 0.667 ms | `5f152d880b39258b33cc489e7844fa38c58b83f8ed835c1947e983002d6e9e0e` |
+
+T06 read back 257 phrase lines, 128 NOTE and 128 OFF events, and loop points
+129–257. Its single host NOTE remained active across the split host patterns;
+the host OFF fell before a fifth-cycle NOTE. None of these six measured runs
+had a missing or extra phrase attack.
+
+The actual audio matrix comprised **48/48 passing renders**: Straight 16 and
+Triplet 12 at all 8 requested song LPBs and all 3 BPMs. Every case retained the
+phrase-local LPB and stayed within the calibrated 5 ms tolerance. At 60 BPM,
+cycle intervals measured 4,000 ms; at 120 BPM, 2,000 ms; at 180 BPM, 1,333,
+1,333 and 1,334 ms (expected 1,333.333 ms). The maximum absolute onset error
+was 0.667 ms. LPB 32 WAV hashes can differ from the other LPBs because the
+song arrangement spans different pattern boundaries; event schedules still
+passed.
+
+Explicit metronome groupings and host-pattern segmentation also passed:
+
+| Arrangement | Captures | Grouping | Pattern boundary | Receipt result |
+| --- | --- | --- | ---: | --- |
+| 3/4 | Straight 12, Triplet 9 | 3 beats × 8 lines | 24 lines | six host patterns each; one trigger only |
+| 4/4 | Straight 16, Triplet 12 | 4 beats × 8 lines | 32 lines | five host patterns each; one trigger only |
+| 7/8 | Triplet 12 | 7 beats × 4 lines at song LPB 8 | 28 lines | six host patterns; 56-line aligned pre-roll |
+
+The 3/4 Straight 12 and Triplet 9 cases each measured 1,500 ms cycles. The 4/4
+Straight 16 and Triplet 12 cases each measured 2,000 ms cycles. The 7/8 case
+measured 2,000 ms cycles across successive 28-line pattern boundaries. Phrase
+readback and rendered audio agree; no host pattern retrigger occurred.
+
+Each source analyzer report records the expected and measured event schedule,
+cycle drift, phrase readback, Renoise version, song configuration, meter,
+pattern count, source commit, WAV SHA-256 and render-sidecar SHA-256. The final
+`.timing_report.json.verified.json` reports add corrected per-capture
+pre-roll/hold/pattern provenance. Original and final reports are retained
+alongside the raw WAVs and sidecars in ignored `tmp/` output.
+
+At capture time the report recorded package archive SHA-256
+`5b7ad1eae42d8157d4836666322846c9337e264881c78262f10d0a9d73195e50`. The
+final required packaging run produced
+`dist/com.david303ttl.ACID_0.1.xrnx` with SHA-256
+`af4ec6d72e899991bc88f56772a6c6d97d47c512083be954c45fc4d6ac748066`; all 25
+archive runtime entries matched the installed Renoise 3.5.4 ACID directory
+byte for byte. Both measurements reference the same source commit; package
+archive SHA values identify their respective packaging runs.
+
+These are static offline-render measurements against the BPM/step-duration
+formula using the WAV sample clock. No separately captured host metronome or
+independent beat-click reference was included. Live BPM/LPB changes,
+stop/start, seek, groove, Live Edit during playback and the full sample/VST
+articulation matrix remain unverified, so this evidence does not close M4.

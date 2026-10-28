@@ -605,7 +605,7 @@ not run in this workspace; functional acceptance remains open.
 
 ## 5B. M3.6 — Plugin/MIDI pitch-bend slide (small follow-up; before M4)
 
-**Status (2026-10-28):** implementation complete; the single reference-VST P0 bend/reset check remains unrun. Lua checks establish deterministic command layout, settings and writer protection only. No connected Renoise document session was available for playback verification. **Baseline:** `develop` at `4f1e9881640de3714e58dcf8ec04adc889447d24`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
+**Status (2026-10-28):** implementation complete; the bounded reference-VST P0 bend/reset check passed in Renoise 3.5.4 Demo with Surge XT VST3 in slot `03` (±12 range, portamento off, phrase-contained M1, +6.99 semitones and center reset). The matching short C→G phrase slide also reached its measured endpoint. This supersedes the earlier “P0 remains unrun” status but covers only that receiver setup. PB Off comparisons, seam and multi-slide cases, other targets, undo/save-reopen and broader Live Edit checks remain unverified. See the [M3.6 manual record](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend) and [audio receipts](../tests/acid/audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28). **Baseline:** `develop` at `4f1e9881640de3714e58dcf8ec04adc889447d24`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
 
 **Implementation record:** the editor exposes the phrase-specific PB Range
 setting with Undo/Redo, draft persistence and Live Edit. The protected phrase
@@ -625,7 +625,9 @@ with raw MIDI data. The [official manual](https://tutorials.renoise.com/wiki/Eff
 documents M1 targeting and main/fine ordering. InstrumentPhrase docs describe
 phrase instrument columns as sample selectors, so actual plugin delivery cannot
 be inferred from these API checks. The [P0 procedure and result table](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend)
-remain the integration gate. M3.6 is not playback-accepted until that check passes.
+records the bounded slot `03` Surge XT pass. That result closes the single
+reference-receiver go/no-go check for its documented configuration; it does
+not establish delivery or glide behavior for other receivers or routes.
 
 ### M3.6.0 — Product contract and limits
 
@@ -681,7 +683,7 @@ remain the integration gate. M3.6 is not playback-accepted until that check pass
 
 ## 6. M4 — Exact timing modes and tempo-independent phrase output
 
-**Status:** timing implementation and local regression coverage are present on `feature/M4`; Renoise acceptance remains open. **Goal:** straight sixteenth steps and eighth-note-triplet steps must render as exact musical durations, independently of song BPM, song LPB and bar grouping, while retaining the existing NOTE/TIE/REST, SLIDE, PB, Repeat/Play Once, ownership and Live Edit guarantees.
+**Status (2026-10-28):** timing implementation and local regression coverage are present on `feature/M4`. Static Renoise 3.5.4 offline audio checks passed for the complete BPM/LPB matrix, the six duration fixtures and explicit 3/4, 4/4 and 7/8 pattern-boundary cases. M4 remains **BLOCKED** by the unmeasured independent host-beat reference, dynamic transport checks, full articulation and source/target acceptance. See the [measured timing record](../tests/acid/acid_timing_manual.md#measured-phrase-period-and-bpmlpb-acceptance) and [audio receipts](../tests/acid/audio_capture_evidence.md#m4-phrase-timing-audio-receipts-2026-10-28). **Goal:** straight sixteenth steps and eighth-note-triplet steps must render as exact musical durations, independently of song BPM, song LPB and bar grouping, while retaining the existing NOTE/TIE/REST, SLIDE, PB, Repeat/Play Once, ownership and Live Edit guarantees.
 
 ### M4.0 — Fixed product and API contract (P0; decisions closed)
 
@@ -766,6 +768,25 @@ subject to the documented host checks.
 6. **Local release check:** run `./scripts/run_tests.ps1 -Tool ACID`, `./tests/acid/validate_loop_oracle.ps1` and `./scripts/package.ps1 -Tool ACID` (PowerShell 7). Add named deterministic timing, writer, store, Live Edit and API-mock regressions; no GitHub Actions. Confirm package manifest/runtime layout and that ARP/DigitaktSampleChain are untouched.
 
 **M4 acceptance is blocked until:** both modes produce source-duration-exact playable phrase grids and repeat without accumulated drift in the validated modern Renoise timing model; M3.5/3.6 semantic, ownership and Live Edit regressions pass; required in-Renoise timing checks have recorded results; receiver-specific PB claims are supported by the bounded M3.6 reference-VST check or explicitly remain unverified. Valid current-format source must remain editable even when an actual host/resource safety failure prevents a phrase commit. No timing mode may be only a cosmetic GUI label.
+
+### M4.6 — Acceptance record (2026-10-28)
+
+| Gate | Result | Evidence / remaining scope |
+| --- | --- | --- |
+| Local ACID Lua suite | Pass | 32 specs passed |
+| Audio oracle and analyzer controls | Pass | 63 oracle cases, 68 calibration onsets and synthetic analyzer controls passed |
+| Packaging and archive licenses | Pass | ACID package built with 25 runtime files; 3 XRNX archive-license checks passed |
+| Straight/Triplet BPM and LPB audio matrix | Pass | 48/48 Renoise offline WAVs: song LPB 2, 3, 4, 6, 8, 12, 16 and 32 at BPM 60, 120 and 180 |
+| Six required duration fixtures | Pass | Four-traversal measured onset schedules for Straight 16/12 and Triplet 12/9/15/64 |
+| Explicit meter/pattern-boundary cases | Pass | 3/4 (24-line), 4/4 (32-line) and 7/8 (28-line) boundaries with a single host trigger |
+| Independent host beat reference | Not run | No separately captured Renoise metronome/click reference; static WAV timestamps were compared with the BPM/step-duration formula |
+| Sample/VST articulation and PB regression | Partial | Bounded LPB 8/6 sample glide and Surge XT ±12 bend/reset captures passed; articulation families, seams, PB Off and receiver breadth remain open |
+| Playback lifecycle and live timing | Not run | Stop/start, seek, loop wraps, Live Edit during playback, live BPM/LPB changes and groove comparison |
+| M3.5 source, target and persistence acceptance | Partial | Program-view timing selection and Generate were exercised; Program/Grid roundtrip, all target types, undo/save-reopen, async destination safety, song switch and scaling checks remain unrun |
+
+**Recommendation: M4 BLOCKED.** The static timing evidence passes, but the
+remaining host acceptance is required before M4 can be accepted. Do not merge
+or begin M5 until the remaining checks are completed and signed off.
 
 ---
 

@@ -1,7 +1,10 @@
 # ACID timing: Renoise manual verification
 
-Status: partial visual check on 2026-10-28, Renoise 3.5.4, Surge XT VST3,
-fresh song and default all-NOTE source. Manual generation and regeneration
+Status (2026-10-28): measured offline phrase-period and BPM/LPB checks pass in
+Renoise 3.5.4; the complete M4 gate remains blocked by the unmeasured
+independent host-beat reference and live transport checks below. The initial
+visual check used Surge XT VST3, a fresh song and default all-NOTE source.
+Manual generation and regeneration
 committed a 16-step Straight Repeat and 16-, 12- and 64-step Triplet Repeat.
 The triplet phrases displayed LPB 6 and shuffle 0; their lengths were 65, 49
 and 257 lines respectively. Visible initial cells alternated NOTE and OFF.
@@ -21,8 +24,8 @@ phrase program was off. This check did not measure playback, test Grid or
 exercise the remaining source and target-switching cases below.
 
 The user subsequently confirmed that the 12-step Triplet Repeat phrase was
-audible and repeated evenly when triggered. Its duration against a beat
-reference, transport changes, groove and pitch-bend playback remain unchecked.
+audible and repeated evenly when triggered. That listening observation
+predates the measured captures below and is not a host-beat reference.
 
 Use a disposable song in Renoise 3.5 or later with a simple test instrument and
 an available pitch-bend VST. Generate both Repeat and Play Once phrases in
@@ -64,6 +67,79 @@ different timing, PB Range and output settings, and verify each restores its own
 values. Test new and foreign destinations with Live Edit armed, and check that
 rapid timing changes commit only the latest source without modifying the foreign
 phrase. These source/editor checks remain unverified in Renoise.
+
+## Measured phrase-period and BPM/LPB acceptance
+
+**Status: static Renoise 3.5.4 audio measurements passed; live acceptance is
+still open.** ACID generated Repeat phrases through the installed writer in
+the disposable `tmp/acid-m4-acceptance/probe_song.xrns`. The instrument was
+`ACID ARTICULATION PROBE`, global slot `01`, phrase program `08`, Selective
+phrase mode. Every timing capture used one host NOTE, one later host OFF, four
+phrase traversals (one cold plus three steady), a silent pre-roll, 48 kHz stereo
+PCM24, precise interpolation and no normalization. Straight phrases read back
+LPB 8; Triplet phrases LPB 6; every phrase had shuffle 0. The analyzer checked
+the measured onset schedule against the expected step positions with a 5 ms
+tolerance and retained each WAV, render sidecar, run receipt and JSON report.
+
+The complete 8 × 3 × 2 matrix used song LPB 2, 3, 4, 6, 8, 12, 16 and 32 at
+60, 120 and 180 BPM. Each of its 48 WAVs passed with the expected number of
+attacks: 64 for Straight 16 and 48 for Triplet 12. Results by BPM were:
+
+| BPM | Expected four-beat cycle | Measured cycle intervals (ms) | Maximum onset error | Cases |
+| ---: | ---: | --- | ---: | ---: |
+| 60 | 4,000 ms | 4,000 / 4,000 / 4,000 | 0.667 ms | 16 |
+| 120 | 2,000 ms | 2,000 / 2,000 / 2,000 | 0.667 ms | 16 |
+| 180 | 1,333.333 ms | 1,333 / 1,333 / 1,334 | 0.667 ms | 16 |
+
+Every matrix case stayed within the calibrated 5 ms onset tolerance. The
+1 ms WAV measurement resolution accounts for the sub-millisecond errors and
+the alternating 1,333/1,334 ms cycle readings at 180 BPM; no accumulating drift
+was measured. Phrase LPB remained fixed at 8/6 while song LPB changed. The
+renderer changed actual seconds with BPM as expected.
+
+The required duration fixtures also passed at song LPB 8 and BPM 120:
+
+| Fixture | Phrase | Beats per cycle | Expected / measured cycle (ms) | Attacks | Max onset error | WAV SHA-256 |
+| --- | --- | ---: | --- | ---: | ---: | --- |
+| T01 | Straight 16 | 4 | 2,000 / 2,000, 2,000, 2,000 | 64 | 0 ms | `8edf60f1a85159335c98b0e94de0903d6047f549dad12ab5babd0afbd55ef167` |
+| T02 | Triplet 12 | 4 | 2,000 / 2,000, 2,000, 2,000 | 48 | 0.667 ms | `4bcdda705cfaebbe0be524a39267b1c6db0c5becbdeffafce11cdb1947a82f41` |
+| T03 | Straight 12 | 3 | 1,500 / 1,500, 1,500, 1,500 | 48 | 0 ms | `63b4fe229ab70ceba832840c8dfbef13e926c9d652aa1b3ebe6c12e176ee768e` |
+| T04 | Triplet 9 | 3 | 1,500 / 1,500, 1,500, 1,500 | 36 | 0.667 ms | `7f721a09b6590457414647036708a06b6a4c488eda40af8f2f410e77019defc6` |
+| T05 | Triplet 15 | 5 | 2,500 / 2,500, 2,500, 2,500 | 60 | 0.667 ms | `4c86a8fcf2a534f54a05b1d676b65d7ca3ca6527c4b887c870adf15798acf913` |
+| T06 | Triplet 64 | 64/3 | 10,666.667 / 10,666, 10,667, 10,667 | 256 | 0.667 ms | `5f152d880b39258b33cc489e7844fa38c58b83f8ed835c1947e983002d6e9e0e` |
+
+T01 and T02 read back 65/49 lines with Repeat loops 33–65/25–49. T03/T04
+read back 49/37 lines and loops 25–49/19–37. T05 read back 61 lines and loop
+31–61. T06 read back 257 lines, 128 NOTE and 128 OFF events, loop 129–257;
+the host OFF arrived before a fifth-cycle onset. There were no missing or
+duplicated phrase attacks.
+
+Explicit metronome grouping and host-pattern boundaries were also exercised
+in the same disposable song. The single trigger remained in the first host
+pattern in each arrangement; pattern boundaries did not retrigger the phrase.
+
+| Arrangement | Fixture(s) | Renoise metronome grouping | Host pattern boundary | Captured arrangement |
+| --- | --- | --- | ---: | --- |
+| 3/4 | Straight 12, Triplet 9 | 3 beats × 8 lines | 24 lines | 6 patterns per capture; pre-roll aligned to a bar |
+| 4/4 | Straight 16, Triplet 12 | 4 beats × 8 lines | 32 lines | 5 patterns per capture; pre-roll aligned to a bar |
+| 7/8 | Triplet 12 | 7 beats × 4 lines = 28 lines at song LPB 8 | 28 lines | 6 patterns; 56-line aligned pre-roll |
+
+The explicit 3/4 cases measured three-beat cycles at 1,500 ms; the 4/4 cases
+measured four-beat cycles at 2,000 ms; the 7/8 Triplet 12 case measured
+four-beat cycles at 2,000 ms while crossing 28-line host-pattern boundaries.
+The detailed reports record per-onset timestamps, cycle errors, meter settings,
+pattern counts, phrase readback, commit, package archive hash, WAV hash and
+render-sidecar hash under `tmp/acid-m4-acceptance/`. Reports ending in
+`.timing_report.json.verified.json` are the final reports with corrected
+per-case arrangement provenance.
+
+These are offline engine captures measured against the BPM/step-duration
+formula using the WAV sample clock. No separately captured host metronome or
+independent beat-click track was included, so the objective's independent
+host-beat-reference comparison is still open. The captures also do not test
+live BPM/LPB changes, stop/start, seek, groove, Live Edit during playback, or
+the full sample/VST articulation matrix. They pass the static timing and
+pattern-boundary portions only.
 
 ## Targeted triplet renderer readback
 
