@@ -55,27 +55,14 @@ local instrument_two={name="Other target",phrases={{id=31,name="Other phrase"}},
 local song={selected_instrument_index=1,selected_instrument=instrument,
   selected_phrase=instrument.phrases[1],selected_phrase_observable=observable(),
   instruments={instrument,instrument_two}}
-local function bind_phrase_program(instrument,value)
-  rawset(instrument,"_phrase_program",value)
-  setmetatable(instrument,{__index=function(target,key)
-      if key=="phrase_program" then return rawget(target,"_phrase_program") end
-      return rawget(target,key)
-    end,
-    __newindex=function(target,key,next_value)
-      if key=="phrase_program" then
-        rawset(target,"_phrase_program",next_value)
-        if next_value>=1 and next_value<=#target.phrases then
-          song.selected_phrase=target.phrases[next_value]
-          song.selected_phrase_observable:fire()
-        end
-        target.phrase_program_observable:fire()
-      else
-        rawset(target,key,next_value)
-      end
-    end})
+instrument.phrase_program=1
+instrument_two.phrase_program=1
+local function select_native_phrase(index)
+  song.selected_phrase_index=index
+  song.selected_phrase=instrument.phrases[index]
+  song.selected_phrase_observable:fire()
 end
-bind_phrase_program(instrument,1)
-bind_phrase_program(instrument_two,1)
+song.selected_phrase_index=1
 local builder=view_builder()
 local dialog
 local app={}
@@ -126,7 +113,10 @@ package.loaded["writers.phrase_writer"]={
       pattern=pattern,options=options}
     local target_instrument=song.instruments[instrument_index]
     if instrument_index==1 and target_index<=#target_instrument.phrases then
-      target_instrument.phrase_program=2
+      -- Staging changes the editor selection without touching the playback program.
+      song.selected_phrase_index=#target_instrument.phrases+1
+      song.selected_phrase=nil
+      song.selected_phrase_observable:fire()
     end
     generation_callback=callback
     return true
@@ -339,10 +329,12 @@ generation_callback({kind="complete",status="committed",message="Live regenerati
   diagnostics={},target={instrument_index=1,phrase_index=4}})
 assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
 
+instrument.phrase_program=2
 instrument.phrase_program_observable:fire()
+instrument.phrase_program=1
 assert(phrase_popup.value==4 and render_calls==5,
   "playback-program notifications alone do not redirect the ACID edit destination")
-instrument.phrase_program=2
+select_native_phrase(2)
 assert(phrase_popup.value==4 and render_calls==5,
   "native phrase selection defers ACID view changes until the idle callback")
 tool.app_idle_observable:fire()
@@ -352,7 +344,7 @@ assert(render_calls==6 and generation_request.target_index==2,
   "Live Edit after a native phrase switch targets the selected phrase")
 generation_callback({kind="complete",status="committed",message="Native phrase selection regenerated.",
   diagnostics={},target={instrument_index=1,phrase_index=2}})
-assert(song.selected_phrase==instrument.phrases[2] and instrument.phrase_program==2,
+assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
   "Live Edit restores the native phrase selected before rendering")
 builder.views.acid_program_key_popup:fire(6)
 assert(render_calls==7 and generation_request.target_index==2,
@@ -363,20 +355,19 @@ assert(#instrument.phrases==4,"native phrase selection must not create another d
 
 live_checkbox:fire(false)
 instrument.phrase_program_observable:fire()
-instrument.phrase_program=2
+select_native_phrase(2)
 phrase_popup:fire(1)
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native selection")
 live_checkbox:fire(true)
 assert(render_calls==8 and generation_request.target_index==1,
   "arming Live Edit after selecting phrase 01 targets phrase 01 after phrase 02 was generated")
-song.selected_phrase_observable:fire()
 generation_callback({kind="complete",status="committed",message="Live phrase 01 regenerated.",
   diagnostics={},target={instrument_index=1,phrase_index=1}})
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1 and generation_request.target_index==1,
   "ACID generation cannot redirect its selected phrase through native phrase notifications")
-assert(song.selected_phrase==instrument.phrases[2] and instrument.phrase_program==2,
+assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
   "regenerating ACID phrase 01 keeps Renoise's independently selected phrase 02")
 
 assert(song.selected_phrase_observable:listener_count()==1,
