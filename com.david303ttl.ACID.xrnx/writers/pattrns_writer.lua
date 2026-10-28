@@ -2,6 +2,7 @@
 -- Emit finite pattrns scripts from semantic note and timing events.
 -- Glide and release-gate effects are applied separately to the rendered phrase.
 local interpreter = require('model.cycle_interpreter')
+local timing = require('model.timing')
 local M = {}
 
 local function valid_volume(value)
@@ -135,7 +136,18 @@ end
 function M.generate(pattern, options)
   local plan, error_message = interpreter.compile_cycle(pattern)
   if not plan then return nil, error_message end
-  return M.emit(plan, options)
+  if options ~= nil and type(options) ~= 'table' then return nil, 'options must be a table' end
+  options = options or {}
+  local layout, layout_error = timing.new(pattern.timing_mode, pattern.length, 'play_once')
+  if not layout then return nil, layout_error end
+  if (options.unit ~= nil and options.unit ~= layout.unit) or
+      (options.resolution ~= nil and options.resolution ~= layout.resolution) then
+    return nil, 'timing options do not match source timing mode'
+  end
+  local emit_options = {}
+  for key, value in pairs(options) do emit_options[key] = value end
+  emit_options.unit, emit_options.resolution = layout.unit, layout.resolution
+  return M.emit(plan, emit_options)
 end
 
 return M

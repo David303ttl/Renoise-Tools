@@ -74,6 +74,18 @@ assert(actual.event({pulse_step=2}) == nil)
 assert(actual.event({pulse_step=3}).key == 40)
 assert(actual.event({pulse_step=4}) == 'off')
 assert(actual.event({pulse_step=5}).key == 43)
+p.timing_mode='triplet'
+local triplet_options={normal_volume=0.4}
+local triplet=compile_script(assert(emitter.generate(p,triplet_options)))
+assert(triplet.unit=='1/8' and triplet.resolution==2/3)
+assert(triplet.event({pulse_step=1}).volume==0.4)
+assert(triplet_options.unit==nil and triplet_options.resolution==nil)
+local triplet_default=compile_script(assert(emitter.generate(p)))
+assert(triplet_default.unit=='1/8' and triplet_default.resolution==2/3)
+assert(emitter.generate(p,{unit='1/8',resolution=2/3}))
+assert(not emitter.generate(p,{unit='1/16',resolution=1}))
+assert(not emitter.generate(p,{resolution=1}))
+assert(not emitter.generate(p,'invalid'))
 local invalid=sequencer.new_pattern(3)
 invalid.pitch_length=1
 for i,command in ipairs({'T','N','N'}) do invalid.time_events[i]=command end
