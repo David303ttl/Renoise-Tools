@@ -236,11 +236,17 @@ assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key
 builder.views.acid_program_key_popup:fire(7)
 assert(#render_callbacks==2 and #tool.writer_calls==2,
   "rapid edits coalesce while one render is active")
-render_callbacks[2]({kind="complete",status="error",message="intermediate render failed"})
+local long_diagnostic=string.rep("TIME step 05: SLIDE approximated: bend range exceeded; ",40)
+render_callbacks[2]({kind="complete",status="error",message=long_diagnostic,
+  diagnostics={long_diagnostic}})
 assert(#render_callbacks==3 and tool.writer_calls[3].pattern.pitch_events[2].key==6,
   "the in-flight follow-up renders the newest source immediately: P1="..
     tostring(tool.writer_calls[3].pattern.pitch_events[1].key).." P2="..
     tostring(tool.writer_calls[3].pattern.pitch_events[2].key))
+assert(status.text:find(long_diagnostic,1,true),
+  "the bounded details field retains the complete diagnostic")
+assert(not builder.views.acid_live_edit_state.text:find(long_diagnostic,1,true),
+  "the live status does not duplicate long diagnostics into an auto-sizing text view")
 fail_draft_clear=true
 render_callbacks[3]({kind="complete",status="approximate",message="recovered with approximation",
   diagnostics={"slide approximated"}})
@@ -316,8 +322,13 @@ render_callbacks[12]({kind="complete",status="committed",message="safety phrase 
 builder.views.acid_program_key_popup:fire(8)
 render_callbacks[13]({kind="complete",status="error",message="later render failed"})
 local live_state=builder.views.acid_live_edit_state.text
+local live_state_view=builder.views.acid_live_edit_state
+assert(live_state_view.kind=="multiline_text" and live_state_view.width==820 and
+  live_state_view.height==48,
+  "live status uses a fixed-size wrapping view so long diagnostics cannot widen the dialog")
 assert(live_state:find("LIVE EDIT ERROR",1,true) and
-  live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID safety append | safety phrase updated",1,true),
-  "a later render error preserves the prior successful target and result")
+  live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID safety append",1,true) and
+  not live_state:find("safety phrase updated",1,true),
+  "a later render error preserves a concise summary of the prior successful commit")
 
 print("ACID GUI draft recovery and typed Live Edit outcome checks passed")

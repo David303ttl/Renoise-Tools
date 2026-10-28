@@ -90,7 +90,7 @@ function M.show()
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
   local status=vb:multiline_textfield{width=820,height=80,active=true,
     font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
-  local live_state_view=vb:text{id="acid_live_edit_state",width=820,font="bold",
+  local live_state_view=vb:multiline_text{id="acid_live_edit_state",width=820,height=48,font="bold",
     text="LIVE EDIT DISABLED"}
   local diagnostic=vb:text{id="acid_source_diagnostic",width=820,font="bold",text=""}
   local navigate_diagnostic
@@ -660,15 +660,8 @@ function M.show()
       return
     end
     local state=live:state()
-    local target_name=phrase_choice and phrase_choice.items[phrase_choice.value] or "No phrase selected"
-    local instrument_name=bound_instrument and bound_instrument.name or "No instrument"
     local prefix="LIVE EDIT "..state.status
-    if state.last_result and state.last_result.message and
-        (state.status=="ERROR" or state.status=="APPROXIMATE" or state.status=="COMMITTED") then
-      prefix=prefix..": "..state.last_result.message
-    end
-    live_state_view.text=prefix.." | Current: "..tostring(instrument_name).." / "..
-      tostring(target_name)
+    live_state_view.text=prefix
     if state.last_commit then
       local commit=state.last_commit
       local committed_target=commit.target_label or
@@ -676,7 +669,7 @@ function M.show()
           commit.target and commit.target.phrase_index or 0)
       live_state_view.text=live_state_view.text.."\nLAST COMMIT: "..
         string.upper(tostring(commit.status or "committed")).." | "..
-        tostring(committed_target).." | "..tostring(commit.message or "")
+        tostring(committed_target)
     end
   end
   local function result_issue(result,message)
