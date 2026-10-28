@@ -85,16 +85,19 @@ local function assert_complete(expected_status)
   assert(status.status==expected_status,
     'expected '..expected_status..', got '..tostring(status.status)..': '..tostring(status.message))
 end
-local function generate(pattern)
+local function generate(pattern,pb_range)
   assert(writer.generate(1,function(value)status=value end,pattern,1,
-    {output_policy='play_once'}))
+    {output_policy='play_once',pb_range=pb_range}))
   for _=1,6 do idle:fire() end
 end
 local pattern=seq.new_pattern(3)
 pattern.pitch_events[1]=pitch(48)
 pattern.pitch_events[2]=pitch(48)
 for i,command in ipairs({'N','T','T'}) do pattern.time_events[i]=command end
-generate(pattern)
+local initial_options={output_policy='play_once',pb_range=12}
+assert(writer.generate(1,function(value)status=value end,pattern,1,initial_options))
+initial_options.pb_range=24
+for _=1,6 do idle:fire() end
 assert_complete('committed')
 assert(status_message(status):find('generated',1,true),status.message)
 local target=instrument.phrases[1]
@@ -102,7 +105,18 @@ assert(target.cells[1].note_value==48)
 assert(target.cells[2].note_value==121 and target.cells[4].note_value==121)
 assert(target.cells[6].note_value==120,'Play Once NTT must release at 2.5 steps')
 assert(ownership.status(target)=='owned')
+local initial_source,initial_policy,initial_pb_range=store.load(song,target)
+assert(initial_source and initial_policy=='play_once' and initial_pb_range==12,
+  'writer did not freeze and persist the requested PB range')
+assert(initial_source.pitch_events[1].note==48 and pattern.pitch_events[1].note==48,
+  'PB Range is not part of canonical PITCH/TIME source')
 local raw,name=song.tool_data,target.name
+local invalid_started,invalid_result=writer.generate(1,function()end,pattern,1,
+  {output_policy='play_once',pb_range=4})
+assert(not invalid_started and invalid_result.code=='source.pb_range'
+  and invalid_result.category=='source')
+assert(song.tool_data==raw and target.name==name and #instrument.phrases==1,
+  'invalid PB range mutated the phrase destination')
 local original_commit=store.commit
 store.commit=function(target_song,candidate)
   target_song.tool_data=candidate.raw
@@ -142,10 +156,26 @@ assert(status_message(status):find('generated',1,true),status.message)
 assert(target.cells[1].note_value==50 and target.cells[2].note_value==120)
 assert(target.cells[3].note_value==48 and target.cells[4].note_value==121)
 assert(target.cells[6].note_value==120)
-local restored,output_policy=store.load(song,target)
+local restored,output_policy,restored_pb_range=store.load(song,target)
 assert(restored and output_policy=='play_once' and restored.time_events[2]=='N'
   and restored.pitch_events[1].note==50)
+assert(restored_pb_range==0,'omitted PB range defaults to Off')
 assert(ownership.status(target)=='owned')
+raw,name=song.tool_data,target.name
+local original_load=store.load
+store.load=function(target_song,phrase)
+  local source,policy,pb_range=original_load(target_song,phrase)
+  return source,policy,pb_range==12 and 24 or (pb_range==0 and 12 or pb_range)
+end
+assert(writer.generate(1,function(value)status=value end,pattern,1,
+  {output_policy='play_once',pb_range=12}))
+for _=1,6 do idle:fire() end
+store.load=original_load
+assert_complete('error')
+assert(status_message(status):find('final phrase PB range verification failed',1,true),status.message)
+assert(song.tool_data==raw and target.name==name and #instrument.phrases==1
+  and rawequal(instrument.phrases[1],target),
+  'PB range verification failure did not roll back phrase and source settings')
 -- Unity accent uses pattrns' empty/full-volume sentinel, not explicit 0x80.
 raw,name=song.tool_data,target.name
 pattern.pitch_events[1].accent=true

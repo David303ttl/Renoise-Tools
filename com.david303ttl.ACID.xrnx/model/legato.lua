@@ -146,7 +146,102 @@ local function add_cell(cells,line,column,values)
   return true
 end
 
-function M.plan(semantic,timeline,layout)
+local function bend_plan(semantic,timeline,layout,options)
+  local range=options.pb_range
+  if range~=2 and range~=12 and range~=24 and range~=48 then return nil,"invalid pitch-bend range" end
+  local target=options.instrument_value
+  if type(target)~="number" or target%1~=0 or target<0 or target>254 then
+    return nil,"pitch bend requires a valid target instrument"
+  end
+  if (layout.lines_per_step or 2)~=2 then return nil,"pitch bend requires two phrase lines per TIME step" end
+  if type(timeline)~="table" or type(timeline.events)~="table" then return nil,"gate timeline is incomplete" end
+  local cells,commands,diagnostics={},{},{
+    "Pitch bend assumes the selected receiver range and isolated monophonic routing; phrase MIDI delivery must be verified in Renoise."}
+  local anchor,pitch,accent,column
+  local collision
+  local function put(line,col,values)
+    local ok,err=add_cell(cells,line,col,values)
+    if not ok then collision=err end
+  end
+  local function bend(line,offset)
+    local value=offset<0 and 8192+offset/range*8192 or 8192+offset/range*8191
+    value=math.floor(value+0.5)
+    commands[line]={value=value,instrument_value=target,
+      number_string=string.format("%02X",math.floor(value/128)),amount_value=value%128}
+  end
+  local events={}
+  for i,event in ipairs(timeline.events) do
+    if type(event.at)~="number" or event.at<0 or event.at%128~=0 then
+      return nil,"pitch-bend timeline position is not representable"
+    end
+    events[i]=event
+  end
+  table.sort(events,function(a,b)
+    if a.at~=b.at then return a.at<b.at end
+    local order={gate_off=1,pitch_target=2,gate_on=3,rest=4,tie=5}
+    return (order[a.kind] or 9)<(order[b.kind] or 9)
+  end)
+  local entry_state
+  local function state() return table.concat({anchor or "empty",pitch or "empty",column or "empty",tostring(accent)},":") end
+  for index,event in ipairs(events) do
+    local line=math.floor(event.at/128)+1
+    if layout.looping and not entry_state and line>=layout.loop_start then entry_state=state() end
+    if event.kind=="gate_on" then
+      column=1
+      put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,delay_value=1})
+      anchor,pitch,accent=event.note,event.note,event.accent
+      bend(line,0)
+    elseif event.kind=="pitch_target" then
+      if not anchor then return nil,"pitch bend requires a cold-entry voice anchor" end
+      local offset=event.note-anchor
+      if math.abs(offset)>range then
+        put(line,column,{note_value=M.OFF,delay_value=0})
+        column=3-column
+        put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,delay_value=1})
+        bend(line,0)
+        anchor,pitch,accent=event.note,event.note,event.accent
+        diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: bend range exceeded",source_step(event))
+      else
+        local next_event=events[index+1]
+        -- A midpoint release leaves only the boundary line for the endpoint.
+        local room=not next_event or next_event.at>=event.at+256
+        if pitch~=event.note then
+          bend(line,room and ((pitch-anchor)+offset)/2 or offset)
+          if room then bend(line+1,offset) end
+          if not room then
+            diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: phrase timing leaves one bend endpoint before release.",source_step(event))
+          end
+        end
+        if event.accent~=accent then
+          diagnostics[#diagnostics+1]=string.format("TIME step %02d: accent change is omitted while the connected voice is held.",source_step(event))
+        end
+        pitch=event.note
+      end
+    elseif event.kind=="gate_off" then
+      if anchor then
+        put(line,column,{note_value=M.OFF,delay_value=0})
+        bend(line,0)
+        anchor,pitch,accent,column=nil,nil,nil,nil
+      end
+    end
+  end
+  if collision then return nil,collision end
+  if layout.looping and entry_state and entry_state~=state() then
+    local fallback,err=M.plan(semantic,timeline,layout)
+    if not fallback then return nil,err end
+    for _,diagnostic in ipairs(diagnostics) do fallback.diagnostics[#fallback.diagnostics+1]=diagnostic end
+    fallback.diagnostics[#fallback.diagnostics+1]="SLIDE approximated: pitch-bend voice anchor cannot repeat safely at the loop seam; receiver-controlled NOTE overlap is used."
+    return fallback
+  end
+  -- The carrier is always rightmost and never replaces NOTE/OFF data.
+  return {cells=cells,columns=3,diagnostics=diagnostics,lines_per_step=2,
+    midi_commands=commands,pb_range=range}
+end
+
+function M.plan(semantic,timeline,layout,options)
+  if options and options.pb_range and options.pb_range~=0 then
+    return bend_plan(semantic,timeline,layout or {},options)
+  end
   layout=layout or {}
   local lines_per_step=layout.lines_per_step or 2
   if lines_per_step~=2 then return nil,"plugin/MIDI legato requires two phrase lines per TIME step" end

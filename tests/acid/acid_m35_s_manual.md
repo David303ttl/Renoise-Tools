@@ -78,6 +78,56 @@ midpoint OFF, and both the glide and OFF remain in the phrase.
    seek and Live Edit regeneration. Verify note-offs in the MIDI/plugin capture.
    Test hybrid layers separately; their sample envelopes may retrigger.
 
+## M3.6 Plugin/MIDI pitch bend
+
+**Local verification (2026-10-28):** all 30 ACID Lua specs passed, including
+anchor accumulation, bend endpoints, range fallback, release/reset, Repeat seam
+safety, settings persistence, command validation and last-good rollback. The
+ACID 0.1 package was built and its archive layout checked. These checks use
+mocks and do not establish MIDI delivery, playback, GUI or host Undo behavior.
+
+**P0 result: not run in this workspace.** The Lua suite verifies phrase cells,
+not whether Renoise delivers phrase-contained M1 commands to a plugin. Complete
+this bounded check with one available bend-responsive VST before treating
+pitch-bend slides as playback-verified. No connected Renoise document session
+was available for this check on 2026-10-28. The pinned API documents phrase
+instrument columns as sample selectors; confirm the actual M1 receiver rather
+than assuming pattern-editor targeting also applies inside a phrase.
+
+1. Use a disposable song and one plugin-only instrument with a bend-responsive
+   VST (Surge XT is suitable). Set the VST bend range to ±12 semitones and turn
+   its own glide off. Record the Renoise version, VST/preset and target
+   instrument slot; do not change the instrument's routing.
+2. In a native instrument phrase, enter a held C note in one note column. In
+   the rightmost visible note column, enter the target instrument slot number,
+   `M1` in the panning field and `652A` in the associated effect field. Enter
+   another `M1` command with `4000` while the note is still held. For a ±12
+   receiver, `652A` is approximately +7 semitones and `4000` is pitch-bend
+   center.
+3. Trigger the phrase. Confirm the held voice bends upward and returns to C
+   without a new note attack, and confirm the commands reach the intended VST.
+   Record pass/fail and any host limitation here:
+
+   | Renoise | VST / preset | Result | Notes |
+   | --- | --- | --- | --- |
+   | | | Not run | |
+
+4. If the phrase does not deliver both commands, record the specific failure
+   and leave PB Range unsupported. Do not add MIDI routing devices or track
+   automation as a fallback.
+
+After P0 passes, test the generated PB Range feature with these focused cases:
+
+| Check | Pass condition | Result |
+| --- | --- | --- |
+| PB Off | Existing plugin/MIDI overlapping-NOTE SLIDE and sample 0G glide are unchanged | Not run |
+| PB ±12, C→G→C | One held note reaches each target and returns to center | Not run |
+| NOTE→SLIDE→NOTE→REST | Connected boundary has no retrigger; REST releases and centers bend | Not run |
+| Two connected slides and Repeat seam | Accumulated bend and cold/steady seam do not jump or stick | Not run |
+| Range exceeded | Ordered NOTE fallback and TIME-step approximation warning | Not run |
+| Save/reopen and Live Edit | PB Range restores for each owned phrase and regenerates safely | Not run |
+| Plugin/MIDI unavailable and hybrid target | Phrase generation remains available with the documented warning | Not run |
+
 ## Save, reopen and Live Edit
 
 1. Save and reopen the XRNS. Confirm current source and Repeat/Play Once policy

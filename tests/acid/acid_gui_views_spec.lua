@@ -98,20 +98,21 @@ package.loaded["writers.phrase_ownership"]={
   id=function(phrase) return phrase.id end
 }
 local persisted_drafts={}
-package.loaded["model.pattern_store"]={load=function()
+package.loaded["model.pattern_store"]={load=function(_,phrase)
   local source=require("model.sequencer").new_pattern(16)
   for i=1,source.length do source.time_events[i]="N" end
-  return source,"repeat"
+  return source,"repeat",phrase.id==22 and 24 or 0
 end,
-  write_draft=function(_,index,phrase_id,name,pattern,policy)
-    persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,name=name}
+  write_draft=function(_,index,phrase_id,name,pattern,policy,pb_range)
+    persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,
+      pb_range=pb_range,name=name}
     return true
   end,
   read_draft=function(_,index,phrase_id,name)
     local item=persisted_drafts[index..":"..phrase_id]
     if not item then return nil end
     assert(item.name==name)
-    return item.pattern,item.policy
+    return item.pattern,item.policy,item.pb_range
   end,
   clear_draft=function(_,index,phrase_id)
     persisted_drafts[index..":"..phrase_id]=nil
@@ -166,18 +167,27 @@ assert(edit_notifications==0 and render_calls==0)
 
 local last_step
 local output_popup
+local pb_range_popup
 local phrase_popup
 for _,node in ipairs(builder.nodes) do
   if node.kind=="valuebox" then last_step=node end
   if node.kind=="popup" and node.items and node.items[1]=="Play Once" then
     output_popup=node
   end
+  if node.id=="acid_pb_range" then pb_range_popup=node end
   if node.kind=="popup" and node.width==360 then phrase_popup=node end
 end
 assert(last_step and last_step.min==1 and last_step.max==64)
+assert(pb_range_popup and pb_range_popup.items[1]=="Off" and
+  pb_range_popup.items[2]=="±2" and pb_range_popup.items[3]=="±12" and
+  pb_range_popup.items[4]=="±24" and pb_range_popup.items[5]=="±48" and
+  pb_range_popup.value==1,"PB Range defaults to Off and offers the documented assumptions")
 last_step:fire("32")
 assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
 output_popup:fire(1)
+pb_range_popup:fire(3)
+assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("STEPS 32/64",1,true),
+  "PB Range changes do not mutate canonical PITCH/TIME source")
 
 local function button(text)
   for _,node in ipairs(builder.nodes) do
@@ -189,33 +199,43 @@ button("Reset Source"):fire()
 assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
 assert(output_popup.value==2,"Reset Source restores Repeat output")
+assert(pb_range_popup.value==1,"Reset Source restores PB Range Off")
 assert(button("Undo").active)
 button("Undo"):fire()
 assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: REST",1,true))
 assert(builder.views.acid_program_key_popup.value==2)
 assert(output_popup.value==1,"Undo restores the previous output policy")
+assert(pb_range_popup.value==3,"Undo restores the prior PB Range")
 assert(button("Redo").active)
 button("Redo"):fire()
 assert(output_popup.value==2 and builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
+assert(pb_range_popup.value==1,"Redo restores the reset PB Range Off")
 button("Undo"):fire()
 builder.views.acid_program_time_command:fire(1)
 assert(not button("Redo").active,"new edits discard the redo branch")
 
 phrase_popup:fire(2)
+assert(pb_range_popup.value==4,"phrase selection restores its stored PB Range")
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request and generation_request.instrument_index==1)
 assert(generation_request.target_index==2,
   "generation must pass the selected phrase index")
+assert(generation_request.options.pb_range==24,
+  "manual generation receives the selected phrase's PB Range")
 assert(phrase_popup.value==2,
   "successful generation must keep the selected destination phrase")
 generation_callback({kind="complete",status="committed",message="Phrase generated.",
   diagnostics={},target={phrase_index=2}})
 
 phrase_popup:fire(3)
+assert(pb_range_popup.value==1,"a new phrase starts with PB Range Off")
+pb_range_popup:fire(4)
 builder.views.acid_program_key_popup:fire(3)
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request.target_index==3,"new phrase generation targets append slot")
+assert(generation_request.options.pb_range==24,"new phrase render captures its selected PB Range")
+pb_range_popup:fire(5)
 builder.views.acid_program_key_popup:fire(4)
 local target_popup
 for _,node in ipairs(builder.nodes) do
@@ -228,8 +248,9 @@ instrument.phrases[3]=created_phrase
 generation_callback({kind="complete",status="committed",message="Phrase generated.",
   diagnostics={},target={phrase_index=3}})
 local draft_cache=require("model.draft_cache")
-local recovered,recovered_policy=draft_cache.get(song,instrument,created_phrase)
-assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat",
+local recovered,recovered_policy,recovered_pb_range=draft_cache.get(song,instrument,created_phrase)
+assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat" and
+  recovered_pb_range==48,
   "the newest NEW PHRASE edit moves onto the phrase committed by its render")
 assert(not draft_cache.get(song,instrument,nil),
   "the committed NEW PHRASE draft key is cleared after it moves")

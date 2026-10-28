@@ -1,12 +1,17 @@
 -- SPDX-License-Identifier: GPL-3.0-only
--- Exact, song-local storage for canonical ACID sources and phrase output policy.
+-- Exact, song-local storage for canonical ACID sources and phrase render settings.
 local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("writers.phrase_ownership")
 local M = {}
-local MAGIC = "ACID-PITCH-TIME-3"
+local MAGIC = "ACID-PITCH-TIME-4"
 local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}
+local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local MAX_ID = 2147483647
+
+local function valid_pb_range(value)
+  return type(value)=="number" and value%1==0 and PB_RANGES[value]
+end
 
 local function valid_id(id)
   return type(id)=="number" and id%1==0 and id>=1 and id<=MAX_ID
@@ -52,13 +57,16 @@ local function decode(raw)
   for line_number=2,#lines do
     local line=lines[line_number]
     if line=="" then return nil,"Unexpected blank ACID entry at line "..line_number end
-    local draft_instrument,draft_phrase,draft_name,draft_policy,draft_pitch_length,draft_length,
-      draft_pitch_data,draft_time=line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
+    local draft_instrument,draft_phrase,draft_name,draft_policy,draft_pb_range,
+      draft_pitch_length,draft_length,draft_pitch_data,draft_time=
+      line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|([%w_]+)|(%d+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
     if draft_instrument then
       draft_instrument,draft_phrase=tonumber(draft_instrument),tonumber(draft_phrase)
+      draft_pb_range=tonumber(draft_pb_range)
       draft_pitch_length,draft_length=tonumber(draft_pitch_length),tonumber(draft_length)
       local key=tostring(draft_instrument)..":"..tostring(draft_phrase)
       if draft_instrument<1 or draft_phrase<0 or drafts[key] or not OUTPUT_POLICIES[draft_policy] or
+          not valid_pb_range(draft_pb_range) or
           not draft_pitch_length or draft_pitch_length<1 or draft_pitch_length>64 or
           not draft_length or draft_length<1 or draft_length>64 or #draft_time~=64 then
         return nil,"Invalid ACID draft header at line "..line_number
@@ -81,13 +89,16 @@ local function decode(raw)
       if not ok then return nil,"Invalid ACID draft source: "..err end
       local instrument_name=decode_text(draft_name)
       if not instrument_name then return nil,"Invalid ACID draft instrument identity at line "..line_number end
-      drafts[key]={pattern=pattern,output_policy=draft_policy,instrument_name=instrument_name,
+      drafts[key]={pattern=pattern,output_policy=draft_policy,pb_range=draft_pb_range,
+        instrument_name=instrument_name,
         instrument_index=draft_instrument,phrase_id=draft_phrase}
     else
-    local id,output_policy,pitch_length,length,pitch_data,time=
-      line:match("^(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
+    local id,output_policy,pb_range,pitch_length,length,pitch_data,time=
+      line:match("^(%d+)|([%w_]+)|(%d+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
+    pb_range=tonumber(pb_range)
     id,pitch_length,length=tonumber(id),tonumber(pitch_length),tonumber(length)
     if not id or not valid_id(id) or entries[id] or not OUTPUT_POLICIES[output_policy] or
+        not valid_pb_range(pb_range) or
         not pitch_length or pitch_length<1 or pitch_length>64 or
         not length or length<1 or length>64 or not time or #time~=64 then
       return nil,"Invalid ACID snapshot header at line "..line_number
@@ -109,7 +120,7 @@ local function decode(raw)
     for step=1,64 do pattern.time_events[step]=time:sub(step,step) end
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID source: "..err end
-    entries[id]={pattern=pattern,output_policy=output_policy}
+    entries[id]={pattern=pattern,output_policy=output_policy,pb_range=pb_range}
     end
   end
   return entries,drafts
@@ -129,11 +140,12 @@ local function encode(entries,drafts)
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID source: "..err end
     if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid phrase output policy" end
+    if not valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
     local pitches={}
     for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     local time={}
     for step=1,64 do time[step]=pattern.time_events[step] or "N" end
-    lines[#lines+1]=table.concat({tostring(id),item.output_policy,
+    lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),
       tostring(pattern.pitch_length),tostring(pattern.length),
       table.concat(pitches,","),table.concat(time)},"|")
   end
@@ -150,10 +162,12 @@ local function encode(entries,drafts)
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID draft source: "..err end
     if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid ACID draft output policy" end
+    if not valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
     local pitches,time={},{}
     for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     for step=1,64 do time[step]=pattern.time_events[step] or "N" end
-    lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),item.output_policy,
+    lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),
+      item.output_policy,tostring(item.pb_range),
       tostring(pattern.pitch_length),tostring(pattern.length),
       table.concat(pitches,","),table.concat(time)},"|")
   end
@@ -168,15 +182,18 @@ function M.read(song)
   return entries
 end
 
-function M.prepare(song,id,pattern,output_policy)
+function M.prepare(song,id,pattern,output_policy,pb_range)
   if not valid_id(id) then return nil,"invalid ACID phrase ID" end
   output_policy=output_policy or "repeat"
+  pb_range=pb_range==nil and 0 or pb_range
+  if not OUTPUT_POLICIES[output_policy] then return nil,"invalid phrase output policy" end
+  if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
   local previous,err=raw_data(song)
   if previous==nil and err then return nil,err end
   local entries,drafts=decode(previous or "")
   local decode_error=drafts
   if not entries then return nil,decode_error end
-  entries[id]={pattern=pattern,output_policy=output_policy}
+  entries[id]={pattern=pattern,output_policy=output_policy,pb_range=pb_range}
   local next_raw,encode_error=encode(entries,drafts)
   if not next_raw then return nil,encode_error end
   return {previous_raw=previous,raw=next_raw,id=id}
@@ -212,10 +229,12 @@ function M.read_draft(song,instrument_index,phrase_id,instrument_name)
     end
     if item.instrument_name~=name or matches~=1 then item=nil end
   end
-  return item and item.pattern or nil,item and item.output_policy or nil
+  return item and item.pattern or nil,item and item.output_policy or nil,
+    item and item.pb_range or nil
 end
 
-local function write_draft(song,instrument_index,phrase_id,instrument_name,pattern,output_policy,remove)
+local function write_draft(song,instrument_index,phrase_id,instrument_name,pattern,
+    output_policy,pb_range,remove)
   local key,err=draft_key(instrument_index,phrase_id)
   if not key then return nil,err end
   local previous,read_error=raw_data(song)
@@ -236,8 +255,10 @@ local function write_draft(song,instrument_index,phrase_id,instrument_name,patte
     local valid,validation_error=interpreter.compile_cycle(pattern)
     if not valid then return nil,validation_error end
     output_policy=output_policy or "repeat"
+    pb_range=pb_range==nil and 0 or pb_range
     if not OUTPUT_POLICIES[output_policy] then return nil,"invalid phrase output policy" end
-    drafts[key]={pattern=pattern,output_policy=output_policy,
+    if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
+    drafts[key]={pattern=pattern,output_policy=output_policy,pb_range=pb_range,
       instrument_name=tostring(instrument_name or ""),instrument_index=instrument_index,
       phrase_id=phrase_id}
   end
@@ -254,12 +275,13 @@ local function write_draft(song,instrument_index,phrase_id,instrument_name,patte
   return true
 end
 
-function M.write_draft(song,instrument_index,phrase_id,instrument_name,pattern,output_policy)
-  return write_draft(song,instrument_index,phrase_id,instrument_name,pattern,output_policy,false)
+function M.write_draft(song,instrument_index,phrase_id,instrument_name,pattern,output_policy,pb_range)
+  return write_draft(song,instrument_index,phrase_id,instrument_name,pattern,
+    output_policy,pb_range,false)
 end
 
 function M.clear_draft(song,instrument_index,phrase_id,instrument_name)
-  return write_draft(song,instrument_index,phrase_id,instrument_name,nil,nil,true)
+  return write_draft(song,instrument_index,phrase_id,instrument_name,nil,nil,nil,true)
 end
 
 function M.has_drafts(song)
@@ -316,8 +338,8 @@ function M.restore(song,candidate)
   return true
 end
 
-function M.save(song,id,pattern,output_policy)
-  local candidate,err=M.prepare(song,id,pattern,output_policy)
+function M.save(song,id,pattern,output_policy,pb_range)
+  local candidate,err=M.prepare(song,id,pattern,output_policy,pb_range)
   if not candidate then return nil,err end
   return M.commit(song,candidate)
 end
@@ -354,7 +376,7 @@ function M.load(song,phrase)
   if not entry then return nil,"ACID source missing from song data" end
   local raw=assert(encode({[id]=entry}))
   local copied=assert(decode(raw))
-  return copied[id].pattern,copied[id].output_policy
+  return copied[id].pattern,copied[id].output_policy,copied[id].pb_range
 end
 
 return M

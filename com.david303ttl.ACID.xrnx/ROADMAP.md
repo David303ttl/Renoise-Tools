@@ -5,7 +5,7 @@
 **Integration target:** `develop`
 **Document status:** implementation plan; M3 measured-audio scope retained; M3.5 is the release-blocking functional correction; TB-303 hardware fidelity remains separately evidence-gated  
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
-**Updated:** 2026-10-27
+**Updated:** 2026-10-28
 
 ## 1. Product objective and scope
 
@@ -83,7 +83,7 @@ The current source stores **64 valid C pitches** and carries an independent acti
 | Completed (implementation) | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
 | Completed (implementation); live acceptance open | **M3 — Articulation measurement and reference-profile renderer** | Scoped reference audio evidence; remaining host transport/live-playback checks | M2 semantic contracts |
 | **Implementation complete; Renoise acceptance open** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
-| **Next after M3.5** | **M3.6 — Plugin/MIDI pitch-bend slide (small follow-up)** | Optional PB Range selector; existing Renoise MIDI pitch bend for instruments without usable portamento | M3.5 source/output/ownership contract |
+| **Implementation complete; P0 playback acceptance open** | **M3.6 — Plugin/MIDI pitch-bend slide (small follow-up)** | Optional PB Range selector; existing Renoise MIDI pitch bend for instruments without usable portamento | M3.5 source/output/ownership contract |
 | After M3.6 | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M3.5 renderer/timeline contract + M3.6 acceptance |
 | After M3.6 | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M3.5 editor and source guarantees |
 | Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5, including M3.6 |
@@ -605,7 +605,27 @@ not run in this workspace; functional acceptance remains open.
 
 ## 5B. M3.6 — Plugin/MIDI pitch-bend slide (small follow-up; before M4)
 
-**Status:** planned. **Baseline:** `develop` at `4f1e9881640de3714e58dcf8ec04adc889447d24`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
+**Status (2026-10-28):** implementation complete; the single reference-VST P0 bend/reset check remains unrun. Lua checks establish deterministic command layout, settings and writer protection only. No connected Renoise document session was available for playback verification. **Baseline:** `develop` at `4f1e9881640de3714e58dcf8ec04adc889447d24`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
+
+**Implementation record:** the editor exposes the phrase-specific PB Range
+setting with Undo/Redo, draft persistence and Live Edit. The protected phrase
+writer selects bend rendering for plugin/MIDI routes, retains PB Off overlap and
+sample glide, validates emitted commands and reports approximation fallbacks.
+PB settings remain separate from canonical musical source. Linear bends use the
+existing two-lines-per-step phrase resolution; same-pitch connections do not
+retrigger. Range overflow and Repeat layouts that cannot preserve a safe pitch
+anchor use bounded ordered-note fallbacks with explicit approximations.
+
+**API/reference check:** pinned API 6.2 PatternLine definitions and offline docs
+confirm writable panning, note/instrument and effect fields. Native M1 uses the
+rightmost note panning field plus the first effect column. Its main/fine MIDI
+bytes encode 14-bit center 8192 as `4000` and maximum 16383 as `7F7F`; effect
+`number_string` avoids confusing character-encoded API numeric effect values
+with raw MIDI data. The [official manual](https://tutorials.renoise.com/wiki/Effect_Commands#midi-commands)
+documents M1 targeting and main/fine ordering. InstrumentPhrase docs describe
+phrase instrument columns as sample selectors, so actual plugin delivery cannot
+be inferred from these API checks. The [P0 procedure and result table](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend)
+remain the integration gate. M3.6 is not playback-accepted until that check passes.
 
 ### M3.6.0 — Product contract and limits
 
@@ -821,7 +841,7 @@ For every such decision, supply **reference + decision + test fixture + manual p
 | 1 | Run the M3.5 Renoise editor, output-policy, draft save/reopen and Live Edit checks. | Manual results cover selected second-phrase regeneration, LAST STEP 32/64, Reset/Undo/Redo, Program/Grid, recoverable failure, retry and destination loss. |
 | 2 | Verify sample, plugin-only, MIDI-only, hybrid/alias and empty targets. | Note order, velocity/OFF delivery, routing dependencies and explicit approximations are recorded. |
 | 3 | Verify stop/start/seek and Live Edit during playback; install the packaged XRNX and check 125%/150% Windows scaling. | Host version and target-specific results are recorded without inferring playback from mocks. |
-| 4 | Implement focused **M3.6** PB Range follow-up, starting with the single native phrase M1 verification. | Confirm usable VST pitch bend/reset, or document the exact host limitation without building another MIDI system. |
+| 4 | Run the implemented **M3.6** PB Range single native phrase M1 verification and focused manual checks. | Confirm usable VST pitch bend/reset, or document the exact host limitation without building another MIDI system. |
 | 5 | Begin M4/M5 after M3.5 functional acceptance and bounded M3.6 go/no-go or delivery. | No sprawling VST compatibility test program; unresolved receiver-specific behavior stays documented. |
 
 **Blocking release rule:** M3 reference calibration is not a substitute for a usable sequencer. M3.5 functional guarantees are required before M6 release acceptance; hardware-faithful analog sound remains a separately labeled research/fidelity objective.

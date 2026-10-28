@@ -3,6 +3,13 @@
 local seq = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local M = { PAGE_SIZE=seq.PAGE_SIZE, MAX_PAGES=seq.MAX_STEPS/seq.PAGE_SIZE }
+local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
+
+local function checked_pb_range(value)
+  value=value==nil and 0 or value
+  assert(type(value)=="number" and value%1==0 and PB_RANGES[value],"invalid PB range")
+  return value
+end
 
 function M.page_for(index)
   assert(type(index)=="number" and index%1==0 and index>=1 and index<=64)
@@ -107,7 +114,8 @@ local function copy_source(pattern)
 end
 
 local function same_state(a,b)
-  if a.output_policy~=b.output_policy or a.pattern.length~=b.pattern.length or
+  if a.output_policy~=b.output_policy or a.pb_range~=b.pb_range or
+      a.pattern.length~=b.pattern.length or
       a.pattern.pitch_length~=b.pattern.pitch_length then return false end
   for i=1,64 do
     local x,y=a.pattern.pitch_events[i],b.pattern.pitch_events[i]
@@ -118,14 +126,15 @@ local function same_state(a,b)
   return true
 end
 
-local function snapshot(pattern,output_policy)
-  return {pattern=copy_source(pattern),output_policy=output_policy}
+local function snapshot(pattern,output_policy,pb_range)
+  return {pattern=copy_source(pattern),output_policy=output_policy,
+    pb_range=checked_pb_range(pb_range)}
 end
 
-function M.new_history(pattern,output_policy)
-  local history={states={snapshot(pattern,output_policy)},position=1}
-  function history:record(next_pattern,next_policy)
-    local next_state=snapshot(next_pattern,next_policy)
+function M.new_history(pattern,output_policy,pb_range)
+  local history={states={snapshot(pattern,output_policy,pb_range)},position=1}
+  function history:record(next_pattern,next_policy,next_pb_range)
+    local next_state=snapshot(next_pattern,next_policy,next_pb_range)
     if same_state(self.states[self.position],next_state) then return false end
     for i=#self.states,self.position+1,-1 do self.states[i]=nil end
     self.states[#self.states+1]=next_state
@@ -136,18 +145,18 @@ function M.new_history(pattern,output_policy)
     if self.position<=1 then return nil end
     self.position=self.position-1
     local state=self.states[self.position]
-    return copy_source(state.pattern),state.output_policy
+    return copy_source(state.pattern),state.output_policy,state.pb_range
   end
   function history:redo()
     if self.position>=#self.states then return nil end
     self.position=self.position+1
     local state=self.states[self.position]
-    return copy_source(state.pattern),state.output_policy
+    return copy_source(state.pattern),state.output_policy,state.pb_range
   end
   function history:can_undo() return self.position>1 end
   function history:can_redo() return self.position<#self.states end
-  function history:reset(current_pattern,current_policy)
-    self.states={snapshot(current_pattern,current_policy)}
+  function history:reset(current_pattern,current_policy,current_pb_range)
+    self.states={snapshot(current_pattern,current_policy,current_pb_range)}
     self.position=1
   end
   return history

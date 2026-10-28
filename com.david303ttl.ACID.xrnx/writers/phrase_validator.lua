@@ -4,9 +4,9 @@
 local M = {}
 local EMPTY, OFF = 121, 120
 
-local function verify_fields(cell,has_note,line,column,delay)
-  if (cell.delay_value or 0)~=(delay or 0) or (cell.instrument_value or 255)~=255
-    or (cell.panning_value or 255)~=255 then
+local function verify_fields(cell,has_note,line,column,delay,midi)
+  if (cell.delay_value or 0)~=(delay or 0) or (cell.instrument_value or 255)~=(midi and midi.instrument_value or 255)
+    or (midi and cell.panning_string~="M1") or (not midi and (cell.panning_value or 255)~=255) then
     return nil,string.format("Unexpected delay, instrument or panning at phrase line 0x%02X column %d",line-1,column)
   end
   local volume=cell.volume_value or 255
@@ -63,6 +63,8 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
   local volumes=articulation and articulation.volumes or {}
   local native=articulation and articulation.native_notes
   if native and columns~=native.columns then return nil,"Legato column count mismatch" end
+  local midi_commands=native and native.midi_commands
+  if midi_commands and phrase.visible_effect_columns~=1 then return nil,"Pitch-bend effect column count mismatch" end
   for step = 1, plan.length do
     local event = plan.steps[step]
     if not event or event.step ~= step then
@@ -113,7 +115,8 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
             line_number-1, column, wanted, tostring(cell.note_value))
         end
         local fields_ok,fields_error=verify_fields(cell,wanted<OFF,line_number,column,
-          native_cell and native_cell.delay_value)
+          native_cell and native_cell.delay_value,
+          column==columns and midi_commands and midi_commands[line_number])
         if not fields_ok then return nil,fields_error end
         local expected_volume=native and (native_cell and native_cell.volume_value or 255)
           or (volumes[line_number] and volumes[line_number][column])
@@ -137,7 +140,12 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
         local line=phrase:line(line_number+offset)
         local cell=line and line.effect_columns and line.effect_columns[column]
         if not cell then return nil,"missing effect column at line "..(line_number+offset-1) end
-        if (cell.number_value or 0)~=0 or (cell.amount_value or 0)~=0 then
+        local command=column==1 and midi_commands and midi_commands[line_number+offset]
+        if command then
+          if cell.number_string~=command.number_string or cell.amount_value~=command.amount_value then
+            return nil,"Pitch-bend command mismatch at line "..(line_number+offset-1)
+          end
+        elseif (cell.number_value or 0)~=0 or (cell.amount_value or 0)~=0 then
           return nil,"Unexpected effect-column data at line "..(line_number+offset-1)
         end
       end

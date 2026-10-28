@@ -352,6 +352,73 @@ for _,item in ipairs(targets) do
       'failed multi-column emission must preserve the last-good phrase and source')
   end
 end
+-- Explicit bend generation commits settings and seals the native MIDI payload.
+instrument=targets[1].target
+local bend_source=source(4)
+bend_source.pitch_length=2
+bend_source.pitch_events[1]=pitch(36,false,true)
+bend_source.pitch_events[2]=pitch(43,false,false)
+for index,command in ipairs({'N','T','N','R'}) do bend_source.time_events[index]=command end
+local bend_target=#instrument.phrases+1
+local bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
+assert(ownership.status(bent)=='owned')
+local saved_bend,saved_policy,saved_range=store.load(song,bent)
+assert(saved_policy=='repeat' and saved_range==12 and same_source(saved_bend,bend_source))
+assert(saved_bend.pb_range==nil,'render settings leaked into canonical memories')
+local command_count,noncenter,center=0,false,false
+local first_command_line
+for line=1,bent.number_of_lines do
+  local native=bent:line(line)
+  local carrier=native.note_columns[bent.visible_note_columns]
+  if carrier.panning_string=='M1' then
+    first_command_line=first_command_line or line
+    command_count=command_count+1
+    assert(carrier.instrument_value==1,'bend targeted the wrong instrument')
+    local effect=native.effect_columns[1]
+    local value=tonumber(effect.number_string,16)*128+effect.amount_value
+    if value==8192 then center=true else noncenter=true end
+  end
+end
+assert(command_count>2 and noncenter and center,'missing native bend ramp or center reset')
+local command=bent:line(first_command_line).effect_columns[1]
+local original_amount=command.amount_value
+command.amount_value=(original_amount+1)%128
+assert(ownership.status(bent)=='modified','M1 payload is absent from the content seal')
+command.amount_value=original_amount
+assert(ownership.status(bent)=='owned')
+
+local bend_id=ownership.id(bent)
+local off=generate(bend_source,'repeat',bend_target,{pb_range=0},2)
+assert(off==bent and ownership.id(off)==bend_id and ownership.status(off)=='owned')
+local off_source,_,off_range=store.load(song,off)
+assert(off_range==0 and same_source(off_source,bend_source))
+assert(off:line(5).note_columns[2].note_value==43,'PB Off lost the overlap route')
+bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
+assert(bent==off and ownership.id(bent)==bend_id)
+
+-- Corrupting a staged MIDI payload must fail verification and preserve last-good output.
+local bend_emitter=require('writers.legato_writer')
+local original_bend_apply=bend_emitter.apply
+local bend_name,bend_data,bend_count=bent.name,song.tool_data,#instrument.phrases
+bend_emitter.apply=function(destination,plan)
+  local ok,err=original_bend_apply(destination,plan)
+  if not ok then return ok,err end
+  for line in pairs(plan.midi_commands or {}) do
+    local effect=destination:line(line).effect_columns[1]
+    effect.amount_value=(effect.amount_value+1)%128
+    break
+  end
+  return true
+end
+local bend_failure
+assert(writer.generate(2,function(value)bend_failure=value end,bend_source,bend_target,
+  {output_policy='repeat',pb_range=12}))
+for _=1,6 do idle:fire() end
+bend_emitter.apply=original_bend_apply
+assert(bend_failure.kind=='complete' and bend_failure.status=='error')
+assert(bend_failure.message:find('Pitch-bend command mismatch',1,true),bend_failure.message)
+assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
+assert(ownership.status(bent)=='owned','corrupted staged M1 damaged the last-good destination')
 instrument=original_instrument
 -- An edit saved during asynchronous rendering must not reject the source commit
 -- or discard the newer draft that Live Edit will apply next.

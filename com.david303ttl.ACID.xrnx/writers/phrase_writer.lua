@@ -19,6 +19,7 @@ M.PHRASE_NAME = "ACID 0.1 TEST"
 local busy = false
 local current = nil
 local MAX_PHRASE_LINES = 512
+local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 
 local function failure(code, category, message, status)
   message=tostring(message or "Phrase generation failed")
@@ -487,9 +488,10 @@ local function finalize(job, event_count, skipped)
       if status~="owned" or ownership.id(phrase)~=job.snapshot_id then
         error("final phrase seal verification failed")
       end
-      local saved,saved_policy=store.load(job.song,phrase)
+      local saved,saved_policy,saved_pb_range=store.load(job.song,phrase)
       if not saved then error("final phrase source association verification failed: "..tostring(saved_policy)) end
       if saved_policy~=job.output_policy then error("final phrase output policy verification failed") end
+      if saved_pb_range~=job.pb_range then error("final phrase PB range verification failed") end
       if not patterns_equal(saved,job.pattern) then error("final phrase source snapshot differs from frozen input") end
     end)
     if not verified then
@@ -631,6 +633,10 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   if output_policy~="repeat" and output_policy~="play_once" then
     return nil,failure("source.output_policy","source","Invalid phrase output policy")
   end
+  local pb_range=options.pb_range==nil and 0 or options.pb_range
+  if type(pb_range)~="number" or pb_range%1~=0 or not PB_RANGES[pb_range] then
+    return nil,failure("source.pb_range","source","Invalid PB range")
+  end
   if type(callback) ~= "function" then
     return nil,failure("source.callback","source","Status callback required")
   end
@@ -699,19 +705,26 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     output_policy=output_policy,successor=plan.loop and plan.loop.steady})
   if not timeline then return nil,failure("source.invalid","source",timeline_error) end
   local native_notes
-  if (capabilities.plugin or capabilities.midi or capabilities.alias) and #slide_steps(plan)>0 then
+  if (capabilities.plugin or capabilities.midi or capabilities.alias) and
+      (#slide_steps(plan)>0 or pb_range>0) then
     local native_error
-    native_notes,native_error=legato.plan(plan,timeline,layout)
+    native_notes,native_error=legato.plan(plan,timeline,layout,
+      {pb_range=pb_range,instrument_value=instrument_index-1})
     if not native_notes then return nil,failure("phrase.legato_plan","phrase",native_error) end
   end
   local commands,approximations,minimum_rate
   if native_notes then
     commands,approximations,minimum_rate={},native_notes.diagnostics,1
     if capabilities.sample then
-      approximations[#approximations+1]="Hybrid sample layers receive overlapping notes; their envelopes and glide can differ from the plugin/MIDI receiver."
+      approximations[#approximations+1]=pb_range>0 and
+        "Hybrid sample layers may respond differently to receiver pitch bend; samples and routing are unchanged." or
+        "Hybrid sample layers receive overlapping notes; their envelopes and glide can differ from the plugin/MIDI receiver."
     end
   else
     commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline)
+    if commands and pb_range>0 and #slide_steps(plan)>0 then
+      approximations[#approximations+1]="PB Range requires a plugin or MIDI receiver; the existing sample/note articulation is retained."
+    end
   end
   if not commands then return nil,failure("phrase.unrepresentable","phrase",approximations) end
   local operations,operation_error=gates.plan(timeline,plan,commands)
@@ -742,7 +755,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     end
   end
   if not operations then return nil,failure("phrase.unrepresentable","phrase",operation_error) end
-  local store_candidate,prepare_error=store.prepare(song,snapshot_id,fixture,output_policy)
+  local store_candidate,prepare_error=store.prepare(song,snapshot_id,fixture,output_policy,pb_range)
   if not store_candidate then return nil,failure("transaction.persistence_prepare","transaction",prepare_error) end
   local target_phrase=replace and instrument.phrases[target_index] or nil
   local job = {
@@ -752,6 +765,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     target_name=target_phrase and target_phrase.name or nil,
     expected_events = meta.note_count + meta.off_count,
     plan = plan, layout=layout, pattern=fixture, output_policy=output_policy,
+    pb_range=pb_range,
     operations=operations,approximations=approximations,native_notes=native_notes,
     target_warning=capabilities.diagnostic,
     capabilities=capabilities,

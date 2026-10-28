@@ -8,6 +8,11 @@ local M = {}
 local NEW_PHRASE = {}
 local drafts = setmetatable({}, {__mode = "k"})
 local POLICIES = { ["repeat"] = true, play_once = true }
+local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
+
+local function valid_pb_range(value)
+  return type(value)=="number" and value%1==0 and PB_RANGES[value]
+end
 
 local function clone_pattern(pattern)
   local copy = {
@@ -68,7 +73,7 @@ local function phrase_belongs(instrument,phrase)
   return false
 end
 
-function M.put(song, instrument, phrase, pattern, output_policy)
+function M.put(song, instrument, phrase, pattern, output_policy, pb_range)
   if song == nil or instrument == nil then return nil, "song and instrument are required" end
   if not phrase_belongs(instrument,phrase) then return nil,"draft phrase is no longer in the selected instrument" end
   if type(pattern) ~= "table" then return nil, "draft source is required" end
@@ -76,8 +81,11 @@ function M.put(song, instrument, phrase, pattern, output_policy)
   if not valid then return nil, err end
   output_policy = output_policy or "repeat"
   if not POLICIES[output_policy] then return nil, "invalid phrase output policy" end
+  pb_range=pb_range==nil and 0 or pb_range
+  if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
   local by_phrase, key = bucket(song, instrument, phrase, true)
   by_phrase[key] = {pattern = clone_pattern(pattern), output_policy = output_policy,
+    pb_range=pb_range,
     persistent=false}
   local index=instrument_index(song,instrument)
   if not index then return nil,"draft instrument is no longer in this song" end
@@ -93,7 +101,7 @@ function M.put(song, instrument, phrase, pattern, output_policy)
     if matches~=1 then return nil,"new phrase draft destination is ambiguous; select it again after reopening" end
   end
   local saved,save_error=store.write_draft(song,index,phrase_id(phrase),instrument.name,
-    pattern,output_policy)
+    pattern,output_policy,pb_range)
   if not saved then return nil,save_error end
   by_phrase[key].persistent=true
   return true
@@ -103,13 +111,14 @@ function M.get(song, instrument, phrase)
   if instrument and not phrase_belongs(instrument,phrase) then return nil end
   local by_phrase, key = bucket(song, instrument, phrase, false)
   local draft = by_phrase and by_phrase[key]
-  if draft then return clone_pattern(draft.pattern), draft.output_policy end
+  if draft then return clone_pattern(draft.pattern), draft.output_policy,draft.pb_range end
   if phrase and phrase_id(phrase)==0 then return nil end
   local index=instrument_index(song,instrument)
   if not index then return nil,"draft instrument is no longer in this song" end
-  local pattern,policy_or_error=store.read_draft(song,index,phrase_id(phrase),instrument.name)
+  local pattern,policy_or_error,pb_range=
+    store.read_draft(song,index,phrase_id(phrase),instrument.name)
   if not pattern then return nil,policy_or_error end
-  return clone_pattern(pattern),policy_or_error
+  return clone_pattern(pattern),policy_or_error,pb_range
 end
 
 function M.clear(song, instrument, phrase)

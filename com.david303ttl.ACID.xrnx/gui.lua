@@ -76,7 +76,8 @@ function M.show()
   local update
   local opened=generation
   local output_policy="repeat"
-  local history=editor.new_history(pattern,output_policy)
+  local pb_range=0
+  local history=editor.new_history(pattern,output_policy,pb_range)
   local undo_button
   local redo_button
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
@@ -119,6 +120,9 @@ function M.show()
   local program_key_popup,program_octave_popup,program_accent,program_slide
   local pitch_length_popup=vb:popup{items=length_items,width=78,value=16}
   local playback_popup=vb:popup{items={"Play Once","Repeat"},width=105,value=2}
+  local pb_range_values={0,2,12,24,48}
+  local pb_range_items={"Off","±2","±12","±24","±48"}
+  local pb_range_popup=vb:popup{id="acid_pb_range",items=pb_range_items,width=92,value=1}
   local preview_popup=vb:popup{items={"Start","Repeating"},width=105,value=1,
     notifier=function(value)
       if updating then return end
@@ -142,7 +146,7 @@ function M.show()
   local function save_draft()
     revision=revision+1
     if not bound_instrument then return true end
-    return drafts.put(song,bound_instrument,bound_phrase,pattern,output_policy)
+    return drafts.put(song,bound_instrument,bound_phrase,pattern,output_policy,pb_range)
   end
   local loading=false
   local function default_pitch()
@@ -176,6 +180,10 @@ function M.show()
     pitch_length_popup.active=true
     playback_popup.value=output_policy=="play_once" and 1 or 2
     playback_popup.active=true
+    for index,value in ipairs(pb_range_values) do
+      if value==pb_range then pb_range_popup.value=index;break end
+    end
+    pb_range_popup.active=true
     if undo_button then undo_button.active=history:can_undo() end
     if redo_button then redo_button.active=history:can_redo() end
     preview_popup.value=preview_cycle
@@ -320,7 +328,7 @@ function M.show()
     update()
   end
   local function changed()
-    history:record(pattern,output_policy)
+    history:record(pattern,output_policy,pb_range)
     local saved,save_error=save_draft()
     update()
     if live then live:changed();update_live_state() end
@@ -342,6 +350,14 @@ function M.show()
     status.text=output_policy=="repeat" and "Repeat output selected for this phrase."
       or "Play Once output selected for this phrase."
     update()
+    changed()
+  end)
+  pb_range_popup:add_notifier(function(value)
+    if updating then return end
+    pb_range=pb_range_values[value] or 0
+    status.text=pb_range==0 and
+      "Pitch bend off; connected plugin/MIDI SLIDE uses overlapping notes." or
+      string.format("PB Range ±%d assumed; set the receiver to match.",pb_range)
     changed()
   end)
   local function write_pitch(key,octave,is_accent,is_slide)
@@ -514,10 +530,12 @@ function M.show()
     end
     revision=revision+1
     if target and target<=#instrument.phrases then
-      local source,output_policy_or_error=store.load(song,instrument.phrases[target])
+      local source,output_policy_or_error,stored_pb_range=
+        store.load(song,instrument.phrases[target])
       if source then
         pattern=source
         output_policy=output_policy_or_error
+        pb_range=stored_pb_range or 0
         selected_pitch=1;selected_step=1
         pitch_page=1;time_page=1
         status.text=string.format("Restored ACID source for phrase %02d.",target)
@@ -525,6 +543,7 @@ function M.show()
         pattern=sequencer.new_pattern(16)
         for i=1,pattern.length do pattern.time_events[i]="N" end
         output_policy="repeat"
+        pb_range=0
         status.text="Source unavailable: "..tostring(output_policy_or_error)..
           " | choose a new phrase; existing audio is protected."
       end
@@ -532,16 +551,18 @@ function M.show()
       pattern=sequencer.new_pattern(16)
       for i=1,pattern.length do pattern.time_events[i]="N" end
       output_policy="repeat"
+      pb_range=0
       status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
     end
-    local draft,policy=drafts.get(song,bound_instrument,bound_phrase)
+    local draft,policy,draft_pb_range=drafts.get(song,bound_instrument,bound_phrase)
     if draft then
       pattern,output_policy=draft,policy
+      pb_range=draft_pb_range or 0
       status.text="Recovered saved draft. Live Edit applies it automatically when enabled."
     elseif policy then
       status.text="DRAFT RECOVERY ERROR: "..tostring(policy).."; existing phrase output is protected."
     end
-    history:reset(pattern,output_policy)
+    history:reset(pattern,output_policy,pb_range)
     update()
     if was_armed then live:changed() end
     if update_live_state then update_live_state() end
@@ -682,6 +703,7 @@ function M.show()
     end
     for i,t in ipairs(pattern.time_events) do copy.time_events[i]=t end
     local requested_revision=revision
+    local requested_pb_range=pb_range
     local requested_instrument,requested_phrase=bound_instrument,bound_phrase
     local success,reason=phrase_writer.generate(selected_instrument,
       function(result)
@@ -704,9 +726,10 @@ function M.show()
               refresh_phrase_choices(result_target)
             end
             if revision~=requested_revision and created then
-              local draft,policy=drafts.get(song,requested_instrument,nil)
+              local draft,policy,draft_pb_range=drafts.get(song,requested_instrument,nil)
               if draft then
-                local moved,move_error=drafts.put(song,requested_instrument,created,draft,policy)
+                local moved,move_error=drafts.put(song,requested_instrument,created,
+                  draft,policy,draft_pb_range)
                 if moved then
                   local cleared,clear_error=drafts.clear(song,requested_instrument,nil)
                   if not cleared then result_issue(result,tostring(clear_error)) end
@@ -722,7 +745,8 @@ function M.show()
           end
         end
         done(result)
-      end,copy,target_index,{token=token,output_policy=output_policy})
+      end,copy,target_index,{token=token,output_policy=output_policy,
+        pb_range=requested_pb_range})
     return success,reason
   end,function(result)
     if opened~=generation then return end
@@ -751,10 +775,11 @@ function M.show()
   end}
   active_live_checkbox=live_checkbox
   undo_button=vb:button{text="Undo",active=false,notifier=function()
-    local source,policy=history:undo()
+    local source,policy,source_pb_range=history:undo()
     if source then
       pattern=source
       output_policy=policy
+      pb_range=source_pb_range or 0
       local saved,save_error=save_draft()
       status.text=saved and "Edit undone and saved with the song." or
         "Edit undone; session recovery only: "..tostring(save_error)
@@ -762,10 +787,11 @@ function M.show()
     end
   end}
   redo_button=vb:button{text="Redo",active=false,notifier=function()
-    local source,policy=history:redo()
+    local source,policy,source_pb_range=history:redo()
     if source then
       pattern=source
       output_policy=policy
+      pb_range=source_pb_range or 0
       local saved,save_error=save_draft()
       status.text=saved and "Edit redone and saved with the song." or
         "Edit redone; session recovery only: "..tostring(save_error)
@@ -815,17 +841,20 @@ function M.show()
         pattern=sequencer.new_pattern(last_step_box.value)
         for i=1,pattern.length do pattern.time_events[i]="N" end
         output_policy="repeat"
+        pb_range=0
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
         status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
         update();changed()
       end},
       undo_button,
       redo_button,
-      vb:text{text="Undo and Redo include source edits and phrase output policy."}},
+      vb:text{text="Undo and Redo include source, phrase output, and PB Range."}},
     vb:text{text="64-step extension: four continuous pages of 16. Roland PITCH/TIME semantics remain separate."},
     view_heading,view_hint,program_panel,grid_panel,
     summary,map_text,diagnostic,diagnostic_jump,
-    vb:row{spacing=6,vb:text{text="Target instrument"},target},
+    vb:row{spacing=6,vb:text{text="Target instrument"},target,
+      vb:text{text="PB Range"},pb_range_popup},
+    vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."},
     vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
@@ -856,6 +885,7 @@ function M.show()
           return
         end
         local requested_revision=revision
+        local requested_pb_range=pb_range
         local requested_object,requested_phrase=bound_instrument,bound_phrase
         local ok,generated,err=pcall(phrase_writer.generate,
           requested_instrument,function(result)
@@ -884,10 +914,11 @@ function M.show()
                   end
                 elseif not requested_phrase then
                   local committed_phrase=requested_object.phrases[result_target]
-                  local draft,draft_policy=drafts.get(song,requested_object,nil)
+                  local draft,draft_policy,draft_pb_range=
+                    drafts.get(song,requested_object,nil)
                   if committed_phrase and draft then
                     local moved,move_error=drafts.put(song,requested_object,committed_phrase,
-                      draft,draft_policy)
+                      draft,draft_policy,draft_pb_range)
                     if moved then
                       local cleared,clear_error=drafts.clear(song,requested_object,nil)
                       if not cleared then
@@ -905,7 +936,7 @@ function M.show()
               status.text=describe_live_result(result):gsub("^LIVE EDIT ","GENERATION ")
             end
           end,pattern,
-          requested_target,{output_policy=output_policy})
+          requested_target,{output_policy=output_policy,pb_range=requested_pb_range})
         if not ok then status.text="ACID error: "..tostring(generated)
         elseif not generated then
           status.text=type(err)=="table" and err.message or tostring(err or "Generation refused")

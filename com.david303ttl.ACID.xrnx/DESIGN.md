@@ -59,6 +59,32 @@ The final validator checks every planned column and delayed OFF. Unrepresentable
 connected dynamics and target envelope limitations produce explicit sonic
 approximations. They never invalidate a legal musical source.
 
+PB Range is a phrase render setting, independent of canonical source and its
+hash. Off preserves the overlap route. An assumed ±2/±12/±24/±48 range requests
+channel-wide native M1 bends for a single held plugin/MIDI note. Connected
+transitions use a linear series at the existing two-lines-per-step phrase
+resolution and accumulate relative to that note anchor. Same-pitch connections
+hold without a retrigger; range overflow uses ordered
+notes with a nonfatal approximation. Release and unrelated attacks require
+center cleanup. The receiver range and isolated monophonic routing remain user
+configuration. Samples retain their automatic glide path; hybrid sample layers
+need separate playback observation.
+
+M1 uses `panning_string = "M1"` in the rightmost note column and a target
+instrument value. The first effect column carries two hexadecimal MIDI data
+bytes: its `number_string` is the main/MSB byte and `amount_value` the fine/LSB
+byte. A 14-bit value `v` maps to `floor(v / 128)` and `v % 128`: center 8192
+is displayed as `4000`, maximum 16383 as `7F7F`. Numeric effect-number properties
+encode character bytes; they are not raw hexadecimal MIDI values.
+
+The pinned API 6.2 PatternLine definitions and offline PatternLine documentation
+establish cell access. The [official effect-command manual](https://tutorials.renoise.com/wiki/Effect_Commands#midi-commands)
+establishes M1 placement and main/fine ordering. InstrumentPhrase documentation
+also says phrase instrument columns normally address samples; these references
+alone do not establish phrase-contained M1 routing to the intended plugin.
+The bounded reference-VST bend/reset check remains unrun and is required before
+claiming playback support. No routing devices or automation are inserted.
+
 `writers/gate_writer.lua` merges gates and glide operations before mutation.
 `writers/phrase_validator.lua` checks the final note, OFF, effect and metadata
 layout. Rendering uses a temporary phrase, identity and ownership checks, then
@@ -66,8 +92,8 @@ a guarded phrase/source commit. Failed writes preserve the last-good destination
 or retain identified recovery material if rollback cannot finish. Foreign,
 manually modified and duplicate-ID destinations cannot be overwritten.
 
-`model/pattern_store.lua` stores the current v3 canonical source and separate
-phrase output policy in song-scoped tool data. `writers/phrase_ownership.lua`
+`model/pattern_store.lua` stores the current `ACID-PITCH-TIME-4` source records and separate
+phrase output policy and PB Range in song-scoped tool data. `writers/phrase_ownership.lua`
 seals generated contents and loop properties. Only the current source and seal
 contracts are accepted.
 

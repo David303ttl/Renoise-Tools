@@ -23,12 +23,13 @@ source.pitch_length = 4
 source.pitch_events[3] = sequencer.new_pitch(5, 1, true, true)
 source.time_events[17] = "R"
 
-assert(cache.put(song_a, instrument_a, phrase_a, source, "play_once"))
+assert(cache.put(song_a, instrument_a, phrase_a, source, "play_once",24))
 source.pitch_events[3].note = 36
-local restored, policy = cache.get(song_a, instrument_a, phrase_a)
+local restored, policy, pb_range = cache.get(song_a, instrument_a, phrase_a)
 assert(restored and restored.pitch_events[3].note == 53)
 assert(restored.pitch_length == 4 and restored.length == 17)
-assert(restored.time_events[17] == "R" and policy == "play_once")
+assert(restored.time_events[17] == "R" and policy == "play_once" and pb_range==24)
+assert(restored.pb_range==nil,"PB range remains outside canonical PITCH/TIME source")
 
 -- Lookup must pass other host objects without invoking their equality operator.
 assert(cache.put(song_a,instrument_b,nil,sequencer.new_pattern(3),"repeat"))
@@ -38,8 +39,9 @@ assert(cache.clear(song_a,instrument_b,nil))
 -- Returned values are detached from cached canonical data.
 restored.time_events[17] = "N"
 restored.pitch_events[3].accent = false
-local pristine = assert(cache.get(song_a, instrument_a, phrase_a))
+local pristine,_,pristine_pb = cache.get(song_a, instrument_a, phrase_a)
 assert(pristine.time_events[17] == "R" and pristine.pitch_events[3].accent)
+assert(pristine_pb==24)
 
 -- All three host object identities scope a draft independently.
 assert(cache.put(song_a, instrument_a, phrase_b, sequencer.new_pattern(8), "repeat"))
@@ -63,14 +65,16 @@ instrument_a.phrases[#instrument_a.phrases]=nil
 -- Drafts survive a new editor session and committed source rewrites preserve them.
 package.loaded["model.draft_cache"]=nil
 cache=require("model.draft_cache")
-local durable=assert(cache.get(song_a,instrument_a,phrase_a))
+local durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.pitch_events[3].note==53)
+assert(durable_pb==24)
 local pattern_store=require("model.pattern_store")
-assert(pattern_store.save(song_a,77,sequencer.new_pattern(4),"repeat"))
+assert(pattern_store.save(song_a,77,sequencer.new_pattern(4),"repeat",12))
 package.loaded["model.draft_cache"]=nil
 cache=require("model.draft_cache")
-durable=assert(cache.get(song_a,instrument_a,phrase_a))
+durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.time_events[17]=="R")
+assert(durable_pb==24)
 
 -- Existing phrase drafts resolve by sealed ID after instrument reordering.
 song_a.instruments={instrument_b,instrument_a}
@@ -96,26 +100,28 @@ assert(cache.get(song_a,instrument_a,phrase_a)==nil)
 instrument_a.phrases={phrase_a,phrase_b}
 
 -- A draft-only write rebases an in-flight source candidate and survives its commit.
-local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat"))
+local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat",48))
 local changed=sequencer.new_pattern(19)
 changed.pitch_events[2]=sequencer.new_pitch(7,0,true,false)
-assert(cache.put(song_a,instrument_a,phrase_a,changed,"repeat"))
+assert(cache.put(song_a,instrument_a,phrase_a,changed,"repeat",12))
 local committed,commit_error=pattern_store.commit(song_a,candidate)
 assert(committed,commit_error)
 local merged=assert(pattern_store.read(song_a))
-assert(merged[88].pattern.length==5)
+assert(merged[88].pattern.length==5 and merged[88].pb_range==48)
 package.loaded["model.draft_cache"]=nil
 cache=require("model.draft_cache")
-local recovered=assert(cache.get(song_a,instrument_a,phrase_a))
+local recovered,_,recovered_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(recovered.length==19 and recovered.pitch_events[2].note==43,
   "commit preserves the newest dirty draft while storing the rendered source")
+assert(recovered_pb==12)
 assert(pattern_store.restore(song_a,candidate))
 local rolled_back=assert(pattern_store.read(song_a))
 assert(rolled_back[88]==nil,
   "rollback removes only the source snapshot from the in-flight render")
-local persisted_draft=assert(pattern_store.read_draft(song_a,1,41,"A"))
+local persisted_draft,_,persisted_pb=pattern_store.read_draft(song_a,1,41,"A")
 assert(persisted_draft.length==19 and persisted_draft.pitch_events[2].note==43,
   "rollback restores the rebased raw data and preserves the newest draft")
+assert(persisted_pb==12)
 
 -- A concurrent source-record change still rejects the prepared candidate.
 local stale_candidate=assert(pattern_store.prepare(song_a,89,sequencer.new_pattern(6),"repeat"))
@@ -128,9 +134,10 @@ assert(pattern_store.read(song_a)[90]~=nil and pattern_store.read(song_a)[89]==n
 local volatile_instrument={name="Volatile",phrases={}}
 local volatile_song={tool_data="corrupt",instruments={volatile_instrument}}
 local volatile=sequencer.new_pattern(3)
-local persisted,persist_error=cache.put(volatile_song,volatile_instrument,nil,volatile,"repeat")
+local persisted,persist_error=cache.put(volatile_song,volatile_instrument,nil,volatile,"repeat",24)
 assert(not persisted and type(persist_error)=="string")
-assert(cache.get(volatile_song,volatile_instrument,nil).length==3)
+local volatile_copy,_,volatile_pb=cache.get(volatile_song,volatile_instrument,nil)
+assert(volatile_copy.length==3 and volatile_pb==24)
 assert(cache.has_volatile(volatile_song) and not cache.has_volatile(song_a))
 
 -- Successful commit calls clear; repeated clear and unrelated targets are safe.
@@ -143,4 +150,5 @@ assert(cache.get(song_a, instrument_a, nil) == nil,
 
 assert(not cache.put(song_a, instrument_a, phrase_a, {}, "repeat"))
 assert(not cache.put(song_a, instrument_a, phrase_a, sequencer.new_pattern(), "invalid_policy"))
+assert(not cache.put(song_a,instrument_a,phrase_a,sequencer.new_pattern(),"repeat",4))
 print("acid_draft_cache_spec: ok")

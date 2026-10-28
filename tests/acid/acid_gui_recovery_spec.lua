@@ -65,20 +65,21 @@ function app:show_warning(message) warnings[#warnings+1]=message end
 local persisted_drafts={}
 local fail_draft_persistence=false
 local fail_draft_clear=false
-package.loaded["model.pattern_store"]={load=function()
+package.loaded["model.pattern_store"]={load=function(_,phrase)
   local source=require("model.sequencer").new_pattern(16)
-  return source,"repeat"
+  return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
 end,
-  write_draft=function(_,index,phrase_id,name,pattern,policy)
+  write_draft=function(_,index,phrase_id,name,pattern,policy,pb_range)
     if fail_draft_persistence then return nil,"test persistence failure" end
-    persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,name=name}
+    persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,
+      pb_range=pb_range,name=name}
     return true
   end,
   read_draft=function(_,index,phrase_id,name)
     local item=persisted_drafts[index..":"..phrase_id]
     if not item then return nil end
     assert(item.name==name)
-    return item.pattern,item.policy
+    return item.pattern,item.policy,item.pb_range
   end,
   clear_draft=function(_,index,phrase_id)
     if fail_draft_clear then return nil,"test cleanup failure" end
@@ -143,15 +144,23 @@ local function popup(builder,width)
   end
   error("missing popup width "..width)
 end
+local function pb_range_popup(builder)
+  assert(builder.views.acid_pb_range,"PB Range popup was not created")
+  return builder.views.acid_pb_range
+end
 
 local builder,dialog=open_gui()
 local phrase_choice=popup(builder,360)
+assert(pb_range_popup(builder).value==2,"the selected phrase restores its stored PB Range")
 builder.views.acid_program_key_popup:fire(2)
 phrase_choice:fire(2)
+assert(pb_range_popup(builder).value==5,"switching phrases restores that phrase's PB Range")
 builder.views.acid_program_key_popup:fire(3)
 phrase_choice:fire(1)
 assert(builder.views.acid_program_key_popup.value==2,
   "switching phrases restores the unsaved draft for phrase one")
+assert(pb_range_popup(builder).value==2,
+  "switching phrases restores the unsaved PB Range draft for phrase one")
 phrase_choice:fire(2)
 assert(builder.views.acid_program_key_popup.value==3,
   "switching back restores the separate phrase two draft")
@@ -162,6 +171,8 @@ builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
 assert(builder.views.acid_program_key_popup.value==2,
   "closing and reopening the editor recovers the phrase one draft")
+assert(pb_range_popup(builder).value==2,
+  "closing and reopening the editor recovers the phrase one's PB Range")
 local recovered_status
 for _,node in ipairs(builder.nodes) do
   if node.kind=="multiline_textfield" then recovered_status=node end
@@ -170,6 +181,12 @@ assert(recovered_status.text:find("Recovered saved draft",1,true),
   "draft recovery reports song persistence")
 tool.app_release_document_observable:fire()
 assert(#warnings==0,"song-persistent drafts do not show a loss warning")
+pb_range_popup(builder):fire(1)
+button(builder,"Undo"):fire()
+assert(pb_range_popup(builder).value==2,"Undo restores the previous PB Range")
+button(builder,"Redo"):fire()
+assert(pb_range_popup(builder).value==1,"Redo restores the changed PB Range")
+pb_range_popup(builder):fire(3)
 force_diagnostic=true
 builder.views.acid_editor_view:fire(2)
 local go_to_error=button(builder,"Go to source error")
@@ -199,6 +216,8 @@ assert(builder.views.acid_live_edit_state.text:find("RENDERING",1,true),
   "arming Live Edit immediately renders the current source")
 assert(#render_callbacks==1 and tool.writer_calls[1].options.token,
   "Live Edit passes a cancellation token to the writer")
+assert(tool.writer_calls[1].options.pb_range==12,
+  "Live Edit passes the selected PB Range to the renderer")
 render_callbacks[1]({kind="complete",status="error",message="temporary render failure",
   diagnostics={"temporary render failure"}})
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
@@ -236,6 +255,8 @@ fail_draft_clear=false
 phrase_choice:fire(2)
 assert(live_checkbox.value and #render_callbacks==4,
   "owned-to-owned destination selection keeps Live Edit armed and resumes")
+assert(tool.writer_calls[4].options.pb_range==48,
+  "Live Edit restores and passes the newly selected phrase's PB Range")
 render_callbacks[4]({kind="complete",status="committed",message="owned phrase rebound"})
 local target_popup=popup(builder,290)
 target_popup:fire(2)

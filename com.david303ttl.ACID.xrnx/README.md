@@ -34,7 +34,7 @@ preview is read-only.
 Manual Generate and Regenerate remain available. Live Edit optionally applies
 each valid source edit immediately, with one render in flight. Edits made during
 rendering apply automatically as soon as that render finishes. Undo and Redo cover source edits and
-phrase output policy. A failed Live Edit remains armed; correct the source or
+phrase output policy and PB Range. A failed Live Edit remains armed; correct the source or
 use Retry Live Edit. Enabling Live Edit also applies the current source. New
 destinations create an ACID phrase automatically. Foreign, modified or deleted
 phrases are preserved; Live Edit creates a separate owned phrase for the edits.
@@ -45,7 +45,7 @@ open session and ACID reports the unsaved state. Give a new draft's instrument
 a unique name or generate its phrase before closing the song. ACID protects
 foreign or modified phrases and uses staged rendering, ownership checks, source persistence and
 rollback before replacing an owned phrase. Source records and ownership seals
-use the current v3 contract.
+use the current source-record and ownership-seal contracts.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE
@@ -56,11 +56,27 @@ existing voice. Repeat preserves this ordering across the loop seam.
 For a plugin or MIDI synth, enable its mono/legato portamento and set its glide
 time. ACID sends the legato note ordering; the receiver supplies continuous
 pitch motion and envelope behavior. A polyphonic receiver may play overlapping
-notes instead of gliding. ACID does not change presets, send speculative pitch
-bend or enable portamento by modifying the instrument. Hybrid instruments use
+notes instead of gliding. ACID does not change presets or enable portamento
+by modifying the instrument. Hybrid instruments use
 the same overlap stream; their sample layers may respond differently. Accent
 changes on a held same-pitch voice are reported when they cannot be delivered.
 Empty slots can receive a silent phrase and are reported as needing a generator.
+
+**PB Range** is an optional receiver-range assumption: **Off** (default), **±2**,
+**±12**, **±24** or **±48** semitones. Off retains receiver-controlled portamento.
+A selected range requests native MIDI pitch-bend commands for connected
+plugin/MIDI slides. Set the matching range in the receiver yourself and use an
+isolated monophonic route: ordinary pitch bend affects the entire MIDI channel.
+ACID does not configure or detect the receiver range. Settings belong to each
+owned phrase and restore on selection/save/reopen; PITCH/TIME memory stays
+unchanged. Out-of-range slides fall back to ordered notes with an approximation
+warning. Hybrid sample layers may respond differently.
+
+Phrase-contained pitch-bend delivery and reset have **not been verified in
+Renoise**. The single reference-VST check in the
+[manual checklist](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend)
+remains open. A receiver that ignores these commands will not produce the
+intended bend.
 
 Phrase generation has been checked with Lua mocks for the current renderer
 contract. Renoise playback and routing checks for Program/Grid switching,
