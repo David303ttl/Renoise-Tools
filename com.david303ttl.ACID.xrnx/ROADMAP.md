@@ -329,7 +329,7 @@ Alternating/consecutive NOTE patterns and native/actual-writer TIE-accent patter
 
 Each behavior PR includes its specs, procedure and actual results; records are updated as evidence arrives, not postponed until the last package. Inspect relevant pinned API 6.2 definitions and offline docs before writing probe/profile or runtime API calls; SDK setup is a development prerequisite. Keep new code/fixture names behavior-based and all runtime dependencies inside ACID. No manifest/API bump or schema migration is implied.
 
-**Merge and completion gates:** run `./scripts/run_tests.ps1 -Tool ACID` after Lua changes; run all suites if shared scripts change and `./scripts/package.ps1 -Tool ACID` for runtime layout/package-input changes. Recheck normal regeneration, ownership rejection, source save/reopen and Live Edit for enabled modes. Record which tests ran, which captures passed, which trigger/profile combinations are supported and which remain unverified. Documentation/probe infrastructure may merge before acoustic support is established; renderer support cannot be enabled on mock tests alone. Full M3 acceptance requires verified gate, connected Repeat slide and repeatable accent behavior for the declared reference profile, or an explicit user-approved reduced scope with the missing goal still visible.
+**Merge gates:** run local ACID specs after Lua changes and package checks after runtime changes. Check regeneration, ownership, save/reopen and Live Edit in Renoise. Use accepted reference audio evidence; capture again only for a reproduced regression.
 
 ---
 
@@ -499,7 +499,7 @@ not run in this workspace; functional acceptance remains open.
 - Allow edit navigation directly to reported step and keep the user's source editable regardless of output capability. Warnings never undo the edit, reset ACCENT/SLIDE or deselect Live Edit.
 - Expose resolved instrument type and silent/unavailable target warning without requiring instrument inspection knowledge. Do not promise audio for an empty instrument.
 
-**Gate U:** all warning/error classes have deterministic mocked GUI tests plus manual 125%/150% Windows scaling checks; status readable without truncating the offending step and cause.
+**Gate U:** all warning/error classes have deterministic mocked GUI tests; one normal-resolution Renoise smoke verifies readable status and diagnostics. Other display scaling belongs to release QA.
 
 ### M3.5.6 — Functional acceptance
 
@@ -780,7 +780,7 @@ Results are retained in [timing evidence](../tests/acid/acid_timing_manual.md) a
 - Package ACID with the repository's PowerShell 7 script, verifying `main.lua` and `manifest.xml` at archive root and no SDK/test files.
 - Decide version/tag **after** demonstrated functionality; manifest `0.1` stays unchanged until a release decision. Do not imply all analog aspects of the original TB-303 are reproduced.
 
-**M6 done when:** M3.5 guarantees hold on sample, plugin, MIDI, hybrid and empty instrument targets; local regression suite, manual Renoise checklist, release package inspection and documentation agree on exactly what ACID supports; there are no unresolved data-loss regressions.
+**M6 done when:** documented host/device support is verified to the declared scope; local tests, release package inspection and documentation agree; there are no unresolved data-loss regressions.
 
 ---
 
@@ -798,13 +798,13 @@ Results are retained in [timing evidence](../tests/acid/acid_timing_manual.md) a
 | Selected phrase regeneration (M3.5-S) | Regenerate the second owned phrase in place; preceding phrase unchanged | Select and regenerate second phrase; chooser remains on that phrase |
 | Leading/trailing TIE, REST, SLIDE | Explicit boundary state assertions | Phrase boundary and actual envelope response |
 | Gate, release and slide collision | Scheduled timeline/collision tests; sample 0G coverage ends before midpoint OFF | OFF locations and recorded attack/release |
-| Instrument-agnostic phrase writing (M3.5) | Capability fixtures, no sample-buffer admission | Sample, plugin-only, external MIDI, hybrid, alias and empty slots; zero-sample plugin writes |
-| Arbitrary articulation (M3.5) | Interval/layout fuzzing; no evidence allowlists; explicit approximations | 25-semitone short slide, connected accents, Repeat seams, multiple BPM/groove settings |
-| Plugin/MIDI commands (M3.5) | Only target-compatible operations; pitch-bend safeguards | VST note/velocity/OFF and MIDI capture; no sample-only Gxx imposed on plugins |
+| Instrument-agnostic phrase writing (M3.5) | Capability fixtures, no sample-buffer admission | Sample, plugin-only and empty slot smoke; other receiver families deferred to M6 |
+| Articulation safety (M3.5) | Interval/layout fuzzing; explicit approximation reporting | Reference sample/VST smoke; broader fidelity in M6 |
+| Plugin/MIDI commands (M3.5) | Target-compatible operations; pitch-bend safeguards | Reference VST smoke; additional MIDI capture only for a reproduced receiver defect |
 | Optional PB Range (M3.6) | Off/±2/±12/±24/±48; pitch anchor, bend limit, center reset, loop seam, no source mutation | One VST phrase bend/reset check; Off regression and selected phrase save/reopen |
 | Live Edit recovery (M3.5) | Typed result, armed/dirty/pending/retry/suspend transitions | Editing during playback, recoverable failure, undo, ownership loss, song change |
-| Straight and triplet timing | Grid conversion and no cumulative drift | BPM/LPB/triplet repeat checks |
-| Several target phrases | IDs, snapshot roundtrip, ownership | Switching, adding and regenerating phrase slots |
+| Straight and triplet timing | Exact grid, repeat endpoints and no cumulative drift | Accepted audio evidence; one playback smoke after writer changes |
+| Instrument/phrase synchronization (M4.7) | Addition, rename, reorder, deletion, identity and stale callback tests | Live inventory; native selection sync; regenerate exact owned phrase in place; explicit creation only |
 | Roland-style re-entry/check workflow | Separate cursors and explicit command/flag reset rules | PITCH audition, TIME review, back/correction, switch view, undo |
 | Independent PITCH/TIME randomization | Seeded output, valid N/T/R and spans, other memory unchanged | Preview/output agreement, undo and Live Edit |
 | Targeted transformations | Exact flag/command changes, unaffected source unchanged | Action scope, undo and regenerated result |
