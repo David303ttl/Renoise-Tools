@@ -360,6 +360,23 @@ bend_source.pitch_events[1]=pitch(36,false,true)
 bend_source.pitch_events[2]=pitch(43,false,false)
 for index,command in ipairs({'N','T','N','R'}) do bend_source.time_events[index]=command end
 local bend_target=#instrument.phrases+1
+local phrase_pitch_bend=require('writers.phrase_pitch_bend')
+assert(phrase_pitch_bend.delivery_verified==true)
+phrase_pitch_bend.delivery_verified=false
+local fallback,fallback_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
+assert(fallback:line(5).note_columns[2].note_value==43,
+  'unverified phrase delivery must retain the target NOTE')
+assert(fallback_status.message:find('receiver targeting are unverified',1,true))
+local _,_,fallback_range=store.load(song,fallback)
+assert(fallback_range==12,'fallback discarded the selected receiver range')
+for line=1,fallback.number_of_lines do
+  for _,cell in ipairs(fallback:line(line).note_columns) do
+    assert(cell.panning_string~='M1','unverified delivery emitted pitch bend')
+  end
+end
+-- Exercise payload transactions without claiming that mocks validate host delivery.
+assert(phrase_pitch_bend.delivery_verified==false)
+phrase_pitch_bend.delivery_verified=true
 local bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
 assert(ownership.status(bent)=='owned')
 local saved_bend,saved_policy,saved_range=store.load(song,bent)
@@ -373,7 +390,7 @@ for line=1,bent.number_of_lines do
   if carrier.panning_string=='M1' then
     first_command_line=first_command_line or line
     command_count=command_count+1
-    assert(carrier.instrument_value==1,'bend targeted the wrong instrument')
+    assert(carrier.instrument_value==255,'phrase bend must use the receiver default MIDI channel')
     local effect=native.effect_columns[1]
     local value=tonumber(effect.number_string,16)*128+effect.amount_value
     if value==8192 then center=true else noncenter=true end
@@ -419,6 +436,18 @@ assert(bend_failure.kind=='complete' and bend_failure.status=='error')
 assert(bend_failure.message:find('Pitch-bend command mismatch',1,true),bend_failure.message)
 assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
 assert(ownership.status(bent)=='owned','corrupted staged M1 damaged the last-good destination')
+-- In-flight receiver movement must preserve the last-good phrase.
+local reorder_failure
+assert(writer.generate(2,function(value)reorder_failure=value end,bend_source,bend_target,
+  {output_policy='repeat',pb_range=12}))
+song.instruments[1],song.instruments[2]=song.instruments[2],song.instruments[1]
+for _=1,6 do idle:fire() end
+song.instruments[1],song.instruments[2]=song.instruments[2],song.instruments[1]
+assert(reorder_failure and reorder_failure.status=='suspended')
+assert(reorder_failure.message:find('target instrument moved',1,true),reorder_failure.message)
+assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
+assert(ownership.status(bent)=='owned','instrument reorder damaged the last-good phrase')
+phrase_pitch_bend.delivery_verified=true
 instrument=original_instrument
 -- An edit saved during asynchronous rendering must not reject the source commit
 -- or discard the newer draft that Live Edit will apply next.

@@ -80,26 +80,52 @@ midpoint OFF, and both the glide and OFF remain in the phrase.
 
 ## M3.6 Plugin/MIDI pitch bend
 
-**Local verification (2026-10-28):** all 30 ACID Lua specs passed, including
-anchor accumulation, bend endpoints, range fallback, release/reset, Repeat seam
-safety, settings persistence, command validation and last-good rollback. The
-ACID 0.1 package was built and its archive layout checked. These checks use
-mocks and do not establish MIDI delivery, playback, GUI or host Undo behavior.
+### Fresh tool prerequisite
 
-**P0 result: not run in this workspace.** The Lua suite verifies phrase cells,
-not whether Renoise delivers phrase-contained M1 commands to a plugin. Complete
-this bounded check with one available bend-responsive VST before treating
-pitch-bend slides as playback-verified. No connected Renoise document session
-was available for this check on 2026-10-28. The pinned API documents phrase
-instrument columns as sample selectors; confirm the actual M1 receiver rather
-than assuming pattern-editor targeting also applies inside a phrase.
+After every runtime change, run `pwsh -NoProfile -File ./scripts/package.ps1 -Tool ACID` and install the newly built `dist/com.david303ttl.ACID_0.1.xrnx`
+by dragging it onto Renoise. Accept replacement of the installed tool and close
+any old ACID dialog. Reload the tool or restart Renoise after saving the current
+song; copying files or rebuilding the archive alone does not replace loaded Lua
+modules. Run playback checks in a new disposable song. Record the package SHA-256
+(`Get-FileHash ./dist/com.david303ttl.ACID_0.1.xrnx`) with the receipt so an
+unchanged manifest version cannot conceal an old installation.
+
+### Support gate and bounded receiver check
+
+**Bounded host check (2026-10-28): passed for native phrase delivery to Surge
+XT in global instrument slot `03`.** Renoise 3.5.4 Demo played a held note
+with phrase-contained `M1` commands. A raw Audacity 3.7.8 capture measured
+130.82 Hz → 195.92 Hz → 130.92 Hz (approximately +6.99 semitones, then center)
+with the phrase instrument/sample field empty (`instrument_value = 255`).
+Peak was -1.95 dBFS. See the [audio receipt](audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28).
+
+Phrase commands now leave that field empty to follow the generated notes'
+default MIDI channel. It is not a global instrument-slot destination. A slot-03
+probe also responded with field `00`, so matching a slot number was not evidence
+of global-slot addressing. Pattern Editor targeting must not be copied into
+phrase commands.
+
+This is a bounded receiver result, not a general VST/MIDI compatibility claim.
+The private `writers/phrase_pitch_bend.lua` support gate is enabled after
+checking the corrected installed writer in Renoise: empty carrier fields and
+audible center → intermediate bend → G in instrument slot `03`. PB Off retains the existing
+overlapping-NOTE route; unsafe Repeat seams retain the whole-phrase fallback.
+Host Undo, save/reopen, external MIDI, arbitrary MIDI channels, hybrids and
+other receivers still need their listed manual checks.
+
+Offline rendering was attempted but is disabled in Renoise Demo. The accepted
+receipt uses live WASAPI loopback at 48 kHz to Audacity, with Recording Level
+97%, following the previously measured route. Windows playback volume was not
+changed. The original song was backed up before testing.
 
 1. Use a disposable song and one plugin-only instrument with a bend-responsive
-   VST (Surge XT is suitable). Set the VST bend range to ±12 semitones and turn
+   VST. First place it in slot `00`, then repeat in a nonzero slot such as `03`.
+   Set the VST bend range to ±12 semitones and turn
    its own glide off. Record the Renoise version, VST/preset and target
    instrument slot; do not change the instrument's routing.
 2. In a native instrument phrase, enter a held C note in one note column. In
-   the rightmost visible note column, enter the target instrument slot number,
+   the rightmost visible note column, leave the instrument/sample field empty
+   to match the generated notes' default MIDI channel. Enter
    `M1` in the panning field and `652A` in the associated effect field. Enter
    another `M1` command with `4000` while the note is still held. For a ±12
    receiver, `652A` is approximately +7 semitones and `4000` is pitch-bend
@@ -108,11 +134,18 @@ than assuming pattern-editor targeting also applies inside a phrase.
    without a new note attack, and confirm the commands reach the intended VST.
    Record pass/fail and any host limitation here:
 
-   | Renoise | VST / preset | Result | Notes |
-   | --- | --- | --- | --- |
-   | | | Not run | |
+   | Renoise | VST / preset | Global slot | Phrase field | Package SHA-256 | Result / evidence |
+   | --- | --- | --- | --- | --- | --- |
+   | | | `00` | | | Not run |
+   | 3.5.4 Demo | Surge XT, cloned receiver | `03` | Empty (`255`) | See audio receipt | Pass: +6.99 semitones and return to center |
 
-4. If the phrase does not deliver both commands, record the specific failure
+4. Compare with the same held-note bend/center commands in the Pattern Editor
+   as a positive control. A pattern-only success does not pass phrase delivery.
+   Confirm the nonzero-slot test controls the selected receiver and leaves a
+   different instrument untouched. Record audible pitch or captured audio/MIDI,
+   including the +7-semitone endpoint and return to center; cell readback alone
+   is insufficient.
+5. If the phrase does not deliver both commands, record the specific failure
    and leave PB Range unsupported. Do not add MIDI routing devices or track
    automation as a fallback.
 
@@ -121,9 +154,12 @@ After P0 passes, test the generated PB Range feature with these focused cases:
 | Check | Pass condition | Result |
 | --- | --- | --- |
 | PB Off | Existing plugin/MIDI overlapping-NOTE SLIDE and sample 0G glide are unchanged | Not run |
-| PB ±12, C→G→C | One held note reaches each target and returns to center | Not run |
+| PB ±12, C→G→C | One held note reaches each target and returns to center | Pass in slot `03`: +6.99 semitones and return to center; see [audio receipt](audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28) |
 | NOTE→SLIDE→NOTE→REST | Connected boundary has no retrigger; REST releases and centers bend | Not run |
+| Short C→G slide, no following TIE | Lines 1–4 contain C/center, intermediate bend, G endpoint, OFF/center; listen for connected motion | Pass in slot `03`: +3.42–3.45 intermediate, +6.92–6.94 endpoint; release/reset tail audibly bends down |
 | Two connected slides and Repeat seam | Accumulated bend and cold/steady seam do not jump or stick | Not run |
+| Unsafe Repeat seam | Whole phrase uses the overlapping-NOTE route with an approximation warning; note order, release and repeated playback remain usable | Not run |
+| Instrument moved during generation | PB render is rejected without replacing the last-good phrase; regeneration targets the current slot | Slot `03` ↔ `04` move: suspended; phrase count/name/source/ownership preserved. Post-move regeneration not checked here |
 | Range exceeded | Ordered NOTE fallback and TIME-step approximation warning | Not run |
 | Save/reopen and Live Edit | PB Range restores for each owned phrase and regenerates safely | Not run |
 | Plugin/MIDI unavailable and hybrid target | Phrase generation remains available with the documented warning | Not run |

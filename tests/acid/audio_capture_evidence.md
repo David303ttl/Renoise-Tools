@@ -462,3 +462,114 @@ verify transport stop/start, seek or Live Edit during audio playback; those
 remain the selective in-app M3 manual acceptance checks. Current-desktop
 soundcard-loopback behavior is separately unclaimed. Implementation and final
 regression/package verification are complete.
+
+## Phrase pitch-bend receiver check (2026-10-28)
+
+A bounded live test ran in Renoise **3.5.4 Demo** with **Surge XT VST3** and
+Audacity **3.7.8**. The current song was first saved to an untracked backup.
+The refreshed ACID package was copied into Renoise's installed Tools directory,
+all archive entries were hash-checked, and **Tools → Reload All Tools** reloaded
+the code; initialization appeared in Renoise's host log.
+
+Renoise and Audacity used the same **PHL24E1N1100A WASAPI** endpoint, shared
+mode, at **48 kHz stereo**. Audacity's Recording Level initially read **26%**;
+it was changed to **97%** using its numeric Recording Level dialog and verified
+by tooltip, reproducing the earlier measured route. Playback Level and Windows
+system volume were not changed. The first low-level exploratory recordings are
+not acceptance receipts. An offline render attempt produced Renoise's explicit
+“Rendering is disabled in the demo version” error, so accepted files below are
+live loopback captures, not offline renders or normalized exports.
+
+Receiver readback showed both Surge scenes at **±12 semitones**, with
+**Portamento 0.0 ms**. The nonzero-slot receiver was cloned from the working
+slot-00 receiver. No receiver compatibility inference extends beyond this
+configuration.
+
+| Native phrase check | Raw capture result |
+| --- | --- |
+| Instrument slot `03`, empty phrase instrument/sample field (`255`) | 130.82 Hz → 195.92 Hz → 130.92 Hz; +6.99 semitones then center; -1.95 dBFS peak |
+| Slot `03`, phrase field `00` | Also responds; matching the global slot number is not a prerequisite for phrase bend delivery |
+
+The accepted native phrase held one C note while applying bend center, +7 and
+center. The phrase instrument/sample field was empty, matching the generated
+notes' default MIDI channel. Its raw WAV is
+`tmp/acid-articulation/phrase-slot03-carrier-empty-20261028-110433-024-6bfc86.wav`,
+SHA-256 `7c5cae8beae05a6b51f951ba9761f3aac7d9218380a31f0ff254e2a93838eff0`.
+The pinned API describes the phrase instrument column as a sample selector;
+this playback result does not turn it into a global destination selector.
+
+An initial generated-writer capture in slot `03` measured center **130.8 Hz**,
+intermediate **159.5 Hz** (+3.45 semitones), and target **195.6 Hz** (+6.97
+semitones), with no full-scale samples. That development capture still used a
+populated phrase field and is supporting interpolation evidence, not the final
+corrected package receipt. The writer was subsequently changed to leave the
+field empty; its refreshed-package result is recorded separately below.
+
+These tests establish audible connected pitch change for the measured phrase
+and receiver. They do not establish all VSTs, external MIDI destinations,
+arbitrary MIDI channels, hybrid layering, host Undo, persistence, or every
+Repeat seam. Unsafe Repeat seams continue to fall back to the NOTE route for
+the whole phrase, with a nonfatal diagnostic.
+
+### Corrected installed production writer
+
+After enabling the bounded-verified support gate, the final archive
+`dist/com.david303ttl.ACID_0.1.xrnx` was built with SHA-256
+`6ea3742580f89319e49ae6645778691a09d7fdf3013c81deec5eadda99da189b` and
+installed through Renoise `install_tool`. All 24 installed entries were
+hash-verified, and the host log confirmed fresh ACID initialization.
+Generation used the installed production module,
+with every M1 carrier's instrument/sample field **empty (`255`)**; the source
+provenance and readback are in the untracked
+`generated_production_slot03_generation.txt` receipt.
+
+Raw file `tmp/acid-articulation/generated-production-slot03-20261028-110722-171-2dcd7e.wav`
+has SHA-256 `6630289b5b8925afbef142c250617eb1d98159379a9410a21b1d3903a23b559d`.
+Its measured center was **130.8 Hz**, intermediate **159.3–159.66 Hz**
+(**+3.41–3.45 semitones**), and endpoint **195.56–195.66 Hz**
+(**+6.96–6.97 semitones**). Raw peak was **-1.958 dBFS**, with **no full-scale
+samples**. Thus the corrected installed writer delivered audible intermediate
+pitch and the intended G target to the nonzero-slot receiver.
+
+The capture chain used Audacity Recording Level **97%**, Renoise track pre-FX
+**+3 dB**, and Gainer settings **12.04 dB + 6 dB**. Receiver settings remained
+unchanged during the final captures. Plugin Global Volume readback alone did
+not establish capture level; the raw WAV measurements are the level evidence.
+Windows playback volume was unchanged. No normalization was used.
+
+### Exact two-step short slide and instrument reordering
+
+The final short source contained only **NOTE C → NOTE G**, outgoing SLIDE on
+C, Play Once, and no following TIE. The installed production writer emitted
+exactly four lines: C/center, intermediate bend, G endpoint, OFF/center.
+
+Fresh raw capture
+`tmp/acid-articulation/generated-fourline-production-slot03-20261028-111020-224-d409e2.wav`
+has SHA-256 `c6d39d59cf45263df8c0856cb23e12af618a49dd76128a3cd54276c1339a1e8d`.
+It is **3.59 s**, peaks at **-1.9068 dBFS**, and has **no full-scale samples**.
+Center measured **130.8 Hz**. The intermediate window at **0.765–0.870 s**
+measured **159.42–159.66 Hz** (**+3.42–3.45 semitones**); the endpoint window
+at **0.960–1.050 s**, before OFF, measured **195.12–195.30 Hz**
+(**+6.92–6.94 semitones**). Receiver settling reached within approximately six
+cents of G. The capture therefore establishes intermediate motion and the
+short-slide endpoint with the existing two-lines-per-step schedule.
+The release/reset tail bends down before silence at approximately **1.14 s**;
+this test does not establish a transparent release.
+
+An earlier attempted short-slide export duplicated a previous recording and
+was rejected as stale evidence. The accepted file above has its own hash and
+was captured after clearing and verifying the existing Audacity project's
+tracks, without opening another project.
+
+A real host reordering check swapped the target between slots `03` and `04`
+during generation, then restored it. The writer **suspended** the in-flight
+render. `production_reorder_receipt.txt` recorded unchanged phrase count,
+name and source, with ownership still `owned`. This verifies preservation of
+the last-good phrase under the tested slot move, rather than only a mock.
+
+The temporary disabled-gate fallback was also captured in slot `03` as
+`tmp/acid-articulation/generated-fallback-slot03-20261028-110245-826-9f3d44.wav`,
+SHA-256 `f87c62fbc0c0f9255f914f72764140e3bbd2b2e04e10037ee05c2c25c5590360`.
+Its audible C→G NOTE route provided a bounded fallback check before the support
+gate was enabled. This is not an unsafe-Repeat-seam playback receipt; that
+whole-phrase fallback still requires its separate musical-usability check.

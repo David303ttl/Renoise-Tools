@@ -150,13 +150,13 @@ local function bend_plan(semantic,timeline,layout,options)
   local range=options.pb_range
   if range~=2 and range~=12 and range~=24 and range~=48 then return nil,"invalid pitch-bend range" end
   local target=options.instrument_value
-  if type(target)~="number" or target%1~=0 or target<0 or target>254 then
-    return nil,"pitch bend requires a valid target instrument"
+  if type(target)~="number" or target%1~=0 or target<0 or target>255 then
+    return nil,"pitch bend requires a valid phrase channel field"
   end
   if (layout.lines_per_step or 2)~=2 then return nil,"pitch bend requires two phrase lines per TIME step" end
   if type(timeline)~="table" or type(timeline.events)~="table" then return nil,"gate timeline is incomplete" end
   local cells,commands,diagnostics={},{},{
-    "Pitch bend assumes the selected receiver range and isolated monophonic routing; phrase MIDI delivery must be verified in Renoise."}
+    "Pitch bend assumes the selected receiver range and isolated monophonic routing; PB Off retains receiver-controlled NOTE overlap."}
   local anchor,pitch,accent,column
   local collision
   local function put(line,col,values)
@@ -202,14 +202,16 @@ local function bend_plan(semantic,timeline,layout,options)
         anchor,pitch,accent=event.note,event.note,event.accent
         diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: bend range exceeded",source_step(event))
       else
-        local next_event=events[index+1]
-        -- A midpoint release leaves only the boundary line for the endpoint.
-        local room=not next_event or next_event.at>=event.at+256
         if pitch~=event.note then
-          bend(line,room and ((pitch-anchor)+offset)/2 or offset)
-          if room then bend(line+1,offset) end
+          -- Glide into the target across the preceding connected half-step.
+          local previous_event=events[index-1]
+          local midpoint_line=line-1
+          local room=previous_event and previous_event.at<event.at-128
+            and not commands[midpoint_line]
+          if room then bend(midpoint_line,((pitch-anchor)+offset)/2) end
+          bend(line,offset)
           if not room then
-            diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: phrase timing leaves one bend endpoint before release.",source_step(event))
+            diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: phrase timing leaves no free intermediate bend line.",source_step(event))
           end
         end
         if event.accent~=accent then

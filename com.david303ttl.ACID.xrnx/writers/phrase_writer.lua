@@ -12,6 +12,7 @@ local target_capabilities = require("model.target_capabilities")
 local sequencer = require("model.sequencer")
 local legato = require("model.legato")
 local legato_writer = require("writers.legato_writer")
+local phrase_pitch_bend = require("writers.phrase_pitch_bend")
 local M = {}
 
 M.LPB = 8
@@ -239,6 +240,10 @@ local function context_valid(job)
   local instrument_found=false
   for index,instrument in ipairs(song.instruments) do
     if rawequal(instrument,job.instrument) then
+      if job.native_notes and next(job.native_notes.midi_commands or {}) and
+          index~=job.instrument_index then
+        return false,"pitch-bend target instrument moved during generation"
+      end
       instrument_found=true
       job.instrument_index=index
       break
@@ -709,14 +714,19 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       (#slide_steps(plan)>0 or pb_range>0) then
     local native_error
     native_notes,native_error=legato.plan(plan,timeline,layout,
-      {pb_range=pb_range,instrument_value=instrument_index-1})
+      {pb_range=phrase_pitch_bend.delivery_verified and pb_range or 0,
+        instrument_value=255})
     if not native_notes then return nil,failure("phrase.legato_plan","phrase",native_error) end
+    if pb_range>0 and not phrase_pitch_bend.delivery_verified then
+      native_notes.diagnostics[#native_notes.diagnostics+1]=
+        "Phrase pitch-bend delivery and receiver targeting are unverified; NOTE overlap is retained for the whole phrase."
+    end
   end
   local commands,approximations,minimum_rate
   if native_notes then
     commands,approximations,minimum_rate={},native_notes.diagnostics,1
     if capabilities.sample then
-      approximations[#approximations+1]=pb_range>0 and
+      approximations[#approximations+1]=next(native_notes.midi_commands or {}) and
         "Hybrid sample layers may respond differently to receiver pitch bend; samples and routing are unchanged." or
         "Hybrid sample layers receive overlapping notes; their envelopes and glide can differ from the plugin/MIDI receiver."
     end
