@@ -739,12 +739,12 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       (#slide_steps(plan)>0 or pb_range>0) then
     local native_error
     native_notes,native_error=legato.plan(plan,timeline,layout,
-      {pb_range=phrase_pitch_bend.delivery_verified and pb_range or 0,
+      {pb_range=phrase_pitch_bend.delivery_enabled and pb_range or 0,
         instrument_value=255})
     if not native_notes then return nil,failure("phrase.legato_plan","phrase",native_error) end
-    if pb_range>0 and not phrase_pitch_bend.delivery_verified then
+    if pb_range>0 and not phrase_pitch_bend.delivery_enabled then
       native_notes.diagnostics[#native_notes.diagnostics+1]=
-        "Phrase pitch-bend delivery and receiver targeting are unverified; NOTE overlap is retained for the whole phrase."
+        "Phrase pitch-bend delivery is unavailable; NOTE overlap is retained for the whole phrase."
     end
   end
   local note_capacity=phrase_api.MAX_NUMBER_OF_NOTE_COLUMNS or 12

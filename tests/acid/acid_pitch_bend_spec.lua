@@ -70,6 +70,16 @@ for _,mode in ipairs({'straight','triplet'}) do
   local loop=render({36,40,43},{true,true,true},12,'repeat',nil,mode)
   assert(loop.midi_commands[6].value~=8192 and loop.midi_commands[7].value==8192)
   assert(attacks(loop)==1)
+  local notes,slides={},{}
+  for i=1,64 do notes[i]=i%2==1 and 36 or 43;slides[i]=false end
+  local many=render(notes,slides,12,'play_once',nil,mode)
+  for i=1,64 do
+    local line=2*i-1
+    assert(many.midi_commands[line].value==8192 and
+      many.cells[line][1].note_value==notes[i] and many.cells[line][1].delay_value==1,
+      'each fresh attack follows its center reset by one delay unit without accumulated drift')
+    assert(many.cells[line+1][1].note_value==120 and many.cells[line+1][1].delay_value==0)
+  end
 end
 local unsafe=render({24,38,52},{true,true,true},12,"repeat")
 assert(not unsafe.midi_commands)

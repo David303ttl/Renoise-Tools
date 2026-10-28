@@ -739,13 +739,22 @@ remain the integration gate. M3.6 is not playback-accepted until that check pass
 | Pattrns source currently refuses anything but 1/16 | Add documented `1/8 × 2/3` pulse; assert exact cell readback; use narrowly scoped native-cell contingency only if it fails |
 | `model/legato.lua`, `writers/gate_writer.lua`, `model/articulation.lua`, `writers/phrase_validator.lua` assume fixed 2-line mapping | Pass consistent layout for duration-sensitive calculations; preserve/verify existing two-line operation offsets. Eliminate duplicated LPB assumptions, not proven fixed cell offsets |
 | Note-delay/PB center-reset can shift a fresh attack by 1/256 line | Verify order and bound the subline offset at LPB 8 and 6; never convert it into cumulative step rounding |
-| Existing M3.6 `delivery_verified=true` conflicts with roadmap's *unrun* reference-VST playback gate | Do not infer playback support from the boolean. Require one reference-VST M1 bend+center test for any **verified** PB claim; preserve safe overlap fallback/diagnostic if unsupported. The audio check may run alongside M4, but M4 cannot be signed off as PB-playback-tested without it |
+| Pitch-bend command generation does not establish receiver delivery | Keep the bounded reference-VST M1 bend+center evidence scoped to its tested setup; preserve safe overlap fallback/diagnostic if unsupported. Do not infer general receiver support from the command-generation switch |
 | Transport legacy speed model or unverified song groove | Detect/document; never rewrite global settings or silently certify musical timing not established in that host mode |
 | Async render during a timing toggle/target change | Snapshot timing/target, cancel stale jobs, commit only current tokens; keep last-good phrase on cancellation/error |
 | Old experimental song source format / modified phrase | Reject safely; do not migrate, erase tool data or adopt/mutate foreign content |
 | Renoise host/resource cap or collision | Precise error + source retained + no partial destination replacement; allow scoped sonic approximation only when notes and releases remain correct |
 
 **Blocker discipline:** first reproduce a failure in a deterministic local Lua spec or one small in-Renoise fixture; identify the source/host capability; use the specified narrow fallback; re-run full regression tests. If no safe fallback can produce the correct NOTE/REST musical timeline, report a hard phrase render failure without committing. Never claim every arbitrary VST, external MIDI receiver, legacy song or host groove obeys ACID's articulation solely because valid note cells were written.
+
+The implementation selects the pulse and phrase LPB from the timing layout,
+validates staged cells and metadata, rejects unsafe commits, and reports legacy
+speed and active groove as unverified. The native pitch-bend switch enables
+command generation; it does not certify receiver delivery. A bounded Surge XT
+phrase bend and center reset was measured at both LPBs as recorded in the
+[timing checklist](../tests/acid/acid_timing_manual.md#targeted-glide-and-bend-playback).
+Other receivers, reset/attack ordering and the broader timing acceptance remain
+subject to the documented host checks.
 
 ### M4.5 — Delivery slices and acceptance gates
 

@@ -103,6 +103,7 @@ function M.show()
     font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
   local live_state_view=vb:multiline_text{id="acid_live_edit_state",width=820,height=48,font="bold",
     text="LIVE EDIT DISABLED"}
+  local source_state=vb:text{id="acid_source_state",width=820,font="bold",text=""}
   local diagnostic=vb:text{id="acid_source_diagnostic",width=820,font="bold",text=""}
   local navigate_diagnostic
   local diagnostic_jump=vb:button{text="Go to source error",active=false,notifier=function()
@@ -162,6 +163,7 @@ function M.show()
   local update_live_state
   local function save_draft()
     revision=revision+1
+    source_state.text="SOURCE DIRTY: Generate to apply this draft."
     if not bound_instrument then return true end
     return drafts.put(song,bound_instrument,bound_phrase,pattern,output_policy,pb_range)
   end
@@ -301,7 +303,8 @@ function M.show()
       diagnostic.text="NOT READY: "..tostring(err)
       if diagnostic_jump then diagnostic_jump.active=false end
     else
-      diagnostic.text="VALID: "..plan.note_count.." NOTE triggers; Start and Repeating previews resolved."
+      diagnostic.text=string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
+        plan.note_count,step_division.text)
       if diagnostic_jump then diagnostic_jump.active=false end
     end
     updating=false
@@ -555,10 +558,12 @@ function M.show()
       loading=false
     end
     revision=revision+1
+    local source_available=false
     if target and target<=#instrument.phrases then
       local source,output_policy_or_error,stored_pb_range=
         store.load(song,instrument.phrases[target])
       if source then
+        source_available=true
         pattern=source
         output_policy=output_policy_or_error
         pb_range=stored_pb_range or 0
@@ -581,6 +586,9 @@ function M.show()
       status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
     end
     local draft,policy,draft_pb_range=drafts.get(song,bound_instrument,bound_phrase)
+    source_state.text=draft and "SOURCE DIRTY: Generate to apply this draft." or
+      (not bound_phrase and "SOURCE DIRTY: Generate to apply this draft." or
+        (source_available and "SOURCE COMMITTED" or "SOURCE UNAVAILABLE"))
     if draft then
       pattern,output_policy=draft,policy
       pb_range=draft_pb_range or 0
@@ -866,6 +874,7 @@ function M.show()
           end
         end
         if (result.status=="committed" or result.status=="approximate") and revision==requested_revision then
+          source_state.text="SOURCE COMMITTED"
           local cleared,clear_error=drafts.clear(song,requested_instrument,requested_phrase)
           if cleared==nil then
             result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
@@ -1055,6 +1064,7 @@ function M.show()
                   bound_phrase=requested_object.phrases[result_target]
                 end
                 if revision==requested_revision then
+                  source_state.text="SOURCE COMMITTED"
                   local cleared,clear_error=drafts.clear(song,requested_object,requested_phrase)
                   if cleared==nil then
                     result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
@@ -1097,7 +1107,7 @@ function M.show()
         status.text=sampler.describe(song.instruments[selected_instrument])
       end}},
     vb:text{text="Live Edit applies changes automatically. With Live Edit off, Generate applies the saved draft."},
-    live_state_view,inspect,status}
+    source_state,live_state_view,inspect,status}
   select_instrument(selected_instrument)
   update()
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)

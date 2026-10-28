@@ -19,7 +19,8 @@ is increased again.
 Timing selects straight sixteenth steps or 1/8 triplet steps. A cycle of N
 steps lasts N/4 or N/3 quarter-note beats respectively. Changing timing keeps
 both memories intact. Phrase timing is local to the phrase; ACID does not change
-the song tempo, LPB or meter.
+the song tempo, LPB or meter. Timing is saved with the source and is included
+in Undo, Redo and Reset. Phrase output and PB Range are separate phrase settings.
 
 A NOTE consumes the next active PITCH entry. TIE holds the current semantic
 voice without consuming pitch memory, and REST releases it. ACCENT and outgoing
@@ -57,7 +58,9 @@ open session and ACID reports the unsaved state. Give a new draft's instrument
 a unique name or generate its phrase before closing the song. ACID protects
 foreign or modified phrases and uses staged rendering, ownership checks, source persistence and
 rollback before replacing an owned phrase. Source records and ownership seals
-use the current source-record and ownership-seal contracts.
+use the current source-record and ownership-seal contracts. With Live Edit off,
+the source is marked dirty until a successful Generate applies the draft. Earlier
+experimental source formats are not imported or migrated.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE
@@ -84,11 +87,12 @@ owned phrase and restore on selection/save/reopen; PITCH/TIME memory stays
 unchanged. Out-of-range slides fall back to ordered notes with an approximation
 warning. Hybrid sample layers may respond differently.
 
-Phrase-contained pitch-bend delivery and reset have **not been verified in
-Renoise**. The single reference-VST check in the
-[manual checklist](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend)
-remains open. A receiver that ignores these commands will not produce the
-intended bend.
+Phrase-contained pitch bend and center reset were measured with a bounded Surge
+XT setup in Renoise 3.5.4 at both phrase LPBs; see the
+[timing checklist](../tests/acid/acid_timing_manual.md#targeted-glide-and-bend-playback).
+This does not establish delivery for other receivers or routes. A receiver that
+ignores these commands will not produce the intended bend; use PB Off for
+receiver-controlled note overlap.
 
 Phrase generation has been checked with Lua mocks for the current renderer
 contract. Renoise playback and routing checks for Program/Grid switching,

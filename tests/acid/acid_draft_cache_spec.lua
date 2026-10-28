@@ -162,4 +162,29 @@ package.loaded["model.draft_cache"]=nil
 local reloaded_cache=require("model.draft_cache")
 local timing_copy=assert(reloaded_cache.get(timing_song,timing_instrument,nil))
 assert(timing_copy.timing_mode=="triplet" and timing_copy.length==64)
+
+-- Independently scoped drafts retain their own timing and render settings on reopen.
+local other_instrument={name="Other timing",phrases={}}
+timing_song.instruments[2]=other_instrument
+local straight_source=sequencer.new_pattern(9)
+assert(reloaded_cache.put(timing_song,other_instrument,nil,straight_source,"play_once",12))
+package.loaded["model.draft_cache"]=nil
+reloaded_cache=require("model.draft_cache")
+local first,first_policy,first_pb=reloaded_cache.get(timing_song,timing_instrument,nil)
+local second,second_policy,second_pb=reloaded_cache.get(timing_song,other_instrument,nil)
+assert(first.timing_mode=="triplet" and first.length==64 and first_policy=="repeat" and first_pb==0)
+assert(second.timing_mode=="straight" and second.length==9 and second_policy=="play_once" and second_pb==12)
+
+-- A corrupt draft mode blocks all writes without discarding the original data.
+local valid_timing_data=timing_song.tool_data
+for _,replacement in ipairs({"|unknown|", "||"}) do
+  local corrupt=valid_timing_data:gsub("|triplet|",replacement,1)
+  timing_song.tool_data=corrupt
+  local loaded,load_error=pattern_store.read_draft(timing_song,1,0,"Timing")
+  assert(not loaded and load_error)
+  assert(not pattern_store.write_draft(timing_song,1,0,"Timing",timing_source,"repeat",0))
+  assert(not pattern_store.save(timing_song,91,straight_source,"repeat",0))
+  assert(timing_song.tool_data==corrupt)
+end
+timing_song.tool_data=valid_timing_data
 print("acid_draft_cache_spec: ok")

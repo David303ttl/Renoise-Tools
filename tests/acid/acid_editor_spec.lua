@@ -135,6 +135,9 @@ local plan=assert(interpreter.compile_cycle(off))
 assert(plan.steps[64].pitch_index==2 and plan.note_count==2)
 local timed=seq.new_pattern(64)
 assert(timed.timing_mode=="straight")
+timed.pitch_length=3
+timed.pitch_events[64]=seq.new_pitch(11,1,true,true)
+timed.time_events[64]="R"
 local timing_history=editor.new_history(timed,"repeat",0)
 local before=assert(interpreter.compile_cycle(timed))
 timed.timing_mode="triplet"
@@ -145,8 +148,17 @@ for i=1,64 do
   assert(before.steps[i].note==after.steps[i].note)
   assert(before.steps[i].pitch_index==after.steps[i].pitch_index)
 end
-assert(timing_history:undo().timing_mode=="straight")
-assert(timing_history:redo().timing_mode=="triplet")
+local straight=timing_history:undo()
+assert(straight.timing_mode=="straight" and not timing_history:can_undo())
+local triplet=timing_history:redo()
+assert(triplet.timing_mode=="triplet" and not timing_history:can_redo())
+assert(triplet.pitch_length==3 and triplet.time_events[64]=="R")
+assert(triplet.pitch_events[64].note==straight.pitch_events[64].note and
+  triplet.pitch_events[64].accent and triplet.pitch_events[64].slide)
+local reset=seq.new_pattern()
+assert(timing_history:record(reset,"repeat",0))
+assert(timing_history:undo().timing_mode=="triplet")
+assert(timing_history:redo().timing_mode=="straight")
 timed.timing_mode=nil
 assert(not seq.validate(timed))
 timed.timing_mode="other"

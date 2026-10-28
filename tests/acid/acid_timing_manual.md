@@ -39,6 +39,23 @@ Redo, Reset, draft save/reopen, switching owned phrases and instruments, and
 protection of modified or foreign phrases. Record each result rather than
 assuming a pass from phrase metadata alone.
 
+For pitch-bend ordering, inspect fresh attacks after center resets at LPB 8 and
+6: the reset is on the attack line and the note delay is one 1/256-line unit.
+Check successive attacks and loop wraps for drift, and record whether the
+receiver observes the reset before each attack. Cell placement alone does not
+establish receiver ordering or audio behavior.
+
+For source and editor verification, enter distinct PITCH flags and TIME commands
+on multiple pages, toggle timing in both Program and Grid, and confirm the
+memories are unchanged and the displayed division and N/4 or N/3 beat duration
+match. With Live Edit off, confirm the source stays marked dirty through view
+changes and Undo/Redo until Generate succeeds. Save and reopen an ungenerated
+draft and verify its timing; then generate, switch between owned phrases with
+different timing, PB Range and output settings, and verify each restores its own
+values. Test new and foreign destinations with Live Edit armed, and check that
+rapid timing changes commit only the latest source without modifying the foreign
+phrase. These source/editor checks remain unverified in Renoise.
+
 ## Targeted triplet renderer readback
 
 Status: **Readback passed; repeated playback across the wrap not yet checked**.

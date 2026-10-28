@@ -365,12 +365,12 @@ bend_source.pitch_events[2]=pitch(43,false,false)
 for index,command in ipairs({'N','T','N','R'}) do bend_source.time_events[index]=command end
 local bend_target=#instrument.phrases+1
 local phrase_pitch_bend=require('writers.phrase_pitch_bend')
-assert(phrase_pitch_bend.delivery_verified==true)
-phrase_pitch_bend.delivery_verified=false
+assert(phrase_pitch_bend.delivery_enabled==true)
+phrase_pitch_bend.delivery_enabled=false
 local fallback,fallback_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
 assert(fallback:line(5).note_columns[2].note_value==43,
   'unverified phrase delivery must retain the target NOTE')
-assert(fallback_status.message:find('receiver targeting are unverified',1,true))
+assert(fallback_status.message:find('delivery is unavailable',1,true))
 local _,_,fallback_range=store.load(song,fallback)
 assert(fallback_range==12,'fallback discarded the selected receiver range')
 for line=1,fallback.number_of_lines do
@@ -379,9 +379,11 @@ for line=1,fallback.number_of_lines do
   end
 end
 -- Exercise payload transactions without claiming that mocks validate host delivery.
-assert(phrase_pitch_bend.delivery_verified==false)
-phrase_pitch_bend.delivery_verified=true
-local bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
+assert(phrase_pitch_bend.delivery_enabled==false)
+phrase_pitch_bend.delivery_enabled=true
+local bent,bent_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
+assert(bent_status.message:find('depends on the receiver and routing',1,true),
+  'enabled phrase commands must not imply receiver delivery is verified')
 assert(ownership.status(bent)=='owned')
 local saved_bend,saved_policy,saved_range=store.load(song,bent)
 assert(saved_policy=='repeat' and saved_range==12 and same_source(saved_bend,bend_source))
@@ -451,7 +453,7 @@ assert(reorder_failure and reorder_failure.status=='suspended')
 assert(reorder_failure.message:find('target instrument moved',1,true),reorder_failure.message)
 assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
 assert(ownership.status(bent)=='owned','instrument reorder damaged the last-good phrase')
-phrase_pitch_bend.delivery_verified=true
+phrase_pitch_bend.delivery_enabled=true
 instrument=original_instrument
 -- An edit saved during asynchronous rendering must not reject the source commit
 -- or discard the newer draft that Live Edit will apply next.

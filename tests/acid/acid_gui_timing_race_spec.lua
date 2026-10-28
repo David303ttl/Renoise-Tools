@@ -69,6 +69,7 @@ local fail_draft_persistence=false
 local fail_draft_clear=false
 package.loaded["model.pattern_store"]={load=function(_,phrase)
   local source=require("model.sequencer").new_pattern(16)
+  if phrase.id==12 then source.timing_mode="triplet" end
   return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
 end,
   write_draft=function(_,index,phrase_id,name,pattern,policy,pb_range)
@@ -154,14 +155,30 @@ end
 local builder,dialog=open_gui()
 local timing=builder.views.acid_timing
 local generate=button(builder,"Generate / Regenerate ACID Phrase")
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
 generate:fire()
 local manual=tool.writer_calls[#tool.writer_calls]
 assert(manual.pattern.timing_mode=="straight" and manual.options.token:is_current(),
   "manual generation starts with a current straight snapshot")
 timing:fire(2)
+assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+assert(builder.views.acid_source_diagnostic.text:find("cycle 16/3 beats",1,true))
+builder.views.acid_editor_view:fire(2)
+assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+button(builder,"Undo"):fire()
+assert(timing.value==1 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+button(builder,"Redo"):fire()
+assert(timing.value==2 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 assert(not manual.options.token:is_current(),
   "changing timing invalidates the pending manual render")
 render_callbacks[#render_callbacks]({kind="complete",status="suspended",message="invalidated"})
+assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+generate:fire()
+render_callbacks[#render_callbacks]({kind="complete",status="committed",message="saved",
+  target={phrase_index=1}})
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
+  "only a successful current generation clears the dirty indication")
+timing:fire(2)
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
@@ -179,4 +196,67 @@ render_callbacks[#render_callbacks]({kind="complete",status="suspended",message=
 local second=tool.writer_calls[#tool.writer_calls]
 assert(second~=first and second.pattern.timing_mode=="straight" and second.options.token:is_current(),
   "Live Edit queues the newest timing after the stale render settles")
+live_checkbox:fire(false)
+render_callbacks[#render_callbacks]({kind="complete",status="suspended",message="disabled"})
+
+local phrase_choice=popup(builder,360)
+timing:fire(2)
+assert(pb_range_popup(builder).value==2, "timing edits retain phrase one PB Range")
+phrase_choice:fire(2)
+assert(timing.value==2 and pb_range_popup(builder).value==5,
+  "phrase two restores its committed timing and separate PB Range")
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
+timing:fire(1)
+phrase_choice:fire(1)
+assert(timing.value==2 and pb_range_popup(builder).value==2,
+  "switching back restores phrase one's timing draft and PB Range")
+assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+phrase_choice:fire(2)
+assert(timing.value==1 and pb_range_popup(builder).value==5,
+  "phrase two retains its independent timing draft")
+
+dialog.visible=false
+tool.app_idle_observable:fire()
+builder,dialog=open_gui()
+timing=builder.views.acid_timing
+phrase_choice=popup(builder,360)
+assert(timing.value==2 and pb_range_popup(builder).value==2,
+  "reopening restores phrase one's saved timing draft and PB Range")
+phrase_choice:fire(2)
+assert(timing.value==1 and pb_range_popup(builder).value==5,
+  "reopening preserves phrase two's separate timing draft")
+local target_popup=popup(builder,290)
+target_popup:fire(2)
+assert(timing.value==1 and pb_range_popup(builder).value==1,
+  "a new instrument draft starts with its own default timing and PB Range")
+timing:fire(2)
+target_popup:fire(1)
+assert(timing.value==2 and pb_range_popup(builder).value==2,
+  "returning to the first instrument restores its selected phrase draft")
+target_popup:fire(2)
+assert(timing.value==2 and pb_range_popup(builder).value==1,
+  "the second instrument retains its own uncommitted timing")
+local reopened_live
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="checkbox" and node.value==false then reopened_live=node end
+end
+assert(reopened_live)
+reopened_live:fire(true)
+local append=tool.writer_calls[#tool.writer_calls]
+local append_callback=render_callbacks[#render_callbacks]
+assert(append.instrument_index==2 and append.target==3 and append.pattern.timing_mode=="triplet",
+  "Live Edit snapshots the new instrument's triplet draft for append")
+phrase_choice:fire(2)
+assert(not append.options.token:is_current(),
+  "selecting a foreign phrase invalidates the pending append")
+assert(other_instrument.phrases[2]==other_foreign,
+  "foreign phrase remains untouched during Live Edit recovery")
+append_callback({kind="complete",status="suspended",message="invalidated"})
+local redirected=tool.writer_calls[#tool.writer_calls]
+assert(redirected~=append and redirected.instrument_index==2 and redirected.target==3 and
+  redirected.pattern.timing_mode=="triplet" and redirected.options.token:is_current(),
+  "foreign selection redirects the separate new-phrase draft with its timing intact: "..
+  tostring(redirected==append).." / "..tostring(redirected.instrument_index).." / "..
+  tostring(redirected.target).." / "..tostring(redirected.pattern.timing_mode).." / "..
+  tostring(redirected.options.token:is_current()))
 print("GUI timing render invalidation passed")

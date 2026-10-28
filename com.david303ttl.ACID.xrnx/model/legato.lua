@@ -156,7 +156,7 @@ local function bend_plan(semantic,timeline,layout,options)
   if (layout.lines_per_step or 2)~=2 then return nil,"pitch bend requires two phrase lines per TIME step" end
   if type(timeline)~="table" or type(timeline.events)~="table" then return nil,"gate timeline is incomplete" end
   local cells,commands,diagnostics={},{},{
-    "Pitch bend assumes the selected receiver range and isolated monophonic routing; PB Off retains receiver-controlled NOTE overlap."}
+    "Pitch bend delivery depends on the receiver and routing; set the selected range and use isolated monophonic routing. PB Off retains NOTE overlap."}
   local anchor,pitch,accent,column
   local collision
   local function put(line,col,values)

@@ -92,7 +92,7 @@ a guarded phrase/source commit. Failed writes preserve the last-good destination
 or retain identified recovery material if rollback cannot finish. Foreign,
 manually modified and duplicate-ID destinations cannot be overwritten.
 
-`model/pattern_store.lua` stores the current `ACID-PITCH-TIME-4` source records and separate
+`model/pattern_store.lua` stores the current `ACID-PITCH-TIME-5` source records and separate
 phrase output policy and PB Range in song-scoped tool data. `writers/phrase_ownership.lua`
 seals generated contents and loop properties. Only the current source and seal
 contracts are accepted.
