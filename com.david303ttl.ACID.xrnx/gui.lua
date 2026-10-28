@@ -751,9 +751,11 @@ function M.show()
         restoring_native_selection=false
       end
     end
-    local ok,current=pcall(function() return instrument.phrase_program end)
-    if ok and current~=state.phrase_program then
-      pcall(function() instrument.phrase_program=state.phrase_program end)
+    if state.selection_revision==native_selection_revision then
+      local ok,current=pcall(function() return instrument.phrase_program end)
+      if ok and current~=state.phrase_program then
+        pcall(function() instrument.phrase_program=state.phrase_program end)
+      end
     end
   end
   update_live_state=function()
