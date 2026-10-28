@@ -270,68 +270,12 @@ establish TB-303 sound fidelity; M3–M5 requirements remain.
 
 **Order:** harness and calibration → isolated voice-continuity experiment (research item 3) → gate implementation and glide decision → supported glide integration → accent → acceptance record. Run the continuity experiment before investing in glide integration; gate implementation does not depend on its success.
 
-### M3.1 — Establish a repeatable audio reference harness
+### M3.1 — Audio diagnostics
 
-**Implementation/evidence record (2026-10-27):** the development probe,
-tempo-aware trigger/start and actual-writer capture/read-back helpers, strict
-oracle validation, offline analyzer and normalization/provenance checks are
-implemented. Current Renoise 3.5.4 offline evidence includes the calibrated
-90/150 BPM grids, one-shot tails, Repeat NOTE/REST seam, tested 8/9-step moving
-glides and flat NOTE accent families. Identical exports demonstrate deterministic
-rendering, not independent loopback captures. See [articulation verification](../tests/acid/acid_articulation_manual.md)
-and [capture evidence](../tests/acid/audio_capture_evidence.md) for accepted
-scope and open checks. No manifest/API version changed.
-
-**Historical loopback measurement audit (2026-10-27):** this records the earlier
-endpoint-specific analysis; later offline results supersede its open status only
-for the cases documented above and in the evidence index. The original 6 ms retrigger miss used an
-unadjusted -60 dBFS onset floor on a +44.58268 dB normalized copy. The analyzer
-now shifts that source-relative floor by the receipt gain; a retained-waveform
-rerun measures the authored 250 ms interval with zero onset error. The 5 ms
-release plus 5 ms tolerance now determines the calibration silence-window start.
-The corrected normalized grid still fails 67 of 68 windows, and the held-note
-release result changes from +10 ms to -5 ms after the same onset correction.
-The realized envelope is unresolved. The probe now reads the current device's
-runtime `fade_amount` maximum for its shortest-release candidate; Renoise 3.5.4
-reports 765.765 while the API definition lists 0–4095. Rebuild/read-back/audio
-measurement must verify this control before calibration. No new gate-writer capture or three-run
-acceptance has passed; M3-B/M3-C support remains blocked on acoustic evidence.
-
-**Capture-level follow-up (2026-10-27):** Renoise's track meter was about
--5.6 dBFS peak while the raw loopback WAV was -50.68 dBFS peak. Audacity's
-Recording Level was set to 97% (its separate Playback Level stayed at 76%;
-Windows system playback volume was not changed). An exploratory held capture
-then measured -6.25 dBFS peak and -81 dB stereo difference. It ran long enough
-to include three extra phrase repeats, so it is invalid for acceptance; its
-+9 ms release crossing and inconclusive attack signature do not settle the
-envelope. The [capture manual](../tests/acid/renoise_articulation_probe_manual.md)
-now records this route-specific level setting and the stop-before-wrap rule.
-Repeat grid calibration, held/retrigger controls and writer captures at this
-setting before interpreting envelope or scheduler behavior.
-
-**Development deliverables** (outside the installable tool):
-
-- `tests/acid/renoise_articulation_probe.lua`, `renoise_articulation_trigger.lua`, `renoise_articulation_start.lua`, `renoise_articulation_flat_control.lua`, `renoise_articulation_probe_envelope.lua` and `renoise_articulation_probe_manual.md`: create a disposable named instrument, controlled phrases and a dedicated song-pattern host trigger, start the exact selected sequence position for capture, toggle a flat-envelope pitch/level control and the diagnostic envelope, reuse the safety conventions of the loop probes, and capture the actual ACID writer output as well as independent native controls. Refuse duplicate named probe objects; clean up only objects created by this run. Keep the existing sampler inspection read-only.
-- `tests/acid/fixtures/audio_cases.json`: authored, machine-readable acoustic oracle, separate from `loop_cases.json` semantic expectations.
-- `tests/acid/validate_audio_oracle.ps1`: validate schema, units, windows, references and case completeness without Renoise or WAVs.
-- `tests/acid/analyze_articulation_audio.ps1`: PowerShell 7 offline WAV analyzer with documented PCM decoding, alignment, RMS, onset and pitch algorithms; emit machine-readable results and a readable per-window report. No private application or audio-library dependency. Tests must include synthetic known-good signals and deliberate onset, drift, pitch, gap, clipping and retrigger failures; do not validate it only against ACID output.
-- `tests/acid/acid_articulation_manual.md`: configuration, evidence index, support matrix, negative results and unresolved decisions. Raw WAVs and scratch reports stay untracked; record SHA-256 hashes and portable artifact references so a retained capture can be checked again.
-
-**Reference instrument contract:** the probe builds the sample and profile; hand-built alternatives do not count until all settings match. Generate one deterministic 168-frame mono saw cycle at 44100 Hz, loop forward over the entire cycle, root note 48, mapping 0–119, no transpose/finetune, fixed interpolation and no sample FX, filter, randomization, velocity-to-filter or pitch modulation. Use linear interpolation and record the generated sample hash. Derive expected frequency from 44100/168 Hz at note 48 and the mapped semitone ratio, not equal-tempered C: this sample is approximately six cents sharp. Use NNA Cut, normal polyphonic playback and explicit OFF; compare native Mono/Glide only on a separate disposable variant. Set gain for captured peaks below -6 dBFS. Use a diagnostic amplitude envelope with 10 ms linear attack, 20 ms decay to 0.65 sustain, and 5 ms release after OFF. Disable envelope looping and all other modulation. This attack/decay signature makes a repeated envelope detectable. Measure the actual realized envelope: if Renoise's available envelope time base cannot express these values, stop, inspect the pinned API 6.2 definitions/offline docs, and record a representable profile and revised oracle before capturing acceptance. Never silently approximate it. Use a flat-envelope companion control to isolate pitch and level analysis. Record all mappings, envelope points/time base, gains, NNA, interpolation, modulation routing and trigger settings in the capture metadata.
-
-**Demo-compatible capture protocol:**
-
-1. Use Renoise WASAPI in shared mode and Audacity Windows WASAPI loopback on the exact same playback endpoint. This desktop exposes 48000 Hz for that endpoint through WASAPI; set Renoise, the Audacity project and export to 48000 Hz without resampling. Export unnormalized PCM24 WAV (PCM16 is accepted when PCM24 is unavailable). Keep the Windows system volume unchanged. Disable OS enhancements, spatial processing, auto gain, recorder effects and monitoring feedback. Mute other applications and unrelated Renoise tracks. OBS is an alternative only after its unprocessed lossless PCM path passes the same calibration; lossy capture is invalid.
-2. Record the Renoise build/edition, capture application/version, endpoint, driver, buffer size, BPM, song LPB/TPL, phrase LPB/layout, trigger mode and profile hash. Start recording at least one second before a single sustained host trigger. The probe trigger pattern is 224 lines (14 seconds), with its only note at line 1 and OFF at line 137; the 8.5-second phrase contains one cold pass and three steady passes. Capture at least two seconds beyond OFF, then stop before the song sequence wraps and retriggers. Do not periodically retrigger the host note.
-3. Run primary cases at 120 BPM, repeat gate/glide acceptance at 90 and 150 BPM. Timing derives from BPM, never recorder start time. Align once to the first detected onset; preserve all subsequent offsets. Do not align each cycle independently or time-stretch/resample to hide drift. All-rest cases require an independently captured synchronization marker followed by the measured silent region; do not infer their origin from silence.
-4. Before any A/B result counts, capture a known M2 grid/marker case from `loop_cases.json` through this exact path (17-step cold intro plus three steady 17-step cycles, with line 69 as the exclusive-end sentinel). Author its expected marker pitches/positions in the audio oracle. Require correct order, no missing/extra markers and every onset/period within 5 ms after single alignment. Freeze the -60 dBFS onset floor against the live route and synthetic positive/negative controls. The user permits explicit normalized analysis copies: retain originals, record source/output hashes and applied gain, and rerun calibration and controls under the same gain policy; never silently normalize a failing candidate. Optional mono averaging must be explicit in its receipt and qualifies a separate mono analysis path. Keep Windows volume unchanged. Repeat calibration after changing endpoint, driver, profile or capture settings. Demo's disabled offline render is not a blocker for this protocol; an available offline renderer is an optional cross-check, not a replacement for loopback calibration.
-5. Capture each A/B pair three times with unchanged configuration. Reject clipping, channel mismatch, contamination, missing tail, failed calibration or excess drift as invalid capture. Keep invalid distinct from acoustic fail and unsupported; no invalid result counts as pass.
-
-**Oracle contract:** use schema identifier `ACID-AUDIO-ORACLE-1` with shared profile and capture requirements. Each case has a stable behavior-based ID, canonical source (PITCH/TIME, active span, length), playback/renderer/rate, BPM/LPB/TPL, trigger context, cycle count and explicit expected windows relative to the aligned origin. Store times in step fractions or milliseconds with declared units; expand them independently from the runtime scheduler. Specify expected attacks and forbidden-attack windows, OFF edges and release-tail deadlines, sustained/silent windows, pitch targets in Renoise note values with cents tolerances, glide direction/settling windows, and amplitude/continuity bounds. Distinguish cold, first steady and subsequent steady windows. Include separate A/B control IDs and the measurement each control validates. Expectations may not be generated by the code being tested.
-
-**Initial numerical acceptance policy:** onset and release-envelope edge tolerance ±5 ms; cycle drift at most 5 ms over the full capture after one alignment; stable pitch within ±15 cents in windows of at least 40 ms; silence RMS below -60 dBFS after the 5 ms release plus 5 ms tolerance. Analyze continuity/release RMS over 5 ms windows with 1 ms hops, and onsets over 10 ms windows to suppress low-pitch saw-cycle dips; require at least 20 ms of silence where a gap is expected. A requested attack must match the calibrated attack/decay signature; calibrate detection with deliberate retriggers, same-pitch holds and a silent negative control. For connected transitions, forbid that attack signature within ±20 ms of the target and forbid a dip greater than 6 dB lasting 4 ms relative to adjacent sustained RMS. Compare pitch-dependent RMS against the matching hold control, not raw waveform discontinuities. Ambiguous pitch/attack estimates are inconclusive and block support; passing continuity measures establishes observable behavior for this profile, not proof of Renoise's internal voice identity. Freeze detector thresholds against positive/negative controls before evaluating candidates; any revision requires rationale and rerunning all affected captures, never tuning only a failing candidate.
-
-**Required fixture families:** isolated NOTE; NOTE-TIE and NOTE-TIE-TIE; adjacent equal/different NOTES; NOTE-REST-NOTE; all-rest; ending REST; trailing TIE before fresh NOTE and before slide; one-step repeat; outgoing versus incoming flags; same-note/up/down/octave slides; short and tied-long slides; cold-to-steady and steady-to-steady slide seams; slide interrupted by REST; accents on/off, consecutive accents, accent changes within a slide chain. Exercise lengths 1/16/17/32/33/48/49/64 structurally and capture 1/16/17/64 with seam articulation. Test host OFF, fresh retrigger, stop/start and seek separately. Selective and keymapped triggering have separate support rows; coverage in one never enables the other.
+- Reference fixtures, native probes and offline analyzer checks are available under `tests/acid/`.
+- Accepted M3 articulation evidence is indexed in [audio evidence](../tests/acid/audio_capture_evidence.md).
+- Capture scripts, loopback calibration and acoustic oracles are **optional diagnostics for a reproducible defect**, not recurring milestone or M4 merge gates.
+- Keep useful deterministic Lua/oracle tests. Do not launch a new capture matrix without a concrete runtime regression.
 
 ### M3.2 — Correct gate and release semantics
 **Latest integration/evidence (2026-10-27):** all 21 authored one-shot NOTE/TIE/TIE-TIE tail, TIE-before-fresh-NOTE, two-TIE-before-fresh-NOTE, Repeat NOTE/REST and Repeat TIE/REST protocols pass at 90/120/150 BPM on the exact read-only diagnostic profile (selective, LPB8/TPL12, no groove). The latest 12 fresh-successor/Repeat REST cases contribute 36 checked WAV files: 12 unique PCM renders and 24 byte-identical copies, all passing with no invalid takes. Earlier invalid two-TIE output remains retained; fresh passing renders supersede it for the current result. See [capture evidence](../tests/acid/audio_capture_evidence.md). Repeated offline exports establish deterministic output, not independent hardware captures.
@@ -557,29 +501,13 @@ not run in this workspace; functional acceptance remains open.
 
 **Gate U:** all warning/error classes have deterministic mocked GUI tests plus manual 125%/150% Windows scaling checks; status readable without truncating the offending step and cause.
 
-### M3.5.6 — Test matrix, local gates and delivery slices
+### M3.5.6 — Functional acceptance
 
-**Mandatory dimensions (pairwise coverage plus named cross-products):**
-
-| Dimension | Cases |
-| --- | --- |
-| Target | Sample instrument; plugin-only VST/VST3; MIDI-only; sample+plugin hybrid; plugin alias; empty instrument; missing plugin/disconnected MIDI |
-| Source | NOTE/TIE/REST; outgoing/loop SLIDE; same-pitch SLIDE; connected and unconnected ACCENT; adjacent slides; long TIE; all-REST; all-NOTE; short/64-step source |
-| Interval | 0, +/-1, +/-4, +/-12, +/-25 and legal pitch-range extremes |
-| Layout | 1, 8, 9, 16, 17, 32, 33, 48, 49, 64 steps; irregular NOTE/TIE/REST; 16/17, 32/33, 48/49, last/first seams |
-| Transport | BPM 73, 90, 120, 137, 150 and tempo change during playback; song LPB/TPL variations; groove on/off; stop, start, seek |
-| Ownership | New owned phrase; regenerate; manual phrase modification; foreign phrase; duplicate ID; reordering/deletion; interrupted job |
-| Live Edit | Single edit, rapid batches, in-flight edit, approximation, transient error and retry, target change, song reopen, undo/redo |
-
-**Test obligations:**
-
-1. **Unit/fixture:** test semantic timeline across all targets independent of device configuration; property/fuzz seeds captured on failure; targeted 25-semitone / 2-line glide must be rendered or explicitly approximated, never refused merely for fixed 0G20.
-2. **Writer:** prove plan completeness, safe native effects, exact NOTE/OFF destinations, Repeat seams, adequate cancellations, staging/rollback, correct phrase metadata and current-format persistence.
-3. **Integration:** in Renoise, create/regenerate plugin-only and empty-instrument phrases with **zero loaded samples**; verify sample phrases still work; verify instrument plugin/MIDI output without requiring a rendered sample.
-4. **Audio/MIDI:** inspect plugin note-on/note-off/velocity and affected sample glide/gate offline or by controlled capture. Record fidelity grade separately from generation success.
-5. **Lifecycle:** verify Live Edit while Renoise plays, then stop/start/seek, change tempo/target, recover from error and save/reopen. No stolen target or silently unchecked Live Edit.
-6. **Regression:** rerun M1/M2 source, M3 reference captures/probes where relevant, unrelated ARP specs if shared code changes, packaging and installed XRNX smoke tests. New functionality may approximate outside verified M3 captures but must not silently regress existing measured behavior.
-7. **Local execution only:** PowerShell/VS Code Lua specs; no GitHub Actions/workflow requirement. Record manual Renoise results as pass/fail/not run, not inferred from mocks.
+- **Local:** semantic NOTE/TIE/REST, glide fallback, phrase capacity, ownership, target identity, cancellation, rollback and draft persistence.
+- **Renoise:** sample and one available plugin instrument; Program/Grid roundtrip, Repeat/Play Once, phrase selection, in-place regeneration and save/reopen.
+- **Live Edit:** latest edit wins, stale render invalidation, no automatic destination creation on instrument switch or target loss.
+- **Optional diagnostics:** additional receiver audio, external MIDI capture, hybrid/alias fidelity and loopback analysis are not M4 blockers. Keep target-specific support limitations explicit.
+- Run tests locally with PowerShell 7 and Renoise. No workflows or capture campaigns.
 
 **Current implementation and acceptance status:**
 
@@ -605,7 +533,7 @@ not run in this workspace; functional acceptance remains open.
 
 ## 5B. M3.6 — Plugin/MIDI pitch-bend slide (small follow-up; before M4)
 
-**Status (2026-10-28):** implementation complete; the bounded reference-VST P0 bend/reset check passed in Renoise 3.5.4 Demo with Surge XT VST3 in slot `03` (±12 range, portamento off, phrase-contained M1, +6.99 semitones and center reset). The matching short C→G phrase slide also reached its measured endpoint. This supersedes the earlier “P0 remains unrun” status but covers only that receiver setup. PB Off comparisons, seam and multi-slide cases, other targets, undo/save-reopen and broader Live Edit checks remain unverified. See the [M3.6 manual record](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend) and [audio receipts](../tests/acid/audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28). **Baseline:** `develop` at `4f1e9881640de3714e58dcf8ec04adc889447d24`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
+**Status:** implemented; reference Surge XT phrase M1 bend and center reset passed at ±12. Other receivers are not certified. **Scope:** manual PB Range assumption only; no VST profiling or configuration. [Evidence](../tests/acid/audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28).
 
 **Implementation record:** the editor exposes the phrase-specific PB Range
 setting with Undo/Redo, draft persistence and Live Edit. The protected phrase
@@ -683,7 +611,7 @@ not establish delivery or glide behavior for other receivers or routes.
 
 ## 6. M4 — Exact timing modes and tempo-independent phrase output
 
-**Status (2026-10-28):** timing implementation and local regression coverage are present on `feature/M4`. Static Renoise 3.5.4 offline audio checks passed for the complete BPM/LPB matrix, the six duration fixtures and explicit 3/4, 4/4 and 7/8 pattern-boundary cases. M4 remains **BLOCKED** by the unmeasured independent host-beat reference, dynamic transport checks, full articulation and source/target acceptance. See the [measured timing record](../tests/acid/acid_timing_manual.md#measured-phrase-period-and-bpmlpb-acceptance) and [audio receipts](../tests/acid/audio_capture_evidence.md#m4-phrase-timing-audio-receipts-2026-10-28). **Goal:** straight sixteenth steps and eighth-note-triplet steps must render as exact musical durations, independently of song BPM, song LPB and bar grouping, while retaining the existing NOTE/TIE/REST, SLIDE, PB, Repeat/Play Once, ownership and Live Edit guarantees.
+**Status:** static timing accepted; M4 remains open for Renoise instrument/phrase synchronization and regeneration safety (M4.7). No further audio measurement or capture matrix is required for closure. [Timing evidence](../tests/acid/acid_timing_manual.md#measured-phrase-period-and-bpmlpb-acceptance).
 
 ### M4.0 — Fixed product and API contract (P0; decisions closed)
 
@@ -749,44 +677,39 @@ not establish delivery or glide behavior for other receivers or routes.
 
 **Blocker discipline:** first reproduce a failure in a deterministic local Lua spec or one small in-Renoise fixture; identify the source/host capability; use the specified narrow fallback; re-run full regression tests. If no safe fallback can produce the correct NOTE/REST musical timeline, report a hard phrase render failure without committing. Never claim every arbitrary VST, external MIDI receiver, legacy song or host groove obeys ACID's articulation solely because valid note cells were written.
 
-The implementation selects the pulse and phrase LPB from the timing layout,
-validates staged cells and metadata, rejects unsafe commits, and reports legacy
-speed and active groove as unverified. The native pitch-bend switch enables
-command generation; it does not certify receiver delivery. A bounded Surge XT
-phrase bend and center reset was measured at both LPBs as recorded in the
-[timing checklist](../tests/acid/acid_timing_manual.md#targeted-glide-and-bend-playback).
-Other receivers, reset/attack ordering and the broader timing acceptance remain
-subject to the documented host checks.
+Phrase timing uses LPB 8/6 with validated staged cells and protected commits. Receiver-specific sound quality remains outside the M4 gate.
 
-### M4.5 — Delivery slices and acceptance gates
+### M4.5 — Closure gates
 
-1. **Timing source + pure tests:** `model/timing.lua`, `model/sequencer.lua`, cycle-unit/line oracles, current-format store/draft and Undo/Redo. Test all 1–64 lengths in both modes, independent PITCH span, leading TIE normalization and mode toggle with unedited 64-C defaults. Gate: exact integer positions and duration invariants.
-2. **Native renderer + validation:** Pattrns pulse selection, phrase LPB 8/6, shuffle 0, 2-line layout, Play Once/Repeat endpoints, readback and guarded write. Gate: all lengths 1–64, including 1/9/12/15/16/17/33/49/64, render without drift or loss; N=64 Repeat = 257 lines in either mode; non-silent and all-REST phrases; safe refusal/rollback injection.
-3. **Articulation regression:** NOTE/TIE/REST, half-step releases, sample `0G`, plugin overlap, PB Off/On, same-pitch hold, overflow and loop-seam bend resets in both LPBs. Gate: no overwritten cells, missing release, stuck pitch command or implicit forced retrigger; explicitly report existing receiver-dependent limitations.
-4. **GUI/live source wiring:** dropdown, Program/Grid, preview, manual Generate, Live Edit, rapid toggles/cancellations, selection sync, draft save/reopen, source Undo/Redo, target switching and owned/foreign safety. Gate: no stale commit and no source/phrase identity crossing.
-5. **One bounded Renoise 3.5+ manual pass:** use a simple test instrument and one available pitch-bend VST. Verify rendered positions and audible NOTE/REST with Straight and Triplet; 16 straight = 12 triplet = four quarter-note beats; 12 straight = 9 triplet = three; 15 triplet = five. Check 3/4, 4/4 and a non-bar-aligned 7/8 arrangement without adding an ACID meter setting. At song LPB **2, 3, 4, 6, 8, 12, 16, 32** and BPM **60, 120, 180**, generated phrase lengths remain identical in beats. Change LPB and BPM during playback without regeneration; verify phrase-local LPB and correct tempo scaling. Exercise transport start/stop/seek, loop-seam note release, groove enabled/disabled, and one reference VST PB bend/reset at both phrase LPBs. Record observed outcomes; mocks do not certify audio or external MIDI.
-6. **Local release check:** run `./scripts/run_tests.ps1 -Tool ACID`, `./tests/acid/validate_loop_oracle.ps1` and `./scripts/package.ps1 -Tool ACID` (PowerShell 7). Add named deterministic timing, writer, store, Live Edit and API-mock regressions; no GitHub Actions. Confirm package manifest/runtime layout and that ARP/DigitaktSampleChain are untouched.
+1. **Timing:** exact model, source/draft persistence, phrase LPB 8/6, repeat endpoints, collision/ownership guards; accepted in Lua and native Renoise.
+2. **Renoise behavior:** complete M4.7 instrument and phrase synchronization, in-place regeneration, new-phrase intent, Live Edit cancellation, source/draft preservation and native selection safety.
+3. **Manual smoke:** one disposable song; switch instruments and owned phrases while ACID is open, create once, regenerate in place, save/reopen and exercise Live Edit during playback. Check transport stop/start/seek and tempo response. No new WAV export or measurement required.
+4. **Local:** `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` and `pwsh -NoProfile -File ./scripts/package.ps1 -Tool ACID` after implementation changes.
 
-**M4 acceptance is blocked until:** both modes produce source-duration-exact playable phrase grids and repeat without accumulated drift in the validated modern Renoise timing model; M3.5/3.6 semantic, ownership and Live Edit regressions pass; required in-Renoise timing checks have recorded results; receiver-specific PB claims are supported by the bounded M3.6 reference-VST check or explicitly remain unverified. Valid current-format source must remain editable even when an actual host/resource safety failure prevents a phrase commit. No timing mode may be only a cosmetic GUI label.
+### M4.6 — Accepted evidence
 
-### M4.6 — Acceptance record (2026-10-28)
+| Scope | Result |
+| --- | --- |
+| Static Straight/Triplet playback | Pass: 48/48 BPM × song-LPB × mode WAVs; four traversals, ≤0.667 ms onset error |
+| Phrase duration and repeat | Pass: six duration fixtures, including 64-step Triplet; no cumulative drift |
+| Meter/pattern boundaries | Pass: 3/4, 4/4, 7/8 |
+| Native sample slide | Pass: bounded glide/REST at phrase LPB 8 and 6 |
+| Plugin PB | Pass: bounded Surge XT ±12 bend and center reset at phrase LPB 8 and 6 |
+| Local verification | Pass: 32 ACID specs, oracle controls, 25-file ACID package and archive licenses |
 
-| Gate | Result | Evidence / remaining scope |
-| --- | --- | --- |
-| Local ACID Lua suite | Pass | 32 specs passed |
-| Audio oracle and analyzer controls | Pass | 63 oracle cases, 68 calibration onsets and synthetic analyzer controls passed |
-| Packaging and archive licenses | Pass | ACID package built with 25 runtime files; 3 XRNX archive-license checks passed |
-| Straight/Triplet BPM and LPB audio matrix | Pass | 48/48 Renoise offline WAVs: song LPB 2, 3, 4, 6, 8, 12, 16 and 32 at BPM 60, 120 and 180 |
-| Six required duration fixtures | Pass | Four-traversal measured onset schedules for Straight 16/12 and Triplet 12/9/15/64 |
-| Explicit meter/pattern-boundary cases | Pass | 3/4 (24-line), 4/4 (32-line) and 7/8 (28-line) boundaries with a single host trigger |
-| Independent host beat reference | Not run | No separately captured Renoise metronome/click reference; static WAV timestamps were compared with the BPM/step-duration formula |
-| Sample/VST articulation and PB regression | Partial | Bounded LPB 8/6 sample glide and Surge XT ±12 bend/reset captures passed; articulation families, seams, PB Off and receiver breadth remain open |
-| Playback lifecycle and live timing | Not run | Stop/start, seek, loop wraps, Live Edit during playback, live BPM/LPB changes and groove comparison |
-| M3.5 source, target and persistence acceptance | Partial | Program-view timing selection and Generate were exercised; Program/Grid roundtrip, all target types, undo/save-reopen, async destination safety, song switch and scaling checks remain unrun |
+Results are retained in [timing evidence](../tests/acid/acid_timing_manual.md) and [audio evidence](../tests/acid/audio_capture_evidence.md). Independent click-track capture, new loopback calibration, repeated WAV exports and a VST compatibility matrix are **not M4 gates**. Repeat a targeted diagnostic only for a reproducible regression affecting that behavior.
 
-**Recommendation: M4 BLOCKED.** The static timing evidence passes, but the
-remaining host acceptance is required before M4 can be accepted. Do not merge
-or begin M5 until the remaining checks are completed and signed off.
+### M4.7 — Instrument/phrase synchronization and regeneration safety (P0)
+
+- **Live inventory:** newly added, deleted, renamed and reordered Renoise instruments appear in ACID without reopening. Track native selected instrument and phrase using supported API 6.2 observables and a guarded idle update. Detach notifiers on close/song change.
+- **Binding:** resolve the exact instrument object and ACID-owned phrase identity, not a cached index. Follow user-initiated native selection; ignore internal staging selection changes. Preserve per-phrase source, timing, PB Range, output policy and uncommitted drafts on A → B → C → A switches.
+- **Regenerate:** require a valid, explicit bound owned phrase. Replace it in place; keep phrase count, identity and native playback program stable. Do not fall back to the first phrase or to append on missing, modified, foreign or deleted destinations.
+- **Create:** append exactly one phrase only after explicit New Phrase/Generate intent. Selecting a newly added or empty instrument never creates a phrase. Instrument/phrase switching alone never commits or starts Live Edit generation.
+- **Asynchronous safety:** capture instrument/phrase identity and selection revision; reject stale or deleted targets and in-flight output on user context changes without touching unrelated content. Failed commits preserve last-good phrases and editable drafts. No automatic reroute to a different instrument.
+- **UI:** keep instrument and destination options current and show a clear Create versus Regenerate action. A missing or unsafe destination reports the actual reason and requires explicit resolution.
+- **Tests:** deterministic notifier, add/delete/reorder/rename, duplicate-ID, rapid-switch, stale-callback, ownership and rollback regressions; one Renoise session exercising selection, generation, Live Edit and save/reopen.
+
+**M4 closure:** M4.7 passes local regressions and the short Renoise manual smoke. No additional acoustic research is required.
 
 ---
 
@@ -926,10 +849,11 @@ For every such decision, supply **reference + decision + test fixture + manual p
 
 | Priority | Action | Exit criterion |
 | --- | --- | --- |
-| 1 | Run the M3.5 Renoise editor, output-policy, draft save/reopen and Live Edit checks. | Manual results cover selected second-phrase regeneration, LAST STEP 32/64, Reset/Undo/Redo, Program/Grid, recoverable failure, retry and destination loss. |
-| 2 | Verify sample, plugin-only, MIDI-only, hybrid/alias and empty targets. | Note order, velocity/OFF delivery, routing dependencies and explicit approximations are recorded. |
-| 3 | Verify stop/start/seek and Live Edit during playback; install the packaged XRNX and check 125%/150% Windows scaling. | Host version and target-specific results are recorded without inferring playback from mocks. |
-| 4 | Run the implemented **M3.6** PB Range single native phrase M1 verification and focused manual checks. | Confirm usable VST pitch bend/reset, or document the exact host limitation without building another MIDI system. |
-| 5 | Begin M4/M5 after M3.5 functional acceptance and bounded M3.6 go/no-go or delivery. | No sprawling VST compatibility test program; unresolved receiver-specific behavior stays documented. |
+| P0 | M4.7 live instrument inventory and native selection sync | Add, rename, reorder, delete and switch instruments without reopening or stale bindings |
+| P0 | Exact owned phrase regeneration and explicit creation | Existing phrase regenerated in place; switching and target loss never append |
+| P0 | Live Edit and persistence safety | In-flight changes never write to stale targets; drafts, source and phrase ownership survive save/reopen |
+| P1 | One disposable-song host smoke and local tests | Source, destination, playback and transport remain usable; regression and package checks pass |
 
-**Blocking release rule:** M3 reference calibration is not a substitute for a usable sequencer. M3.5 functional guarantees are required before M6 release acceptance; hardware-faithful analog sound remains a separately labeled research/fidelity objective.
+
+
+**Blocking release rule:** M4 acceptance requires functional destination safety. Broader MIDI/hybrid/VST compatibility and hardware-faithful acoustic research belong to M6 or targeted diagnostics.
