@@ -127,8 +127,8 @@ function M.clear(song, instrument, phrase)
   local removed=false
   if index and (not phrase or phrase_id(phrase)>0) then
     local ok,err=store.clear_draft(song,index,phrase_id(phrase),instrument.name)
-    if not ok then return nil,err end
-    removed=ok
+    if ok==nil then return nil,err end
+    removed=ok==true
   end
   if not by_phrase or not by_phrase[key] then return removed end
   by_phrase[key] = nil

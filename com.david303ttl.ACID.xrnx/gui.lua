@@ -18,7 +18,18 @@ local active_live
 local active_live_checkbox
 local idle_observable
 local idle_notifier
+local selected_phrase_observable
+local selected_phrase_notifier
+local function detach_selected_phrase_watch()
+  if selected_phrase_observable and selected_phrase_notifier then
+    pcall(function()
+      selected_phrase_observable:remove_notifier(selected_phrase_notifier)
+    end)
+  end
+  selected_phrase_observable,selected_phrase_notifier=nil,nil
+end
 local function detach_dialog_watch()
+  detach_selected_phrase_watch()
   if idle_observable and idle_notifier then
     pcall(function() idle_observable:remove_notifier(idle_notifier) end)
   end
@@ -137,6 +148,19 @@ function M.show()
   local accent=vb:checkbox{value=false}
   local slide=vb:checkbox{value=false}
   local phrase_choice,phrase_targets
+  local bind_selected_phrase_watch
+  local apply_pending_selected_phrase_selection
+  local pending_selected_phrase_instrument,pending_selected_phrase
+  local selected_phrase_sync_suppressions=0
+  local function suppress_selected_phrase_sync()
+    selected_phrase_sync_suppressions=selected_phrase_sync_suppressions+1
+    local released=false
+    return function()
+      if released then return end
+      released=true
+      selected_phrase_sync_suppressions=math.max(0,selected_phrase_sync_suppressions-1)
+    end
+  end
   local live_checkbox
   local live
   local live_target
@@ -571,7 +595,10 @@ function M.show()
   phrase_names,phrase_targets=options_for_instrument()
   phrase_choice=vb:popup{width=360,items=phrase_names,
     value=#phrase_names,notifier=function(n)
-      if not loading then load_target(n) end
+      if not loading then
+        pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
+        load_target(n)
+      end
     end}
   local function select_instrument(n)
     selected_instrument=n
@@ -581,15 +608,22 @@ function M.show()
     phrase_choice.items=options
     local chosen=#options
     local instrument=song.instruments[n]
-    local current=instrument.phrase_program
-    if type(current)=="number" and current>=1 and
-      current<=#instrument.phrases and
-      ownership.status(instrument.phrases[current])=="owned" then
-      chosen=current
+    local current_phrase=rawequal(song.selected_instrument,instrument) and
+      song.selected_phrase or nil
+    if current_phrase then
+      for index,phrase in ipairs(instrument.phrases) do
+        if rawequal(phrase,current_phrase) and ownership.status(phrase)=="owned" then
+          chosen=index
+          break
+        end
+      end
     end
     phrase_choice.value=chosen
     loading=false
     load_target(chosen)
+    if bind_selected_phrase_watch then
+      bind_selected_phrase_watch()
+    end
   end
   local function refresh_phrase_choices(preferred_target)
     local chosen=phrase_choice.value
@@ -604,6 +638,53 @@ function M.show()
     phrase_choice.items=options
     phrase_choice.value=math.min(chosen,#options)
     loading=false
+  end
+  bind_selected_phrase_watch=function()
+    detach_selected_phrase_watch()
+    pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
+    local observable=song.selected_phrase_observable
+    if not observable or type(observable.add_notifier)~="function" or
+        type(observable.remove_notifier)~="function" then
+      return
+    end
+    local notifier=function()
+      if opened~=generation or loading or selected_phrase_sync_suppressions>0 then
+        return
+      end
+      local instrument=song.selected_instrument
+      if not instrument or
+          not rawequal(song.instruments[selected_instrument],instrument) then
+        return
+      end
+      pending_selected_phrase_instrument=instrument
+      pending_selected_phrase=song.selected_phrase
+    end
+    local ok=pcall(function() observable:add_notifier(notifier) end)
+    if ok then
+      selected_phrase_observable=observable
+      selected_phrase_notifier=notifier
+    end
+  end
+  apply_pending_selected_phrase_selection=function()
+    local instrument,phrase=pending_selected_phrase_instrument,pending_selected_phrase
+    pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
+    if not instrument or not phrase or opened~=generation or
+        selected_phrase_sync_suppressions>0 or
+        not rawequal(song.instruments[selected_instrument],instrument) then
+      return false
+    end
+    local index
+    for position,item in ipairs(instrument.phrases) do
+      if rawequal(item,phrase) then index=position;break end
+    end
+    if not index then return false end
+    local selected_target=phrase_targets[phrase_choice.value]
+    if not phrase or (selected_target==index and rawequal(bound_phrase,phrase)) then
+      return false
+    end
+    refresh_phrase_choices(index)
+    load_target(index)
+    return true
   end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)select_instrument(n) end}
@@ -649,6 +730,31 @@ function M.show()
     local instrument_name=instrument and instrument.name or "(unnamed instrument)"
     local phrase_name=phrase and phrase.name~="" and phrase.name or "(unnamed phrase)"
     return string.format("%s / %02d %s",instrument_name,index,phrase_name)
+  end
+  local function phrase_position(instrument,phrase)
+    if not instrument or not phrase then return nil end
+    for index,item in ipairs(instrument.phrases) do
+      if rawequal(item,phrase) then return index end
+    end
+  end
+  local function capture_native_phrase_state(instrument)
+    local selected=rawequal(song.selected_instrument,instrument)
+    local phrase=selected and song.selected_phrase or nil
+    return {instrument=instrument,phrase=phrase,
+      phrase_program=instrument.phrase_program,selected=selected}
+  end
+  local function restore_native_phrase_state(state)
+    if not state then return end
+    local instrument=state.instrument
+    if state.selected and rawequal(song.selected_instrument,instrument) then
+      -- Renoise phrase staging can change both the edit row and playback program.
+      local index=phrase_position(instrument,state.phrase)
+      if index then pcall(function() instrument.phrase_program=index end) end
+    end
+    local ok,current=pcall(function() return instrument.phrase_program end)
+    if ok and current~=state.phrase_program then
+      pcall(function() instrument.phrase_program=state.phrase_program end)
+    end
   end
   update_live_state=function()
     if not live then
@@ -698,13 +804,18 @@ function M.show()
     local requested_revision=revision
     local requested_pb_range=pb_range
     local requested_instrument,requested_phrase=bound_instrument,bound_phrase
-    local success,reason=phrase_writer.generate(selected_instrument,
+    local requested_native_phrase_state=requested_phrase and
+      capture_native_phrase_state(requested_instrument) or nil
+    local release_selected_phrase_sync=suppress_selected_phrase_sync()
+    local called,success,reason=pcall(phrase_writer.generate,selected_instrument,
       function(result)
         if type(result)=="table" and result.kind=="status" then
           status.text="LIVE EDIT "..string.upper(tostring(result.status or "RENDERING"))..": "..
             tostring(result.message or "Building phrase.")
           return
         end
+        restore_native_phrase_state(requested_native_phrase_state)
+        release_selected_phrase_sync()
         if type(result)~="table" or result.kind~="complete" then
           result={kind="complete",status="error",message="Phrase writer returned an invalid result.",
             diagnostics={tostring(result)}}
@@ -725,7 +836,7 @@ function M.show()
                   draft,policy,draft_pb_range)
                 if moved then
                   local cleared,clear_error=drafts.clear(song,requested_instrument,nil)
-                  if not cleared then result_issue(result,tostring(clear_error)) end
+                  if cleared==nil then result_issue(result,tostring(clear_error)) end
                 else result_issue(result,tostring(move_error)) end
               end
             end
@@ -733,13 +844,23 @@ function M.show()
         end
         if (result.status=="committed" or result.status=="approximate") and revision==requested_revision then
           local cleared,clear_error=drafts.clear(song,requested_instrument,requested_phrase)
-          if not cleared then
+          if cleared==nil then
             result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
           end
         end
         done(result)
       end,copy,target_index,{token=token,output_policy=output_policy,
         pb_range=requested_pb_range})
+    if not called then
+      restore_native_phrase_state(requested_native_phrase_state)
+      release_selected_phrase_sync()
+      local message=tostring(success)
+      return nil,{kind="complete",status="error",message=message,diagnostics={message}}
+    end
+    if not success then
+      restore_native_phrase_state(requested_native_phrase_state)
+      release_selected_phrase_sync()
+    end
     return success,reason
   end,function(result)
     if opened~=generation then return end
@@ -756,6 +877,7 @@ function M.show()
   active_live=live
   live_checkbox=vb:checkbox{value=false,notifier=function(value)
     if value then
+      apply_pending_selected_phrase_selection()
       live:set_enabled(true)
       status.text="LIVE EDIT RENDERING: applying the current source."
       live:changed()
@@ -860,6 +982,11 @@ function M.show()
         if opened~=generation then
           status.text="Song changed. Close and reopen ACID.";return
         end
+        local applied_pending=apply_pending_selected_phrase_selection()
+        if applied_pending and live:state().enabled then
+          status.text="Live Edit is applying the newly selected phrase."
+          return
+        end
         local projection=editor.project(pattern)
         if projection.error then
           local e=projection.error
@@ -880,14 +1007,19 @@ function M.show()
         local requested_revision=revision
         local requested_pb_range=pb_range
         local requested_object,requested_phrase=bound_instrument,bound_phrase
+        local requested_native_phrase_state=requested_phrase and
+          capture_native_phrase_state(requested_object) or nil
+        local release_selected_phrase_sync=suppress_selected_phrase_sync()
         local ok,generated,err=pcall(phrase_writer.generate,
           requested_instrument,function(result)
+            if type(result)=="table" and result.kind=="status" then
+              status.text="GENERATION "..string.upper(tostring(result.status or "RENDERING"))..": "..
+                tostring(result.message or "Building phrase.")
+              return
+            end
+            restore_native_phrase_state(requested_native_phrase_state)
+            release_selected_phrase_sync()
             if opened==generation then
-              if type(result)=="table" and result.kind=="status" then
-                status.text="GENERATION "..string.upper(tostring(result.status or "RENDERING"))..": "..
-                  tostring(result.message or "Building phrase.")
-                return
-              end
               if type(result)~="table" or result.kind~="complete" then
                 status.text="GENERATION ERROR: phrase writer returned an invalid result."
                 return
@@ -902,7 +1034,7 @@ function M.show()
                 end
                 if revision==requested_revision then
                   local cleared,clear_error=drafts.clear(song,requested_object,requested_phrase)
-                  if not cleared then
+                  if cleared==nil then
                     result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
                   end
                 elseif not requested_phrase then
@@ -914,7 +1046,7 @@ function M.show()
                       draft,draft_policy,draft_pb_range)
                     if moved then
                       local cleared,clear_error=drafts.clear(song,requested_object,nil)
-                      if not cleared then
+                      if cleared==nil then
                         result_issue(result,"New phrase draft was copied, but its temporary entry remains: "..tostring(clear_error))
                       end
                     else
@@ -930,6 +1062,10 @@ function M.show()
             end
           end,pattern,
           requested_target,{output_policy=output_policy,pb_range=requested_pb_range})
+        if not ok or not generated then
+          restore_native_phrase_state(requested_native_phrase_state)
+          release_selected_phrase_sync()
+        end
         if not ok then status.text="ACID error: "..tostring(generated)
         elseif not generated then
           status.text=type(err)=="table" and err.message or tostring(err or "Generation refused")
@@ -962,8 +1098,12 @@ function M.show()
       detach_this_watch()
       return
     end
-    if observed_dialog.visible then return end
+    if observed_dialog.visible then
+      apply_pending_selected_phrase_selection()
+      return
+    end
     detach_this_watch()
+    detach_selected_phrase_watch()
     observed_live:stop()
     observed_checkbox.value=false
     if active_live==observed_live then active_live=nil end

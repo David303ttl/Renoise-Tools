@@ -143,7 +143,8 @@ assert(cache.has_volatile(volatile_song) and not cache.has_volatile(song_a))
 -- Successful commit calls clear; repeated clear and unrelated targets are safe.
 assert(cache.clear(song_a, instrument_a, phrase_a))
 assert(cache.get(song_a, instrument_a, phrase_a) == nil)
-assert(not cache.clear(song_a, instrument_a, phrase_a))
+assert(cache.clear(song_a, instrument_a, phrase_a)==false,
+  "clearing an absent draft reports a successful no-op")
 assert(cache.get(song_a, instrument_a, phrase_b) ~= nil)
 assert(cache.get(song_a, instrument_a, nil) == nil,
   "reordered unbound new-phrase drafts remain unavailable for automatic recovery")

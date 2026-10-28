@@ -49,7 +49,9 @@ local other_owned={id=21,name="Other owned"}
 local other_foreign={id=22,name="Other foreign",foreign=true}
 local other_instrument={name="Other target",phrases={other_owned,other_foreign},
   phrase_program=1,samples={},sample_modulation_sets={},sample_device_chains={}}
-local song={selected_instrument_index=1,instruments={instrument,other_instrument}}
+local song={selected_instrument_index=1,selected_instrument=instrument,
+  selected_phrase=phrase_one,selected_phrase_observable=observable(),
+  instruments={instrument,other_instrument}}
 local current_builder
 local dialogs={}
 local warnings={}

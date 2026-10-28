@@ -4,7 +4,19 @@ local function observable()
   local handlers={}
   return {
     add_notifier=function(_,handler) handlers[handler]=true end,
-    remove_notifier=function(_,handler) handlers[handler]=nil end
+    remove_notifier=function(_,handler) handlers[handler]=nil end,
+    listener_count=function()
+      local count=0
+      for _ in pairs(handlers) do count=count+1 end
+      return count
+    end,
+    fire=function()
+      local pending={}
+      for handler in pairs(handlers) do pending[#pending+1]=handler end
+      for _,handler in ipairs(pending) do
+        if handlers[handler] then handler() end
+      end
+    end
   }
 end
 
@@ -36,10 +48,34 @@ end
 local tool={app_new_document_observable=observable(),app_idle_observable=observable()}
 local instrument={name="Target",phrases={{id=21,name="ACID phrase 1"},
   {id=22,name="ACID phrase 2"}},samples={},sample_modulation_sets={},
-  sample_device_chains={},phrase_program=1}
+  sample_device_chains={},phrase_program_observable=observable()}
 local instrument_two={name="Other target",phrases={{id=31,name="Other phrase"}},
-  samples={},sample_modulation_sets={},sample_device_chains={},phrase_program=1}
-local song={selected_instrument_index=1,instruments={instrument,instrument_two}}
+  samples={},sample_modulation_sets={},sample_device_chains={},
+  phrase_program_observable=observable()}
+local song={selected_instrument_index=1,selected_instrument=instrument,
+  selected_phrase=instrument.phrases[1],selected_phrase_observable=observable(),
+  instruments={instrument,instrument_two}}
+local function bind_phrase_program(instrument,value)
+  rawset(instrument,"_phrase_program",value)
+  setmetatable(instrument,{__index=function(target,key)
+      if key=="phrase_program" then return rawget(target,"_phrase_program") end
+      return rawget(target,key)
+    end,
+    __newindex=function(target,key,next_value)
+      if key=="phrase_program" then
+        rawset(target,"_phrase_program",next_value)
+        if next_value>=1 and next_value<=#target.phrases then
+          song.selected_phrase=target.phrases[next_value]
+          song.selected_phrase_observable:fire()
+        end
+        target.phrase_program_observable:fire()
+      else
+        rawset(target,key,next_value)
+      end
+    end})
+end
+bind_phrase_program(instrument,1)
+bind_phrase_program(instrument_two,1)
 local builder=view_builder()
 local dialog
 local app={}
@@ -88,6 +124,10 @@ package.loaded["writers.phrase_writer"]={
     render_calls=render_calls+1
     generation_request={instrument_index=instrument_index,target_index=target_index,
       pattern=pattern,options=options}
+    local target_instrument=song.instruments[instrument_index]
+    if instrument_index==1 and target_index<=#target_instrument.phrases then
+      target_instrument.phrase_program=2
+    end
     generation_callback=callback
     return true
   end,
@@ -115,8 +155,10 @@ end,
     return item.pattern,item.policy,item.pb_range
   end,
   clear_draft=function(_,index,phrase_id)
-    persisted_drafts[index..":"..phrase_id]=nil
-    return true
+    local key=index..":"..phrase_id
+    local existed=persisted_drafts[key]~=nil
+    persisted_drafts[key]=nil
+    return existed
   end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
@@ -215,6 +257,14 @@ button("Undo"):fire()
 builder.views.acid_program_time_command:fire(1)
 assert(not button("Redo").active,"new edits discard the redo branch")
 
+phrase_popup:fire(1)
+button("Generate / Regenerate ACID Phrase"):fire()
+assert(generation_request.target_index==1,"the first owned phrase can be generated in place")
+generation_callback({kind="complete",status="committed",message="Phrase 01 generated.",
+  diagnostics={},target={phrase_index=1}})
+assert(song.selected_phrase==instrument.phrases[1] and instrument.phrase_program==1,
+  "manual regeneration restores Renoise's selected phrase after staging cleanup")
+
 phrase_popup:fire(2)
 assert(pb_range_popup.value==4,"phrase selection restores its stored PB Range")
 button("Generate / Regenerate ACID Phrase"):fire()
@@ -227,6 +277,16 @@ assert(phrase_popup.value==2,
   "successful generation must keep the selected destination phrase")
 generation_callback({kind="complete",status="committed",message="Phrase generated.",
   diagnostics={},target={phrase_index=2}})
+assert(song.selected_phrase==instrument.phrases[1] and instrument.phrase_program==1,
+  "manual generation preserves a different native phrase selection")
+local draft_warning
+for _,node in ipairs(builder.nodes) do
+  if type(node.text)=="string" and node.text:find("DRAFT WARNING",1,true) then
+    draft_warning=node.text
+  end
+end
+assert(not draft_warning,
+  "clearing a nonexistent draft does not report a cleanup failure: "..tostring(draft_warning))
 
 phrase_popup:fire(3)
 assert(pb_range_popup.value==1,"a new phrase starts with PB Range Off")
@@ -265,7 +325,7 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
-assert(render_calls==3 and generation_request.target_index==4,
+assert(render_calls==4 and generation_request.target_index==4,
   "arming Live Edit immediately appends the selected new phrase")
 local appended={id=24,name="Live appended phrase"}
 instrument.phrases[4]=appended
@@ -273,10 +333,57 @@ generation_callback({kind="complete",status="committed",message="Live append com
   diagnostics={},target={instrument_index=1,phrase_index=4}})
 assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
 builder.views.acid_program_key_popup:fire(5)
-assert(render_calls==4 and generation_request.target_index==4,
+assert(render_calls==5 and generation_request.target_index==4,
   "the next edit regenerates the same appended phrase in place")
 generation_callback({kind="complete",status="committed",message="Live regeneration committed.",
   diagnostics={},target={instrument_index=1,phrase_index=4}})
 assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
 
-print("ACID Program/Grid views and immediate Live Edit append checks passed")
+instrument.phrase_program_observable:fire()
+assert(phrase_popup.value==4 and render_calls==5,
+  "playback-program notifications alone do not redirect the ACID edit destination")
+instrument.phrase_program=2
+assert(phrase_popup.value==4 and render_calls==5,
+  "native phrase selection defers ACID view changes until the idle callback")
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==2 and pb_range_popup.value==4,
+  "native Phrase Editor selection rebinds ACID to that phrase on idle")
+assert(render_calls==6 and generation_request.target_index==2,
+  "Live Edit after a native phrase switch targets the selected phrase")
+generation_callback({kind="complete",status="committed",message="Native phrase selection regenerated.",
+  diagnostics={},target={instrument_index=1,phrase_index=2}})
+assert(song.selected_phrase==instrument.phrases[2] and instrument.phrase_program==2,
+  "Live Edit restores the native phrase selected before rendering")
+builder.views.acid_program_key_popup:fire(6)
+assert(render_calls==7 and generation_request.target_index==2,
+  "subsequent PITCH edits keep regenerating the phrase selected in Renoise")
+generation_callback({kind="complete",status="committed",message="Selected phrase regenerated again.",
+  diagnostics={},target={instrument_index=1,phrase_index=2}})
+assert(#instrument.phrases==4,"native phrase selection must not create another destination")
+
+live_checkbox:fire(false)
+instrument.phrase_program_observable:fire()
+instrument.phrase_program=2
+phrase_popup:fire(1)
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native selection")
+live_checkbox:fire(true)
+assert(render_calls==8 and generation_request.target_index==1,
+  "arming Live Edit after selecting phrase 01 targets phrase 01 after phrase 02 was generated")
+song.selected_phrase_observable:fire()
+generation_callback({kind="complete",status="committed",message="Live phrase 01 regenerated.",
+  diagnostics={},target={instrument_index=1,phrase_index=1}})
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==1 and generation_request.target_index==1,
+  "ACID generation cannot redirect its selected phrase through native phrase notifications")
+assert(song.selected_phrase==instrument.phrases[2] and instrument.phrase_program==2,
+  "regenerating ACID phrase 01 keeps Renoise's independently selected phrase 02")
+
+assert(song.selected_phrase_observable:listener_count()==1,
+  "ACID watches the Renoise selected phrase")
+dialog.visible=false
+tool.app_idle_observable:fire()
+assert(song.selected_phrase_observable:listener_count()==0,
+  "closing ACID removes its selected-phrase observer")
+
+print("ACID Program/Grid views, native phrase selection and Live Edit destination checks passed")
