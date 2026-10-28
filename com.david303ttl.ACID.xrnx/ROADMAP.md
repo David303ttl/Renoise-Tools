@@ -83,9 +83,10 @@ The current source stores **64 valid C pitches** and carries an independent acti
 | Completed (implementation) | **M2 — Continuous sequence and loop correctness** | Reliable repeated patterns and deterministically consumed pitches | M1 |
 | Completed (implementation); live acceptance open | **M3 — Articulation measurement and reference-profile renderer** | Scoped reference audio evidence; remaining host transport/live-playback checks | M2 semantic contracts |
 | **Implementation complete; Renoise acceptance open** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
-| After M3.5 | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M3.5 renderer/timeline contract |
-| After M3.5 | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M3.5 editor and source guarantees |
-| Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5 |
+| **Next after M3.5** | **M3.6 — Plugin/MIDI pitch-bend slide (small follow-up)** | Optional PB Range selector; existing Renoise MIDI pitch bend for instruments without usable portamento | M3.5 source/output/ownership contract |
+| After M3.6 | **M4 — Timing modes and tempo robustness** | Straight/triplet programming and stable timing | M3.5 renderer/timeline contract + M3.6 acceptance |
+| After M3.6 | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M3.5 editor and source guarantees |
+| Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5, including M3.6 |
 
 **Milestone completion** normally requires deterministic Lua checks and targeted Renoise verification for rendered notes, audio, GUI, phrases, persistence, or undo. If a user accepts deferring a check, record the scope decision and keep the deferred claim explicitly unverified; a passing mock test alone is not an audio conformance result.
 
@@ -602,6 +603,61 @@ not run in this workspace; functional acceptance remains open.
 
 ---
 
+## 5B. M3.6 — Plugin/MIDI pitch-bend slide (small follow-up; before M4)
+
+**Status:** planned. **Baseline:** \`develop\` at \`4f1e9881640de3714e58dcf8ec04adc889447d24\`; M3.5 already produces overlapping notes for receiver-controlled mono/legato portamento. **Goal:** add an optional *manual pitch-bend-range assumption* for a selected plugin/MIDI instrument without profiling, configuring or modifying the plugin.
+
+### M3.6.0 — Product contract and limits
+
+- Keep the current automatic sample \`0Gxx\` path and plugin/MIDI overlapping-NOTE legato as they are. **Do not** reinstate Baseline/Retrigger/Slide modes.
+- Add exactly one unobtrusive **PB Range** dropdown next to the selected instrument: **Off (default), ±2, ±12, ±24, ±48 semitones**. Off preserves existing overlap/receiver-portamento behavior. Non-Off asks ACID to generate a bend-controlled connected SLIDE for the plugin/MIDI receiver.
+- A selected value is **ACID's assumed range**, not a command that sets a VST's bend range. User sets the matching range in the chosen instrument; do not discover VST parameters, install presets, change instrument/plugin state, or claim the range has been verified.
+- Store the PB selection only as target/owned-phrase **render settings**, separate from canonical PITCH/TIME memory and the source ownership hash. Selecting another phrase restores that phrase's saved setting; changing the value schedules normal guarded regeneration and supports existing Undo/Redo/Live Edit behavior. For this WIP, replace the current output-setting format directly where required: **no migration or backward-compatibility code**.
+- Pitch bend is **channel-wide** on ordinary MIDI receivers; require isolated monophonic use for exact connected behavior. ACID does not claim independent bends for simultaneous voices, unrelated routed tracks, or arbitrary polyphonic VST presets.
+- No plugin database, per-VST calibration, plugin-specific integration, auto-portamento setup, alternative playback engine, user-defined curves, general MIDI FX rack, extra UI modes, or mandatory third-party dependency.
+
+### M3.6.1 — Reuse native Renoise MIDI commands; one feasibility check
+
+1. Use the documented Renoise **M1 pitch-bend MIDI command** as the first implementation target, not sample-only \`0Gxx\`. The Renoise manual specifies \`M1\` in the **rightmost note column's panning field**, a valid target instrument number, and the paired hexadecimal MIDI value in the associated effect field. Verify the exact phrase API cell-property mapping against the pinned Renoise 3.5/API 6.2 SDK before modifying \`legato_writer.lua\` or \`phrase_validator.lua\`.
+2. **Single bounded in-Renoise check:** with one available VST responding to bend (suggested: Surge XT), set its bend range to ±12 and turn its own glide off; manually enter a held C note plus noncenter/center M1 commands inside a triggered native Renoise instrument phrase. Confirm audible pitch change **and reset**, and the intended MIDI target. This is a go/no-go integration check, not an audio-calibration program.
+3. If phrase-contained M1 does not reach plugins through the current host/phrase route, record the specific limitation and **do not** add or silently reconfigure an Instrument MIDI Control device or track automation. Keep the existing overlap route and nonfatal limitation warning; reconsider explicit routing separately only if genuinely needed.
+4. Keep target verification limited to this available reference VST and ordinary note/MIDI checks. Do not require testing dozens of synthesizers or proving compatibility across the VST ecosystem.
+
+**Gate P0:** one concrete Renoise phrase can deliver a bend and a center reset to the chosen plugin. If not, stop M1 implementation without blocking existing musical NOTE/SLIDE generation or M4 work; report unsupported explicit PB and preserve current overlap behavior.
+
+### M3.6.2 — Minimal bend-aware renderer
+
+1. Implement a small deterministic phrase-cell pitch-bend emitter reusing **model/control_signals.lua**'s semantic NOTE/TIE/REST/SLIDE timeline and the existing protected phrase writer. Extend the current legato writer/validator where practical; avoid a new engine.
+2. With PB **Off**, retain the existing NOTE-before-delayed-OFF legato method; with PB **On**, keep a *single active receiver note* and bend it smoothly to each connected SLIDE target. No target NOTE-on or envelope restart is requested at the connected boundary.
+3. Treat a selected ±R as mapping \`-R..+R\` semitones onto MIDI 14-bit pitch bend \`0..16383\` with center \`8192\`. Calculate from the **held note's pitch anchor**, including accumulated connected transitions, rather than independently centering every target. Ensure complete target pitch and bend endpoint when representable; never wrap, clamp silently or jump past the chosen range.
+4. Generate a short **linear** series of pitch-bend points across the available connected-step interval using the **existing phrase timing resolution**. No additional glide-time, easing or precision controls. Preserve NOTE/TIE/REST order and source-step mapping.
+5. A fresh NOTE, REST, Play Once tail, normal release, or safe loop reset must stop the old note as required and restore bend to center **before the next unrelated attack**. Handle cold→steady and steady→steady phrase loops explicitly; do not issue an incorrect center reset while a connected held note is crossing the seam.
+6. A same-pitch connected SLIDE holds the receiver note without a second attack. Preserve ACCENT in the source; if connected velocity/expressivity cannot change on the already-held voice, show a nonfatal warning.
+7. If a connected interval or accumulated pitch offset exceeds the selected range, **never refuse valid source**. Emit an ordered NOTE fallback for the affected transition, restore pitch-bend center safely, and report **SLIDE approximated: bend range exceeded** with its TIME step. A plugin that ignores bend gets the same nonfatal limitation, not a broken/missing phrase.
+8. Ensure M1 cells do not erase existing NOTE, volume, OFF, delay or instrument-column data. Extend post-render verification to check all inserted bend commands, intended MIDI target and required center resets. Keep staged phrase replacement, seals, undo, foreign-phrase protection and last-good Live Edit intact.
+9. Hybrid instruments: PB applies only to responding plugin/MIDI layers; sample layers may behave differently. Show a short hybrid-articulation warning; never alter their samples or routing.
+
+**Gate P1:** PB Off reproduces M3.5 output; PB On produces structurally valid bends and safe note/release ordering for basic connected slides and remains usable when the receiver cannot implement exact continuity.
+
+### M3.6.3 — Small acceptance set; no research program
+
+| Check | Pass condition |
+| --- | --- |
+| Off default | Current plugin legato overlap and sample 0G behavior unchanged |
+| PB ±12 C→G / G→C | One held voice reaches target and returns to center as expected on the available reference VST |
+| NOTE→SLIDE→NOTE→REST | No unwanted attack during connected slide; fresh attack and REST cleanup correct |
+| Two connected slides + Repeat seam | Accumulated bend and cold/steady behavior correct, no stuck pitch |
+| Range exceeded | Ordered NOTES still generated; explicit approximation, never source rejection |
+| Range dropdown + save/reopen | Selected phrase retains setting; PITCH/TIME unchanged; Live Edit regenerates safely |
+| Plugin/MIDI unavailable | Generation and editor continue with actionable warning |
+| Existing tests | ACID Lua suite, packaging and one in-Renoise reference check pass; no GitHub workflows |
+
+**Delivery:** one focused implementation PR after M3.5, with matching local Lua specs and a short addition to \`tests/acid/acid_m35_s_manual.md\`. If the M1 go/no-go check fails, document the blocker and close the spike without building a MIDI routing subsystem. Do not postpone M4 for open-ended testing.
+
+**M3.6 done when:** users can select PB Off or an assumed bend range, ACID writes correct validated phrase commands where supported, existing sample/plugin pathways remain intact, and the single reference-VST playback check establishes working bend/reset behavior. Do not promise identical glide from all VST instruments.
+
+---
+
 ## 6. M4 — Rhythmic fidelity and timing modes
 
 **Goal:** correctly represent the time base, especially TB-303-style triplet programming, with an explicit stored grid for straight and triplet patterns.
@@ -617,7 +673,7 @@ not run in this workspace; functional acceptance remains open.
 
 - Implement a timing compiler that emits rational musical positions or a fixed high-resolution tick representation without cumulative rounding drift.
 - Choose LPB/phrase lengths/delays based on representability; search supported grids and explicit timing approximations before declining a truly unrepresentable native phrase. Keep the valid canonical source editable and provide precise step/line diagnostics on hard resource bounds; follow M3.5's nonfatal-fidelity contract.
-- Reuse the M3 gate/articulation timeline so timing modes do not destroy note lengths or selective glide.
+- Reuse the M3.5 gate/articulation timeline and M3.6's bend timing/centering rules so timing modes do not destroy note lengths, connected SLIDE or bend reset.
 - Persist an explicit timing mode with the source snapshot and validate it. Revise the WIP format directly when adding the field; do not infer timing from or migrate earlier development records.
 
 ### M4.3 — Verification
@@ -714,6 +770,7 @@ Test Original triplet lengths 1/9/12/15 and straight lengths 1/12/16, plus Exten
 | Instrument-agnostic phrase writing (M3.5) | Capability fixtures, no sample-buffer admission | Sample, plugin-only, external MIDI, hybrid, alias and empty slots; zero-sample plugin writes |
 | Arbitrary articulation (M3.5) | Interval/layout fuzzing; no evidence allowlists; explicit approximations | 25-semitone short slide, connected accents, Repeat seams, multiple BPM/groove settings |
 | Plugin/MIDI commands (M3.5) | Only target-compatible operations; pitch-bend safeguards | VST note/velocity/OFF and MIDI capture; no sample-only Gxx imposed on plugins |
+| Optional PB Range (M3.6) | Off/±2/±12/±24/±48; pitch anchor, bend limit, center reset, loop seam, no source mutation | One VST phrase bend/reset check; Off regression and selected phrase save/reopen |
 | Live Edit recovery (M3.5) | Typed result, armed/dirty/pending/retry/suspend transitions | Editing during playback, recoverable failure, undo, ownership loss, song change |
 | Straight and triplet timing | Grid conversion and no cumulative drift | BPM/LPB/triplet repeat checks |
 | Several target phrases | IDs, snapshot roundtrip, ownership | Switching, adding and regenerating phrase slots |
@@ -764,6 +821,7 @@ For every such decision, supply **reference + decision + test fixture + manual p
 | 1 | Run the M3.5 Renoise editor, output-policy, draft save/reopen and Live Edit checks. | Manual results cover selected second-phrase regeneration, LAST STEP 32/64, Reset/Undo/Redo, Program/Grid, recoverable failure, retry and destination loss. |
 | 2 | Verify sample, plugin-only, MIDI-only, hybrid/alias and empty targets. | Note order, velocity/OFF delivery, routing dependencies and explicit approximations are recorded. |
 | 3 | Verify stop/start/seek and Live Edit during playback; install the packaged XRNX and check 125%/150% Windows scaling. | Host version and target-specific results are recorded without inferring playback from mocks. |
-| 4 | Begin M4/M5 after M3.5 functional acceptance or an explicit scope decision. | Remaining host checks and fidelity limitations stay explicit. |
+| 4 | Implement focused **M3.6** PB Range follow-up, starting with the single native phrase M1 verification. | Confirm usable VST pitch bend/reset, or document the exact host limitation without building another MIDI system. |
+| 5 | Begin M4/M5 after M3.5 functional acceptance and bounded M3.6 go/no-go or delivery. | No sprawling VST compatibility test program; unresolved receiver-specific behavior stays documented. |
 
 **Blocking release rule:** M3 reference calibration is not a substitute for a usable sequencer. M3.5 functional guarantees are required before M6 release acceptance; hardware-faithful analog sound remains a separately labeled research/fidelity objective.
