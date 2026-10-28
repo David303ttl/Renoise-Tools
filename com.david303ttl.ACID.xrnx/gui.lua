@@ -130,6 +130,7 @@ function M.show()
   local program_pitch_summary,program_time_summary
   local program_key_popup,program_octave_popup,program_accent,program_slide
   local pitch_length_popup=vb:popup{items=length_items,width=78,value=16}
+  local timing_popup=vb:popup{id="acid_timing",items={"Straight","Triplet"},width=105,value=1}
   local playback_popup=vb:popup{items={"Play Once","Repeat"},width=105,value=2}
   local pb_range_values={0,2,12,24,48}
   local pb_range_items={"Off","±2","±12","±24","±48"}
@@ -140,7 +141,7 @@ function M.show()
       preview_cycle=value
       update()
     end}
-  local step_division=vb:text{text="Straight 1/16 (triplet renderer not yet implemented)"}
+  local step_division=vb:text{text="Straight 1/16"}
   local pitch_page_buttons,time_page_buttons={},{}
   local pitch_cells,time_cells,time_headers,preview_cells={}, {}, {}, {}
   local key_popup=vb:popup{items=keys,width=95,value=1}
@@ -194,6 +195,10 @@ function M.show()
     if grid_panel then grid_panel.visible=editor_view==2 end
     pitch_length_popup.value=pattern.pitch_length or 16
     pitch_length_popup.active=true
+    timing_popup.value=pattern.timing_mode=="triplet" and 2 or 1
+    step_division.text=pattern.timing_mode=="triplet" and
+      string.format("1/8 triplet; cycle %d/3 beats",pattern.length) or
+      string.format("1/16 straight; cycle %d/4 beats",pattern.length)
     playback_popup.value=output_policy=="play_once" and 1 or 2
     playback_popup.active=true
     for index,value in ipairs(pb_range_values) do
@@ -360,6 +365,11 @@ function M.show()
         or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error))
     end
   end
+  timing_popup:add_notifier(function(value)
+    if updating then return end
+    pattern.timing_mode=value==2 and "triplet" or "straight"
+    changed()
+  end)
   playback_popup:add_notifier(function(value)
     if updating then return end
     output_policy=value==2 and "repeat" or "play_once"
@@ -804,6 +814,7 @@ function M.show()
     -- are scheduled for another pass and cannot mutate the running job.
     local copy=sequencer.new_pattern(pattern.length)
     copy.pitch_length=pattern.pitch_length
+    copy.timing_mode=pattern.timing_mode
     copy.pitch_events={}
     for i,p in ipairs(pattern.pitch_events) do
       local v={}
@@ -812,6 +823,10 @@ function M.show()
     end
     for i,t in ipairs(pattern.time_events) do copy.time_events[i]=t end
     local requested_revision=revision
+    local live_token_current=token.is_current
+    token.is_current=function(self)
+      return revision==requested_revision and live_token_current(self)
+    end
     local requested_pb_range=pb_range
     local requested_instrument,requested_phrase=bound_instrument,bound_phrase
     local requested_native_phrase_state=requested_phrase and
@@ -951,7 +966,7 @@ function M.show()
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
     vb:row{spacing=10,vb:text{text="LAST STEP"},last_step_box,
-      step_division},
+      vb:text{text="Timing"},timing_popup,step_division},
     vb:row{spacing=8,vb:text{text="Editor view"},view_popup,
       vb:text{text="Active PITCH span"},pitch_length_popup,
       vb:text{text="Program and Grid edit the same source."}},
@@ -1011,6 +1026,9 @@ function M.show()
           return
         end
         local requested_revision=revision
+        local manual_token={is_current=function()
+          return opened==generation and revision==requested_revision
+        end}
         local requested_pb_range=pb_range
         local requested_object,requested_phrase=bound_instrument,bound_phrase
         local requested_native_phrase_state=requested_phrase and
@@ -1065,7 +1083,7 @@ function M.show()
               status.text=describe_live_result(result):gsub("^LIVE EDIT ","GENERATION ")
             end
           end,pattern,
-          requested_target,{output_policy=output_policy,pb_range=requested_pb_range,
+          requested_target,{token=manual_token,output_policy=output_policy,pb_range=requested_pb_range,
             phrase_mutation=mutate_phrases})
         if not ok or not generated then
           restore_native_phrase_state(requested_native_phrase_state)

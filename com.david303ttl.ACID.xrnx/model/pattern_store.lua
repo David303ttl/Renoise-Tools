@@ -4,7 +4,7 @@ local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("writers.phrase_ownership")
 local M = {}
-local MAGIC = "ACID-PITCH-TIME-4"
+local MAGIC = "ACID-PITCH-TIME-5"
 local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}
 local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local MAX_ID = 2147483647
@@ -58,8 +58,8 @@ local function decode(raw)
     local line=lines[line_number]
     if line=="" then return nil,"Unexpected blank ACID entry at line "..line_number end
     local draft_instrument,draft_phrase,draft_name,draft_policy,draft_pb_range,
-      draft_pitch_length,draft_length,draft_pitch_data,draft_time=
-      line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|([%w_]+)|(%d+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
+      draft_mode,draft_pitch_length,draft_length,draft_pitch_data,draft_time=
+      line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
     if draft_instrument then
       draft_instrument,draft_phrase=tonumber(draft_instrument),tonumber(draft_phrase)
       draft_pb_range=tonumber(draft_pb_range)
@@ -73,6 +73,7 @@ local function decode(raw)
       end
       local pattern=sequencer.new_pattern(draft_length)
       pattern.pitch_length=draft_pitch_length
+      pattern.timing_mode=draft_mode
       pattern.pitch_events={}
       local normalized_tokens={}
       for token in draft_pitch_data:gmatch("[^,]+") do
@@ -93,8 +94,8 @@ local function decode(raw)
         instrument_name=instrument_name,
         instrument_index=draft_instrument,phrase_id=draft_phrase}
     else
-    local id,output_policy,pb_range,pitch_length,length,pitch_data,time=
-      line:match("^(%d+)|([%w_]+)|(%d+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
+    local id,output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time=
+      line:match("^(%d+)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
     pb_range=tonumber(pb_range)
     id,pitch_length,length=tonumber(id),tonumber(pitch_length),tonumber(length)
     if not id or not valid_id(id) or entries[id] or not OUTPUT_POLICIES[output_policy] or
@@ -105,6 +106,7 @@ local function decode(raw)
     end
     local pattern=sequencer.new_pattern(length)
     pattern.pitch_length=pitch_length
+    pattern.timing_mode=timing_mode
     pattern.pitch_events={}
     local normalized_tokens={}
     for token in pitch_data:gmatch("[^,]+") do
@@ -145,7 +147,7 @@ local function encode(entries,drafts)
     for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     local time={}
     for step=1,64 do time[step]=pattern.time_events[step] or "N" end
-    lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),
+    lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),pattern.timing_mode,
       tostring(pattern.pitch_length),tostring(pattern.length),
       table.concat(pitches,","),table.concat(time)},"|")
   end
@@ -167,7 +169,7 @@ local function encode(entries,drafts)
     for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     for step=1,64 do time[step]=pattern.time_events[step] or "N" end
     lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),
-      item.output_policy,tostring(item.pb_range),
+      item.output_policy,tostring(item.pb_range),pattern.timing_mode,
       tostring(pattern.pitch_length),tostring(pattern.length),
       table.concat(pitches,","),table.concat(time)},"|")
   end

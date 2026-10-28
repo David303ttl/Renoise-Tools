@@ -4,10 +4,6 @@
 local interpreter = require('model.cycle_interpreter')
 local M = {}
 
-local function valid_unit(value)
-  return value == '1/16'
-end
-
 local function valid_volume(value)
   return type(value) == 'number' and value >= 0 and value <= 1
     and value == value -- reject NaN
@@ -30,8 +26,10 @@ function M.emit(plan, options)
     return nil, 'invalid compiled ACID plan'
   end
   local unit = options.unit or '1/16'
-  if not valid_unit(unit) then
-    return nil, 'only straight 1/16 timing is supported'
+  local resolution = options.resolution or 1
+  if not ((unit == '1/16' and resolution == 1) or
+      (unit == '1/8' and resolution == 2/3)) then
+    return nil, 'invalid timing pulse'
   end
   local normal_volume = options.normal_volume or 0.7
   local accent_volume = options.accent_volume or 1.0
@@ -74,7 +72,8 @@ function M.emit(plan, options)
     '-- Note and timing events; glide and gate effects are applied separately.',
     'local values = { ' .. table.concat(items, ', ') .. ' }',
     'return pattern {',
-    '  unit = "1/16",',
+    '  unit = "' .. unit .. '",',
+    '  resolution = ' .. (resolution == 1 and '1' or '2/3') .. ',',
     '  repeats = false,',
     '  pulse = { ' .. count_pulses(plan.length) .. ' },',
     '  event = function(context)',

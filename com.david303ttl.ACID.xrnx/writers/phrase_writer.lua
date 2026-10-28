@@ -10,12 +10,12 @@ local ownership = require("writers.phrase_ownership")
 local store = require("model.pattern_store")
 local target_capabilities = require("model.target_capabilities")
 local sequencer = require("model.sequencer")
+local timing = require("model.timing")
 local legato = require("model.legato")
 local legato_writer = require("writers.legato_writer")
 local phrase_pitch_bend = require("writers.phrase_pitch_bend")
 local M = {}
 
-M.LPB = 8
 M.PHRASE_NAME = "ACID 0.1 TEST"
 local busy = false
 local current = nil
@@ -33,12 +33,13 @@ local function physical_plan(pattern, output_policy)
   if output_policy~="repeat" and output_policy~="play_once" then
     return nil,"Invalid phrase output policy"
   end
+  local layout,layout_error=timing.new(pattern.timing_mode,pattern.length,output_policy)
+  if not layout then return nil,layout_error end
   if output_policy == "play_once" then
     local plan, err=compiler.compile_cycle(pattern)
     if not plan then return nil,err end
     plan.source_length=plan.length
-    return plan,{looping=false,loop_start=1,loop_end=plan.length*2,
-      number_of_lines=plan.length*2}
+    return plan,layout
   end
   local loop,err=compiler.plan_loop(pattern)
   if not loop then return nil,err end
@@ -59,8 +60,7 @@ local function physical_plan(pattern, output_policy)
   end
   return {length=length,steps=steps,note_count=loop.cold.note_count+loop.steady.note_count,
     pitch_length=pattern.pitch_length,loop=loop,source_length=pattern.length},
-    {looping=true,loop_start=pattern.length*2+1,loop_end=length*2+1,
-      number_of_lines=length*2+1}
+    layout
 end
 M.plan_output=physical_plan
 
@@ -164,7 +164,7 @@ local function articulation_plan(plan,capabilities,timeline)
 end
 
 local function copy_pattern(pattern)
-  local copy={length=pattern.length,
+  local copy={length=pattern.length,timing_mode=pattern.timing_mode,
     pitch_length=pattern.pitch_length,
     pitch_events={},time_events={}}
   for i,pitch in ipairs(pattern.pitch_events) do
@@ -178,7 +178,7 @@ end
 
 local function patterns_equal(a,b)
   if type(a)~="table" or type(b)~="table" then return false end
-  for _,key in ipairs({"length","pitch_length"}) do
+  for _,key in ipairs({"length","pitch_length","timing_mode"}) do
     if a[key]~=b[key] then return false end
   end
   for i=1,64 do
@@ -352,6 +352,8 @@ local function finalize(job, event_count, skipped)
   end
   local layout_ok,layout_error=pcall(function()
     job.phrase.number_of_lines=job.layout.number_of_lines
+    job.phrase.lpb=job.layout.lpb
+    job.phrase.shuffle=0
     job.phrase.looping=job.layout.looping
     job.phrase.loop_end=job.layout.loop_end
     job.phrase.loop_start=job.layout.loop_start
@@ -389,7 +391,8 @@ local function finalize(job, event_count, skipped)
   local ok, error_message = pcall(function()
     -- Rendered lines are normal native phrase data (not a running script).
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
-    job.phrase.lpb = M.LPB
+    job.phrase.lpb = job.layout.lpb
+    job.phrase.shuffle = 0
     job.phrase.number_of_lines = job.layout.number_of_lines
     job.phrase.name = M.PHRASE_NAME
     job.phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
@@ -400,6 +403,9 @@ local function finalize(job, event_count, skipped)
   if not ok then
     complete(job, error_message)
     return
+  end
+  if job.phrase.lpb~=job.layout.lpb or job.phrase.shuffle~=0 then
+    complete(job,"Phrase timing metadata verification failed");return
   end
   if not token_current(job) then
     complete(job,job.invalid_reason or "generation was invalidated before commit",nil,"suspended")
@@ -557,7 +563,7 @@ local function render(job)
     target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
   local ok, error_message = pcall(function()
     local started, start_error = script:render_to_pattern({
-      lpb = M.LPB,
+      lpb = job.layout.lpb,
       max_events = job.plan.length + 8
     }, function(render_error, rendered_events, skipped_events)
       if current ~= job then return end
@@ -710,7 +716,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   if layout.number_of_lines>MAX_PHRASE_LINES then return nil,failure("phrase.unrepresentable","phrase","Rendered phrase exceeds Renoise's line limit") end
   local meta
   local source
-  source,meta=pattrns.emit(plan)
+  source,meta=pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution})
   if not source then return nil,failure("phrase.unrepresentable","phrase",meta) end
   local timeline,timeline_error=control.compile(fixture,{gate_fraction=0.5,plan=plan,
     output_policy=output_policy,successor=plan.loop and plan.loop.steady})
@@ -743,6 +749,15 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     end
   end
   if not commands then return nil,failure("phrase.unrepresentable","phrase",approximations) end
+  local transport_ok,transport=pcall(function() return song.transport end)
+  if transport_ok and transport then
+    if renoise.Transport and transport.timing_model==renoise.Transport.TIMING_MODEL_SPEED then
+      approximations[#approximations+1]="Legacy speed timing is active; phrase timing in beats is unverified."
+    end
+    if transport.groove_enabled then
+      approximations[#approximations+1]="Song groove is active; its effect on phrase timing is unverified."
+    end
+  end
   local operations,operation_error=gates.plan(timeline,plan,commands)
   if not operations and #commands>0 then
     for candidate_rate=math.max(1,minimum_rate+1),255 do

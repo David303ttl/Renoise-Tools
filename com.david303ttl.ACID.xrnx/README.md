@@ -16,6 +16,11 @@ edit the same source; switching views does not change or regenerate the
 sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
 is increased again.
 
+Timing selects straight sixteenth steps or 1/8 triplet steps. A cycle of N
+steps lasts N/4 or N/3 quarter-note beats respectively. Changing timing keeps
+both memories intact. Phrase timing is local to the phrase; ACID does not change
+the song tempo, LPB or meter.
+
 A NOTE consumes the next active PITCH entry. TIE holds the current semantic
 voice without consuming pitch memory, and REST releases it. ACCENT and outgoing
 SLIDE belong to PITCH entries. Entering TIE at TIME 01 stores NOTE. Repeat
@@ -90,7 +95,9 @@ contract. Renoise playback and routing checks for Program/Grid switching,
 Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
 pending; see the [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md).
 The full M3.5 instrument and Live Edit gates remain tracked in
-[ROADMAP.md](ROADMAP.md). Triplet timing is not implemented.
+[ROADMAP.md](ROADMAP.md). Straight and triplet playback, including host groove
+and legacy speed timing, remain subject to the
+[timing checklist](../tests/acid/acid_timing_manual.md).
 
 ## Development checks
 

@@ -18,6 +18,7 @@ local function clone_pattern(pattern)
   local copy = {
     length = pattern.length,
     pitch_length = pattern.pitch_length,
+    timing_mode = pattern.timing_mode,
     pitch_events = {},
     time_events = {}
   }

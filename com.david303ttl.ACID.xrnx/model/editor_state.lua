@@ -102,7 +102,7 @@ function M.step_text(projection, step, cycle)
 end
 
 local function copy_source(pattern)
-  local copy={length=pattern.length,pitch_length=pattern.pitch_length,
+  local copy={length=pattern.length,pitch_length=pattern.pitch_length,timing_mode=pattern.timing_mode,
     pitch_events={},time_events={}}
   for i,pitch in ipairs(pattern.pitch_events) do
     local item={}
@@ -116,7 +116,8 @@ end
 local function same_state(a,b)
   if a.output_policy~=b.output_policy or a.pb_range~=b.pb_range or
       a.pattern.length~=b.pattern.length or
-      a.pattern.pitch_length~=b.pattern.pitch_length then return false end
+      a.pattern.pitch_length~=b.pattern.pitch_length or
+      a.pattern.timing_mode~=b.pattern.timing_mode then return false end
   for i=1,64 do
     local x,y=a.pattern.pitch_events[i],b.pattern.pitch_events[i]
     if x.note~=y.note or x.key~=y.key or x.octave~=y.octave or

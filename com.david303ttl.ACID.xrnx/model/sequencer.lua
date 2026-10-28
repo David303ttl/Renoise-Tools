@@ -5,7 +5,7 @@ local M = {}
 M.MAX_STEPS = 64
 M.PAGE_SIZE = 16
 M.BASE_NOTE = 36 -- C-3 in Renoise
-local SOURCE_FIELDS={length=true,pitch_length=true,pitch_events=true,time_events=true}
+local SOURCE_FIELDS={length=true,pitch_length=true,timing_mode=true,pitch_events=true,time_events=true}
 
 local function integer_between(v, a, b)
   return type(v) == "number" and v % 1 == 0 and v >= a and v <= b
@@ -35,7 +35,7 @@ function M.new_pattern(length,...)
   end
   local time_events = {}
   for i=1,M.MAX_STEPS do time_events[i] = "N" end
-  return {length=length, pitch_length=16, pitch_events=pitches,
+  return {length=length, pitch_length=16, timing_mode="straight", pitch_events=pitches,
     time_events=time_events}
 end
 
@@ -96,6 +96,9 @@ function M.validate(pattern)
   end
   if not integer_between(pattern.pitch_length, 1, M.MAX_STEPS) then
     return false, "pitch length must be 1..64"
+  end
+  if pattern.timing_mode ~= "straight" and pattern.timing_mode ~= "triplet" then
+    return false, "timing mode must be straight or triplet"
   end
   if array_size(pattern.pitch_events) ~= M.MAX_STEPS then
     return false, "PITCH memory must contain exactly 64 entries"

@@ -41,7 +41,11 @@ function script:render_to_pattern(options,callback)
       total_steps=total_steps+1
     end
   end
-  assert(options.lpb==8)
+  if options.lpb==6 then
+    assert(source:find('unit = "1/8"',1,true) and source:find('resolution = 2/3',1,true))
+  else
+    assert(options.lpb==8 and source:find('unit = "1/16"',1,true))
+  end
   assert(options.max_events==total_steps+8)
   render_calls[#render_calls+1]={max_events=options.max_events,steps=total_steps,
     notes=notes,offs=offs}
@@ -67,7 +71,7 @@ local function make_phrase()
   function phrase:column_is_muted() return false end
   function phrase:copy_from(other)
     columns.copy(self,other)
-    for _,key in ipairs({'number_of_lines','lpb','playback_mode','looping',
+    for _,key in ipairs({'number_of_lines','lpb','shuffle','playback_mode','looping',
       'loop_start','loop_end','key_tracking','name','visible_note_columns',
       'visible_effect_columns','instrument_column_visible',
       'volume_column_visible','panning_column_visible','delay_column_visible',
@@ -477,3 +481,28 @@ assert(draft_cache.get(song,instrument,instrument.phrases[1]).length==5,
 assert(#instrument.phrases==count_before and ownership.status(instrument.phrases[1])=='owned',
   'ordinary in-flight editing left a recovery or staging phrase')
 print('ACID Repeat end-to-end mocked integration checks passed (playback checked separately in Renoise)')
+
+-- Exercise both pulse modes through rendering and protected replacement.
+for _,policy in ipairs({'play_once','repeat'}) do
+  for _,length in ipairs({1,9,12,15,16,17,33,49,64}) do
+    local timed=source(length)
+    timed.timing_mode='triplet'
+    local target=#instrument.phrases+1
+    local output=generate(timed,policy,target)
+    assert(output.lpb==6 and output.shuffle==0)
+    assert(output.number_of_lines==(policy=='repeat' and 4*length+1 or 2*length))
+    assert(store.load(song,output).timing_mode=='triplet')
+    for step=1,(policy=='repeat' and 2*length or length) do
+      assert(output.cells[2*step-1].note_value==timed.pitch_events[(step-1)%length+1].note)
+    end
+    timed.timing_mode='straight'
+    output=generate(timed,policy,target)
+    assert(output.lpb==8 and output.shuffle==0 and store.load(song,output).timing_mode=='straight')
+  end
+end
+renoise.Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2}
+song.transport={timing_model=1,groove_enabled=true}
+local _,timing_status=generate(source(4),'repeat',#instrument.phrases+1)
+assert(timing_status.message:find('Legacy speed timing',1,true))
+assert(timing_status.message:find('Song groove',1,true))
+assert(song.transport.timing_model==1 and song.transport.groove_enabled)

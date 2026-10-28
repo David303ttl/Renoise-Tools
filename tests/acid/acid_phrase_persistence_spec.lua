@@ -26,6 +26,7 @@ assert(a.name:find("[v3:",1,true))
 s.instruments[1].phrases[1]=a
 assert(ownership.status(a)=="owned" and ownership.id(a)==1)
 local p=seq.new_pattern(17)
+p.timing_mode="triplet"
 p.pitch_length=3
 for i=1,17 do p.time_events[i]="N" end
 p.pitch_events[2]=seq.new_pitch(3,1,true,true)
@@ -39,10 +40,11 @@ assert(store.commit(s,initial) and s.tool_data==initial.raw)
 assert(store.restore(s,initial) and s.tool_data==nil)
 assert(store.allocate(s)==2)
 assert(store.save(s,1,p,"play_once",12))
-assert(s.tool_data:match("^ACID%-PITCH%-TIME%-4\n"))
+assert(s.tool_data:match("^ACID%-PITCH%-TIME%-5\n"))
 local restored,output_policy,pb_range=store.load(s,a)
 assert(restored and output_policy=="play_once" and pb_range==12)
 assert(restored.length==17 and #restored.pitch_events==64)
+assert(restored.timing_mode=="triplet")
 assert(restored.pitch_length==3 and #restored.time_events==64)
 assert(restored.pitch_events[2].note==51)
 assert(restored.pitch_events[2].octave==1)
@@ -101,6 +103,10 @@ assert(play_once_policy=="play_once")
 assert(play_once_pb_range==2)
 assert(play_once_copy.length==original.length and play_once_copy.pitch_length==original.pitch_length)
 local valid_data=s.tool_data
+s.tool_data=valid_data:gsub("|triplet|", "|unknown|", 1)
+assert(not store.read(s))
+s.tool_data=valid_data:gsub("|triplet|", "|", 1)
+assert(not store.read(s))
 s.tool_data=valid_data:gsub("|play_once|2|", "|play_once|4|", 1)
 assert(not store.read(s)) -- unsupported PB ranges are rejected
 s.tool_data=valid_data:gsub("|play_once|", "|unsupported|", 1)
@@ -148,6 +154,9 @@ assert(s.tool_data=="ACID-PITCH-TIME-2\n")
 s.tool_data="ACID-PITCH-TIME-3\n"
 assert(not store.read(s) and not store.save(s,3,p,"repeat"))
 assert(s.tool_data=="ACID-PITCH-TIME-3\n")
+s.tool_data="ACID-PITCH-TIME-4\n"
+assert(not store.read(s) and not store.save(s,3,p,"repeat"))
+assert(s.tool_data=="ACID-PITCH-TIME-4\n")
 s.tool_data="ACID-PITCH-TIME-1\n"
 assert(not store.read(s) and not store.save(s,3,p,"repeat"))
 assert(s.tool_data=="ACID-PITCH-TIME-1\n")

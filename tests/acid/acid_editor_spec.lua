@@ -133,4 +133,22 @@ off.pitch_length=2
 for i=1,64 do off.time_events[i]=(i==1 or i==64) and "N" or "R" end
 local plan=assert(interpreter.compile_cycle(off))
 assert(plan.steps[64].pitch_index==2 and plan.note_count==2)
+local timed=seq.new_pattern(64)
+assert(timed.timing_mode=="straight")
+local timing_history=editor.new_history(timed,"repeat",0)
+local before=assert(interpreter.compile_cycle(timed))
+timed.timing_mode="triplet"
+assert(timing_history:record(timed,"repeat",0))
+assert(not timing_history:record(timed,"repeat",0))
+local after=assert(interpreter.compile_cycle(timed))
+for i=1,64 do
+  assert(before.steps[i].note==after.steps[i].note)
+  assert(before.steps[i].pitch_index==after.steps[i].pitch_index)
+end
+assert(timing_history:undo().timing_mode=="straight")
+assert(timing_history:redo().timing_mode=="triplet")
+timed.timing_mode=nil
+assert(not seq.validate(timed))
+timed.timing_mode="other"
+assert(not seq.validate(timed))
 print("ACID editor, paging, octave, preview and diagnostic checks passed")

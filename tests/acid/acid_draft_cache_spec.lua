@@ -134,10 +134,11 @@ assert(pattern_store.read(song_a)[90]~=nil and pattern_store.read(song_a)[89]==n
 local volatile_instrument={name="Volatile",phrases={}}
 local volatile_song={tool_data="corrupt",instruments={volatile_instrument}}
 local volatile=sequencer.new_pattern(3)
+volatile.timing_mode="triplet"
 local persisted,persist_error=cache.put(volatile_song,volatile_instrument,nil,volatile,"repeat",24)
 assert(not persisted and type(persist_error)=="string")
 local volatile_copy,_,volatile_pb=cache.get(volatile_song,volatile_instrument,nil)
-assert(volatile_copy.length==3 and volatile_pb==24)
+assert(volatile_copy.length==3 and volatile_copy.timing_mode=="triplet" and volatile_pb==24)
 assert(cache.has_volatile(volatile_song) and not cache.has_volatile(song_a))
 
 -- Successful commit calls clear; repeated clear and unrelated targets are safe.
@@ -152,4 +153,13 @@ assert(cache.get(song_a, instrument_a, nil) == nil,
 assert(not cache.put(song_a, instrument_a, phrase_a, {}, "repeat"))
 assert(not cache.put(song_a, instrument_a, phrase_a, sequencer.new_pattern(), "invalid_policy"))
 assert(not cache.put(song_a,instrument_a,phrase_a,sequencer.new_pattern(),"repeat",4))
+local timing_instrument={name="Timing",phrases={}}
+local timing_song={instruments={timing_instrument}}
+local timing_source=sequencer.new_pattern(64)
+timing_source.timing_mode="triplet"
+assert(cache.put(timing_song,timing_instrument,nil,timing_source,"repeat",0))
+package.loaded["model.draft_cache"]=nil
+local reloaded_cache=require("model.draft_cache")
+local timing_copy=assert(reloaded_cache.get(timing_song,timing_instrument,nil))
+assert(timing_copy.timing_mode=="triplet" and timing_copy.length==64)
 print("acid_draft_cache_spec: ok")
