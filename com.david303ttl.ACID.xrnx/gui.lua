@@ -874,10 +874,12 @@ function M.show()
           end
         end
         if (result.status=="committed" or result.status=="approximate") and revision==requested_revision then
-          source_state.text="SOURCE COMMITTED"
           local cleared,clear_error=drafts.clear(song,requested_instrument,requested_phrase)
           if cleared==nil then
+            source_state.text="SOURCE COMMITTED; DRAFT RECOVERY PENDING"
             result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
+          else
+            source_state.text="SOURCE COMMITTED"
           end
         end
         done(result)
@@ -1064,10 +1066,12 @@ function M.show()
                   bound_phrase=requested_object.phrases[result_target]
                 end
                 if revision==requested_revision then
-                  source_state.text="SOURCE COMMITTED"
                   local cleared,clear_error=drafts.clear(song,requested_object,requested_phrase)
                   if cleared==nil then
+                    source_state.text="SOURCE COMMITTED; DRAFT RECOVERY PENDING"
                     result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
+                  else
+                    source_state.text="SOURCE COMMITTED"
                   end
                 elseif not requested_phrase then
                   local committed_phrase=requested_object.phrases[result_target]

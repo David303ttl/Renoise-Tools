@@ -173,6 +173,20 @@ assert(not manual.options.token:is_current(),
   "changing timing invalidates the pending manual render")
 render_callbacks[#render_callbacks]({kind="complete",status="suspended",message="invalidated"})
 assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+fail_draft_clear=true
+generate:fire()
+local manual_result={kind="complete",status="committed",message="saved",target={phrase_index=1}}
+render_callbacks[#render_callbacks](manual_result)
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED; DRAFT RECOVERY PENDING",
+  "manual commit reports retained draft when cleanup fails")
+assert(persisted_drafts["1:11"], "failed cleanup must retain the draft")
+assert(manual_result.draft_warning:find("test cleanup failure",1,true))
+local recovery_choice=popup(builder,360)
+recovery_choice:fire(2)
+recovery_choice:fire(1)
+assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true) and timing.value==2,
+  "reselecting the phrase recovers the retained draft")
+fail_draft_clear=false
 generate:fire()
 render_callbacks[#render_callbacks]({kind="complete",status="committed",message="saved",
   target={phrase_index=1}})
@@ -196,8 +210,15 @@ render_callbacks[#render_callbacks]({kind="complete",status="suspended",message=
 local second=tool.writer_calls[#tool.writer_calls]
 assert(second~=first and second.pattern.timing_mode=="straight" and second.options.token:is_current(),
   "Live Edit queues the newest timing after the stale render settles")
+fail_draft_clear=true
+local live_result={kind="complete",status="committed",message="saved",target={phrase_index=1}}
+render_callbacks[#render_callbacks](live_result)
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED; DRAFT RECOVERY PENDING",
+  "Live Edit commit reports retained draft when cleanup fails")
+assert(persisted_drafts["1:11"], "Live Edit cleanup failure must retain the draft")
+assert(live_result.draft_warning:find("test cleanup failure",1,true))
+fail_draft_clear=false
 live_checkbox:fire(false)
-render_callbacks[#render_callbacks]({kind="complete",status="suspended",message="disabled"})
 
 local phrase_choice=popup(builder,360)
 timing:fire(2)
