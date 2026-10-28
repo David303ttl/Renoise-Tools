@@ -76,6 +76,18 @@ phrase.looping=false
 phrase.loop_start=1
 phrase.loop_end=16
 assert(verifier.verify(phrase,plan,2))
+for _,lpb in ipairs({8,6}) do
+  local timing_layout={looping=false,loop_start=1,loop_end=16,number_of_lines=16,lpb=lpb}
+  phrase.lpb=lpb
+  phrase.shuffle=0
+  assert(verifier.verify(phrase,plan,2,timing_layout))
+  phrase.lpb=lpb==8 and 6 or 8
+  assert(not verifier.verify(phrase,plan,2,timing_layout),"wrong phrase LPB accepted")
+  phrase.lpb=lpb
+  phrase.shuffle=0.1
+  assert(not verifier.verify(phrase,plan,2,timing_layout),"nonzero phrase shuffle accepted")
+end
+phrase.shuffle=0
 assert(verifier.verify(phrase,plan,2,nil,{volumes={[1]={[1]=89,[2]=255}}}))
 assert(not verifier.verify(phrase,plan,2,nil,{volumes={[1]={[1]=90,[2]=255}}}),
   "a changed validated native volume was accepted")

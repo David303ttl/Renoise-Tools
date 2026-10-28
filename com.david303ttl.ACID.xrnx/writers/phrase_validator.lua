@@ -35,6 +35,12 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
       expected_lines or musical_lines, tostring(phrase.number_of_lines))
   end
   if layout then
+    if layout.lpb and phrase.lpb~=layout.lpb then
+      return nil,"phrase LPB mismatch"
+    end
+    if layout.lpb and phrase.shuffle~=0 then
+      return nil,"phrase shuffle must be zero"
+    end
     if type(layout.looping)~="boolean" then
       return nil,"invalid phrase loop layout"
     end

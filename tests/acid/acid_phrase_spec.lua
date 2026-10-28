@@ -36,6 +36,7 @@ function phrase:column_is_muted() return false end
 function phrase:copy_from(other)
   self.number_of_lines=other.number_of_lines
   self.lpb=other.lpb
+  self.shuffle=other.shuffle
   self.playback_mode=other.playback_mode
   self.looping=other.looping
   self.loop_start=other.loop_start
@@ -64,6 +65,7 @@ function instrument:insert_phrase_at(i)
     self.number_of_lines=other.number_of_lines
     self.playback_mode=other.playback_mode
     self.lpb=other.lpb
+    self.shuffle=other.shuffle
     self.looping=other.looping
     self.loop_start=other.loop_start
     self.loop_end=other.loop_end
@@ -412,3 +414,56 @@ assert(slide_phrase.cells[1].note_value==40,
 assert(first_phrase.cells[1].note_value==first_note,
   "regeneration must leave the preceding phrase unchanged")
 print("ACID phrase writer slide and destination regression checks passed")
+
+-- Triplet rendering must use the same LPB in Pattrns and the committed phrase.
+-- A misplaced rendered event must leave the previous phrase and source intact.
+local triplet_source=source_fixture()
+triplet_source.timing_mode="triplet"
+local triplet_status
+local triplet_target=#instrument.phrases+1
+local render_triplet=function(self,opts,cb)
+  assert(opts.lpb==6, "triplet script was rendered at the wrong LPB")
+  assert(self.paragraphs[1]:find('unit = "1/8"',1,true))
+  assert(self.paragraphs[1]:find('resolution = 2/3',1,true))
+  local target=instrument.phrases[#instrument.phrases]
+  local notes={[1]=36,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
+  for line=1,16 do
+    target.cells[line]={note_value=notes[line] or 121,
+      volume_value=line==5 and 255 or (notes[line] and notes[line]<120 and 89 or 255)}
+  end
+  cb(nil,8,0)
+end
+script.render_to_pattern=render_triplet
+assert(generate(function(value)triplet_status=value end,triplet_source,triplet_target))
+idle:fire();idle:fire();idle:fire()
+assert(triplet_status.status=='committed' or triplet_status.status=='approximate',triplet_status.message)
+local triplet_phrase=instrument.phrases[triplet_target]
+assert(triplet_phrase.lpb==6 and triplet_phrase.shuffle==0 and triplet_phrase.number_of_lines==16)
+assert(store.load(song,triplet_phrase).timing_mode=='triplet')
+local triplet_store=song.tool_data
+local triplet_first=triplet_phrase.cells[1].note_value
+function script:render_to_pattern(opts,cb)
+  return render_triplet(self,opts,function(...)
+    local target=instrument.phrases[#instrument.phrases]
+    target.cells[5].note_value=121
+    target.cells[6].note_value=39
+    cb(...)
+  end)
+end
+assert(generate(function(value)triplet_status=value end,triplet_source,triplet_target))
+idle:fire();idle:fire();idle:fire()
+script.render_to_pattern=original_render
+assert(triplet_status.status=='error',triplet_status.message)
+assert(instrument.phrases[triplet_target]==triplet_phrase and triplet_phrase.cells[1].note_value==triplet_first)
+assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
+-- Reported host limits are checked before replacing an owned destination.
+for _,limit in ipairs({"MAX_NUMBER_OF_LINES","MAX_NUMBER_OF_NOTE_COLUMNS"}) do
+  local saved=renoise.InstrumentPhrase[limit]
+  renoise.InstrumentPhrase[limit]=limit=="MAX_NUMBER_OF_LINES" and 15 or 0
+  local accepted,reason=generate(function(value)triplet_status=value end,triplet_source,triplet_target)
+  assert(not accepted and reason,limit.." was ignored")
+  assert(instrument.phrases[triplet_target]==triplet_phrase and triplet_phrase.cells[1].note_value==triplet_first)
+  assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
+  renoise.InstrumentPhrase[limit]=saved
+end
+print("ACID triplet renderer metadata and transaction checks passed")

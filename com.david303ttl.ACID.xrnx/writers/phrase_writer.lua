@@ -407,6 +407,8 @@ local function finalize(job, event_count, skipped)
   if job.phrase.lpb~=job.layout.lpb or job.phrase.shuffle~=0 then
     complete(job,"Phrase timing metadata verification failed");return
   end
+  local final_verified,final_error=validator.verify(job.phrase,job.plan,2,job.layout,expected_articulation)
+  if not final_verified then complete(job,final_error);return end
   if not token_current(job) then
     complete(job,job.invalid_reason or "generation was invalidated before commit",nil,"suspended")
     return
@@ -429,6 +431,8 @@ local function finalize(job, event_count, skipped)
       backup.name="ACID TRANSACTION BACKUP"
       local copied,copy_error=pcall(function()
         job.target_phrase:copy_from(job.phrase)
+        local valid,validation_error=validator.verify(job.target_phrase,job.plan,2,job.layout,expected_articulation)
+        if not valid then error("Copied phrase validation failed: "..tostring(validation_error)) end
         local name,name_error=ownership.make_name(job.target_phrase,job.snapshot_id)
         if not name then error(name_error) end
         job.target_phrase.name=name
@@ -713,7 +717,16 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   local plan,layout_or_error=physical_plan(fixture,output_policy)
   if not plan then return nil,failure("source.invalid","source",layout_or_error) end
   local layout=layout_or_error
-  if layout.number_of_lines>MAX_PHRASE_LINES then return nil,failure("phrase.unrepresentable","phrase","Rendered phrase exceeds Renoise's line limit") end
+  local phrase_api=renoise.InstrumentPhrase
+  local line_capacity=phrase_api.MAX_NUMBER_OF_LINES or MAX_PHRASE_LINES
+  if layout.number_of_lines>line_capacity then
+    local line=line_capacity+1
+    local physical_step=math.min(math.floor((line-1)/layout.lines_per_step)+1,layout.physical_steps)
+    return nil,failure("phrase.unrepresentable","phrase",string.format(
+      "TIME step %02d, cycle %d, phrase line %d exceeds the host line limit %d",
+      layout.source_step(physical_step),math.floor((physical_step-1)/fixture.length)+1,
+      line,line_capacity))
+  end
   local meta
   local source
   source,meta=pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution})
@@ -733,6 +746,27 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       native_notes.diagnostics[#native_notes.diagnostics+1]=
         "Phrase pitch-bend delivery and receiver targeting are unverified; NOTE overlap is retained for the whole phrase."
     end
+  end
+  local note_capacity=phrase_api.MAX_NUMBER_OF_NOTE_COLUMNS or 12
+  local effect_capacity=phrase_api.MAX_NUMBER_OF_EFFECT_COLUMNS or 8
+  if note_capacity<1 or (native_notes and (native_notes.columns>note_capacity or
+      (next(native_notes.midi_commands or {}) and effect_capacity<1))) then
+    local line=1
+    if native_notes and note_capacity>=1 then
+      for candidate=1,layout.number_of_lines do
+        local cells=native_notes.cells[candidate] or {}
+        local command=native_notes.midi_commands and native_notes.midi_commands[candidate]
+        local exceeds=command and (effect_capacity<1 or native_notes.columns>note_capacity)
+        for column in pairs(cells) do
+          if column>note_capacity then exceeds=true;break end
+        end
+        if exceeds then line=candidate;break end
+      end
+    end
+    local physical_step=math.min(math.floor((line-1)/layout.lines_per_step)+1,layout.physical_steps)
+    return nil,failure("phrase.unrepresentable","phrase",
+      string.format("TIME step %02d, cycle %d, phrase line %d: host phrase column capacity is insufficient for articulation",
+        layout.source_step(physical_step),math.floor((physical_step-1)/fixture.length)+1,line))
   end
   local commands,approximations,minimum_rate
   if native_notes then
@@ -760,6 +794,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   end
   local operations,operation_error=gates.plan(timeline,plan,commands)
   if not operations and #commands>0 then
+    local collision_error=operation_error
     for candidate_rate=math.max(1,minimum_rate+1),255 do
       local candidate_commands=articulation.plan(plan,2,candidate_rate)
       if candidate_commands then
@@ -778,7 +813,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       if operations then
         local places={}
         for _,step in ipairs(slide_steps(plan)) do places[#places+1]=string.format("%02d",step) end
-        approximations[#approximations+1]=tostring(operation_error)..
+        approximations[#approximations+1]=tostring(collision_error)..
           "; TIME steps "..table.concat(places,",")..
           " glide commands conflicted with gate timing at all rates, and ordered pitch events were retained"
         commands={}

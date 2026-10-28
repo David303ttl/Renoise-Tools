@@ -4,8 +4,9 @@ local gates=require("model.control_signals")
 local writer=require("writers.phrase_writer")
 local legato=require("model.legato")
 
-local function render(notes,slides,range,policy,commands)
+local function render(notes,slides,range,policy,commands,mode)
   local p=seq.new_pattern(commands and #commands or #notes)
+  p.timing_mode=mode or 'straight'
   p.pitch_length=#notes
   for i,note in ipairs(notes) do
     local octave=math.floor((note-36)/12)
@@ -62,6 +63,14 @@ assert(attacks(fresh)==2 and fresh.midi_commands[4].value==8192 and fresh.midi_c
 local seam=render({36,40,43},{true,true,true},12,"repeat")
 assert(seam.midi_commands and attacks(seam)==1)
 assert(seam.midi_commands[6].value~=8192 and seam.midi_commands[7].value==8192)
+for _,mode in ipairs({'straight','triplet'}) do
+  local ordered=render({36,43},{true,false},2,'play_once',nil,mode)
+  assert(ordered.midi_commands[1].value==8192 and ordered.cells[1][1].delay_value==1)
+  assert(ordered.midi_commands[3].value==8192 and ordered.cells[3][2].delay_value==1)
+  local loop=render({36,40,43},{true,true,true},12,'repeat',nil,mode)
+  assert(loop.midi_commands[6].value~=8192 and loop.midi_commands[7].value==8192)
+  assert(attacks(loop)==1)
+end
 local unsafe=render({24,38,52},{true,true,true},12,"repeat")
 assert(not unsafe.midi_commands)
 assert(table.concat(unsafe.diagnostics," "):find("loop seam",1,true))
