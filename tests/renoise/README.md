@@ -3,8 +3,8 @@
 ## Pinned API 6.2 contract
 
 These signatures come from `sdk/renoise-api-6.2/definitions/` and the matching
-offline API pages and guides. They describe the scripting surface; host-specific
-prompt and window behavior has not been demonstrated by this repository work.
+offline API pages and guides. They describe the scripting surface; observed host
+results are recorded in [host_verification.md](host_verification.md).
 
 | API | Signature and lifecycle constraints | Workaround supported by 6.2 docs |
 | --- | --- | --- |
@@ -22,41 +22,105 @@ prompt and window behavior has not been demonstrated by this repository work.
 The offline application guide states that loading and saving are not always
 instantaneous because prompts may be shown. It does not establish dirty-song
 prompt handling, asynchronous reload behavior, or reliable window activation.
-Those behaviors remain unverified until an isolated Renoise spike. Unknown modal
-dialogs must fail closed; do not patch `renoise.app()` or infer success from a
+Unknown modal dialogs must fail closed; do not patch `renoise.app()` or infer success from a
 request return or fixed delay.
 
-## Isolated host preflight
+## Host preflight and behavior spike
 
-`host_preflight.psm1` exports `Test-RenoiseHostPreflight`; callers cannot supply
-or replace its live Windows context. It requires explicit configuration for the
-dedicated Windows user SID and session ID, a profile marker and expected contents,
-Renoise executable, APPDATA, Renoise Tools path, ACID installation target,
-writable temporary directory, and three true behavior attestations:
-`DirtyDocumentFlowVerified`, `AsyncDocumentLifecycleVerified`, and
-`WindowActivationVerified`. APPDATA must match both the process environment and
-Windows' ApplicationData known folder.
-It checks current identity and APPDATA, a WTS-active non-session-0 desktop with
-visible `WinSta0` and an accessible input desktop matching the calling thread's
-desktop, Renoise executable metadata/version,
-`APPDATA\Renoise\V3.x.x\Scripts\Tools`, exact ACID target, the marker, and the
-absence of any Renoise process. A failed safety check returns before the temporary
-write probe. The probe is removed immediately.
+Development tests use the current desktop and an explicitly selected Renoise
+process, starting with a fresh disposable song. A separate Windows account,
+administrator provisioning, and protected profile markers are not prerequisites.
+Local evidence records reproducible observations; it is not a security credential
+and does not prove account isolation.
 
-Dirty-document prompts, async new/load/reload lifecycle, and window activation
-remain unverified here. These booleans are out-of-band operator attestations until
-an isolated runner/UI spike exists; this implementation neither automates nor
-detects dialogs. Leave each attestation false or unset until its behavior has
-been confirmed in the isolated host; preflight rejects false or missing evidence.
-The future runner must detect known prompts with supported UI automation and fail
-closed on an unknown modal dialog.
+`host_preflight.psm1` exports `Test-RenoiseHostPreflight`. It reads the current
+Windows identity, session, desktop, APPDATA, executable metadata, and Renoise
+process itself. Callers select the Renoise PID explicitly; preflight verifies its
+executable, owner, session, start time, and profile paths. It never launches,
+attaches to, or terminates Renoise. Execution mode requires a local evidence JSON
+whose raw trace and source hashes match the current environment and selected PID.
+The evidence stores observations and context, not caller-supplied verification
+booleans.
 
-Preflight never installs, starts, attaches to, or terminates Renoise. In
-particular, process ownership is not inferred from an existing process. Any
-future process-owning runner must retain the PID, executable path, and start time
-from its own successful `Start-Process -PassThru` call and may dispose only that
-positively identified process; redirected launch into another instance is an
-abort condition.
+The standalone probe in `spike_tool/` has no ACID runtime dependency. Copy its
+contents into a separate tool directory named
+`com.david303ttl.RenoiseTestHostSpike.xrnx` beneath the current profile's
+`Scripts\Tools`. Invoke **Tools → Renoise Test Host Spike → Initialize log and
+create fresh test song** once. This replaces the old raw trace, requests a new
+song, saves that disposable song to a unique fixture, then asynchronously creates
+another new song and loads the fixture. It logs Renoise lifecycle callbacks at
+each step. After this automatic sequence, reload the test tool from Renoise's
+Scripting Editor once to record `tool_will_unload` and `tool_finished_loading`.
+On Renoise 3.5.4, the API save wrote the fixture without delivering the saved
+notification to the requesting probe. Use **File → Save** if it remains waiting
+after the fixture is saved; the observed notification resumes the sequence.
+If the initial new-song request presents Renoise's save prompt, choose
+the intended Save, Discard, or Cancel action in Renoise; the probe will not choose
+for you.
+
+For dirty-document observations, use **Mark current fixture dirty (tempo +1 BPM)**
+and invoke the dirty
+new-song or fixture-load menu action. Resolve the prompt in Renoise, then choose
+the matching **Record dirty prompt** item. Repeat as needed for Cancel, Save, and
+Discard for both new-song and fixture-load operations. The menu record is an
+operator observation, so retain a screenshot of each prompt and resulting
+document state with the raw trace.
+
+For window activation, start the foreground observer for the Renoise PID selected
+by preflight, alt-tab to another window and back, then retain its output:
+
+```powershell
+pwsh -NoProfile -File ./tests/renoise/Capture-Foreground.ps1 `
+  -RenoiseProcessId <renoise-pid> `
+  -OutputPath <evidence-directory>\foreground.jsonl `
+  -DurationSeconds 120
+```
+
+The observer checks that the process belongs to the current user and session. It
+records foreground transitions and executable identity, and does not activate or
+control Renoise.
+
+Build the local evidence JSON from the selected PID, raw traces, and probe sources
+after the host checks are complete:
+
+First copy `main.lua`, `manifest.xml`, and `spike-observations.jsonl` from the
+installed probe into an evidence directory. Use that snapshot as `ApiTracePath`;
+the running probe continues appending activation events to its original trace.
+Keep screenshots beside the snapshot. These artifacts belong under ignored
+`tmp/`, not in the repository history.
+
+```powershell
+pwsh -NoProfile -File ./tests/renoise/build_spike_evidence.ps1 `
+  -RenoiseProcessId <renoise-pid> `
+  -ApiTracePath '<spike tool folder>\spike-observations.jsonl' `
+  -ForegroundTracePath '<evidence directory>\foreground.jsonl' `
+  -OutputPath '<evidence directory>\behavior-evidence.json'
+```
+
+Safety preflight can run before collecting behavior. Execution preflight reads
+the evidence JSON and validates its environment, process, hashes, and raw flow
+events:
+
+```powershell
+Import-Module ./tests/renoise/host_preflight.psm1 -Force
+Test-RenoiseHostPreflight -Mode Safety -Configuration ([pscustomobject]@{
+  RenoiseExe = '<Renoise.exe path>'
+  RenoiseProcessId = <renoise-pid>
+  TemporaryDirectory = $env:TEMP
+})
+Test-RenoiseHostPreflight -Configuration ([pscustomobject]@{
+  RenoiseExe = '<Renoise.exe path>'
+  RenoiseProcessId = <renoise-pid>
+  TemporaryDirectory = $env:TEMP
+  BehaviorEvidencePath = '<evidence directory>\behavior-evidence.json'
+})
+```
+
+The tool logs `requested` actions separately from observed callbacks. A request
+return does not establish completion. Missing events, unexpected document
+transitions, or unknown modal dialogs fail closed. API 6.2 documents callback
+lifecycle but does not establish prompt or foreground behavior; those require
+observations from the running Renoise UI.
 
 Run synthetic fail-closed checks (no Renoise host required):
 
@@ -65,4 +129,19 @@ pwsh -NoProfile -File ./scripts/test_host_preflight.ps1
 ```
 
 These checks use synthetic contexts and temporary junctions; they do not establish
-native Renoise behavior or constitute a native smoke test.
+native Renoise behavior or constitute a native smoke test. A real-host spike is
+established only when the raw observations and current environment evidence have
+been collected from Renoise.
+
+Run the separate Windows integration checks against the selected process:
+
+```powershell
+./scripts/test_host_preflight_live.ps1 -RenoiseExe '<Renoise.exe path>' `
+  -RenoiseProcessId <renoise-pid> -RequireSafetyPass `
+  -BehaviorEvidencePath '<evidence directory>\behavior-evidence.json'
+lua tests/renoise/spike_tool_spec.lua
+```
+
+`InstallReplacementAuthorized` is separate from behavioral execution approval.
+An existing ACID installation that differs from the repository bundle cannot be
+replaced by this preflight. The standalone spike does not modify ACID.

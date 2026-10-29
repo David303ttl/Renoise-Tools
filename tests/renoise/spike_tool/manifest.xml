@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.2</ApiVersion>
+  <Id>com.david303ttl.RenoiseTestHostSpike</Id>
+  <Version>1.0</Version>
+  <Author>Renoise Tools test suite</Author>
+  <Name>Renoise Test Host Spike</Name>
+  <Category>Development</Category>
+  <Description>Records raw Renoise document and foreground lifecycle observations for isolated host acceptance.</Description>
+  <Platform>Windows</Platform>
+</RenoiseScriptingTool>
