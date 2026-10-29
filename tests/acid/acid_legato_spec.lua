@@ -19,9 +19,10 @@ end
 
 local function plan(p)
   local semantic=assert(cycles.plan_loop(p))
-  local timeline=assert(gates.compile(p,{plan=semantic.steady,
-    successor=semantic.verification,output_policy="repeat"}))
-  local physical={steps=semantic.steady.steps,loop=semantic}
+  local physical={length=semantic.steady.length,steps=semantic.steady.steps,loop=semantic}
+  local timeline=assert(gates.compile(p,{plan=physical,
+    successor=semantic.steady,output_policy="repeat"}))
+
   local timing_layout=assert(timing.new(p.timing_mode or "straight",p.length,"repeat"))
   local layout={lines_per_step=timing_layout.lines_per_step,
     half_step_lines=timing_layout.half_step_lines,max_columns=3}

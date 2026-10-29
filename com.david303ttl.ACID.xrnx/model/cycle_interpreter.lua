@@ -3,6 +3,8 @@
 local sequencer = require("model.sequencer")
 local policies = require("model.policies")
 local M = { MAX_CYCLES = 128 }
+local MAX_STATE_CYCLE = 1000000
+local EXCLUSIVE_CYCLE_LIMIT = MAX_STATE_CYCLE + 1
 
 local integer = policies.in_integer_range
 
@@ -35,7 +37,7 @@ end
 
 local function validate_state(state)
   if state == nil then return true end
-  if type(state) ~= "table" or not integer(state.cycle, 1, 1000000) then
+  if type(state) ~= "table" or not integer(state.cycle, 1, MAX_STATE_CYCLE) then
     return nil, "invalid cycle state"
   end
   local voice = state.voice
@@ -111,7 +113,7 @@ function M.compile_cycles(pattern, count, state)
   if not ok then return nil, err end
   ok, err = validate_state(state)
   if not ok then return nil, err end
-  if state and state.cycle + count > 1000001 then return nil, "invalid cycle count" end
+  if state and state.cycle + count > EXCLUSIVE_CYCLE_LIMIT then return nil, "invalid cycle count" end
   local plans = {}
   for i=1,count do plans[i], state = run_cycle(pattern, state) end
   return plans, state

@@ -306,13 +306,35 @@ assert(not invalid_started and invalid_result.kind=='complete'
   and invalid_result.category=='source' and invalid_result.code=='source.invalid')
 assert(rawequal(instrument.phrases[1],target) and target.name==previous_name
   and song.tool_data==previous_raw)
-assert(writer.generate(1,function(value)status=value end,wide_slide,1,
-  {output_policy='repeat'}))
-instrument.samples={}
-instrument.plugin_properties.plugin_loaded=true
-for _=1,6 do idle:fire() end
-assert(status.status=='suspended' and status.category=='safety'
-  and status.code=='safety.target_changed')
-assert(rawequal(instrument.phrases[1],target) and target.name==previous_name
-  and song.tool_data==previous_raw,'stale target capabilities changed last-good state')
+local capability_changes={
+  function()instrument.samples={}end,
+  function()instrument.plugin_properties.plugin_loaded=true end,
+  function()instrument.plugin_properties.alias_instrument_index=1 end,
+  function()instrument.plugin_properties.alias_fx_track_index=1 end,
+  function()instrument.plugin_properties.alias_fx_device_index=1 end,
+  function()instrument.plugin_properties.midi_output_routing_index=1 end,
+  function()instrument.midi_output_properties.device_name='Other Port' end,
+  function()instrument.midi_output_properties.instrument_type=2 end,
+  function()instrument.midi_output_properties.channel=2 end,
+  function()instrument.phrase_playback_mode=2 end,
+  function()instrument.phrase_program=2 end,
+  function()renoise.Midi.available_output_devices=function()return {}end end,
+}
+for index,mutate in ipairs(capability_changes) do
+  instrument.samples={{sample_buffer={has_sample_data=true}}}
+  instrument.plugin_properties={plugin_loaded=false,alias_instrument_index=0,
+    alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0}
+  instrument.midi_output_properties={device_name='Connected Port',instrument_type=1,channel=1}
+  instrument.phrase_playback_mode,instrument.phrase_program=1,1
+  renoise.Midi={available_output_devices=function()return {'Connected Port'}end}
+  assert(writer.generate(1,function(value)status=value end,wide_slide,1,
+    {output_policy='repeat'}))
+  mutate()
+  for _=1,6 do idle:fire() end
+  assert(status.status=='suspended' and status.category=='safety'
+    and status.code=='safety.target_changed','capability field '..index..' failed to suspend')
+  assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],target)
+    and target.name==previous_name and song.tool_data==previous_raw,
+    'stale target capabilities changed last-good state')
+end
 print('ACID one-shot gate generation, regeneration and transaction rollback passed (mocked Renoise)')

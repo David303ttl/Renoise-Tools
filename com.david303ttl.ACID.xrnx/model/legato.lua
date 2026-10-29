@@ -35,11 +35,6 @@ local function semantic_plans(semantic)
     if semantic.loop.verification then plans[#plans+1]=semantic.loop.verification end
     return plans
   end
-  if semantic.cold and semantic.steady then
-    local plans={semantic.cold,semantic.steady}
-    if semantic.verification then plans[#plans+1]=semantic.verification end
-    return plans
-  end
   if type(semantic.steps)=="table" then return {semantic} end
   return nil,"semantic plan must contain cycle steps"
 end
@@ -276,6 +271,8 @@ local function bend_plan(semantic,timeline,layout,options,lines_per_step)
 end
 
 function M.plan(semantic,timeline,layout,options)
+  local associated,association_error=control.validate_association(semantic,timeline)
+  if not associated then return nil,association_error end
   layout=layout or {}
   local lines_per_step,layout_error=resolution(layout)
   if not lines_per_step then return nil,layout_error end

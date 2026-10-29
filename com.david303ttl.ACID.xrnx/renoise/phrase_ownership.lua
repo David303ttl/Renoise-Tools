@@ -2,12 +2,17 @@
 -- Content seal for current ACID generated phrases; this is not a security token.
 local M={}
 local PREFIX="ACID 0.1 #"
+local HASH_INITIAL = 5381
+local HASH_MULTIPLIER = 33
+local HASH_MODULUS = 2147483647
+local HASH_FIELD_SEPARATOR = 124
+local MAX_PHRASE_ID = 2147483647
 local function hash(phrase)
-  local acc=5381
+  local acc=HASH_INITIAL
   local function feed(value)
     local text=tostring(value==nil and "_" or value)
-    for i=1,#text do acc=(acc*33+text:byte(i))%2147483647 end
-    acc=(acc*33+124)%2147483647
+    for i=1,#text do acc=(acc*HASH_MULTIPLIER+text:byte(i))%HASH_MODULUS end
+    acc=(acc*HASH_MULTIPLIER+HASH_FIELD_SEPARATOR)%HASH_MODULUS
   end
   feed(phrase.number_of_lines)
   feed(phrase.lpb)
@@ -50,11 +55,11 @@ function M.id(phrase)
   local id=(phrase.name or ""):match("^ACID 0%.1 #(%d+) %[v3:(%x%x%x%x%x%x%x%x)%]$")
   if not id then return nil end
   local numeric=tonumber(id)
-  return numeric and numeric>=1 and numeric<=2147483647 and numeric or nil
+  return numeric and numeric>=1 and numeric<=MAX_PHRASE_ID and numeric or nil
 end
 
 function M.make_name(phrase,id)
-  if type(id)~="number" or id%1~=0 or id<1 or id>2147483647 then
+  if type(id)~="number" or id%1~=0 or id<1 or id>MAX_PHRASE_ID then
     return nil,"invalid ACID phrase ID"
   end
   local seal,err=hash(phrase)
@@ -67,7 +72,7 @@ function M.status(phrase)
   local seal=name:match("^ACID 0%.1 #%d+ %[v3:(%x%x%x%x%x%x%x%x)%]$")
   if not seal or not name:match("^ACID 0%.1 #(%d+) ") then return "foreign" end
   local id=tonumber(name:match("^ACID 0%.1 #(%d+) "))
-  if not id or id<1 or id>2147483647 then return "foreign" end
+  if not id or id<1 or id>MAX_PHRASE_ID then return "foreign" end
   local actual,err=hash(phrase)
   if not actual then return "modified",err end
   if seal~=actual then return "modified","ACID phrase was edited after generation" end

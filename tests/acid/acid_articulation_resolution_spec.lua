@@ -5,6 +5,7 @@ local gate_writer=require("writers.gate_writer")
 local planner=require("model.output_planner")
 local articulation=require("model.articulation")
 local legato=require("model.legato")
+local plan_fixture=require("tests.acid.timeline_fixture")
 local seq=require("model.sequencer")
 local compiler=require("model.cycle_interpreter")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
@@ -77,16 +78,16 @@ local overlap_timeline={steps=2,events={
   {kind="pitch_target",at=256,note=40,step=2,source_step=2,accent=false},
   {kind="gate_off",at=384,step=2,source_step=2}}}
 local overlap_layout={lines_per_step=4,half_step_lines=2}
-local overlap=assert(legato.plan(overlap_semantic,overlap_timeline,overlap_layout))
+local overlap=assert(plan_fixture(overlap_semantic,overlap_timeline,overlap_layout))
 assert(overlap.lines_per_step==4 and overlap.cells[1][1].note_value==36)
 assert(overlap.cells[5][2].note_value==40 and overlap.cells[5][2].delay_value==0)
 assert(legato.ORDER_DELAY==1 and overlap.cells[5][1].delay_value==legato.ORDER_DELAY)
 assert(overlap.cells[7][2].note_value==legato.OFF and overlap.cells[7][2].delay_value==0)
 overlap_timeline.events[3].at=400
-local quantized=assert(legato.plan(overlap_semantic,overlap_timeline,overlap_layout))
+local quantized=assert(plan_fixture(overlap_semantic,overlap_timeline,overlap_layout))
 assert(quantized.cells[7][2].delay_value>0)
 
-local boundary_off=assert(legato.plan({steps={{kind="note",step=1}}},{steps=2,events={
+local boundary_off=assert(plan_fixture({steps={{kind="note",step=1}}},{steps=2,events={
   {kind="gate_on",at=0,note=36,step=1,accent=false},
   {kind="gate_off",at=256,step=2}}},{lines_per_step=4,half_step_lines=2}))
 assert(boundary_off.cells[5][1].note_value==legato.OFF and
@@ -98,13 +99,13 @@ local bend_timeline={steps=2,events={
   {kind="gate_off",at=128,step=1},
   {kind="gate_on",at=256,note=43,step=2,accent=false}}}
 local bend_layout={lines_per_step=4,half_step_lines=2}
-local bend=assert(legato.plan(bend_semantic,bend_timeline,bend_layout,
+local bend=assert(plan_fixture(bend_semantic,bend_timeline,bend_layout,
   {pb_range=12,instrument_value=3}))
 assert(bend.cells[1][1].delay_value==1 and bend.midi_commands[1].value==8192)
 assert(bend.cells[3][1].note_value==legato.OFF and bend.midi_commands[3].value==8192)
 assert(bend.cells[5][1].note_value==43 and bend.cells[5][1].delay_value==0)
 assert(not bend.midi_commands[5])
-local glide=assert(legato.plan({}, {steps=2,events={
+local glide=assert(plan_fixture({}, {steps=2,events={
   {kind="gate_on",at=0,note=36,step=1,accent=false},
   {kind="pitch_target",at=256,note=40,step=2,accent=false}}},
   bend_layout,{pb_range=12,instrument_value=3}))

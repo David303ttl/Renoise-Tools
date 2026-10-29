@@ -3,6 +3,7 @@ local seq=require("model.sequencer")
 local gates=require("model.control_signals")
 local writer=require("writers.phrase_writer")
 local legato=require("model.legato")
+local plan_fixture=require("tests.acid.timeline_fixture")
 
 local function render(notes,slides,range,policy,commands,mode)
   local p=seq.new_pattern(commands and #commands or #notes)
@@ -15,7 +16,7 @@ local function render(notes,slides,range,policy,commands,mode)
   for i=1,p.length do p.time_events[i]=commands and commands[i] or "N" end
   local plan,layout=assert(writer.plan_output(p,policy or "play_once"))
   local timeline=assert(gates.compile(p,{plan=plan,successor=plan.loop and plan.loop.steady,output_policy=policy or "play_once"}))
-  return assert(legato.plan(plan,timeline,layout,{pb_range=range,instrument_value=3})),timeline
+  return assert(plan_fixture(plan,timeline,layout,{pb_range=range,instrument_value=3})),timeline
 end
 local function attacks(plan)
   local count=0
@@ -33,7 +34,7 @@ assert(up.midi_commands[5].value==math.floor(8192+7/12*8191+0.5))
 assert(not table.concat(up.diagnostics," "):find("SLIDE approximated",1,true))
 assert(up.midi_commands[7].value==8192)
 assert(up.cells[1][1].delay_value==1 and up.cells[7][1].note_value==120)
-local default_channel=assert(legato.plan({}, {events={{kind='gate_on',at=0,note=36,step=1,accent=false}},steps=1},
+local default_channel=assert(plan_fixture({}, {events={{kind='gate_on',at=0,note=36,step=1,accent=false}},steps=1},
   {lines_per_step=4,half_step_lines=2},{pb_range=12,instrument_value=255}))
 assert(default_channel.midi_commands[1].instrument_value==255)
 local down=render({43,36},{true,false},12)
@@ -100,13 +101,13 @@ for _,range in ipairs({2,12,24,48}) do
   local result=render({36,38},{true,false},range)
   assert(result.midi_commands[5].value<=16383)
 end
-local accent_plan=assert(legato.plan({}, {events={
+local accent_plan=assert(plan_fixture({}, {events={
   {kind="gate_on",at=0,note=36,step=1,accent=false},
   {kind="pitch_target",at=256,note=40,step=2,accent=true},
   {kind="gate_off",at=384,step=2}},steps=2},{lines_per_step=4,half_step_lines=2},
   {pb_range=12,instrument_value=0}))
 assert(table.concat(accent_plan.diagnostics," "):find("TIME step 02: accent change",1,true))
-local cramped=assert(legato.plan({}, {events={
+local cramped=assert(plan_fixture({}, {events={
   {kind="gate_on",at=0,note=36,step=1,accent=false},
   {kind="pitch_target",at=128,note=40,step=2,accent=false},
   {kind="gate_off",at=256,step=2}},steps=2},{lines_per_step=4,half_step_lines=2},
@@ -114,7 +115,7 @@ local cramped=assert(legato.plan({}, {events={
 assert(cramped.midi_commands[1].value==8192)
 assert(cramped.midi_commands[3].value==math.floor(8192+4/12*8191+0.5))
 assert(table.concat(cramped.diagnostics," "):find("no free intermediate bend line",1,true))
-assert(not legato.plan({}, {events={{kind="gate_on",at=1,note=36}},steps=1},
+assert(not plan_fixture({}, {events={{kind="gate_on",at=1,note=36}},steps=1},
   {lines_per_step=4,half_step_lines=2},
   {pb_range=12,instrument_value=0}))
 print("ACID pitch-bend anchor, endpoints, release and seam checks passed")

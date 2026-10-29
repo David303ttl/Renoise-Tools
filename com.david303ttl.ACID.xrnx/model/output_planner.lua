@@ -99,7 +99,7 @@ local function articulation_plan(plan,capabilities,timeline,lines_per_step)
   if not early_releases then return nil,release_error end
   local release_at={}
   for _,line in ipairs(early_releases) do release_at[line]=true end
-  local rate=1
+  local rate=articulation.MIN_RATE
   for _,event in ipairs(plan.steps) do
     if event.kind=="note" and event.transition=="slide" then
       local held=0
@@ -118,12 +118,12 @@ local function articulation_plan(plan,capabilities,timeline,lines_per_step)
         end
       end
       local interval=math.abs(event.note-event.from_note)
-      rate=math.max(rate,math.ceil(interval*16/available))
+      rate=math.max(rate,articulation.rate_for_interval(interval,available))
     end
   end
   if not has_slide then return {},{},1 end
   local minimum_rate=rate
-  if rate>254 then rate=255 end
+  if rate>articulation.MAX_FINITE_RATE then rate=articulation.MAX_RATE end
   local commands,err=articulation.plan(plan,lines_per_step,rate)
   if not commands then return nil,err end
   local places={}
@@ -145,7 +145,7 @@ local function articulation_plan(plan,capabilities,timeline,lines_per_step)
       end
     end
   end
-  if rate==255 then
+  if rate==articulation.MAX_RATE then
     local places={}
     for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
     approximations[#approximations+1]="TIME steps "..table.concat(places,",")..
@@ -415,13 +415,13 @@ function M.plan(source,output_policy,pb_range,capacities,capabilities,options)
   local operations,operation_error=M.plan_gates(timeline,plan,commands,layout.lines_per_step)
   if not operations and #commands>0 then
     local collision_error=operation_error
-    for candidate_rate=math.max(1,minimum_rate+1),255 do
+    for candidate_rate=math.max(articulation.MIN_RATE,minimum_rate+1),articulation.MAX_RATE do
       local candidate_commands=articulation.plan(plan,layout.lines_per_step,candidate_rate)
       if candidate_commands then
         local candidate_operations=M.plan_gates(timeline,plan,candidate_commands,layout.lines_per_step)
         if candidate_operations then
           commands,operations=candidate_commands,candidate_operations
-          if candidate_rate==255 then
+          if candidate_rate==articulation.MAX_RATE then
             approximations[#approximations+1]="native glide placement required 0G FF instant transitions; continuity is approximate"
           end
           break

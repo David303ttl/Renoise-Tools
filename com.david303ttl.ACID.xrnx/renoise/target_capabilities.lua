@@ -1,6 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Read-only description of the current Renoise instrument output layers.
 local M = {}
+-- Keep comparison values private so mutable diagnostics cannot change a baseline.
+local comparisons = setmetatable({}, {__mode="k"})
+local COMPARISON_FIELDS = 13
 
 local function has_sample(instrument)
   if instrument.samples==nil then error("sample inventory is unavailable") end
@@ -69,14 +72,13 @@ local function inspect(instrument)
     phrase_playback_mode = instrument.phrase_playback_mode,
     phrase_program = instrument.phrase_program,
   }
-  result.signature = table.concat({
-    tostring(result.sample), tostring(result.plugin), tostring(result.midi),
-    tostring(alias_instrument), tostring(alias_fx_track), tostring(alias_fx_device),
-    tostring(midi_device), tostring(midi_routing), tostring(midi_available),
-    tostring(midi_properties and midi_properties.instrument_type or ""),
-    tostring(midi_properties and midi_properties.channel or ""),
-    tostring(result.phrase_playback_mode), tostring(result.phrase_program),
-  }, "|")
+  comparisons[result] = {
+    result.sample, result.plugin, result.midi,
+    alias_instrument, alias_fx_track, alias_fx_device,
+    midi_device, midi_routing, midi_available,
+    midi_properties.instrument_type, midi_properties.channel,
+    result.phrase_playback_mode, result.phrase_program,
+  }
   result.diagnostics={}
   local function warn(message) result.diagnostics[#result.diagnostics+1]=message end
   if kind == "empty" then
@@ -112,8 +114,20 @@ function M.inspect(instrument)
   local ok,result=pcall(inspect,instrument)
   if ok then return result end
   local reason="Could not inspect receiver: "..tostring(result)
-  return {kind="unknown",read_error=reason,signature="unknown|"..reason,
+  local unknown={kind="unknown",read_error=reason,
     diagnostics={reason},diagnostic=reason}
+  comparisons[unknown]={read_error=reason}
+  return unknown
+end
+
+function M.same(left, right)
+  local a,b=comparisons[left],comparisons[right]
+  if not a or not b then return false end
+  if a.read_error or b.read_error then return a.read_error==b.read_error end
+  for index=1,COMPARISON_FIELDS do
+    if a[index]~=b[index] then return false end
+  end
+  return true
 end
 
 return M

@@ -111,7 +111,7 @@ local function context_valid(job)
   if not instrument_found then return false,"target instrument changed during generation" end
   local capabilities,capability_error=target_capabilities.inspect(job.instrument)
   if not capabilities then return false,capability_error end
-  if capabilities.signature~=job.capabilities.signature then
+  if not target_capabilities.same(capabilities,job.capabilities) then
     return false,"target output capabilities changed during generation"
   end
   if not phrase_index(job.instrument,job.phrase) then

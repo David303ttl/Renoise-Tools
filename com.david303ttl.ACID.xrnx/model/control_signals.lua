@@ -7,6 +7,71 @@ local M={UNITS_PER_STEP=256,DEFAULT_GATE_FRACTION=0.5}
 local UNITS_PER_STEP=M.UNITS_PER_STEP
 local ROUND_HALF_UP=0.5
 
+local function plain(value,active)
+  if type(value)~="table" then return type(value)~="function" and type(value)~="userdata" end
+  active=active or {}
+  if getmetatable(value) or active[value] then return false end
+  active[value]=true
+  for key,item in pairs(value) do
+    if (type(key)~="string" and type(key)~="number") or not plain(item,active) then return false end
+  end
+  active[value]=nil
+  return true
+end
+
+local function copy(value)
+  if type(value)~="table" then return value end
+  local result={}
+  for key,item in pairs(value) do result[key]=copy(item) end
+  return result
+end
+
+local function equal(a,b,semantic)
+  if type(a)~=type(b) then return false end
+  if type(a)~="table" then return a==b end
+  for key,value in pairs(a) do
+    if not (semantic and (key=="cycle" or key=="absolute_step" or key=="origin_cycle")) and
+        not equal(value,b[key],semantic) then return false end
+  end
+  for key in pairs(b) do
+    if not (semantic and (key=="cycle" or key=="absolute_step" or key=="origin_cycle")) and a[key]==nil then return false end
+  end
+  return true
+end
+
+local function complete(plan)
+  if type(plan)~="table" or not plain(plan) or type(plan.steps)~="table" or
+      not policies.is_integer(plan.length) or plan.length<1 or #plan.steps~=plan.length then return false end
+  for step,event in ipairs(plan.steps) do
+    if type(event)~="table" or event.step~=step or
+      (event.kind~="note" and event.kind~="tie" and event.kind~="rest") then return false end
+    if event.kind=="note" and not policies.in_integer_range(event.note,0,119) then return false end
+    if event.cycle~=nil and (not policies.is_integer(event.cycle) or event.cycle<1) then return false end
+  end
+  if plan.cycle~=nil and (not policies.is_integer(plan.cycle) or plan.cycle<1) then return false end
+  if plan.loop~=nil and (type(plan.loop)~="table" or not complete(plan.loop.cold) or
+      not complete(plan.loop.steady) or not complete(plan.loop.verification)) then return false end
+  return true
+end
+
+function M.validate_association(semantic,timeline)
+  if not complete(semantic) or type(timeline)~="table" or
+      not complete(timeline.semantic) or not plain(timeline) or timeline.steps~=semantic.length or
+      not equal(semantic,timeline.semantic) or type(timeline.association)~="table" or
+      not equal(timeline.semantic,timeline.association.semantic) or
+      not equal(timeline.successor,timeline.association.successor) or
+      not equal(timeline.events,timeline.association.events) then
+    return nil,"gate timeline does not match the semantic plan"
+  end
+  if semantic.loop and not equal(semantic.loop.steady,timeline.successor) then
+    return nil,"gate timeline does not match the successor cycle"
+  end
+  if timeline.output_policy=="repeat" and not complete(timeline.successor) then
+    return nil,"gate timeline requires a complete successor cycle"
+  end
+  return true
+end
+
 local function add(out,at,kind,ev,more)
   local e={at=at,kind=kind,step=ev.source_step or ev.step,cycle=ev.cycle}
   if more then for k,v in pairs(more) do e[k]=v end end
@@ -15,6 +80,7 @@ end
 
 function M.compile(pattern,options)
   options=options or {}
+  if type(options)~="table" then return nil,"gate scheduling options must be a table" end
   local fraction=options.gate_fraction or M.DEFAULT_GATE_FRACTION
   if type(fraction)~="number" or fraction<=0 or fraction>=1 or fraction~=fraction then
     return nil,"gate_fraction must be between 0 and 1"
@@ -33,11 +99,22 @@ function M.compile(pattern,options)
   if output_policy=="repeat" and not successor then
     return nil,"Repeat gate scheduling requires an explicit successor cycle"
   end
-  if not plan.steps or not plan.steps[1] or #plan.steps~=plan.length then
+  if not complete(plan) then
     return nil,"gate scheduling requires a complete semantic cycle"
   end
-  if successor and (not successor.steps or not successor.steps[1]) then
+  if successor and not complete(successor) then
     return nil,"gate scheduling requires a complete successor cycle"
+  end
+  if plan.loop and not equal(plan.loop.steady,successor) then
+    return nil,"gate scheduling successor does not match the semantic plan"
+  end
+  if successor then
+    local tail=plan.steps[plan.length]
+    local expected=compiler.compile_cycle(pattern,{cycle=(tail.cycle or plan.cycle or 1)+1,
+      next_pitch=1,voice=tail.voice,hold_intent=tail.hold_intent})
+    if not expected or not equal(expected.steps,successor.steps,true) then
+      return nil,"gate scheduling successor does not follow the semantic plan"
+    end
   end
   local first=plan.steps[1]
   -- A preceding fresh attack already received its midpoint release. Only
@@ -75,7 +152,8 @@ function M.compile(pattern,options)
   end
   return {events=events,steps=plan.length,units_per_step=UNITS_PER_STEP,
     gate_fraction=fraction,boundary=plan.boundary,output_policy=output_policy,
-    open_at_end=gate,final_note=note,semantic=plan,successor=successor}
+    open_at_end=gate,final_note=note,semantic=copy(plan),successor=copy(successor),
+    association={semantic=copy(plan),successor=copy(successor),events=copy(events)}}
 end
 
 -- Return exactly representable midpoint edges; REST edges belong to the

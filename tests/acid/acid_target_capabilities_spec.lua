@@ -34,7 +34,7 @@ end
 for _,case in ipairs(cases) do
   local result=assert(capabilities.inspect(case[1]))
   assert(result.kind==case[2], 'unexpected target kind: '..result.kind)
-  assert(type(result.signature)=='string' and #result.signature>0)
+  assert(capabilities.same(result,assert(capabilities.inspect(case[1]))))
   if result.kind=='empty' then assert(result.diagnostic:find('silent',1,true)) end
 end
 _G.type=lua_type
@@ -58,7 +58,7 @@ local before=assert(capabilities.inspect(instrument))
 instrument.plugin_properties.plugin_loaded=false
 instrument.midi_output_properties.device_name='MIDI Out'
 local after=assert(capabilities.inspect(instrument))
-assert(before.signature~=after.signature, 'capability changes must invalidate a render target')
+assert(not capabilities.same(before,after), 'capability changes must invalidate a render target')
 assert(after.kind=='midi' and after.diagnostic:find('MIDI',1,true))
 
 local alias=target(false,false,'')
@@ -80,10 +80,43 @@ phrase_target.phrase_program=0
 local phrase_off=assert(capabilities.inspect(phrase_target))
 assert(phrase_off.diagnostic:find('mode is OFF',1,true))
 assert(phrase_off.diagnostic:find('program is off',1,true))
-local phrase_signature=phrase_off.signature
 phrase_target.phrase_playback_mode=2
 phrase_target.phrase_program=1
 local phrase_ready=assert(capabilities.inspect(phrase_target))
-assert(phrase_ready.signature~=phrase_signature and phrase_ready.diagnostic==nil)
+assert(not capabilities.same(phrase_ready,phrase_off) and phrase_ready.diagnostic==nil)
+
+local mutations={
+  function(value)value.samples={{sample_buffer={has_sample_data=true}}}end,
+  function(value)value.plugin_properties.plugin_loaded=true end,
+  function(value)value.plugin_properties.alias_instrument_index=1 end,
+  function(value)value.plugin_properties.alias_fx_track_index=1 end,
+  function(value)value.plugin_properties.alias_fx_device_index=1 end,
+  function(value)value.plugin_properties.midi_output_routing_index=1 end,
+  function(value)value.midi_output_properties.device_name='Other Port' end,
+  function(value)value.midi_output_properties.instrument_type=2 end,
+  function(value)value.midi_output_properties.channel=2 end,
+  function(value)value.phrase_playback_mode=2 end,
+  function(value)value.phrase_program=2 end,
+  function()_G.renoise.Midi.available_output_devices=function()return {}end end,
+}
+for index,mutate in ipairs(mutations) do
+  _G.renoise.Midi.available_output_devices=function()return {'Connected Port'}end
+  local value=target(false,false,'Connected Port')
+  value.phrase_playback_mode,value.phrase_program=1,1
+  local baseline=assert(capabilities.inspect(value))
+  mutate(value)
+  local changed=assert(capabilities.inspect(value))
+  assert(not capabilities.same(baseline,changed),'capability field mutation '..index..' was ignored')
+end
+local stable=target(false,false,'Connected Port')
+local baseline=assert(capabilities.inspect(stable))
+baseline.midi_device='tampered'
+baseline.phrase_program=99
+assert(capabilities.same(baseline,assert(capabilities.inspect(stable))),
+  'public capability mutation changed the captured comparison contract')
+assert(not capabilities.same({},{}),'uninspected capabilities must reject comparison')
+assert(not capabilities.same(baseline,nil))
+assert(not capabilities.same(baseline,missing))
+assert(capabilities.same(missing,assert(capabilities.inspect({}))))
 
 print('ACID target capability classification and change detection passed')

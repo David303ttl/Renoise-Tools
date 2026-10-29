@@ -203,6 +203,10 @@ equal(first.steps[1].from_note, 40, 'incoming voice preserved')
 equal(incoming.voice.note, 40, 'incoming state remains unchanged')
 returned.voice.note = 0
 equal(incoming.voice.note, 40, 'returned state does not alias input')
+local last, exhausted = interpreter.compile_cycles(p, 1, {cycle=1000000})
+assert(last and exhausted.cycle==1000001)
+assert(not interpreter.compile_cycle(p, exhausted))
+assert(not interpreter.compile_cycles(p, 2, {cycle=1000000}))
 p.time_events[1] = 'T'
 assert(not interpreter.compile_cycle(p))
 assert(not interpreter.compile_cycles(p, 0))

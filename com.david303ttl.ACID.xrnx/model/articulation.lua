@@ -2,6 +2,20 @@
 -- Place note-column glide effects; sample voice continuity is not guaranteed.
 local M = {}
 M.DEFAULT_RATE = 0x20
+M.MIN_RATE = 0x01
+M.MAX_FINITE_RATE = 0xFE
+M.MAX_RATE = 0xFF
+M.CONTINUE_RATE = 0x00
+local RATE_UNITS_PER_SEMITONE = 16
+
+function M.rate_for_interval(interval, lines)
+  return math.ceil(math.abs(interval) * RATE_UNITS_PER_SEMITONE / lines)
+end
+
+function M.command_span(interval, rate)
+  return rate == M.MAX_RATE and 1
+    or math.max(1, math.ceil(math.abs(interval) * RATE_UNITS_PER_SEMITONE / rate))
+end
 local MIN_LINES_PER_STEP=2
 
 local function integer(value, minimum, maximum)
@@ -16,7 +30,7 @@ function M.plan(plan, lines_per_step, rate)
     return nil, "invalid glide plan or step resolution"
   end
   rate=rate or M.DEFAULT_RATE
-  if not integer(rate,1,255) then return nil,"glide rate must be 01..FF" end
+  if not integer(rate,M.MIN_RATE,M.MAX_RATE) then return nil,"glide rate must be 01..FF" end
   local commands = {}
   for step=1,plan.length do
     local event = plan.steps[step]
@@ -34,7 +48,7 @@ function M.plan(plan, lines_per_step, rate)
       local interval=event.note-event.from_note
       -- Native Gxx advances xx sixteenths of a semitone per command line.
       -- This determines command coverage, not acoustic settling or continuity.
-      local span=rate==255 and 1 or math.max(1,math.ceil(math.abs(interval)*16/rate))
+      local span=M.command_span(interval,rate)
       local available=lines_per_step
       for successor=step+1,plan.length do
         local held=plan.steps[successor]
@@ -49,7 +63,7 @@ function M.plan(plan, lines_per_step, rate)
         -- G00 continues the last rate; it does not cancel glide.
         commands[#commands+1] = {
         line=target_line+offset, note=offset==0 and event.note or nil,
-        command="0G", amount=offset==0 and rate or 0,
+        command="0G", amount=offset==0 and rate or M.CONTINUE_RATE,
         step=step, time_step=event.source_step or event.step or step,
         cycle=event.cycle, pitch_index=event.pitch_index,
         kind=offset==0 and "glide" or "continuation"

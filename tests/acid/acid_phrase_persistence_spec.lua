@@ -22,7 +22,7 @@ end
 local s={tool_data=nil,instruments={{phrases={}}}}
 local a=phrase()
 a.name=assert(ownership.make_name(a,1))
-assert(a.name:find("[v3:",1,true))
+assert(a.name=="ACID 0.1 #1 [v3:286369F5]")
 s.instruments[1].phrases[1]=a
 assert(ownership.status(a)=="owned" and ownership.id(a)==1)
 local p=seq.new_pattern(17)
