@@ -1,5 +1,41 @@
 # Renoise test host
 
+## Development bundle
+
+Build a disposable ACID bundle below the repository's ignored `tmp/` directory:
+
+~~~powershell
+$runDirectory = Join-Path 'tmp' ("acid-dev-" + [guid]::NewGuid().ToString("N"))
+pwsh -NoProfile -File ./scripts/package_dev.ps1 -Tool ACID -OutputDirectory $runDirectory
+~~~
+
+`OutputDirectory` is repository-relative. Build staging, the session file and
+the output bundle stay under `tmp/`; `.gitignore` excludes that directory.
+The packaging test exercises a non-ASCII repository path. Renoise's Lua file
+APIs use UTF-8 paths; the bootstrap passes `bundle_path` through unchanged and
+adds only ASCII relative path components.
+
+The output contains an extracted **com.david303ttl.ACID.xrnx** development tool
+and **acid-test-session.conf**. The tool is derived from the normal release
+archive, with a test-only driver and a bootstrap appended to its staged
+**main.lua**; production source files and the manifest stay unchanged. The
+bootstrap resolves the sidecar next to the bundle at runtime and contains no
+absolute desktop path. The session file contains only the loopback address,
+port and random per-run test secrets; it stores no username or operating
+system session identifier. Its ACL is limited to the current Windows user.
+Keep the output directory at its generated path while using the bundle because
+the staged bootstrap locates that sidecar relative to the bundle. This command
+does not install the tool or modify Renoise.
+
+The driver currently validates the session and binds only to **127.0.0.1**;
+it closes client connections until the constrained protocol is implemented.
+Run the deterministic packaging and admission checks with:
+
+~~~powershell
+pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
+lua ./tests/renoise/remote_driver_spec.lua
+~~~
+
 ## Pinned API 6.2 contract
 
 These signatures come from `sdk/renoise-api-6.2/definitions/` and the matching

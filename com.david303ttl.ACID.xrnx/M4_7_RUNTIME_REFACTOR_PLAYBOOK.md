@@ -710,7 +710,7 @@ M4 remains open and Step 8 remains required.
 
 ### Step T0 — Establish automated real-Renoise verification before 2.2
 
-**Status:** T0.1 API notes, preflight, and manual real-Renoise behavior spike are complete; T0.2–T0.8 and Gate T0 remain pending. The recorded host observations are not an automated E2E pass. Keep Steps 2.2–2.9 in order and all Step 3–8 acceptance obligations.
+**Status:** T0.1 and T0.2 are complete; T0.3–T0.8 and Gate T0 remain pending. T0.2 package and driver-admission checks are automated, but are not an in-host Renoise E2E pass. Keep Steps 2.2–2.9 in order and all Step 3–8 acceptance obligations.
 
 **Purpose:** make native Renoise API and keyboard E2E checks repeatable from PowerShell 7 on a developer's current Windows desktop. An existing Renoise process may be explicitly selected or a new process launched; a separate account or VM is optional, never required. Use disposable songs, native API readback, and independent assertions. Use keyboard input only where user interaction and focus matter; a harness smoke pass is not evidence that the legacy writer is safe.
 
@@ -744,12 +744,31 @@ The source driver is under `tests/renoise/`, **not** `com.david303ttl.ACID.xrnx/
 
 #### T0.2 — Produce and inspect a strictly development-only ACID package
 
-1. Add `scripts/package_dev.ps1 -Tool ACID -OutputDirectory <temporary-path>`: build a clean release archive with the existing `scripts/package.ps1`, extract it safely into a temporary `com.david303ttl.ACID.xrnx` folder, add the minimal driver/config and a one-shot staged-entrypoint bootstrap. Reject archive traversal, duplicate paths and unexpected IDs. Do not copy SDK, scenarios, fixtures, docs or AutoHotkey into the tool.
-2. Keep dev bootstrap configuration ephemeral: bind only to `127.0.0.1`, choose a reserved test-run port with collision detection, use an unpredictable per-run token/nonce, and identify the runner's session. Do not persist the token in song data or a tracked file. Use tight temporary-file permissions. Refuse to start an unauthenticated or non-loopback driver.
+1. Add `scripts/package_dev.ps1 -Tool ACID -OutputDirectory tmp/<unique-name>`: accept only a repository-relative output path directly below ignored `tmp/`; keep build staging and the session sidecar there too. Build a clean release archive with the existing `scripts/package.ps1`, extract it safely into a temporary `com.david303ttl.ACID.xrnx` folder, add the minimal driver/config and a one-shot staged-entrypoint bootstrap. Reject archive traversal, duplicate paths and unexpected IDs. Do not copy SDK, scenarios, fixtures, docs or AutoHotkey into the tool.
+2. Keep dev bootstrap configuration ephemeral: bind only to `127.0.0.1`, choose a reserved test-run port and fail closed if the listener bind collides, and use unpredictable per-run token/nonce values. The nonce identifies the test run; do not record account names, OS session IDs, process IDs, desktop paths or environment values. Keep the sidecar outside the tool bundle with tight temporary-file permissions. These are random test secrets, not user account credentials. Refuse to start without valid secrets or with a non-loopback bind.
 3. Verify release and dev contents independently: release has only approved runtime assets and LICENSE, no test modules/config/bootstrap; dev has the expected driver and otherwise identical production payload/manifest. Verify source-file hashes for all unaffected production files and assert only the staged `main.lua` differs. Leave ordinary `scripts/package.ps1 -Tool ACID` semantics unchanged.
 4. Add a deterministic package test covering exclusion, exact manifests, bootstrap presence only in dev, missing/duplicate driver rejection and a stale dev-file negative case.
 
-**Complete when:** repeated dev builds are disposable, normal release output has no dev driver/credentials, package/spec checks pass, and no source tree or regular Renoise installation is modified by building.
+**Complete when:** repeated dev builds are disposable, normal release output has no dev driver or test secrets, package/spec checks pass, and no tracked source file or regular Renoise installation is modified by building.
+
+**T0.2 result (2026-10-29):** **scripts/package_dev.ps1** builds from the
+normal ACID release archive, rejects unsafe/duplicate paths and unexpected IDs,
+and verifies source hashes before adding the dev-only driver and bootstrap. The
+per-run session file is outside the tool bundle under ignored repository `tmp/`
+with a protected current-user ACL and contains only the loopback endpoint and
+random test secrets. It records
+no user or desktop identifiers. The staged bootstrap locates the sidecar
+relative to the bundle and contains no absolute desktop path. The driver
+validates the secrets and loopback binding before opening a listener.
+**tests/renoise/test_package_dev.ps1** passed release exclusion,
+manifest/payload comparison, repeat-build, ACL, port-availability and
+non-ASCII repository-path checks,
+plus missing/duplicate driver, stale-output, traversal, duplicate-entry and
+unexpected-ID cases. **lua tests/renoise/remote_driver_spec.lua** passed
+admission, simulated bind-collision refusal and unload checks.
+A direct ACID development build under repository `tmp/` also passed. No tracked
+source file, Renoise installation or song was changed; the listener closes
+clients until T0.3 implements the transport.
 
 #### T0.3 — Implement a constrained asynchronous in-Renoise transport
 
