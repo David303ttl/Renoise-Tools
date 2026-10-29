@@ -155,32 +155,323 @@ implement these contracts before its consumers can authorize writes.
 
 ## Step 1 — Establish shared validation and storage contracts
 
-Implement these small helpers in existing ownership/store modules before callers depend on them:
+**Clean cutover:** replace competing runtime paths; do not add legacy readers,
+migrations, automatic adoption, or compatibility fallbacks. Keep the current
+persisted format identifiers and strict decoder. An unsupported existing target
+is blocked, with its valid source available for explicit recovery to New; it is
+never rewritten to make it acceptable. Keep the existing transaction, compiler
+and module owners. The only additional module justified here is a small pure
+output planner extracted from duplicated writer/validation responsibilities.
 
-1. Normal owned-source load still rejects duplicate IDs across the **entire live song**. Read names for the global ID inventory; do not repeatedly hash every phrase during GUI refresh.
-2. Add a narrow source-entry read for Make Independent: decode/validate the entry for a specified old ID without declaring any colliding phrase uniquely owned. Do not weaken normal `store.load`.
-3. Preserve the current persisted seal format. Add one deterministic, session-only content snapshot/comparison used for target checks, metadata-only verification, and rollback. Compare actual values, not only the existing short hash.
-   Before classifying an existing destination as writable, independently verify that its musical output matches its saved canonical source and output settings using the deterministic compiler/layout/articulation validators plus complete field preflight. Prove the validator's coverage; do not assume the current validator already establishes this association. A source record whose expected output differs from the unchanged sealed phrase must fail, including after undo, save and reload. This establishes output compatibility, not historical provenance: distinct sources producing identical verified output are indistinguishable. Reconstruct receiver/PB-dependent expectations only when their inputs are known; otherwise block. If the association cannot be verified without rendering or changing native state, block regeneration and preserve source for explicit recovery to New. A session baseline may retain a previously verified exact source/output pair, but a fresh session must not seed trust from seal and source validity alone. No schema or seal-format migration is authorized.
-4. Cover the values the transaction can overwrite: all note/effect fields in every available column, including hidden columns, through the API's full phrase line range; line count, LPB, shuffle, loop/key/playback/autoseek settings, visibility, and column mute/name values. Check mapping/script preservation by the existing copy/rollback mechanism; add comparison only where that mechanism can alter them. Inspect each relevant definition before reading it. Preserve the mapping through its documented fields rather than assigning a mapping object; the pinned reference does not explicitly document whether that reference is writable. Do not toggle playback mode merely to inspect a script.
-5. The old persisted seal does not protect hidden cells. For previously generated owned phrases, reject nonempty hidden note/effect cells or retained cells beyond the active line count before destructive regeneration; generated output must leave those cells empty. If inactive script/mapping data cannot be preserved and verified using the existing transaction, block that target rather than erase it. Do not extend the persisted schema to disguise an unverifiable baseline.
-6. Store candidates preserve unrelated committed entries and **current** durable drafts. A successful musical commit removes only its own committed target draft in the same guarded store candidate; the draft rebase must not reintroduce that entry. Failed commits restore it. A create clears its own New scratch record only if it is still the captured draft/destination; otherwise preserve it. Compare source/draft preconditions before commit. Restore prior raw `tool_data` only if current data still equals this transaction's written candidate; otherwise retain newer data and report an integrity blocker.
-7. Define draft precedence now for later integration: validate committed ownership/source first; restore a matching dirty draft for the same object/ID ahead of committed source; if none, use committed source. Session drafts retain the source/content baseline captured when first edited; if that baseline changes, detach the draft instead of rebasing silently. Existing durable drafts have no historical baseline field: after reload, restore them only against a uniquely owned, valid current target with the matching ID, and describe them as recovered edits. Do not claim historical-baseline verification across restart or add a schema migration. New Phrase restores that instrument's scratch draft.
-8. Collision drafts are object-keyed and recoverable in-session only. Existing durable draft records cannot safely distinguish two copies sharing one ID. Never overwrite/reassign such a record merely because a colliding phrase was selected.
+**Execution order:** complete 1.1–1.8 in order. Add and run focused tests with
+the owning substep; do not defer them to 1.8. Each completion check is required
+before advancing. This sequence changes contracts/helpers only; runtime context,
+writer integration, Make Independent and GUI wiring remain Steps 2–6.
 
-**Field policy for successful regeneration:** Snapshot all categories below before mutation and restore all of them on rollback. Make Independent changes only the ownership name and cloned source entry; every other category stays unchanged.
+**Responsibility reference:** use these owners throughout the sequence.
 
-| Category | Successful regeneration policy |
-|---|---|
-| Note/effect cells, line count, LPB, shuffle, phrase loop settings, playback mode, key tracking | Replace with the existing compiler/writer's validated output and layout; retain existing musical semantics. Hidden and inactive tail cells must be empty before destructive regeneration and after generation. |
-| Note-column names/mutes, phrase `base_note`, `autoseek`, visibility settings | Read note-column metadata through phrase `column_name(column)` / `column_is_muted(column)` and restore through their documented setters, across all note columns. Preserve destination values; visibility must still expose every column/subcolumn required by generated output. Reject incompatible visibility before mutation rather than hide output or silently change user metadata. Create uses existing validated writer defaults. |
-| Mapping presence, `key_tracking`, `base_note`, `note_range`, `looping`, `loop_start`, `loop_end` | Preserve on the same destination through the proven native path. Mapping fields are separate from similarly named phrase fields. Reject if the generated layout conflicts with mapping constraints or preservation cannot be verified. Never assign the mapping object. |
-| Inactive script paragraphs, pending/committed state, parameter values, editor state | Preserve only where the native feasibility check establishes a readable and restorable path. The generated stage's script must not silently replace the destination's inactive script. Reject unverifiable targets; do not toggle playback mode to probe them or invent setters for read-only state. |
-| Ownership name and committed source/settings | Replace together under the guarded transaction and verify the new association. Preserve every unrelated source entry. |
-| Session/durable drafts | Clear only the exact committed draft under its captured preconditions; preserve newer, unrelated, detached, and ambiguous records. |
+| Owner | Contract consumed by later steps |
+| --- | --- |
+| `phrase_ownership` | Parse names; build the song-wide ID inventory from names; capture detached value snapshots; compare snapshots; check supported fields and hidden/tail emptiness. Keep persisted seal calculation unchanged. |
+| `pattern_store` | Strict source/draft decoding, narrow validated entry read, unique-live-target load, candidate preparation/commit/restore, and guarded durable draft access. No dependency on the writer or GUI. |
+| Pure output planner | Extract the existing physical layout, articulation/gate fallback, native legato and volume planning once; return expected final output without host writes or rendering. Generation and compatibility use this same implementation. |
+| `phrase_validator` | Compare a live phrase against complete planner expectations and preservation policy; return success or a concrete rejection reason. No source-store writes or baseline adoption. |
+| `draft_cache` | Object-keyed session drafts, captured baseline/revision, durable-store delegation, detached recovery list/copy/discard. No second serializer or ownership implementation. |
 
-Represent detached recovery entries in `draft_cache` with session-local keys, captured source/settings/baselines, display labels, and detachment reason. Provide narrow list/copy/discard operations for Step 5; no new persisted format. Display labels are presentation only, never lookup identity.
+Keep source loading and compatibility validation separate to avoid a store/writer
+dependency cycle. `store.load` returns a candidate source association, not write
+authorization. The shared classification path combines it with the validator;
+the writer independently repeats those checks immediately before mutation.
 
-**Gate 1:** Focused tests cover strict normal load, validated collision-source read, missing/corrupt source, hidden-cell protection, complete value comparison, preservation of unrelated entries/current drafts, and refusal to roll back over newer store data. No Renoise mutation is needed to test these pure contracts.
+### 1.1 — Prove script-free staging feasibility
+
+**Status:** pending native evidence; not satisfied by Step 0's earlier probes.
+
+**Depends on:** completed Step 0 and its pinned API/native feasibility record.
+Use disposable native probes outside runtime/package inputs, not a partial writer
+implementation. The field matrix in 1.5 defines the values to compare.
+
+**Action:** use a disposable probe to exercise the proposed sequence below,
+including equivalent create/regenerate copies; production writer integration is
+not required to run it. Keep the single staging phrase and existing slot budgets.
+After its render callback has completed and
+output is validated, clear only this job's generated script via documented
+`paragraphs` assignment and `commit()`, with existing lifecycle guards and
+commit-wait handling. Never clear a user destination's script. Before any
+promotion/copy, require the empty-script predicate and verify that all rendered
+cells/settings are unchanged. The committed notification alone does not prove
+settlement. A disposable native probe must establish the exact empty assignment,
+notification/settlement sequence, preservation of pattern data and readable editor
+state, and absence of later script/parameter reappearance through idle and
+save/reload. Establish the canonical empty snapshot and prove stage-to-destination,
+destination-to-backup and backup-to-destination preserve it exactly, including
+readable editor state. Then prove create → regenerate twice uses the same
+destination and passes preflight. Record the exact sequence in the existing feasibility record.
+No fixed delay, guessed setter, second publication phrase or extra slot is
+authorized. If this path fails or cannot establish stable empty state, stop and
+revise the renderer/publication contract before dependent writer implementation;
+do not accept a workflow that blocks its own next regeneration. Gate 0's earlier
+completion does not supply this newly required evidence.
+
+**Complete when:** the existing feasibility record contains host/API version,
+fixture, exact API sequence, canonical empty-script snapshot, copy/rollback and
+save/reload observations, with all required checks passing. A failed or unavailable native check
+blocks this substep and dependent implementation; pure tests cannot replace it.
+
+### 1.2 — Implement immutable source values and content snapshots
+
+**Depends on:** 1.1's proven canonical script state. Work in existing model and
+ownership owners; use the exact field matrix in 1.5 as the shared reference.
+
+Consolidate canonical source copying/equality in an existing model module and
+reuse it in editor history, drafts, candidate inputs and recovery. Freeze candidate
+inputs at preparation; later caller mutation must not alter a prepared write.
+
+Snapshots contain copied scalar values/arrays, no live line, cell, mapping or
+script references. Read failures reject safely. Use one exact value comparator
+with explicit allowed differences: none for target/rollback; ownership name
+only for Make Independent; generated fields only for successful regeneration.
+Do not use a hash, host equality, or mutable snapshot as a substitute.
+
+**Complete when:** focused tests prove deep-copy isolation, deterministic exact
+comparison, detection of every captured field change, allowed-difference policies,
+and rejection on required read failure. No host references remain in value snapshots.
+
+### 1.3 — Implement live identity and guarded source/draft access
+
+**Depends on:** 1.2's copying/comparison helpers.
+
+1. Require raw-identity membership of the supplied instrument and phrase in the
+   current song and exactly one live holder of the ID, which must be that phrase.
+   Normal load rejects zero/multiple holders across the **entire song**, including
+   other instruments. Registered temporary objects never count as owners. Cache
+   the name inventory only until invalidated; do not hash every phrase during
+   ordinary list refresh. Rebuild/recheck at transaction boundaries.
+2. Provide a narrow entry read by explicit ID for Make Independent. It validates
+   and copies the saved source/settings but makes no ownership claim. Every
+   collision holder still undergoes Step 4's group checks. Missing/corrupt data
+   rejects without mutation; never guess an original holder.
+
+Put raw membership and uniqueness checks inside durable draft get/put/clear too;
+never let an invalid existing phrase become the New scratch ID. Keep New scratch
+within the current format's live-instrument/index/name and unique-name restrictions.
+The candidate commit/removal rules are implemented in 1.6.
+
+**Complete when:** tests cover detached objects, same-index replacements,
+song-wide collisions, temporary-object exclusion, missing/corrupt entries,
+narrow collision reads without ownership, and blocked durable get/put/clear.
+
+### 1.4 — Extract the shared pure output planner
+
+**Depends on:** 1.2's immutable source inputs and 1.3's validated source reads.
+
+The planner takes copied canonical source, output policy, PB range, documented
+native capacities, and an explicit read-only receiver capability profile. Reuse
+the existing instrument inspection; do not infer receiver type from notes. Its
+result includes semantic plan, layout, complete final note/effect expectations,
+volume expectations, and required column/subcolumn visibility. Include the
+existing glide/gate collision fallback and native overlapping-note/PB path.
+Expected values must be derived from those inputs, never from destination values
+being checked. Unknown or failed receiver reads block when they affect output;
+receiver-independent plans need no irrelevant receiver assumptions.
+
+Extract the existing writer planning once and redirect its planning call to that
+helper; preserve its public runtime behavior until Step 3. Do not add a second
+planner or begin transaction/GUI integration here.
+
+**Complete when:** planner tests preserve repeat/play-once, supported timing modes,
+notes/rests/ties/accent, glide/gate fallback, native overlap and PB expectations.
+Unknown required receiver inputs reject. Planning performs no render or host write.
+
+### 1.5 — Implement complete compatibility and field preflight
+
+**Depends on:** 1.1's native script evidence, 1.2's snapshots, 1.3's source/identity
+checks and 1.4's shared expected output. This field matrix is also the reference
+for 1.1 probes and 1.2 snapshot coverage; it is not a second execution sequence.
+
+Validate the **saved committed** source/settings against the existing phrase
+before planning a proposed edit. A dirty draft is never the expected source for
+this check. Preserve existing timing, articulation and fallback semantics when
+extracting the planner; do not invent a second compiler.
+
+The unchanged store has no historical receiver profile. Use current explicit
+inputs and require exact output equality; changed receivers that produce a
+different plan block. This proves current output compatibility, not provenance
+or audible receiver behavior. Different sources with identical expected output
+remain indistinguishable. On undo, reopen and reload, re-run this check; never
+seed trust from a valid seal plus valid source. A session cache is usable only
+while the exact source/settings, complete content and planning inputs still
+match its previously verified values.
+
+Strengthen the existing validator rather than treating its current visible-only
+and partly optional checks as proof. Require every expected cell field, generated
+property, sentinel and unused cell to match. No render, playback-mode probe,
+native setter or store mutation is permitted during classification. Unsupported
+or unprovable cases block and preserve recoverable source.
+
+Inspect the pinned definitions **and offline docs** for each member before use.
+Read `phrase:line(1..MAX_NUMBER_OF_LINES)` and every available note/effect column,
+not only visible columns or active lines. API 6.2 documents those full bounds.
+Use documented cell `is_empty` for emptiness and exact numeric fields for value
+comparison; a cell with only ancillary data is not safe merely because its note
+is empty. Before regeneration reject nonempty hidden cells or cells beyond active
+length. Successful output must also leave all unused/hidden/tail cells empty.
+
+| Category / exact values captured | Successful regeneration / comparison |
+| --- | --- |
+| All note cells: `note_value`, `instrument_value`, `volume_value`, `panning_value`, `delay_value`, `effect_number_value`, `effect_amount_value`; effect cells: `number_value`, `amount_value` | Compare every value to final planner expectations, including emptiness outside generated output. Preserve existing musical semantics. |
+| `number_of_lines`, `lpb`, `shuffle`, `looping`, `loop_start`, `loop_end`, `playback_mode`, `key_tracking` | Replace with validated layout/writer values; final playback is `PLAY_PATTERN` and phrase tracking is `KEY_TRACKING_NONE`. Check loop/layout invariants explicitly. |
+| `base_note`, `autoseek`; all note-column names/mutes through `column_name` / `column_is_muted` and documented setters | Preserve exact destination values. Create uses existing writer defaults, captured and verified explicitly. |
+| `visible_note_columns`, `visible_effect_columns`, `instrument_column_visible`, `volume_column_visible`, `panning_column_visible`, `delay_column_visible`, `sample_effects_column_visible` | Preserve destination visibility only if it exposes every column and nonempty subfield required by planned output. Reject insufficient visibility before mutation; do not silently expand it. Create exposes required output. |
+| Mapping presence and `key_tracking`, `base_note`, `note_range`, `looping`, `loop_start`, `loop_end` | Preserve the same destination mapping and exact values. Initially support mapped regeneration only when planned line count is unchanged, matching the native preservation evidence. Reject mapped length changes. Verify after copy and rollback independently of backup, which lacks the mapping. Never assign the mapping object or invent undocumented endpoint ranges. |
+| Inactive script paragraphs, parameter list/values, pending changes, readable editor state | Existing targets pass only the tested empty-script predicate below. Do not modify a target script, assign `editor_visible`, or toggle playback to inspect it. A script-bearing stage cannot be copied/promoted as successful output. |
+| Ownership name; committed source/settings | Replace under the guarded transaction; verify seal, ID, exact saved source/settings and independent output association. Preserve unrelated entries. |
+| Session/durable drafts | Remove only the captured committed draft under the preconditions below. |
+
+Visibility requirements are minimums: extra visible columns are allowed only
+when their cells are empty. Replace the current validator's exact native-column
+count restrictions accordingly. Derive subcolumn requirements from meaningful
+nonempty values using documented defaults (instrument/volume/panning 255,
+delay 0, effect number/amount 0); expose the instrument/panning carrier and
+effect command fields where the PB plan uses them.
+
+Rollback compares every captured category including the original ownership name;
+Make Independent compares every category except that name. Backup validation
+must account for the deliberately neutral backup name and absent mapping, while
+the original mapping is checked on the destination. Do not weaken destination
+rollback comparison to match backup omissions.
+
+**Script predicate:** reject any paragraph containing non-whitespace text, any
+parameter, nonzero `pending_changes`, or failed required access. Nonempty inactive
+scripts are unsupported even if generated by the current implementation; no
+legacy exception, script recognition heuristic or automatic target cleanup.
+This tested predicate is necessary, not sufficient for exact preservation:
+accepted targets must also match the native-proven canonical empty script
+snapshot, including paragraph representation and readable editor state. Reject
+other whitespace/editor variants rather than normalizing a user destination.
+
+**Complete when:** tests reject valid-seal/valid-source mismatches after simulated
+undo and fresh-session load, use committed source despite a dirty draft, detect
+each changed output/preserved field, and reject hidden/tail data, insufficient
+visibility, mapped length changes and unsupported script variants. Classification
+performs no host mutation; complete expected output is shared with generation.
+
+### 1.6 — Implement guarded store candidates and atomic draft removal
+
+**Depends on:** 1.2's immutable values, 1.3's access guards and 1.5's validation
+contract. Accept a request guard as an argument; use a stub in focused tests.
+The runtime supplies it in Step 2, without a store dependency on the GUI/cache.
+
+1. Keep a simple candidate: captured source-map values, proposed source-map
+   values, and optional captured draft removal. Metadata-only Make Independent
+   has no draft removal. Use the existing decoder/encoder for canonical value
+   comparison; no generic merge engine, persistent revisions or new schema.
+2. A removal captures destination objects/kind, old ID or New scratch key,
+   instrument index/name at capture, exact durable draft value or absence, and
+   session draft token/edit revision. The request guard supplies the current-token
+   check; the store must not import `draft_cache` or inspect GUI state. Distinguish
+   a missing draft from an empty source. Revisions are session-only and prevent A → B → A value equality from
+   clearing a newer edit. No invalid existing phrase may fall through to ID zero
+   (New scratch).
+3. At commit, require the request guard and unchanged captured source map. Rebase
+   **current** durable drafts, then remove only the captured record when its exact
+   value and session revision still match and its live destination is unambiguous.
+   A changed draft or changed scratch slot/name is preserved, never relocated by
+   name/index guessing. A newer editor revision invalidates the musical request
+   through Step 2's guard; the store also preserves mismatching records defensively.
+   An absent captured record cannot authorize deletion of a subsequently added one.
+4. Re-read raw `tool_data` immediately before assignment and require it still
+   equals the raw value used to build this rebased candidate. Perform no yield or
+   user callback inside compare/write/verify. Record the exact previous and
+   intended write raw values **before calling the setter**, so a setter that
+   mutates then throws still leaves guarded rollback evidence. Verify persistence
+   after assignment; failed/uncertain readback retains an integrity blocker.
+5. Restore only when current raw equals the transaction's written candidate;
+   already equal to previous raw is a successful no-op. Otherwise preserve newer
+   data and return an integrity-blocking failure. Failed writes may have changed
+   host data: inspect/verify rather than assuming an exception means no mutation.
+6. Every durable draft get/put/clear enforces the same raw membership and unique
+   live-holder predicate in the store boundary. Duplicate IDs never read, replace,
+   move or clear the ambiguous durable record, including during Make Independent.
+   New scratch requires the captured live instrument, unchanged index/name and
+   existing unique-name checks. Session drafts remain available when durable
+   access is rejected; report the existing persistence/loss warning.
+
+**Complete when:** tests prove current-draft rebasing without target resurrection,
+exact captured removal, preservation of unrelated/newer/equal-valued newer drafts
+and captured absence, safe New scratch handling, frozen candidate inputs,
+Make Independent without draft removal, and guarded rollback after partial writes.
+
+### 1.7 — Implement session draft baselines and recovery operations
+
+**Depends on:** 1.2's copied values, 1.5's verified baselines and 1.6's store
+preconditions. Use stub validation/guard inputs in focused tests; do not wire widgets.
+
+Validate committed ownership/source/output first; only then restore a dirty
+object-local draft whose captured ID, source/settings and complete content
+baseline still match. Otherwise detach it; do not silently rebase it. With no
+matching draft, use committed source. New restores only that instrument's scratch.
+The unchanged durable format has no historical baseline/revision: after reload
+read only against a uniquely owned, currently verified matching ID and label the
+result recovered edits. This is the sole current-format path, not a migration or
+a claim of historical verification.
+On first restore, copy a durable draft into an object-local session record with
+a fresh token and the currently verified baseline. This captures current state
+only and supplies exact-revision bookkeeping; it invents no historical baseline.
+
+`draft_cache` provides narrow detach/list/copy/discard and compare-and-clear
+operations. Detached entries use session-local tokens and copied source/settings,
+value baselines, scalar display labels and reason; no retained host references
+inside recovery payloads. Labels never identify a destination. Collision drafts
+are object-local/session-only; never import their ambiguous durable record.
+Copy to New returns a copy and recovery token, keeps the original, and preserves
+an occupied outgoing scratch as another entry. Only successful create of that
+exact copied revision or explicit discard removes the original. Dialog close
+retains session drafts; document release drops old-song associations/recovery
+with the volatile-loss warning. Reload restores only safe durable records.
+GUI actions and widgets remain Step 5's responsibility.
+
+**Complete when:** tests prove precedence, current-baseline hydration of durable
+recovery, detachment on baseline changes, collision isolation, copy/discard
+isolation, occupied-scratch preservation, exact-revision clearing, and the stated
+close/release lifetimes. No ambiguous durable record enters recovery.
+
+### 1.8 — Close Gate 1 and hand contracts to runtime integration
+
+**Depends on:** completed 1.1–1.7. Review the one shared planner and existing module
+owners for competing paths or circular dependencies. Run
+`./scripts/run_tests.ps1 -Tool ACID` in PowerShell 7 after Lua changes.
+
+**Gate 1:** Map focused cases to existing specs, adding behavior-named specs only
+where needed. Pure helpers use value fixtures; host access uses API-shaped mocks.
+All of the following must pass before dependent runtime integration:
+
+- Normal load and durable get/put/clear reject detached objects, same-index
+  replacements, duplicates in other instruments, missing/corrupt records and
+  invalid-existing-phrase-to-New fallback; narrow collision read grants no ownership.
+- A valid seal plus valid incompatible source rejects, including simulated undo
+  and fresh-session/reload. Dirty draft does not replace committed expectations.
+- Shared planning preserves repeat/play-once, supported timing modes,
+  notes/rests/ties/accent, glide/gate fallback, native overlap and PB behavior;
+  unknown required receiver inputs reject. No render or host mutation occurs.
+- Mutating each cell field, generated property, sentinel, hidden/tail cell,
+  mapping field or preserved metadata is detected by the appropriate comparator.
+  Insufficient visibility, mapped length changes and unsupported scripts reject
+  before mutation. Read failures do not seed a baseline.
+- Candidates preserve unrelated sources/current drafts, remove the matching
+  committed draft atomically without reintroduction, preserve newer/equal-valued
+  newer drafts and newly added records, and preserve relocated New scratch.
+  Make Independent never removes an old-ID draft. Guarded restore refuses newer
+  store data; injected partial writes produce checked outcomes.
+- Draft baselines detach on source/content changes; recovery copy/discard and
+  exact-revision clear preserve other entries and occupied scratch; close/release
+  follow the stated lifetimes. Current-format recovered drafts have no invented
+  historical baseline.
+
+**Complete when:** every focused case is mapped to a test/result, the ACID suite
+passes, the 1.1 native evidence passes, and the diff preserves the clean-cutover
+constraints. Only then mark Gate 1 complete and start Step 2. Mocked verification
+is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
@@ -252,7 +543,7 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 4. On external modification/removal/collision, detach affected drafts. When detached entries exist, expose a small **Recover Draft** chooser with captured instrument/phrase labels, reason, and session-only status. With an explicit instrument and New Phrase selected, **Copy to New** copies the chosen source/settings into that scratch editor through a guarded programmatic update; it never requests generation, even while Live Edit is armed. Preserve any outgoing scratch draft as a separate recovery entry first. Keep the original recovered entry until that exact copied revision successfully creates a phrase or the user explicitly discards that entry. Failed or superseded generation preserves it. Selecting New alone never transfers content. Never recover by overwriting an unsafe phrase; never read an ambiguous durable collision record into this flow.
 5. Wire Step 4 to the smallest Make Independent button/context action for the ACID-bound colliding phrase. Enable only when the whole collision group passes Step 4's unchanged seal/content/source checks; otherwise disable with the actual reason. Keep the same bound object after resolution; no M5 layout redesign. Route manual Generate and armed real edits into one `request_generation(trigger)`. Freeze source/settings and capture Step 2 token; call only the appropriate Step 3 facade. Arming, loading source/drafts, cursor/view changes, and no-op edits enqueue nothing.
 6. Retain immediate single-flight scheduling. A newer edit invalidates the older uncommitted job and replaces one pending snapshot. Request cancellation, retain/coalesce the latest snapshot, and dispatch it only after that exact prior job's terminal callback retires writer occupancy and confirms no blocker; in-flight cancellation can remain pending indefinitely. Manual Generate supersedes pending Live Edit through the same lifecycle. A blocked result or document/session change discards pending authorization while preserving its draft. No retry spin or concurrent writer.
-7. On a successful New create, bind the returned phrase object before any later request can start. On regenerate, require the same returned object. Apply completion/status/draft clearing only when that request's session, target, and revision remain current. Clear only the draft actually committed; never clear newer edits.
+7. On a successful New create, bind the returned phrase object before any later request can start. On regenerate, require the same returned object. Apply completion/status/session-draft clearing only when that request's session, target, and revision remain current. Clear only the captured session draft through compare-and-clear; durable draft removal already occurred in the guarded store commit, never in a second GUI write. Never clear newer edits.
 8. Preserve recoverable errors and armed status. A stale completion cannot select a target, replace a draft, erase an error, or release a newer job. Closing dialog invalidates/cancels work but preserves session drafts. Song reload reconstructs only successfully persisted, unambiguous records; do not promise durable collision drafts.
 9. Provide **Revalidate** for an integrity blocker. It performs read-only checks: no render, ownership repair, store write, recovery deletion, or baseline adoption. Require no in-flight native render, verify registered temporary objects are absent, and verify the affected destination/source against the recorded pre-transaction state or a completely verified committed state. Validate current live ownership/source associations and draft preconditions. Clear the blocker only if all relevant checks pass; require a fresh Generate/edit afterward, never drain an old pending request. If exact recovery objects remain after completed rendering, explain that the user must inspect/preserve them and remove them natively before revalidation; never suggest deletion while rendering may still use them. If destination/source consistency cannot be verified, keep the blocker and direct the user to native undo or a known-good saved song. Detached drafts remain available for recovery. Status includes the reason, blocker scope, captured recovery labels, and safe next action. Changing songs clears neither an unresolved global render slot nor evidence in a still-live blocked song.
 
