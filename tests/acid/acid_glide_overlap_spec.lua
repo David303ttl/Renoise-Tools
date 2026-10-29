@@ -1,6 +1,9 @@
 dofile("tests/bootstrap.lua")("acid")
 local compiler=require("model.cycle_interpreter")
 local articulation=require("model.articulation")
+local control=require("model.control_signals")
+local planner=require("model.output_planner")
+local gates=require("writers.gate_writer")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local pattern=seq.new_pattern(4)
@@ -19,8 +22,10 @@ cells[13].note_value=120
 cells[7].note_value=120
 local phrase={}
 function phrase:line(i)return {note_columns={cells[i]}}end
-local result,err=articulation.apply(phrase,plan,4,12,{output_policy="play_once"})
-assert(not result and err:find("contradictory gate/glide operations",1,true),err)
+local timeline=assert(control.compile({}, {plan=plan,output_policy="play_once"}))
+local commands=assert(articulation.plan(plan,4,12))
+local operations,err=planner.plan_gates(timeline,plan,commands,4)
+assert(not operations and err:find("contradictory gate/glide operations",1,true),err)
 assert(cells[7].note_value==120 and cells[7].effect_amount_value==0)
 assert(cells[5].effect_number_string==nil)
 -- A shorter glide leaves the midpoint free; foreign content on its continuation
@@ -30,7 +35,9 @@ cells[7].note_value=121
 cells[5].effect_number_value=0
 cells[5].effect_number_string=nil
 cells[5].effect_amount_value=0
-local blocked,diagnostic=articulation.apply(phrase,plan,4,0x20,{output_policy="play_once"})
+commands=assert(articulation.plan(plan,4,0x20))
+operations=assert(planner.plan_gates(timeline,plan,commands,4))
+local blocked,diagnostic=gates.apply_plan(phrase,operations)
 assert(not blocked)
 assert(diagnostic:find("TIME step 02",1,true),diagnostic)
 assert(diagnostic:find("cycle 1, phrase line 0x05",1,true),diagnostic)

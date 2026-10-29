@@ -2,6 +2,7 @@ dofile("tests/bootstrap.lua")("acid")
 local timing=require("model.timing")
 local signals=require("model.control_signals")
 local gate_writer=require("writers.gate_writer")
+local planner=require("model.output_planner")
 local articulation=require("model.articulation")
 local legato=require("model.legato")
 local seq=require("model.sequencer")
@@ -33,14 +34,14 @@ assert(not signals.release_lines(half,0))
 assert(not signals.release_lines(half,1.5))
 
 local semantic={steps={{kind="note",step=1},{kind="note",step=2}}}
-local mapped=assert(gate_writer.plan(timeline(128),semantic,nil,4))
+local mapped=assert(planner.plan_gates(timeline(128),semantic,nil,4))
 assert(mapped.release_lines[3])
-assert(not gate_writer.plan(timeline(128),semantic,{{line=3,kind="glide"}},4))
+assert(not planner.plan_gates(timeline(128),semantic,{{line=3,kind="glide"}},4))
 local conflict=timeline(256)
 local step_notes={steps={{kind="note",step=1},{kind="note",step=2}}}
-rejected,why=gate_writer.plan(conflict,step_notes,nil,4)
+rejected,why=planner.plan_gates(conflict,step_notes,nil,4)
 assert(not rejected and why:find("OFF conflicts",1,true))
-rejected,why=gate_writer.plan(timeline(128),semantic,nil)
+rejected,why=planner.plan_gates(timeline(128),semantic,nil)
 assert(not rejected and why:find("positive integer lines-per-step",1,true))
 
 local pattern=seq.new_pattern(2)
@@ -59,12 +60,14 @@ for step,event in ipairs(articulation_plan.steps) do
 end
 local phrase={}
 function phrase:line(i) return {note_columns={cells[i]}} end
-local applied=assert(articulation.apply(phrase,articulation_plan,4,0x40,
-  {output_policy="play_once"}))
-assert(applied.slide_count==1 and cells[5].effect_number_string=="0G")
+local art_timeline=assert(signals.compile({}, {plan=articulation_plan,
+  output_policy="play_once"}))
+local commands=assert(articulation.plan(articulation_plan,4,0x40))
+local merged=assert(planner.plan_gates(art_timeline,articulation_plan,commands,4))
+assert(gate_writer.apply_plan(phrase,merged))
+assert(commands[1].kind=="glide" and cells[5].effect_number_string=="0G")
 assert(cells[7].note_value==120)
-assert(not articulation.apply(phrase,articulation_plan,1,0x40,
-  {output_policy="play_once"}))
+assert(not articulation.plan(articulation_plan,1,0x40))
 
 local overlap_semantic={steps={
   {kind="note",step=1,source_step=1,note=36},

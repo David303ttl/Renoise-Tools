@@ -1,6 +1,9 @@
 dofile('tests/bootstrap.lua')('acid')
 local compiler=require("model.cycle_interpreter")
 local articulation=require("model.articulation")
+local control=require("model.control_signals")
+local planner=require("model.output_planner")
+local gates=require("writers.gate_writer")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local pattern=seq.new_pattern(8)
@@ -23,8 +26,10 @@ cells[17].note_value=39
 cells[21].note_value=120
 local phrase={}
 function phrase:line(i) return {note_columns={cells[i]}} end
-local result=assert(articulation.apply(phrase,plan,4,0x40,{output_policy="play_once"}))
-assert(result.slide_count==1 and result.commands==2)
+local timeline=assert(control.compile({}, {plan=plan,output_policy="play_once"}))
+local operations=assert(planner.plan_gates(timeline,plan,commands,4))
+local result=assert(gates.apply_plan(phrase,operations))
+assert(commands[1].kind=="glide" and #operations.operations==2)
 assert(cells[9].effect_number_string=="0G")
 assert(cells[9].effect_amount_value==0x40)
 assert(cells[10].effect_number_string=="0G")
@@ -35,7 +40,7 @@ assert(cells[13].note_value==120 and cells[21].note_value==120)
 cells[9].effect_number_value=0
 cells[9].effect_number_string=nil
 cells[10].effect_number_value=7
-assert(not articulation.apply(phrase,plan,4,0x40,{output_policy="play_once"}))
+assert(not gates.apply_plan(phrase,operations))
 assert(cells[9].effect_number_value==0)
 assert(not articulation.plan(plan,4,0))
 -- The configured rate needs more command lines than the step can provide.

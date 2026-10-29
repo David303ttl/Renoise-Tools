@@ -1,6 +1,9 @@
 dofile('tests/bootstrap.lua')('acid')
 local engine=require("model.cycle_interpreter")
 local art=require("model.articulation")
+local signals=require("model.control_signals")
+local planner=require("model.output_planner")
+local gates=require("writers.gate_writer")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local p=seq.new_pattern(8)
@@ -18,23 +21,26 @@ for i,v in pairs({[1]=36,[5]=39,[7]=120,[9]=39,[11]=41,[15]=120}) do
 end
 local phrase={number_of_lines=16}
 function phrase:line(i)return {note_columns={cells[i]}}end
-local result,err=art.apply(phrase,plan,2,0x20,{output_policy="play_once"})
-assert(result,err)
-assert(result.slide_count==1)
+local timeline=assert(signals.compile({}, {plan=plan,output_policy="play_once"}))
+local operations=assert(planner.plan_gates(timeline,plan,commands,2))
+local result=assert(gates.apply_plan(phrase,operations))
+assert(commands[1].kind=="glide")
 assert(result.early_releases==1)
 assert(cells[5].effect_number_string=="0G")
 assert(cells[6].effect_amount_value==0)
 assert(cells[10].note_value==120)
 local old=cells[1].note_value
-assert(not art.apply(phrase,plan,2,0x20,{output_policy="play_once"}))
+assert(not gates.apply_plan(phrase,operations))
 assert(cells[1].note_value==old)
--- Standalone application uses the same terminal gate policy as the writer.
+-- Planned application preserves the terminal gate policy.
 local isolated=seq.new_pattern(1)
 for i,command in ipairs({"N"}) do isolated.time_events[i]=command end
 local tail_plan=assert(engine.compile_cycle(isolated))
 cells[1]={note_value=tail_plan.steps[1].note,effect_number_value=0,effect_amount_value=0}
 cells[2]={note_value=121,effect_number_value=0,effect_amount_value=0}
-local tail=assert(art.apply(phrase,tail_plan,2,nil,{output_policy="play_once"}))
-assert(tail.early_releases==1 and tail.slide_count==0 and tail.commands==1)
-assert(tail.rate==0x20 and cells[2].note_value==120)
+local tail_timeline=assert(signals.compile({}, {plan=tail_plan,output_policy="play_once"}))
+local tail_operations=assert(planner.plan_gates(tail_timeline,tail_plan,{},2))
+local tail=assert(gates.apply_plan(phrase,tail_operations))
+assert(tail.early_releases==1 and #tail_operations.operations==1)
+assert(cells[2].note_value==120)
 print("ACID gate/slide operation checks passed")

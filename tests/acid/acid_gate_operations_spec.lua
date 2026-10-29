@@ -1,5 +1,6 @@
 dofile("tests/bootstrap.lua")("acid")
 local gates=require("writers.gate_writer")
+local planner=require("model.output_planner")
 local signals=require("model.control_signals")
 local seq=require("model.sequencer")
 local compiler=require("model.cycle_interpreter")
@@ -7,7 +8,7 @@ local p=seq.new_pattern(2)
 for i,command in ipairs({"N","N"}) do p.time_events[i]=command end
 local semantic=assert(compiler.compile_cycle(p))
 local timeline=assert(signals.compile(p,{plan=semantic,output_policy="play_once"}))
-local operations=assert(gates.plan(timeline,semantic,nil,4))
+local operations=assert(planner.plan_gates(timeline,semantic,nil,4))
 assert(operations.release_lines[3] and operations.release_lines[7])
 local cells={}
 local phrase={}
@@ -31,9 +32,9 @@ reset()
 cells[7]=nil
 assert(not gates.apply_plan(phrase,operations))
 assert(cells[3].note_value==121)
-local merged,err=gates.plan(timeline,semantic,{{line=7,kind="continuation",command="0G",amount=0}},4)
+local merged,err=planner.plan_gates(timeline,semantic,{{line=7,kind="continuation",command="0G",amount=0}},4)
 assert(not merged and err:find("contradictory gate/glide operations",1,true),err)
-merged,err=gates.plan(timeline,semantic)
+merged,err=planner.plan_gates(timeline,semantic)
 assert(not merged and err:find("positive integer lines-per-step",1,true),err)
 -- An exception after an earlier write restores that earlier cell.
 reset()
@@ -50,5 +51,5 @@ assert(not result and why:find("rolled back",1,true),why)
 assert(cells[3].note_value==121 and cells[7].note_value==121)
 -- A later malformed merged release must never target the loop sentinel.
 local bad={steps=2,gate_fraction=.5,events={{kind="gate_off",reason="tail",at=512}}}
-assert(not gates.plan(bad,semantic,nil,4))
+assert(not planner.plan_gates(bad,semantic,nil,4))
 print("ACID merged articulation collision and rollback checks passed")

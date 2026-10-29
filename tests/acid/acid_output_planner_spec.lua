@@ -2,9 +2,8 @@ dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local planner=require("model.output_planner")
 local capabilities=require("renoise.target_capabilities")
-local gates=require("writers.gate_writer")
 local pattrns=require("writers.pattrns_writer")
-assert(gates.plan==planner.plan_gates and pattrns.expected_volumes==planner.expected_volumes)
+assert(pattrns.expected_volumes==planner.expected_volumes)
 local capacities={max_lines=512,max_note_columns=12,max_effect_columns=8,
   play_pattern=1,key_tracking_none=1}
 local sample={sample=true,plugin=false,midi=false,alias=false}

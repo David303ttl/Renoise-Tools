@@ -1,10 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-only
--- Merge gate and glide operations before touching native phrase cells.
+-- Preflight and apply planned gate and glide operations to native phrase cells.
 local M={}
 local planner=require("model.output_planner")
 local location=planner.location
-M.location=location
-M.plan=planner.plan_gates
 
 function M.apply_plan(phrase,merged)
   local targets={}
@@ -53,9 +51,4 @@ function M.apply_plan(phrase,merged)
   return {early_releases=#lines,release_lines=lines}
 end
 
-function M.apply(phrase,timeline,lines_per_step)
-  local merged,err=M.plan(timeline,timeline.semantic,nil,lines_per_step)
-  if not merged then return nil,err end
-  return M.apply_plan(phrase,merged)
-end
 return M

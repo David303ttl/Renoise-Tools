@@ -1,5 +1,6 @@
 dofile('tests/bootstrap.lua')('acid')
 local signals=require("model.control_signals")
+local planner=require("model.output_planner")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local p=seq.new_pattern(8)
@@ -32,9 +33,10 @@ local cells={}
 for i=1,32 do cells[i]={note_value=121} end
 local phrase={}
 function phrase:line(i)return {note_columns={cells[i]}}end
-local result=assert(gate_writer.apply(phrase,tl,4))
+local operations=assert(planner.plan_gates(tl,tl.semantic,nil,4))
+local result=assert(gate_writer.apply_plan(phrase,operations))
 assert(result.early_releases==1 and cells[19].note_value==120)
-assert(not gate_writer.apply(phrase,tl,4))
+assert(not gate_writer.apply_plan(phrase,operations))
 print("ACID control-signal and gate tests passed")
 
 -- Compare every short valid source to a run-based oracle. A run ends at a

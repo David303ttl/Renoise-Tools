@@ -95,7 +95,8 @@ alone do not establish phrase-contained M1 routing to the intended plugin.
 The bounded reference-VST bend/reset check remains unrun and is required before
 claiming playback support. No routing devices or automation are inserted.
 
-`writers/gate_writer.lua` merges gates and glide operations before mutation.
+`model/output_planner.lua` merges gates and glide operations; the gate writer
+preflights the planned operations before applying them to phrase cells.
 `writers/phrase_validator.lua` checks the final note, OFF, effect and metadata
 layout. Rendering uses a temporary phrase, identity and ownership checks, then
 a guarded phrase/source commit. Failed writes preserve the last-good destination

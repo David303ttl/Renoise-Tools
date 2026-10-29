@@ -60,32 +60,4 @@ function M.plan(plan, lines_per_step, rate)
   return commands
 end
 
-function M.apply(phrase, plan, lines_per_step, rate, options)
-  if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<MIN_LINES_PER_STEP
-    or lines_per_step~=lines_per_step then
-    return nil,"articulation output requires at least 2 lines per step"
-  end
-  options=options or {}
-  if type(options)~="table" then return nil,"invalid articulation output options" end
-  local commands,err=M.plan(plan,lines_per_step,rate)
-  if not commands then return nil,err end
-  local control=require("model.control_signals")
-  local gates=require("writers.gate_writer")
-  local timeline
-  timeline,err=control.compile({}, {plan=plan,successor=options.successor,
-    output_policy=options.output_policy or "repeat",
-    gate_fraction=control.DEFAULT_GATE_FRACTION})
-  if not timeline then return nil,err end
-  local merged
-  merged,err=gates.plan(timeline,plan,commands,lines_per_step)
-  if not merged then return nil,err end
-  local applied
-  applied,err=gates.apply_plan(phrase,merged)
-  if not applied then return nil,err end
-  local count=0
-  for _,command in ipairs(commands) do if command.kind=="glide" then count=count+1 end end
-  return {slide_count=count,early_releases=applied.early_releases,
-    commands=#merged.operations,rate=rate or M.DEFAULT_RATE,skipped_continuations={}}
-end
-
 return M
