@@ -2,6 +2,7 @@ dofile('tests/bootstrap.lua')('acid')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
 local emitter = require('writers.pattrns_writer')
 local sequencer = require('model.sequencer')
+local planner = require('model.output_planner')
 
 local function compile_script(source)
   -- Mock the pattrns "pattern" constructor; validate emitted Lua source
@@ -59,14 +60,16 @@ assert(not emitter.emit({length=2, steps={{step=1,kind='note',note=36}}}))
 assert(not emitter.emit({length=1, steps={{step=1,kind='rest'}}}))
 assert(not emitter.emit({length=1, steps={{step=1,kind='invalid'}}}))
 
--- End-to-end path via sequencer/compiler, with a REST not consuming a pitch.
+-- A REST does not consume a pitch in the planned and emitted traversal.
 local p=sequencer.new_pattern(5)
 p.pitch_length=3
 p.pitch_events[1]=pitch(36,false,true)
 p.pitch_events[2]=pitch(40,true,false)
 p.pitch_events[3]=pitch(43)
 for i,command in ipairs({'N','T','N','R','N'}) do p.time_events[i]=command end
-local generated, result = assert(emitter.generate(p))
+local plan, layout = assert(planner.plan_output(p, 'play_once', 512))
+local generated, result = assert(emitter.emit(plan,
+  {unit=layout.unit,resolution=layout.resolution}))
 local actual = compile_script(generated)
 assert(result.note_count == 3 and result.off_count == 1)
 assert(actual.event({pulse_step=1}).key == 36)
@@ -75,31 +78,35 @@ assert(actual.event({pulse_step=3}).key == 40)
 assert(actual.event({pulse_step=4}) == 'off')
 assert(actual.event({pulse_step=5}).key == 43)
 p.timing_mode='triplet'
-local triplet_options={normal_volume=0.4}
-local triplet=compile_script(assert(emitter.generate(p,triplet_options)))
+local triplet_plan, triplet_layout = assert(planner.plan_output(p, 'play_once', 512))
+local triplet_options={unit=triplet_layout.unit,resolution=triplet_layout.resolution,
+  normal_volume=0.4}
+local triplet=compile_script(assert(emitter.emit(triplet_plan,triplet_options)))
 assert(triplet.unit=='1/8' and triplet.resolution==2/3)
 assert(triplet.event({pulse_step=1}).volume==0.4)
-assert(triplet_options.unit==nil and triplet_options.resolution==nil)
-local triplet_default=compile_script(assert(emitter.generate(p)))
+assert(triplet_options.unit==triplet_layout.unit and
+  triplet_options.resolution==triplet_layout.resolution and triplet_options.normal_volume==0.4)
+local triplet_default=compile_script(assert(emitter.emit(triplet_plan,
+  {unit=triplet_layout.unit,resolution=triplet_layout.resolution})))
 assert(triplet_default.unit=='1/8' and triplet_default.resolution==2/3)
-assert(emitter.generate(p,{unit='1/8',resolution=2/3}))
-assert(not emitter.generate(p,{unit='1/16',resolution=1}))
-assert(not emitter.generate(p,{resolution=1}))
-assert(not emitter.generate(p,'invalid'))
+assert(triplet_default.event({pulse_step=1}).volume==0.7)
+assert(not emitter.emit(triplet_plan,{unit='1/16',resolution=2/3}))
+assert(not emitter.emit(triplet_plan,{unit='1/8',resolution=1}))
+assert(not emitter.emit(triplet_plan,'invalid'))
 local invalid=sequencer.new_pattern(3)
 invalid.pitch_length=1
 for i,command in ipairs({'T','N','N'}) do invalid.time_events[i]=command end
-assert(not emitter.generate(invalid))
-local volumes=assert(emitter.expected_volumes(sample,4,33,2))
+assert(not planner.plan_output(invalid, 'play_once', 512))
+local volumes=assert(planner.expected_volumes(sample,4,33,2))
 assert(volumes[1][1]==89 and volumes[9][1]==255)
 assert(volumes[3][1]==255 and volumes[7][1]==255)
 assert(volumes[33][1]==255 and volumes[1][2]==255)
-local custom_volumes=assert(emitter.expected_volumes(sample,4,32,1,
+local custom_volumes=assert(planner.expected_volumes(sample,4,32,1,
   {normal_volume=0.4,accent_volume=0.9}))
 assert(custom_volumes[1][1]==51 and custom_volumes[9][1]==115)
-local extremes=assert(emitter.expected_volumes(sample,4,32,1,
+local extremes=assert(planner.expected_volumes(sample,4,32,1,
   {normal_volume=0,accent_volume=0.5}))
 assert(extremes[1][1]==0 and extremes[9][1]==64)
-assert(not emitter.expected_volumes(sample,4,31,1))
-assert(not emitter.expected_volumes(sample,4,32,1,{normal_volume=2}))
+assert(not planner.expected_volumes(sample,4,31,1))
+assert(not planner.expected_volumes(sample,4,32,1,{normal_volume=2}))
 print('ACID pattrns script emitter checks passed')

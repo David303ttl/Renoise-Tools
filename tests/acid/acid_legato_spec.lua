@@ -3,7 +3,7 @@ local seq=require("model.sequencer")
 local cycles=require("model.cycle_interpreter")
 local gates=require("model.control_signals")
 local legato=require("model.legato")
-local phrase_writer=require("writers.phrase_writer")
+local output_planner=require("model.output_planner")
 local timing=require("model.timing")
 
 local function pattern(notes,slides,accents,commands)
@@ -40,7 +40,7 @@ local function count_table_keys(values)
 end
 
 local function simulate_repeat(p)
-  local physical,layout=assert(phrase_writer.plan_output(p,"repeat"))
+  local physical,layout=assert(output_planner.plan_output(p,"repeat",512))
   local timeline=assert(gates.compile(p,{plan=physical,
     successor=physical.loop.steady,output_policy="repeat"}))
   local native=assert(legato.plan(physical,timeline,layout))

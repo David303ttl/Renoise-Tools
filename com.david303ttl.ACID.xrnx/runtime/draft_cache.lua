@@ -375,8 +375,6 @@ function M.has_volatile(song)
   return false
 end
 
-function M.close() return true end
-
 function M.release(song)
   local warning=M.has_volatile(song) and "Session-only ACID drafts were released" or nil
   sessions[song]=nil

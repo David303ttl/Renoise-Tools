@@ -25,10 +25,6 @@ local function failure(code, category, message, status)
     message=message,diagnostics={message}}
 end
 
-function M.plan_output(pattern,output_policy)
-  return output_planner.plan_output(pattern,output_policy,MAX_PHRASE_LINES)
-end
-
 local patterns_equal=sequencer.same_source
 
 local function notify(job, message, force)

@@ -590,6 +590,8 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.8 — Prune confirmed dead APIs, not future safety functionality
 
+**Status:** implemented. Removed `pattrns_writer.generate/expected_volumes`, `memory_status`, `sequencer.describe`, `draft_cache.close` and `phrase_writer.plan_output`; planner cell constructors and command encoding are private. Tests exercise canonical planning/emission and ownership state. Protected draft APIs and `live_regen.armed` remain. Direct affected specs, 45 ACID specs and all 48 repository specs pass; second-pass caller/diff review and package root/module/exclusion checks pass. Native Renoise checks remain unverified; Gate 1A remains pending.
+
 1. Delete `pattrns_writer.generate` if the 1A.1 caller audit confirms no production use; retain `emit`. Remove `memory_status`, `sequencer.describe`, `draft_cache.close` and unused exports only where test assertions can be redirected to the canonical state/behavior. Do not delete legitimate regression coverage merely to remove a module.
 2. **Do not remove** `draft_cache.capture/is_current/compare_and_clear`: Step 1 hardened exact-revision clearing, and Step 5 must use or deliberately subsume it in the one completion path. **Do not remove** `list/discard/copy_to_new/restore` before Step 5 wires Recover Draft and proves occupied-scratch and persistence guards. The absence of a current GUI caller is not proof these contracts are obsolete.
 3. Defer `live_regen.armed` to Step 5's single-flight controller cutover. Keep one public arming state or remove redundant fields **then**, with appropriate tests. Inventory remaining test-only helpers and delete only proven dead paths; no compatibility stubs for internal APIs.

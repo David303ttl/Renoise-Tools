@@ -179,12 +179,4 @@ function M.same_source(a,b)
   return true
 end
 
-function M.describe(pattern)
-  local ok, err = M.validate(pattern)
-  if not ok then return nil, err end
-  return string.format("Draft state: %d time slots, %d active pitch entries, %d stored pitch entries, %d time events",
-    pattern.length,
-    pattern.pitch_length or #pattern.pitch_events, #pattern.pitch_events,
-    #pattern.time_events)
-end
 return M

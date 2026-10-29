@@ -123,7 +123,6 @@ local copied,cp,cb,copy_meta=cache.copy_to_new(song,other,token)
 assert(copied.length==3 and cp=="repeat" and cb==12 and copy_meta.recovery_token==token)
 assert(#cache.list(song)==2,"occupied scratch remains recoverable")
 assert(cache.get(song,other,nil).length==3)
-assert(cache.close(song) and cache.get(song,other,nil).length==3)
 local create=assert(cache.capture(song,other,nil))
 local create_candidate=assert(store.prepare(song,3,dirty,"repeat",12,
   function(token,revision)return token==create.token and revision==create.revision and cache.is_current(song,create)end,create))

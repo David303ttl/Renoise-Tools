@@ -1,4 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
+local output_planner=require('model.output_planner')
 local function observable()
   local handlers = {}
   return {
@@ -140,7 +141,7 @@ assert_terminal_status("committed")
 assert(message_text(messages[#messages]):find("generated",1,true),messages[#messages].message)
 assert(message_text(messages[#messages]):find("4 notes, 4 OFF",1,true))
 local repeat_source=source_fixture()
-local repeat_plan,repeat_layout=assert(writer.plan_output(repeat_source,"repeat"))
+local repeat_plan,repeat_layout=assert(output_planner.plan_output(repeat_source,"repeat",512))
 assert(repeat_plan.length==16 and repeat_layout.looping)
 assert(repeat_layout.loop_start==33 and repeat_layout.loop_end==65)
 assert(repeat_layout.number_of_lines==65)
@@ -148,7 +149,7 @@ assert(repeat_plan.steps[1].cycle==1 and repeat_plan.steps[9].cycle==2)
 for _,length in ipairs({1,16,17,32}) do
   local pattern=require("model.sequencer").new_pattern(length)
   for step=1,length do pattern.time_events[step]="N" end
-  local physical,layout=assert(writer.plan_output(pattern,"repeat"))
+  local physical,layout=assert(output_planner.plan_output(pattern,"repeat",512))
   assert(physical.length==2*length)
   assert(layout.looping and layout.loop_start==4*length+1)
   assert(layout.loop_end==8*length+1 and layout.number_of_lines==8*length+1)
@@ -160,10 +161,10 @@ local repeat_slide=require("model.sequencer").new_pattern(4)
 for i,command in ipairs({"N","T","N","R"}) do repeat_slide.time_events[i]=command end
 for i=1,32 do repeat_slide.pitch_events[i]=pitch(36+i%12) end
 repeat_slide.pitch_events[1].slide=true
-local slide_plan,slide_layout=assert(writer.plan_output(repeat_slide,"repeat"))
+local slide_plan,slide_layout=assert(output_planner.plan_output(repeat_slide,"repeat",512))
 assert(slide_plan.loop and slide_layout.looping,
   "A valid SLIDE source must enter the automatic Repeat renderer")
-local play_once_plan,play_once_layout=assert(writer.plan_output(repeat_slide,"play_once"))
+local play_once_plan,play_once_layout=assert(output_planner.plan_output(repeat_slide,"play_once",512))
 assert(not play_once_layout.looping and repeat_slide.pitch_events[1].slide,
   "Phrase output policy must not rewrite the musical source")
 assert(#instrument.phrases==before_repeat)

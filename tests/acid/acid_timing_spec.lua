@@ -3,7 +3,7 @@ local timing=require('model.timing')
 local sequencer=require('model.sequencer')
 local compiler=require('model.cycle_interpreter')
 local pattrns=require('writers.pattrns_writer')
-local writer=require('writers.phrase_writer')
+local output_planner=require('model.output_planner')
 
 -- Fixed musical examples: 12 straight steps span three beats, while 32
 -- triplet steps span ten beats and two triplet subdivisions.
@@ -53,7 +53,7 @@ for _,mode in ipairs({'straight','triplet'}) do
       assert(not pcall(function() layout.lpb=4 end))
       local pattern=sequencer.new_pattern(n)
       pattern.timing_mode=mode
-      local plan,output=assert(writer.plan_output(pattern,policy))
+      local plan,output=assert(output_planner.plan_output(pattern,policy,512))
       assert(output.lpb==layout.lpb and output.number_of_lines==layout.number_of_lines)
       local script=assert(pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution}))
       assert(script:find('unit = "'..layout.unit..'"',1,true))

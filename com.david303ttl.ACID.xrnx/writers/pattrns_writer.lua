@@ -1,7 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Emit finite pattrns scripts from semantic note and timing events.
 -- Glide and release-gate effects are applied separately to the rendered phrase.
-local interpreter = require('model.cycle_interpreter')
 local timing = require('model.timing')
 local sequencer = require('model.sequencer')
 local policies = require("model.policies")
@@ -14,7 +13,7 @@ local function count_pulses(n)
   return table.concat(items, ', ')
 end
 
--- Input must be compiler.compile()'s resolved event plan.
+-- Input must be output_planner.plan()'s resolved event plan.
 -- Returns a source string and non-playback metadata. No Renoise API required.
 function M.emit(plan, options)
   options = options or {}
@@ -94,25 +93,6 @@ function M.emit(plan, options)
     slide_intentions = slide_count,
     requires_articulation = true
   }
-end
-
-M.expected_volumes=require("model.output_planner").expected_volumes
-
-function M.generate(pattern, options)
-  local plan, error_message = interpreter.compile_cycle(pattern)
-  if not plan then return nil, error_message end
-  if options ~= nil and type(options) ~= 'table' then return nil, 'options must be a table' end
-  options = options or {}
-  local layout, layout_error = timing.new(pattern.timing_mode, pattern.length, 'play_once')
-  if not layout then return nil, layout_error end
-  if (options.unit ~= nil and options.unit ~= layout.unit) or
-      (options.resolution ~= nil and options.resolution ~= layout.resolution) then
-    return nil, 'timing options do not match source timing mode'
-  end
-  local emit_options = {}
-  for key, value in pairs(options) do emit_options[key] = value end
-  emit_options.unit, emit_options.resolution = layout.unit, layout.resolution
-  return M.emit(plan, emit_options)
 end
 
 return M

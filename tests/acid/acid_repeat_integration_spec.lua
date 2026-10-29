@@ -1,4 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
+local output_planner=require('model.output_planner')
 local columns=dofile('tests/acid/phrase_columns.lua')
 
 local idle_handlers={}
@@ -145,7 +146,7 @@ end
 -- ownership seal and transaction -> exact source round-trip at all grid lengths.
 for _,length in ipairs({1,16,17,32}) do
   local pattern=source(length)
-  local physical,layout=assert(writer.plan_output(pattern,'repeat'))
+  local physical,layout=assert(output_planner.plan_output(pattern,'repeat',512))
   assert(physical.length==2*length and #physical.steps==2*length)
   assert(layout.looping and layout.loop_start==4*length+1)
   assert(layout.loop_end==8*length+1 and layout.number_of_lines==8*length+1)
@@ -192,7 +193,7 @@ for i,command in ipairs({'N','T','N','R'}) do mixed.time_events[i]=command end
 mixed.pitch_events[1]=pitch(36)
 mixed.pitch_events[2]=pitch(43)
 mixed.pitch_events[3]=pitch(40)
-local physical=assert(writer.plan_output(mixed,'repeat'))
+local physical=assert(output_planner.plan_output(mixed,'repeat',512))
 assert(physical.steps[1].kind=='note' and physical.steps[2].kind=='tie')
 assert(physical.steps[4].kind=='rest' and physical.steps[4].releases)
 assert(physical.steps[5].kind=='note' and physical.steps[5].cycle==2)
@@ -215,7 +216,7 @@ assert(rest_render.steps==34 and rest_render.notes==0 and rest_render.offs==0)
 local too_long=source(32)
 too_long.length=33
 too_long.time_events[33]='N'
-local invalid_plan,invalid_reason=writer.plan_output(too_long,'repeat')
+local invalid_plan,invalid_reason=output_planner.plan_output(too_long,'repeat',512)
 assert(not invalid_plan and invalid_reason)
 local too_long_store=song.tool_data
 local rejected=writer.generate(1,function() end,too_long,#instrument.phrases+1,

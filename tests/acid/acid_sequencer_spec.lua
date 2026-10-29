@@ -48,7 +48,6 @@ assert(not pcall(sequencer.new_pitch,0,0,1,false))
 assert(not sequencer.validate({length = 17, pitch_events = {}, time_events = {}}))
 assert(not sequencer.validate({length = 33, pitch_events = {}, time_events = {}}))
 assert(not sequencer.validate({length = 16, pitch_events = {}}))
-assert(sequencer.describe(pattern) == "Draft state: 16 time slots, 16 active pitch entries, 32 stored pitch entries, 32 time events")
 
 pattern.pitch_events[1] = sequencer.new_pitch(0,0,false,true)
 pattern.pitch_events[2] = sequencer.new_pitch(0,1,true,false)

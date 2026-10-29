@@ -3,7 +3,7 @@ local verifier = require("writers.phrase_validator")
 local compiler = require("model.cycle_interpreter")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
-local phrase_writer=require("writers.phrase_writer")
+local output_planner=require("model.output_planner")
 local signals=require("model.control_signals")
 local fixture=seq.new_pattern(8)
 fixture.pitch_length=4
@@ -54,7 +54,7 @@ for step=1,32 do
   repeat_source.time_events[step]="N"
   repeat_source.pitch_events[step]=pitch(36)
 end
-local repeat_plan,repeat_layout=assert(phrase_writer.plan_output(repeat_source,"repeat"))
+local repeat_plan,repeat_layout=assert(output_planner.plan_output(repeat_source,"repeat",512))
 local repeat_timeline=assert(signals.compile(repeat_source,{plan=repeat_plan,
   successor=repeat_plan.loop.steady,output_policy="repeat"}))
 local repeat_releases=assert(signals.release_lines(repeat_timeline,4))
@@ -129,7 +129,7 @@ phrase.shuffle=0
 assert(verifier.verify(phrase,plan,4,nil,{volumes={[1]={[1]=89,[2]=255}}}))
 assert(not verifier.verify(phrase,plan,4,nil,{volumes={[1]={[1]=90,[2]=255}}}),
   "a changed validated native volume was accepted")
-local volumes=assert(require("writers.pattrns_writer").expected_volumes(plan,4,32,2))
+local volumes=assert(require("model.output_planner").expected_volumes(plan,4,32,2))
 for line=1,32 do cells[line].volume_value=volumes[line][1] end
 assert(cells[1].volume_value==89 and cells[9].volume_value==255)
 assert(cells[3].volume_value==255 and cells[7].volume_value==255)

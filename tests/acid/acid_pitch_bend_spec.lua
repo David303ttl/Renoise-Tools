@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local gates=require("model.control_signals")
-local writer=require("writers.phrase_writer")
+local output_planner=require("model.output_planner")
 local legato=require("model.legato")
 local plan_fixture=require("tests.acid.timeline_fixture")
 
@@ -14,7 +14,7 @@ local function render(notes,slides,range,policy,commands,mode)
     p.pitch_events[i]=seq.new_pitch((note-36)%12,octave,false,slides[i] or false)
   end
   for i=1,p.length do p.time_events[i]=commands and commands[i] or "N" end
-  local plan,layout=assert(writer.plan_output(p,policy or "play_once"))
+  local plan,layout=assert(output_planner.plan_output(p,policy or "play_once",512))
   local timeline=assert(gates.compile(p,{plan=plan,successor=plan.loop and plan.loop.steady,output_policy=policy or "play_once"}))
   return assert(plan_fixture(plan,timeline,layout,{pb_range=range,instrument_value=3})),timeline
 end

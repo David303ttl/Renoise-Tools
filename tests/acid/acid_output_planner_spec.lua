@@ -2,8 +2,6 @@ dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local planner=require("model.output_planner")
 local capabilities=require("renoise.target_capabilities")
-local pattrns=require("writers.pattrns_writer")
-assert(pattrns.expected_volumes==planner.expected_volumes)
 local capacities={max_lines=512,max_note_columns=12,max_effect_columns=8,
   play_pattern=1,key_tracking_none=1}
 local sample={sample=true,plugin=false,midi=false,alias=false}
@@ -38,6 +36,8 @@ for _,mode in ipairs({"straight","triplet"}) do
     assert(lines[9].note_columns[1].note_value==43 and lines[9].note_columns[1].volume_value==255)
     assert(lines[7].note_columns[1].note_value==120 and lines[13].note_columns[1].note_value==120)
     assert(lines[512].note_columns[12].is_empty and lines[512].effect_columns[8].is_empty)
+    assert(lines[512].note_columns[12].effect_number_value==0 and
+      lines[512].effect_columns[8].number_value==0)
     for _,line in ipairs(lines) do
       for _,cell in ipairs(line.note_columns) do
         for _,field in ipairs({"note_value","instrument_value","volume_value","panning_value",
@@ -102,10 +102,6 @@ local limits={max_lines=512,max_note_columns=1,max_effect_columns=0,play_pattern
 assert(not run(connected,"play_once",plugin,12,limits))
 limits.max_lines=4
 assert(not run(source(),"repeat",{},0,limits))
-for text,value in pairs({["00"]=0,["0G"]=16,["40"]=1024,["7F"]=1807,["0M"]=22,["ZT"]=8989,["M1"]=5633}) do
-  assert(planner.command_value(text)==value,text)
-end
-assert(not planner.command_value("??"))
 local unknown_profile=assert(capabilities.inspect({}))
 assert(unknown_profile.kind=="unknown" and unknown_profile.sample==nil and unknown_profile.plugin==nil)
 assert(run(source(),"play_once",unknown_profile))

@@ -253,12 +253,12 @@ local function positive_integer(value)
   return policies.is_integer(value) and value>=1
 end
 
-function M.empty_note()
+local function empty_note()
   return {note_value=121,instrument_value=255,volume_value=255,panning_value=255,
     delay_value=0,effect_number_value=0,effect_amount_value=0,is_empty=true}
 end
 
-function M.empty_effect()
+local function empty_effect()
   return {number_value=0,amount_value=0,is_empty=true}
 end
 
@@ -270,18 +270,17 @@ local function command_value(text)
   if not first or not second then return nil end
   return (first-1)*256+second-1
 end
-M.command_value=command_value
 
 local function expected_output(plan,layout,native,operations,capacities,volumes)
   local expected={properties={number_of_lines=layout.number_of_lines,lpb=layout.lpb,
     shuffle=0,looping=layout.looping,loop_start=layout.loop_start,loop_end=layout.loop_end,
     playback_mode=capacities.play_pattern,key_tracking=capacities.key_tracking_none},
-    lines={},empty_note=M.empty_note(),empty_effect=M.empty_effect()}
+    lines={},empty_note=empty_note(),empty_effect=empty_effect()}
   for index=1,capacities.max_lines do
     local line={note_columns={},effect_columns={}}
     expected.lines[index]=line
-    for column=1,capacities.max_note_columns do line.note_columns[column]=M.empty_note() end
-    for column=1,capacities.max_effect_columns do line.effect_columns[column]=M.empty_effect() end
+    for column=1,capacities.max_note_columns do line.note_columns[column]=empty_note() end
+    for column=1,capacities.max_effect_columns do line.effect_columns[column]=empty_effect() end
   end
   if native then
     for line,columns in pairs(native.cells) do
