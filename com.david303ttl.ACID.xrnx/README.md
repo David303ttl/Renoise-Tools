@@ -8,19 +8,24 @@ manifest remains at version 0.1.
 ## Editing a sequence
 
 Open **Tools > ACID...** or use the Pattern Editor context menu. A fresh draft
-is ready immediately: 64 C pitch entries, 64 NOTE commands, LAST STEP 16 and
+is ready immediately: 32 C pitch entries, 32 NOTE commands, LAST STEP 16 and
 an active PITCH span of 16. Change LAST STEP and the active PITCH span as
 needed. Program view selects one PITCH entry and TIME step for editing. Grid
-view edits sixteen positions directly across four continuous pages. Both views
+view edits sixteen positions directly across two continuous pages. Both views
 edit the same source; switching views does not change or regenerate the
 sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
 is increased again.
 
-Timing selects straight sixteenth steps or 1/8 triplet steps. A cycle of N
-steps lasts N/4 or N/3 quarter-note beats respectively. Changing timing keeps
+Timing selects straight sixteenth steps or 1/8 triplet steps. Straight uses
+phrase LPB 16 and triplet LPB 12, with four phrase lines per source step. A
+cycle of N steps lasts N/4 or N/3 quarter-note beats respectively, so each step
+keeps its 1/4-beat or 1/3-beat duration. Changing timing keeps
 both memories intact. Phrase timing is local to the phrase; ACID does not change
 the song tempo, LPB or meter. Timing is saved with the source and is included
 in Undo, Redo and Reset. Phrase output and PB Range are separate phrase settings.
+At N=32, Play Once has 128 lines. Repeat has 257 lines: the steady loop starts
+at line 129 and ends exclusively at line 257, the empty sentinel. The 512-line
+phrase capacity is unchanged.
 
 A NOTE consumes the next active PITCH entry. TIE holds the current semantic
 voice without consuming pitch memory, and REST releases it. ACCENT and outgoing
@@ -57,16 +62,21 @@ has an ambiguous destination or persistence fails, it remains available in the
 open session and ACID reports the unsaved state. Give a new draft's instrument
 a unique name or generate its phrase before closing the song. ACID protects
 foreign or modified phrases and uses staged rendering, ownership checks, source persistence and
-rollback before replacing an owned phrase. Source records and ownership seals
-use the current source-record and ownership-seal contracts. With Live Edit off,
-the source is marked dirty until a successful Generate applies the draft. Earlier
-experimental source formats are not imported or migrated.
+rollback before replacing an owned phrase. The current WIP source schema is
+`ACID-PITCH-TIME-1`. With Live Edit off,
+the source is marked dirty until a successful Generate applies the draft.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE
-uses overlapping notes: the target starts in another phrase column before a
-delayed OFF releases its predecessor. Same-pitch connected notes hold the
-existing voice. Repeat preserves this ordering across the loop seam.
+uses overlapping notes: the target starts in another phrase column at delay 0
+before a delayed OFF releases its predecessor. The OFF uses the minimum
+note-delay unit (1/256 phrase line) per event; Renoise quantizes delays to ticks,
+so this bounded ordering is host-tick-quantized, not sample-accurate, and never
+accumulates into step rounding. Same-pitch connected notes hold the existing
+voice. Pitch-bend attacks align to the phrase line; a fresh NOTE with a center
+reset uses delay 1 only when the bend channel is not known centered, otherwise
+delay 0. Repeat
+preserves overlap ordering across the loop seam.
 
 For a plugin or MIDI synth, enable its mono/legato portamento and set its glide
 time. ACID sends the legato note ordering; the receiver supplies continuous
@@ -87,10 +97,9 @@ owned phrase and restore on selection/save/reopen; PITCH/TIME memory stays
 unchanged. Out-of-range slides fall back to ordered notes with an approximation
 warning. Hybrid sample layers may respond differently.
 
-Phrase-contained pitch bend and center reset were measured with a bounded Surge
-XT setup in Renoise 3.5.4 at both phrase LPBs; see the
-[timing checklist](../tests/acid/acid_timing_manual.md#targeted-glide-and-bend-playback).
-This does not establish delivery for other receivers or routes. A receiver that
+Phrase-contained pitch bend and center-reset playback checks are pending for
+the current LPB16/12 four-line layout. This does not establish delivery for
+other receivers or routes. A receiver that
 ignores these commands will not produce the intended bend; use PB Off for
 receiver-controlled note overlap.
 
@@ -100,7 +109,7 @@ Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
 pending; see the [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md).
 The full M3.5 instrument and Live Edit gates remain tracked in
 [ROADMAP.md](ROADMAP.md). Generation requires LPB transport timing and rejects
-legacy speed timing before changing phrases or saved source. Straight and
+unsupported speed timing before changing phrases or saved source. Straight and
 triplet playback, including host groove, remain subject to the
 [timing checklist](../tests/acid/acid_timing_manual.md).
 

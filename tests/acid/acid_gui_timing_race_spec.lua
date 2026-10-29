@@ -109,6 +109,7 @@ package.loaded["writers.phrase_writer"]={
 local editor_module=require("model.editor_state")
 local force_diagnostic=false
 package.loaded["model.editor_state"]={
+  MAX_PAGES=editor_module.MAX_PAGES,
   project=function(pattern)
     if force_diagnostic then
       return {error={step=3,pitch_index=2,message="TIME step 03: test diagnostic."},

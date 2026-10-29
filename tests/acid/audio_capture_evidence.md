@@ -1,44 +1,17 @@
-# ACID — accepted audio evidence
+# ACID Renoise playback verification
 
-**Policy:** existing qualified results remain accepted. Audio capture, metronome reference, WASAPI calibration and VST receiver matrices are optional defect diagnostics, not M4 closure requirements. [M4 gates](../../com.david303ttl.ACID.xrnx/ROADMAP.md#m45--closure-gates).
+Current target: 32 source steps, four phrase lines per step, Straight LPB 16,
+and Triplet LPB 12. Phrase output policies are Play Once and Repeat.
 
-## M3 articulation
+## Checks
 
-| Scope | Accepted result |
-| --- | --- |
-| NOTE/TIE/REST gates and release | 21 one-shot/Repeat protocols passed across BPM 90/120/150 on the reference sample profile |
-| Moving glide and Repeat seams | Scoped sample writer playback passed |
-| Accent | Scoped native sample level/retention checks passed |
+- Generate lengths 1 and 32 in both timing modes and output policies.
+- Verify Play Once line counts 4 and 128; verify Repeat line counts 9 and 257.
+- At length 32 Repeat, verify loop start 129, exclusive end 257, and an empty
+  sentinel at line 257.
+- Inspect gate, glide, legato, pitch-bend, and reset placement at all four line
+  offsets per step.
+- Check phrase duration, repeated playback, loop seam, and fresh-attack timing.
 
-Results apply to the stated reference instrument and Renoise configuration, not all receiver types.
-
-## Phrase pitch-bend receiver check (2026-10-28)
-
-| Scope | Accepted result |
-| --- | --- |
-| Renoise 3.5.4, Surge XT VST3, global instrument slot 03 | Phrase-contained M1 delivered bend and center reset with instrument/sample field empty (255) |
-| PB ±12 held C→G→C | 130.82 Hz → 195.92 Hz → 130.92 Hz; +6.99 semitones, reset passed |
-| Generated short C→G slide | Intermediate and endpoint bend observed |
-| Sample and VST LPB 8/6 | C→G glide, REST silence and note return passed |
-
-No general VST, hybrid or external-MIDI delivery guarantee.
-
-## M4 phrase timing audio receipts (2026-10-28)
-
-**Renoise 3.5.4, installed ACID writer, 48 kHz PCM24, four traversals.**
-
-| Scope | Accepted result |
-| --- | --- |
-| Straight/Triplet, BPM 60/120/180, song LPB 2/3/4/6/8/12/16/32 | 48/48 passing WAVs |
-| Straight 16 / Triplet 12 | Four-beat cycle |
-| Straight 12 / Triplet 9 | Three-beat cycle |
-| Triplet 15 | Five-beat cycle |
-| Triplet 64 | 21⅓ beats, 256 expected attacks over four traversals |
-| Meter and host-pattern boundaries | 3/4, 4/4 and 7/8 passed |
-| Maximum measured onset error | 0.667 ms; no accumulating drift |
-
-Source baseline: `0df7d907bc531eecb07d026bd1d98a88cff05893`. WAVs, hashes, sidecars and per-onset reports are in ignored `tmp/acid-m4-acceptance/` where retained. No recapture required for M4.
-
-## Diagnostics
-
-Retain the deterministic Lua regressions, audio-oracle validators and reusable targeted probes. The following are **not scheduled acceptance tasks**: loopback-route calibration, additional raw WAV captures, repeated audio-onset analysis, independent click-track measurement or broad receiver qualification. Run a targeted diagnostic only for a reproduced regression.
+Current-layout Renoise playback evidence is pending. Mocked specs validate
+planning and phrase-cell expectations but do not establish playback behavior.

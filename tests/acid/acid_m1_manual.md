@@ -1,56 +1,12 @@
 # ACID PITCH / TIME editor (Renoise manual QA)
 
-The original M1 procedure is superseded. Current Gate S checks are in
-[acid_m35_s_manual.md](acid_m35_s_manual.md). The 64-step capacity is a software
-extension; a hardware TB-303 has a 16-step pattern limit.
+Follow the current source workflow in
+[acid_m35_s_manual.md](acid_m35_s_manual.md) and the current timing/output
+acceptance in [acid_timing_manual.md](acid_timing_manual.md). Verify independent
+TIME length and active PITCH span through 32, including editing both memories at
+their final position, Program/Grid equivalence, save/reopen, and Undo/Redo.
 
-## Local deterministic regression
-
-Run from the repository root in VS Code:
-
-```powershell
-pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID
-```
-
-The `tests/acid/acid_editor_spec.lua` covers 1/16/17/32/33/48/49/64
-steps, independent NOTE consumption, pitch wrap, octave transposition, page
-boundaries, TIE and REST, and exact-step errors.
-
-## Renoise smoke test (requires Renoise 3.5/API 6.2)
-
-1. Install the ACID tool. Open an instrument with a playable
-   sample and no foreign phrase content. Open Tools > ACID.
-2. Confirm LAST STEP=16. The fresh draft is immediately editable. All 64 PITCH positions
-   should show C, normal octave, ACCENT and SLIDE off. The sixteen active
-   TIME steps should all be NOTE. Confirm the decoded preview is C for every
-   step without editing any pitches.
-3. Edit P01 keyboard C, octave DOWN, ACCENT on, SLIDE on. Edit P02 D#, octave
-   UP. Verify the two controls independently alter the decoded MIDI pitches.
-4. Set TIME step 01 to NOTE, step 02 to TIE, and step 03 to NOTE using
-   the per-step dropdown selectors. Click the step header to inspect it. Preview: step 1 P01, step 2 holds P01,
-   step 3 P02. P03 onwards should be marked unused.
-5. Set LAST STEP=17, select TIME page 17-32 and set step 17 to NOTE. Verify it
-   maps to the next pitch position, not automatically to P17.
-6. Switch to Grid view. Set LAST STEP=64 and visit all four PITCH and TIME pages. Edit steps 16,
-   17, 32, 33, 48, 49, 64; ensure state persists when switching pages.
-7. Shrink LAST STEP to 16, then enlarge again. Time values outside the active
-   range should be restored in this open draft.
-8. Check that untouched C entries count as stored but can be unused by the TIME
-   stream. The editor must not report a missing-pitch error for those entries.
-9. Generate an ACID phrase using an initialized pattern with valid NOTE
-   pitches. Check the phrase line count equals two times LAST STEP and the
-   decoded preview matches events. Regression-check phrase ownership,
-   regeneration, selective-slide collisions, and manual edits.
-10. Change songs with the dialog open. Verify generation is cancelled and the
-    outdated dialog cannot target the new song.
-
-## Known limits
-
-- Native sample slide, gates, and loop boundary articulation are experimental;
-  a correct editor preview is not evidence of faithful audio behavior.
-- The editor currently uses straight 1/16 divisions; triplet is not ready
-  for rendering and must not be silently enabled.
-- Draft source is stored after successful phrase generation. Reset requires
-  confirmation and can be undone once in the open editor.
-- Native Renoise GUI rendering and playback have not been exercised in this
-  environment. The tests must be run locally before merge.
+Phrase verification uses four phrase lines per source step: Straight LPB 16
+and Triplet LPB 12. Renoise host acceptance for max-length playback, both
+output policies, loop endpoints/sentinel, and conditional PB reset alignment
+remains pending; use the timing checklist to record results.

@@ -21,7 +21,7 @@
   },
   "status": "Independent semantic windows cover the fixed diagnostic reference profile at 90, 120, and 150 BPM; non-120 BPM settling windows begin at least 40 ms after the final glide command line. Analyzer readiness is not acoustic acceptance.",
   "index_base": 0,
-  "step_unit": "one straight TIME sixteenth; 1 step = 2 phrase lines at phrase LPB 8",
+  "step_unit": "one straight TIME sixteenth; 1 step = 4 phrase lines at phrase LPB 16",
   "capture_requirements": {
     "allowed_channels": [
       1,

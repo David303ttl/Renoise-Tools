@@ -1,41 +1,41 @@
 # ACID timing — Renoise acceptance
 
-**Status:** static timing accepted in Renoise 3.5.4. Remaining M4 gate: [instrument and phrase hardening](../../com.david303ttl.ACID.xrnx/ROADMAP.md#m47--instrumentphrase-synchronization-and-regeneration-safety-p0).
+## Current phrase contract
 
-## Measured phrase-period and BPM/LPB acceptance
+Source TIME length and independent active PITCH span are each 1–32. Straight
+uses phrase LPB 16 and Triplet uses phrase LPB 12; each source step occupies
+four phrase lines. A Straight step lasts 1/4 beat and a Triplet step lasts 1/3
+beat.
 
-| Test | Result |
-| --- | --- |
-| Straight / Triplet, song LPB 2, 3, 4, 6, 8, 12, 16, 32 at BPM 60, 120, 180 | 48/48 offline WAVs passed |
-| Straight 16 / Triplet 12 | 4-beat cycles passed |
-| Straight 12 / Triplet 9 | 3-beat cycles passed |
-| Triplet 15 | 5-beat cycle passed |
-| Triplet 64 | 21⅓-beat cycle, 256 attacks over four traversals, passed |
-| Repeat metadata | Phrase LPB 8/6, shuffle 0, two lines per step, validated loop endpoints |
-| 3/4, 4/4 and 7/8 | Passed across host-pattern boundaries |
-| Maximum onset deviation | ≤0.667 ms; no accumulating drift |
+At N=32, Play Once has 128 lines. Repeat has 257 lines, loop start 129, and
+exclusive loop end 257. Line 257 is an empty sentinel. Phrase capacity remains
+512 lines. Gate positions are represented on the 256-unit-per-source-step
+timeline and mapped through the selected four-line layout.
 
-**Accepted configuration:** Renoise 3.5.4, ACID-installed writer, single host trigger, 48 kHz stereo PCM24, four traversals per phrase. Original WAVs, render sidecars, hashes and individual reports remain under ignored `tmp/acid-m4-acceptance/` if available.
+## Pending Renoise checks
 
-## Targeted glide and bend playback
+These host checks have not been performed. Use a disposable Renoise song and
+record the build, source, timing mode, output policy, phrase LPB, line count,
+loop endpoints, and observed playback.
 
-| Target | Result |
-| --- | --- |
-| Native sample, phrase LPB 8 and 6 | C→G glide, REST silence and C return passed |
-| Surge XT VST3, ±12 PB, phrase LPB 8 and 6 | C→G bend, REST silence and C return passed |
-| Phrase-contained M1 receiver check | Surge XT slot 03, +6.99 semitones and center reset passed |
+1. Generate N=32 Straight Play Once. Verify LPB 16, 128 lines, four phrase
+   lines per source step, and the final release.
+2. Generate N=32 Triplet Play Once. Verify LPB 12, 128 lines, four phrase
+   lines per source step, and the final release.
+3. Generate N=32 Repeat in both modes. Verify 257 lines, `loop_start=129`,
+   `loop_end=257`, and an empty sentinel.
+4. Play both modes across cold-to-steady and steady-to-steady seams. Verify
+   source-step durations of 1/4 and 1/3 beat and check for drift.
+5. Inspect the last source step and sentinel under both output policies. Confirm
+   no event is placed in the sentinel and no extra audible line occurs.
+6. Check PB fresh-NOTE alignment with and without a required center reset. Use
+   delay 1 plus center reset only when the bend channel is not known centered;
+   otherwise use delay 0. The 1/256-line ordering is host-tick-quantized,
+   bounded, and not sample-accurate.
+7. During playback, check stop/start/seek and BPM/LPB changes in Straight and
+   Triplet.
+8. Check instrument and phrase selection, in-place regeneration, explicit new
+   phrase creation, Live Edit, and source/settings save/reopen.
 
-Receiver behavior outside these setups is not certified.
-
-## Remaining manual check
-
-Use one disposable Renoise song after M4.7 implementation:
-
-1. Add, rename, reorder, delete and select instruments while ACID remains open; verify synchronized target choices.
-2. Select existing owned phrases and regenerate each in place; no duplicate phrase or unintended instrument/phrase selection.
-3. Create one new phrase explicitly; switch instruments with Live Edit active; confirm no implicit append or stale commit.
-4. Switch Program/Grid, edit, Undo/Redo, save/reopen and verify per-phrase settings and drafts.
-5. During playback, check stop/start/seek and BPM/LPB changes using Straight and Triplet.
-6. In a legacy speed-timing song, attempt New Phrase and regeneration of an owned phrase. Both must report unsupported timing and leave phrases, saved source and transport unchanged. Return to LPB timing and confirm generation succeeds.
-
-**Not required for M4:** new WAV batches, independent beat-click captures, soundcard loopback calibration, repeated onset analysis, additional VST receiver matrices or exhaustive articulation recordings. Use an existing diagnostic tool only for a reproduced defect.
+Receiver-specific behavior outside the checked setup is not certified. Do not
+interpret structural inspection or mocked tests as actual playback acceptance.

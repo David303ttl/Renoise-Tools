@@ -3,9 +3,9 @@ local sequencer = require("model.sequencer")
 local pattern = sequencer.new_pattern()
 assert(pattern.length == 16)
 assert(pattern.pitch_length == 16)
-assert(#pattern.pitch_events == 64 and #pattern.time_events == 64)
-for i=1,64 do assert(pattern.time_events[i]=="N") end
-for i=1,64 do
+assert(#pattern.pitch_events == 32 and #pattern.time_events == 32)
+for i=1,32 do assert(pattern.time_events[i]=="N") end
+for i=1,32 do
   assert(pattern.pitch_events[i].note==36)
   assert(pattern.pitch_events[i].key==0 and pattern.pitch_events[i].octave==0)
   assert(not pattern.pitch_events[i].accent and not pattern.pitch_events[i].slide)
@@ -19,13 +19,20 @@ local extra_field=sequencer.new_pattern(1)
 extra_field.unused=true
 assert(not sequencer.validate(extra_field))
 assert(sequencer.new_pattern(8).length == 8)
-assert(sequencer.new_pattern(64).length == 64)
+assert(sequencer.new_pattern(32).length == 32)
+assert(not pcall(sequencer.new_pattern,33))
+local oversized=sequencer.new_pattern(1)
+oversized.pitch_events[33]=sequencer.new_pitch(0,0)
+assert(not sequencer.validate(oversized))
+oversized=sequencer.new_pattern(1)
+oversized.time_events[33]="N"
+assert(not sequencer.validate(oversized))
 assert(not pcall(sequencer.new_pattern,16,"extended"))
 assert(not pcall(sequencer.new_pitch,0,0,1,false))
 assert(not sequencer.validate({length = 17, pitch_events = {}, time_events = {}}))
-assert(not sequencer.validate({length = 65, pitch_events = {}, time_events = {}}))
+assert(not sequencer.validate({length = 33, pitch_events = {}, time_events = {}}))
 assert(not sequencer.validate({length = 16, pitch_events = {}}))
-assert(sequencer.describe(pattern) == "Draft state: 16 time slots, 16 active pitch entries, 64 stored pitch entries, 64 time events")
+assert(sequencer.describe(pattern) == "Draft state: 16 time slots, 16 active pitch entries, 32 stored pitch entries, 32 time events")
 
 pattern.pitch_events[1] = sequencer.new_pitch(0,0,false,true)
 pattern.pitch_events[2] = sequencer.new_pitch(0,1,true,false)
@@ -46,7 +53,7 @@ assert(not sequencer.validate(pattern))
 pattern.time_events[4] = "N"
 assert(sequencer.validate(pattern))
 
-local extended=sequencer.new_pattern(64)
+local extended=sequencer.new_pattern(32)
 assert(extended.pitch_length==16 and sequencer.validate(extended))
 assert(sequencer.set_pitch_length(extended,3))
 local source=sequencer.new_pattern(16)

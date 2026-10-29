@@ -1,5 +1,8 @@
 -- Run manually in Renoise's Scripting Terminal on a disposable probe instrument.
 -- This script only appends phrases to that explicitly named instrument.
+local LINES_PER_STEP=4
+local PHRASE_LPB=16
+local FIRST_PHRASE_LINE=1
 local song = renoise.song()
 assert(song, "Open the disposable probe song first")
 local instrument = song.selected_instrument
@@ -35,7 +38,7 @@ local function make_phrase(name, line_count, loop_start, loop_end, notes)
   phrase.visible_effect_columns = 0
   phrase.instrument_column_visible = false
   phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-  phrase.lpb = 8
+  phrase.lpb = PHRASE_LPB
   phrase.shuffle = 0
   phrase.autoseek = false
   phrase.loop_end = loop_end
@@ -46,14 +49,23 @@ local function make_phrase(name, line_count, loop_start, loop_end, notes)
 end
 
 local ok, err = pcall(function()
-  make_phrase("ACID LOOP PROBE | full 1-8", 8, 1, 8,
-    {{1,36},{3,40},{5,43},{7,48},{8,50}})
-  make_phrase("ACID LOOP PROBE | full 1-7", 8, 1, 7,
-    {{1,36},{3,40},{5,43},{7,48},{8,50}})
-  make_phrase("ACID LOOP PROBE | intro + 9-16", 16, 9, 16,
-    {{1,36},{3,40},{5,43},{7,48},{9,36},{11,40},{13,43},{15,48},{16,50}})
-  make_phrase("ACID LOOP PROBE | NOTE TIE NOTE REST", 8, 1, 8,
-    {{1,36},{5,43},{7,renoise.PatternLine.NOTE_OFF}})
+  local source_steps=8
+  local cold_lines=source_steps*LINES_PER_STEP
+  local endpoint_line=cold_lines+FIRST_PHRASE_LINE
+  make_phrase("ACID LOOP PROBE | full 1-32", endpoint_line, FIRST_PHRASE_LINE,
+    cold_lines, {{1,36},{5,40},{9,43},{13,48},{17,36},{21,40},{25,43},{29,48},{32,50}})
+  make_phrase("ACID LOOP PROBE | full 1-33", endpoint_line, FIRST_PHRASE_LINE,
+    endpoint_line, {{1,36},{5,40},{9,43},{13,48},{17,36},{21,40},{25,43},{29,48},{32,50},{33,52}})
+  make_phrase("ACID LOOP PROBE | intro + 33-64",
+    cold_lines*2+FIRST_PHRASE_LINE,cold_lines+FIRST_PHRASE_LINE,
+    cold_lines*2,{{1,36},{5,40},{9,43},{13,48},{33,36},{37,40},{41,43},{45,48},
+      {49,36},{53,40},{57,43},{61,48},{64,50}})
+  local mixed_steps=4
+  local mixed_lines=mixed_steps*LINES_PER_STEP
+  make_phrase("ACID LOOP PROBE | NOTE TIE NOTE REST",mixed_lines,
+    FIRST_PHRASE_LINE,mixed_lines,
+    {{1,36},{9,43},{(mixed_steps-1)*LINES_PER_STEP+FIRST_PHRASE_LINE,
+      renoise.PatternLine.NOTE_OFF}})
 end)
 
 if not ok then
@@ -81,5 +93,5 @@ end
 
 print("Created four disposable ACID loop probe phrases on ACID LOOP PROBE.")
 print("Set the instrument to selective phrase playback and trigger each phrase once.")
-print("Endpoint phrases use LPB 8; 8 lines should repeat every one beat.")
-print("The NOTE TIE NOTE REST phrase has NOTE at line 1, a TIE gap, NOTE at line 5, and OFF at line 7.")
+print("Endpoint phrases use LPB 16 with four lines per source step.")
+print("The NOTE TIE NOTE REST phrase has NOTE at line 1, a TIE gap, NOTE at line 9, and REST OFF at line 13.")

@@ -10,7 +10,7 @@ state.pitch_events[2]=pitch(39,true,false)
 for i,command in ipairs({"N","T","N","R","N","N","T","R"}) do state.time_events[i]=command end
 local m=memory.inspect(state)
 assert(m.length==8 and m.notes==4 and m.ties==2 and m.rests==2)
-assert(m.missing_time==0 and m.pitch_count==64 and m.pitch_length==2 and m.next_pitch==1)
+assert(m.missing_time==0 and m.pitch_count==32 and m.pitch_length==2 and m.next_pitch==1)
 assert(m.time_text=="N T N R N N T R")
 local p={name="",number_of_lines=2,visible_note_columns=1,visible_effect_columns=0,lpb=8,looping=false,loop_start=1,loop_end=2,playback_mode=1,key_tracking=1,lines={}}
 function p:column_is_muted()return false end

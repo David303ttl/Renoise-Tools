@@ -1,6 +1,27 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Sparse plugin/MIDI NOTE/OFF plan for connected phrase transitions.
 local M = { MAX_COLUMNS=3, EMPTY=121, OFF=120 }
+local control=require("model.control_signals")
+M.IMMEDIATE_DELAY = 0
+-- Minimum positive note-column delay; Renoise quantizes playback to ticks.
+M.ORDER_DELAY = 1
+M.PITCH_BEND_CENTER = 8192
+M.PITCH_BEND_MAX = 16383
+local TIMELINE_UNITS_PER_STEP=control.UNITS_PER_STEP
+local HALF_STEP_UNITS=TIMELINE_UNITS_PER_STEP/2
+local BEND_VALUES_PER_BYTE=128
+local HALF_STEP_INTERPOLATION_DIVISOR=2
+local ROUND_HALF_UP=0.5
+local FIRST_PHRASE_LINE=1
+
+local function resolution(layout)
+  local lines_per_step=type(layout)=="table" and layout.lines_per_step
+  if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<1
+    or lines_per_step~=lines_per_step then
+    return nil,"legato planning requires a positive integer lines-per-step"
+  end
+  return lines_per_step
+end
 
 local function source_step(event)
   return event.source_step or event.step
@@ -146,32 +167,38 @@ local function add_cell(cells,line,column,values)
   return true
 end
 
-local function bend_plan(semantic,timeline,layout,options)
+local function bend_plan(semantic,timeline,layout,options,lines_per_step)
   local range=options.pb_range
   if range~=2 and range~=12 and range~=24 and range~=48 then return nil,"invalid pitch-bend range" end
   local target=options.instrument_value
   if type(target)~="number" or target%1~=0 or target<0 or target>255 then
     return nil,"pitch bend requires a valid phrase channel field"
   end
-  if (layout.lines_per_step or 2)~=2 then return nil,"pitch bend requires two phrase lines per TIME step" end
   if type(timeline)~="table" or type(timeline.events)~="table" then return nil,"gate timeline is incomplete" end
   local cells,commands,diagnostics={},{},{
     "Pitch bend delivery depends on the receiver and routing; set the selected range and use isolated monophonic routing. PB Off retains NOTE overlap."}
   local anchor,pitch,accent,column
+  local centered=false
   local collision
   local function put(line,col,values)
     local ok,err=add_cell(cells,line,col,values)
     if not ok then collision=err end
   end
   local function bend(line,offset)
-    local value=offset<0 and 8192+offset/range*8192 or 8192+offset/range*8191
-    value=math.floor(value+0.5)
+    local negative_span=M.PITCH_BEND_CENTER
+    local positive_span=M.PITCH_BEND_MAX-M.PITCH_BEND_CENTER
+    local value=offset<0 and M.PITCH_BEND_CENTER+offset/range*negative_span
+      or M.PITCH_BEND_CENTER+offset/range*positive_span
+    value=math.floor(value+ROUND_HALF_UP)
     commands[line]={value=value,instrument_value=target,
-      number_string=string.format("%02X",math.floor(value/128)),amount_value=value%128}
+      number_string=string.format("%02X",math.floor(value/BEND_VALUES_PER_BYTE)),
+      amount_value=value%BEND_VALUES_PER_BYTE}
+    centered=value==M.PITCH_BEND_CENTER
   end
   local events={}
   for i,event in ipairs(timeline.events) do
-    if type(event.at)~="number" or event.at<0 or event.at%128~=0 then
+    if type(event.at)~="number" or event.at<0 or event.at%1~=0
+      or (event.at*lines_per_step)%TIMELINE_UNITS_PER_STEP~=0 then
       return nil,"pitch-bend timeline position is not representable"
     end
     events[i]=event
@@ -182,33 +209,40 @@ local function bend_plan(semantic,timeline,layout,options)
     return (order[a.kind] or 9)<(order[b.kind] or 9)
   end)
   local entry_state
-  local function state() return table.concat({anchor or "empty",pitch or "empty",column or "empty",tostring(accent)},":") end
+  local function state() return table.concat({anchor or "empty",pitch or "empty",column or "empty",tostring(accent),tostring(centered)},":") end
   for index,event in ipairs(events) do
-    local line=math.floor(event.at/128)+1
+    local line=math.floor(event.at*lines_per_step/TIMELINE_UNITS_PER_STEP)+FIRST_PHRASE_LINE
     if layout.looping and not entry_state and line>=layout.loop_start then entry_state=state() end
     if event.kind=="gate_on" then
       column=1
-      put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,delay_value=1})
+      put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,
+        delay_value=centered and M.IMMEDIATE_DELAY or M.ORDER_DELAY})
       anchor,pitch,accent=event.note,event.note,event.accent
-      bend(line,0)
+      if not centered then bend(line,M.IMMEDIATE_DELAY) end
     elseif event.kind=="pitch_target" then
       if not anchor then return nil,"pitch bend requires a cold-entry voice anchor" end
       local offset=event.note-anchor
       if math.abs(offset)>range then
-        put(line,column,{note_value=M.OFF,delay_value=0})
+        put(line,column,{note_value=M.OFF,delay_value=M.IMMEDIATE_DELAY})
         column=3-column
-        put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,delay_value=1})
-        bend(line,0)
+        put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,
+          delay_value=M.ORDER_DELAY})
+        bend(line,M.IMMEDIATE_DELAY)
         anchor,pitch,accent=event.note,event.note,event.accent
         diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: bend range exceeded",source_step(event))
       else
         if pitch~=event.note then
           -- Glide into the target across the preceding connected half-step.
           local previous_event=events[index-1]
-          local midpoint_line=line-1
-          local room=previous_event and previous_event.at<event.at-128
+          local half_step_lines=layout.half_step_lines
+          local midpoint_line=type(half_step_lines)=="number" and half_step_lines%1==0
+            and (line-half_step_lines) or nil
+          local room=midpoint_line and midpoint_line>=1 and previous_event
+            and previous_event.at<event.at-HALF_STEP_UNITS
             and not commands[midpoint_line]
-          if room then bend(midpoint_line,((pitch-anchor)+offset)/2) end
+          if room then
+            bend(midpoint_line,((pitch-anchor)+offset)/HALF_STEP_INTERPOLATION_DIVISOR)
+          end
           bend(line,offset)
           if not room then
             diagnostics[#diagnostics+1]=string.format("TIME step %02d: SLIDE approximated: phrase timing leaves no free intermediate bend line.",source_step(event))
@@ -221,8 +255,8 @@ local function bend_plan(semantic,timeline,layout,options)
       end
     elseif event.kind=="gate_off" then
       if anchor then
-        put(line,column,{note_value=M.OFF,delay_value=0})
-        bend(line,0)
+        put(line,column,{note_value=M.OFF,delay_value=M.IMMEDIATE_DELAY})
+        bend(line,M.IMMEDIATE_DELAY)
         anchor,pitch,accent,column=nil,nil,nil,nil
       end
     end
@@ -236,17 +270,17 @@ local function bend_plan(semantic,timeline,layout,options)
     return fallback
   end
   -- The carrier is always rightmost and never replaces NOTE/OFF data.
-  return {cells=cells,columns=3,diagnostics=diagnostics,lines_per_step=2,
+  return {cells=cells,columns=3,diagnostics=diagnostics,lines_per_step=lines_per_step,
     midi_commands=commands,pb_range=range}
 end
 
 function M.plan(semantic,timeline,layout,options)
-  if options and options.pb_range and options.pb_range~=0 then
-    return bend_plan(semantic,timeline,layout or {},options)
-  end
   layout=layout or {}
-  local lines_per_step=layout.lines_per_step or 2
-  if lines_per_step~=2 then return nil,"plugin/MIDI legato requires two phrase lines per TIME step" end
+  local lines_per_step,layout_error=resolution(layout)
+  if not lines_per_step then return nil,layout_error end
+  if options and options.pb_range and options.pb_range~=0 then
+    return bend_plan(semantic,timeline,layout,options,lines_per_step)
+  end
   if type(timeline)~="table" or type(timeline.events)~="table" or
       type(timeline.steps)~="number" or timeline.steps<1 then
     return nil,"gate timeline is incomplete"
@@ -292,14 +326,14 @@ function M.plan(semantic,timeline,layout,options)
     if type(event.at)~="number" or event.at<0 or event.at%1~=0 then
       return nil,"timeline event has an invalid position"
     end
-    local line=math.floor(event.at/128)+1
+    local line=math.floor(event.at*lines_per_step/TIMELINE_UNITS_PER_STEP)+FIRST_PHRASE_LINE
     if event.kind=="gate_on" then
       local step=source_step(event)
       local column=colors[step]
       if not column then return nil,"gate NOTE has no semantic source TIME step" end
       local velocity=event.accent and 255 or 89
       local ok,cell_error=add_cell(cells,line,column,{note_value=event.note,
-        volume_value=velocity,delay_value=0})
+        volume_value=velocity,delay_value=M.IMMEDIATE_DELAY})
       if not ok then return nil,cell_error end
       active_step,active_note=step,event.note
     elseif event.kind=="pitch_target" then
@@ -319,16 +353,17 @@ function M.plan(semantic,timeline,layout,options)
           return nil,"connected NOTE columns are not isolated"
         end
         local ok,cell_error=add_cell(cells,line,column,{note_value=event.note,
-          volume_value=event.accent and 255 or 89,delay_value=0})
+          volume_value=event.accent and 255 or 89,delay_value=M.IMMEDIATE_DELAY})
         if not ok then return nil,cell_error end
-        ok,cell_error=add_cell(cells,line,previous_column,{note_value=M.OFF,delay_value=1})
+        ok,cell_error=add_cell(cells,line,previous_column,
+          {note_value=M.OFF,delay_value=M.ORDER_DELAY})
         if not ok then return nil,cell_error end
         active_step,active_note=step,event.note
       end
     elseif event.kind=="gate_off" then
       if active_step then
         local column=colors[active_step]
-        local delay=event.at%128==0 and 0 or math.floor((event.at%128)*2+0.5)
+        local delay=(event.at*lines_per_step)%TIMELINE_UNITS_PER_STEP
         local ok,cell_error=add_cell(cells,line,column,{note_value=M.OFF,delay_value=delay})
         if not ok then return nil,cell_error end
         active_step,active_note=nil,nil

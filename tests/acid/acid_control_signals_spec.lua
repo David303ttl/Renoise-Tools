@@ -23,18 +23,18 @@ assert(by["gate_off:1152"].reason=="retrigger")
 assert(by["gate_on:1280"].note==41)
 assert(by["tie:1536"].note==41)
 assert(by["gate_off:1792"].reason=="rest")
-local lines=assert(signals.release_lines(tl,2))
-assert(#lines==1 and lines[1]==10)
+local lines=assert(signals.release_lines(tl,4))
+assert(#lines==1 and lines[1]==19)
 assert(not signals.compile(p,{gate_fraction=0}))
-assert(not signals.release_lines(tl,1))
+assert(not signals.release_lines(tl,3))
 local gate_writer=require("writers.gate_writer")
 local cells={}
-for i=1,16 do cells[i]={note_value=121} end
+for i=1,32 do cells[i]={note_value=121} end
 local phrase={}
 function phrase:line(i)return {note_columns={cells[i]}}end
-local result=assert(gate_writer.apply(phrase,tl))
-assert(result.early_releases==1 and cells[10].note_value==120)
-assert(not gate_writer.apply(phrase,tl))
+local result=assert(gate_writer.apply(phrase,tl,4))
+assert(result.early_releases==1 and cells[19].note_value==120)
+assert(not gate_writer.apply(phrase,tl,4))
 print("ACID control-signal and gate tests passed")
 
 -- Compare every short valid source to a run-based oracle. A run ends at a
@@ -119,7 +119,7 @@ for i,command in ipairs({"N"}) do terminal.time_events[i]=command end
 terminal.pitch_events[1].slide=true
 local tail=assert(signals.compile(terminal,{output_policy="play_once"}))
 assert(#tail.events==2 and tail.events[2].at==128 and tail.events[2].reason=="tail")
-assert(assert(signals.release_lines(tail,2))[1]==2)
+assert(assert(signals.release_lines(tail,4))[1]==3)
 
 print("ACID successor gate oracle passed "..checked.." cases")
 
@@ -127,13 +127,13 @@ local terminal_plan=assert(cycles.compile_cycle(terminal))
 assert(not signals.compile(terminal,{plan=terminal_plan,output_policy="repeat"}))
 assert(not signals.compile(terminal,{output_policy="invalid"}))
 assert(not signals.release_lines(assert(signals.compile(terminal,{gate_fraction=0.25})),2))
-for _,length in ipairs({16,17,32,33,48,49,64}) do
+for _,length in ipairs({16,17,32}) do
   local long=seq.new_pattern(length)
   for step=1,length do long.time_events[step]=step==1 and "N" or "T" end
   long.pitch_events[1].slide=true
   local timeline=assert(signals.compile(long,{output_policy="play_once"}))
-  local releases=assert(signals.release_lines(timeline,2))
-  assert(#releases==1 and releases[1]==length*2)
+  local releases=assert(signals.release_lines(timeline,4))
+  assert(#releases==1 and releases[1]==length*4-1)
   assert(timeline.events[#timeline.events].at==(length-1)*256+128)
   assert(not timeline.open_at_end)
 end

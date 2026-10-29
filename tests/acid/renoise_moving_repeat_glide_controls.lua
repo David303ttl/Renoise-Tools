@@ -1,5 +1,9 @@
 -- Add pitch-matched held NOTE controls for the moving Repeat glide probes.
 local song=assert(renoise.song(),"Open the disposable articulation song first")
+local LINES_PER_STEP=4
+local PHRASE_LPB=16
+local SOURCE_STEPS=8
+local FIRST_PHRASE_LINE=1
 local instrument
 for _,candidate in ipairs(song.instruments) do
  if candidate.name=="ACID ARTICULATION PROBE" then assert(not instrument,"Multiple articulation probes exist");instrument=candidate end
@@ -19,19 +23,19 @@ for _,name in ipairs(expected) do
   local phrase=instrument:insert_phrase_at(#instrument.phrases+1)
   phrase.name=name
   phrase.playback_mode=renoise.InstrumentPhrase.PLAY_PATTERN
-  phrase.number_of_lines=17
+   phrase.number_of_lines=SOURCE_STEPS*LINES_PER_STEP+1
   phrase.visible_note_columns=1
   phrase.visible_effect_columns=0
   phrase.instrument_column_visible=false
   phrase.key_tracking=renoise.InstrumentPhrase.KEY_TRACKING_NONE
-  phrase.lpb=8
+   phrase.lpb=PHRASE_LPB
   phrase.shuffle=0
   phrase.autoseek=false
   phrase.looping=true
-  phrase.loop_start=3
-  phrase.loop_end=17
-  phrase:line(1).note_columns[1].note_value=note
-  phrase:line(1).note_columns[1].instrument_value=renoise.PatternLine.EMPTY_INSTRUMENT
+   phrase.loop_start=LINES_PER_STEP+FIRST_PHRASE_LINE
+   phrase.loop_end=phrase.number_of_lines
+   phrase:line(FIRST_PHRASE_LINE).note_columns[1].note_value=note
+   phrase:line(FIRST_PHRASE_LINE).note_columns[1].instrument_value=renoise.PatternLine.EMPTY_INSTRUMENT
   print("Created pitch-matched held control "..name.." at phrase program "..tostring(#instrument.phrases))
  end
 end

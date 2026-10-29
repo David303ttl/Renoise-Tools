@@ -51,12 +51,12 @@ assert(probe ~= source and probe.trigger_options ~= source.trigger_options,
 assert(not source.trigger_options.monophonic and source.trigger_options.monophonic_glide == 0,
   "Comparison changed the polyphonic reference")
 assert(probe.trigger_options.monophonic and probe.trigger_options.monophonic_glide == 32)
-assert(#probe.phrases == 2 and probe.phrases[1]:line(5).note_columns[1].note_value == 55
-  and probe.phrases[2]:line(5).note_columns[1].note_value == 48,
+assert(#probe.phrases == 2 and probe.phrases[1]:line(9).note_columns[1].note_value == 55
+  and probe.phrases[2]:line(9).note_columns[1].note_value == 48,
   "Native comparison and same-pitch control are missing")
 for _, phrase in ipairs(probe.phrases) do
-  assert(phrase:line(11).note_columns[1].note_value == 120 and not phrase.looping)
-  for line = 1, 16 do
+   assert(phrase:line(21).note_columns[1].note_value == 120 and not phrase.looping)
+   for line = 1, 32 do
     assert(phrase:line(line).note_columns[1].effect_number_string == nil,
       "Native comparison unexpectedly uses local glide")
   end

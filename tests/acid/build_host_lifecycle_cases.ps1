@@ -117,7 +117,7 @@ $fixture = [ordered]@{
   format = 'ACID-AUDIO-ORACLE-1'
   status = 'Independent native host lifecycle windows at 120 BPM; event times are authored from song-pattern line positions. Acoustic status remains unverified.'
   index_base = 0
-  step_unit = 'one straight TIME sixteenth; one step = two phrase lines at phrase LPB 8'
+  step_unit = 'one straight TIME sixteenth; one step = four phrase lines at phrase LPB 16'
   capture_requirements = @{
     sample_rate = 48000
     preferred_channels = 1

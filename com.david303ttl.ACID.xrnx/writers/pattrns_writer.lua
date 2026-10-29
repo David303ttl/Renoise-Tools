@@ -3,7 +3,9 @@
 -- Glide and release-gate effects are applied separately to the rendered phrase.
 local interpreter = require('model.cycle_interpreter')
 local timing = require('model.timing')
+local sequencer = require('model.sequencer')
 local M = {}
+local MAX_PHYSICAL_STEPS=sequencer.MAX_STEPS*timing.REPEAT_CYCLES
 
 local function valid_volume(value)
   return type(value) == 'number' and value >= 0 and value <= 1
@@ -23,13 +25,15 @@ function M.emit(plan, options)
   if type(options) ~= 'table' then return nil, 'options must be a table' end
   if type(plan) ~= 'table' or type(plan.steps) ~= 'table'
     or type(plan.length) ~= 'number' or plan.length % 1 ~= 0
-    or plan.length < 1 or plan.length > 128 then
+    or plan.length < 1 or plan.length > MAX_PHYSICAL_STEPS then
     return nil, 'invalid compiled ACID plan'
   end
-  local unit = options.unit or '1/16'
-  local resolution = options.resolution or 1
-  if not ((unit == '1/16' and resolution == 1) or
-      (unit == '1/8' and resolution == 2/3)) then
+  local unit = options.unit or timing.STRAIGHT_PULSE_UNIT
+  local resolution = options.resolution or timing.STRAIGHT_PULSE_RESOLUTION
+  if not ((unit == timing.STRAIGHT_PULSE_UNIT and
+      resolution == timing.STRAIGHT_PULSE_RESOLUTION) or
+      (unit == timing.TRIPLET_PULSE_UNIT and
+      resolution == timing.TRIPLET_PULSE_RESOLUTION)) then
     return nil, 'invalid timing pulse'
   end
   local normal_volume = options.normal_volume or 0.7
@@ -74,7 +78,9 @@ function M.emit(plan, options)
     'local values = { ' .. table.concat(items, ', ') .. ' }',
     'return pattern {',
     '  unit = "' .. unit .. '",',
-    '  resolution = ' .. (resolution == 1 and '1' or '2/3') .. ',',
+    '  resolution = ' .. (resolution == timing.STRAIGHT_PULSE_RESOLUTION
+      and timing.STRAIGHT_PULSE_RESOLUTION_SOURCE
+      or timing.TRIPLET_PULSE_RESOLUTION_SOURCE) .. ',',
     '  repeats = false,',
     '  pulse = { ' .. count_pulses(plan.length) .. ' },',
     '  event = function(context)',

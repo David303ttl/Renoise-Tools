@@ -26,11 +26,11 @@ That source-level difference is documented as evidence, not copied as ACID
 behavior. Original hardware's exact PITCH cursor behavior and the acoustic
 result of loop-boundary glide remain unresolved.
 
-Original entry is a programming subset: straight TIME length 1–16 and active
-PITCH span 16. Extended permits TIME length 1–64 and active PITCH span 1–64.
-Both modes store 64 valid PITCH entries, defaulting to C. The Original defaults
-and capacity are ACID policies; they do not assert how unentered hardware
-memory is initialized. Length alone does not establish Original conformance.
+The current source contract permits TIME length 1–32 and active PITCH span
+1–32. Both memories contain 32 entries, with valid C defaults for PITCH.
+Original entry uses straight TIME length 1–16 and active PITCH span 16; Extended
+entry uses the full current limits. Length alone does not establish Original
+conformance.
 Triplets are outside M2 and belong to M4.
 
 ## Source and cursor decisions
@@ -88,17 +88,17 @@ NOTE commands with three active pitches consume P01, P02, P03, P01, P02 on each
 cycle. Three NOTE commands with five active pitches consume P01, P02, P03;
 P04 and P05 remain stored but unused in that cycle. The next cycle starts again
 at P01. The fixture has both cases so an implementation cannot derive playback
-length from the 64-entry capacity or carry an unfinished cursor across cycles.
+length from storage capacity or carry an unfinished cursor across cycles.
 
 ## Fixture oracle
 
 [`loop_cases.json`](../tests/acid/fixtures/loop_cases.json) contains
-hand-authored expectations for three cycles, entry normalization and refusal,
-cutover refusal, boundary transitions, and lengths 1, 16, 17, 32, 33, 48, 49,
-and 64. Indices are one-based and note values are Renoise note values. Every
+hand-authored expectations for three cycles, entry normalization and validation,
+boundary transitions, and lengths 1, 15, 16, 17, 31, and 32. Indices are
+one-based and note values are Renoise note values. Every
 fixture starts cold and silent on cycle 1; subsequent cycles carry held voice
 state independently of the reset PITCH cursor. Additional cases cover
-multi-step all-N and all-R cycles and exact active-span wrap at 16 and 64.
+multi-step all-N and all-R cycles and exact active-span wrap at 16 and 32.
 
 Expected records describe semantic note consumption, ties, releases, requested
 transitions, and exit state. They do not assert sample-envelope continuity or

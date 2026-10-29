@@ -23,17 +23,22 @@ for track_index, pattern_track in ipairs(song:pattern(1).tracks) do
 end
 assert(song.sequencer_track_count >= 1,
   "Song must contain a regular track so the probe track can be inserted")
-assert(#instrument.phrases + 8 <= renoise.Instrument.MAX_NUMBER_OF_PHRASES,
-  "Insufficient phrase slots for eight length cases")
 local render_tool = renoise.tool and renoise.tool() or nil
 local output_root = os.getenv("TEMP")
 assert(output_root and output_root ~= "", "TEMP environment variable is missing")
 local separator = package.config:sub(1, 1)
 local run_id = tostring(os.time())
-local lengths = {1, 16, 17, 32, 33, 48, 49, 64}
+local lengths = {1, 15, 16, 17, 31, 32}
+local LINES_PER_STEP = 4
+local RENDER_PERIODS = 4
+local STRAIGHT_STEPS_PER_BEAT = 4
 local sample_rate = 44100
 local bit_depth = 16
 local song_lpb = 8
+local phrase_lpb = 16
+local song_lines_per_step = song_lpb / STRAIGHT_STEPS_PER_BEAT
+assert(#instrument.phrases + #lengths <= renoise.Instrument.MAX_NUMBER_OF_PHRASES,
+  "Insufficient phrase slots for selected source lengths")
 
 local function path_for(length)
   return output_root .. separator .. "acid_loop_endpoint_" .. run_id .. "_" .. length .. ".wav"
@@ -75,7 +80,7 @@ local setup_ok, setup_error = pcall(function()
   instrument.phrase_playback_mode = renoise.Instrument.PHRASES_PLAY_SELECTIVE
 
   for _, steps in ipairs(lengths) do
-    local period_lines = 2 * steps
+    local period_lines = LINES_PER_STEP * steps
     local endpoint_line = period_lines + 1
     local phrase = instrument:insert_phrase_at(#instrument.phrases + 1)
     phrase_objects[#phrase_objects + 1] = phrase
@@ -87,7 +92,7 @@ local setup_ok, setup_error = pcall(function()
     phrase.visible_effect_columns = 0
     phrase.instrument_column_visible = false
     phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-    phrase.lpb = song_lpb
+    phrase.lpb = phrase_lpb
     phrase.shuffle = 0
     phrase.autoseek = false
     phrase.looping = false
@@ -95,8 +100,9 @@ local setup_ok, setup_error = pcall(function()
     phrase.loop_start = 1
     for step = 1, steps do
       local note = 36 + ((step - 1) % 25)
-      phrase:line(2 * step - 1).note_columns[1].note_value = note
-      phrase:line(2 * step - 1).note_columns[1].instrument_value = 255
+      local start_line = (step - 1) * LINES_PER_STEP + 1
+      phrase:line(start_line).note_columns[1].note_value = note
+      phrase:line(start_line).note_columns[1].instrument_value = 255
     end
     phrase:line(period_lines).note_columns[1].note_value = 55
     phrase:line(period_lines).note_columns[1].instrument_value = 255
@@ -193,7 +199,7 @@ render_next = function()
   end
   local steps = lengths[render_index]
   local phrase_index = phrase_indices[render_index]
-  local render_lines = 4 * 2 * steps
+  local render_lines = RENDER_PERIODS * steps * song_lines_per_step
   instrument.phrase_program = phrase_index
   current_render = outputs[render_index]
   idle_count = 0
@@ -207,8 +213,8 @@ render_next = function()
   }
   local started, err = song:render(options, current_render, function()
     local done = current_render
-    print(string.format("Rendered TIME %d; range 1..%d contains at least four expected cycles.",
-      steps, render_lines))
+    print(string.format("Rendered TIME %d; range 1..%d contains %d expected cycles.",
+      steps, render_lines, RENDER_PERIODS))
     current_render = nil
     render_next()
   end)
@@ -228,6 +234,7 @@ idle_notifier = function()
 end
 if render_tool then render_tool.app_idle_observable:add_notifier(idle_notifier) end
 render_next()
-print("Started eight offline WAV renders. Each has four nominal phrase periods; no host retrigger is used.")
-print(string.format("BPM %.1f, song/phrase LPB %d, sample rate %d, bit depth %d.",
-  song.transport.bpm, song_lpb, sample_rate, bit_depth))
+print(string.format("Started %d offline WAV renders. Each has %d nominal phrase periods; no host retrigger is used.",
+  #lengths, RENDER_PERIODS))
+print(string.format("BPM %.1f, song LPB %d, phrase LPB %d, sample rate %d, bit depth %d.",
+  song.transport.bpm, song_lpb, phrase_lpb, sample_rate, bit_depth))

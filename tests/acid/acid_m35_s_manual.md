@@ -1,13 +1,13 @@
 # ACID — Renoise functional acceptance
 
-**M4 gate:** instrument/phrase synchronization, ownership, in-place regeneration, persistence and one playback smoke. No new audio captures or receiver matrices. See [M4.7](../../com.david303ttl.ACID.xrnx/ROADMAP.md#m47--instrumentphrase-synchronization-and-regeneration-safety-p0).
+**Current acceptance:** instrument/phrase synchronization, ownership, in-place regeneration, persistence, plus pending host validation of the max-32 timing/layout contract. See [M4](../../com.david303ttl.ACID.xrnx/ROADMAP.md#6-m4--exact-timing-modes-and-tempo-independent-phrase-output).
 
 ## Program/Grid and source
 
 1. Open ACID on a fresh instrument slot. Confirm the draft is editable without
    a Create step, with C pitches, NOTE commands, LAST STEP 16 and PITCH span 16.
-2. Change LAST STEP to 32, then 64, and PITCH span to 3. Confirm LAST STEP
-   accepts values from 1–64. Edit TIME 32 and 64 and PITCH positions 1–3.
+2. Change LAST STEP to 32 and PITCH span to 32. Confirm both independent
+   capacities are 1–32. Edit TIME and PITCH positions 1, 16, 17 and 32.
    Switch Program → Grid → Program. Confirm the source values,
    decoded preview and generated phrase cells do not change from view switches.
    With Live Edit enabled, confirm switching views does not queue a render.
@@ -33,11 +33,29 @@
 4. Edit an owned phrase manually and confirm ACID refuses replacement while
    preserving it. Confirm a foreign phrase is also preserved.
 
+## Pending current-layout Renoise acceptance
+
+These checks have **not** been run. Record the Renoise build, source, output
+policy, phrase LPB, line count, loop endpoints and observed playback for each.
+
+1. Generate a max-length Straight source (N=32). Verify phrase LPB 16, four
+   phrase lines per source step, and 128 Play Once lines with final release.
+2. Generate a max-length Triplet source (N=32). Verify phrase LPB 12, four
+   phrase lines per source step, and 128 Play Once lines with final release.
+3. For both timing modes, generate Repeat at N=32. Verify 257 lines, an empty
+   exclusive-end sentinel, `loop_start=129`, `loop_end=257`, and the repeating
+   cycle period; listen across the cold-to-steady and steady-to-steady seams.
+4. Repeat Straight/Triplet at short and boundary lengths; verify step durations
+   remain 1/4 and 1/3 beat respectively and no drift appears across the seam.
+5. Target PB fresh attacks both when the bend channel is known centered and when
+   it is not. Verify delay 0 without reset and delay 1 plus center reset when
+   required. Renoise tick quantization applies; this is not sample-accurate.
+
 ## Target sanity
 
 - Generate and regenerate with one sample instrument, one available plugin instrument and an empty instrument. Empty instrument may be silent; the editor and writer must remain usable.
 - MIDI-only, hybrid and alias fidelity are receiver-dependent release checks, not M4 blockers.
-- Existing NOTE/TIE/REST, sample glide and reference VST PB audio results remain accepted; no repeat capture required.
+- Straight/Triplet playback and PB attack/reset alignment at LPB16/12 remain pending in the timing checklist.
 
 ## Native render lifecycle
 
@@ -60,7 +78,10 @@ timing remain unverified. The open song uses LPB timing; the API exposes
 
 ## M3.6 Plugin/MIDI pitch bend
 
-**Accepted:** phrase-contained M1 delivery and ±12 bend/center reset with Surge XT VST3, Renoise 3.5.4, global slot 03. Native sample and VST glide/REST checks passed at phrase LPB 8 and 6. [Evidence](audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28).
+**Pending (NOT YET PERFORMED):** Using the existing disposable-song method,
+verify conditional center-reset and fresh-attack alignment at LPB 16 and 12:
+delay 1 plus reset only when the bend channel is not known centered; otherwise
+delay 0. Check both Straight and Triplet and actual host-tick behavior.
 
 PB Off/on safety, range overflow and receiver-independent structural behavior belong to Lua regression tests. Other receivers are not certified; no additional audio-capture gate.
 
@@ -114,8 +135,8 @@ reported TIME/PITCH location is selected without modifying source.
 
 | Check | Result |
 | --- | --- |
-| Static Straight/Triplet timing and meter playback | Passed; [timing evidence](acid_timing_manual.md) |
-| Native sample glide and Surge XT PB | Passed for bounded reference setups |
+| Static Straight/Triplet timing and meter playback | Pending: LPB16/12, four lines per source step |
+| Native sample glide and Surge XT PB | Pending current-layout alignment/playback checks |
 | Add/rename/reorder/delete instrument while ACID remains open | Pending |
 | Renoise instrument/phrase selection follows 1:1 without unintended writes | Partial; see [phrase destination check](acid_phrase_destination_manual.md) |
 | Existing owned phrase regenerate in place; no added phrase | Passed in Renoise 3.5.4; phrase count stayed two |

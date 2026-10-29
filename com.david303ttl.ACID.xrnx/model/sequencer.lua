@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- ACID pitch/time memory. Drafts can be partially entered.
--- Pitch and time memories have independent contents and 64-slot capacity.
+-- Pitch and time memories have independent contents and 32-slot capacity.
 local M = {}
-M.MAX_STEPS = 64
+M.MAX_STEPS = 32
 M.PAGE_SIZE = 16
 M.BASE_NOTE = 36 -- C-3 in Renoise
 local SOURCE_FIELDS={length=true,pitch_length=true,timing_mode=true,pitch_events=true,time_events=true}
@@ -26,7 +26,7 @@ end
 function M.new_pattern(length,...)
   assert(select("#",...)==0,"new_pattern accepts only LAST STEP")
   length = length or 16
-  assert(integer_between(length, 1, M.MAX_STEPS), "length must be 1..64")
+  assert(integer_between(length, 1, M.MAX_STEPS), "length must be 1..32")
   -- PITCH and TIME memories are fixed-capacity; LAST STEP selects the active
   -- TIME prefix. Untouched PITCH positions play C with no ACCENT or SLIDE.
   local pitches = {}
@@ -42,7 +42,7 @@ end
 function M.set_pitch_length(pattern, pitch_length)
   if type(pattern) ~= "table" or
       not integer_between(pitch_length, 1, M.MAX_STEPS) then
-    return false, "pitch length must be 1..64"
+    return false, "pitch length must be 1..32"
   end
   pattern.pitch_length = pitch_length
   return true
@@ -92,23 +92,23 @@ function M.validate(pattern)
     if not SOURCE_FIELDS[key] then return false,"unknown source field: "..tostring(key) end
   end
   if not integer_between(pattern.length, 1, M.MAX_STEPS) then
-    return false, "pattern length must be 1..64"
+    return false, "pattern length must be 1..32"
   end
   if not integer_between(pattern.pitch_length, 1, M.MAX_STEPS) then
-    return false, "pitch length must be 1..64"
+    return false, "pitch length must be 1..32"
   end
   if pattern.timing_mode ~= "straight" and pattern.timing_mode ~= "triplet" then
     return false, "timing mode must be straight or triplet"
   end
   if array_size(pattern.pitch_events) ~= M.MAX_STEPS then
-    return false, "PITCH memory must contain exactly 64 entries"
+    return false, "PITCH memory must contain exactly 32 entries"
   end
   local np, nt = array_size(pattern.pitch_events), array_size(pattern.time_events)
   if np == nil or nt == nil then
-    return false, "pitch_events and time_events must be dense arrays (maximum 64 entries)"
+    return false, "pitch_events and time_events must be dense arrays (maximum 32 entries)"
   end
   if nt ~= M.MAX_STEPS then
-    return false, "TIME memory must contain exactly 64 entries"
+    return false, "TIME memory must contain exactly 32 entries"
   end
   for i, p in ipairs(pattern.pitch_events) do
     if type(p) ~= "table" or not integer_between(p.note, 0, 119) then

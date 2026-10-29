@@ -30,38 +30,38 @@ p.timing_mode="triplet"
 p.pitch_length=3
 for i=1,17 do p.time_events[i]="N" end
 p.pitch_events[2]=seq.new_pitch(3,1,true,true)
-p.pitch_events[40]=seq.new_pitch(4,0,true,false)
+p.pitch_events[32]=seq.new_pitch(4,0,true,false)
 p.time_events[16]="T"
 p.time_events[17]="R"
-p.time_events[64]="T"
+p.time_events[32]="T"
 local initial=assert(store.prepare(s,2,p,"repeat"))
 assert(initial.previous_raw==nil)
 assert(store.commit(s,initial) and s.tool_data==initial.raw)
 assert(store.restore(s,initial) and s.tool_data==nil)
 assert(store.allocate(s)==2)
 assert(store.save(s,1,p,"play_once",12))
-assert(s.tool_data:match("^ACID%-PITCH%-TIME%-5\n"))
+assert(s.tool_data:match("^ACID%-PITCH%-TIME%-1\n"))
 local restored,output_policy,pb_range=store.load(s,a)
 assert(restored and output_policy=="play_once" and pb_range==12)
-assert(restored.length==17 and #restored.pitch_events==64)
+assert(restored.length==17 and #restored.pitch_events==32)
 assert(restored.timing_mode=="triplet")
-assert(restored.pitch_length==3 and #restored.time_events==64)
+assert(restored.pitch_length==3 and #restored.time_events==32)
 assert(restored.pitch_events[2].note==51)
 assert(restored.pitch_events[2].octave==1)
 assert(restored.pitch_events[2].accent and restored.pitch_events[2].slide)
-assert(restored.pitch_events[40].note==40 and restored.pitch_events[40].accent)
+assert(restored.pitch_events[32].note==40 and restored.pitch_events[32].accent)
 assert(restored.time_events[16]=="T" and restored.time_events[17]=="R")
-assert(restored.time_events[64]=="T")
+assert(restored.time_events[32]=="T")
 restored.length=16
 assert(store.save(s,1,restored,"repeat"))
 local shortened,_,shortened_pb=store.load(s,a)
-assert(shortened.length==16 and shortened.time_events[17]=="R" and shortened.time_events[64]=="T")
+assert(shortened.length==16 and shortened.time_events[17]=="R" and shortened.time_events[32]=="T")
 assert(shortened_pb==0,"omitted PB range defaults to Off")
 shortened.length=17
 assert(store.save(s,1,shortened,"repeat",24))
 local expanded=assert(store.load(s,a))
 local _,_,expanded_pb=store.load(s,a)
-assert(expanded.length==17 and expanded.time_events[17]=="R" and expanded.time_events[64]=="T")
+assert(expanded.length==17 and expanded.time_events[17]=="R" and expanded.time_events[32]=="T")
 assert(expanded_pb==24)
 restored.pitch_events[2].note=36
 local again=assert(store.load(s,a))
@@ -81,10 +81,10 @@ local b=phrase(40)
 b.name=assert(ownership.make_name(b,2))
 s.instruments[1].phrases[2]=b
 assert(store.allocate(s)==3)
-local p2=seq.new_pattern(64)
-for i=1,64 do p2.time_events[i]="R" end
+local p2=seq.new_pattern(32)
+for i=1,32 do p2.time_events[i]="R" end
 assert(store.save(s,2,p2,"repeat"))
-assert(store.load(s,b).length==64)
+assert(store.load(s,b).length==32)
 assert(store.load(s,a).length==17)
 local c=phrase(43)
 c.name=assert(ownership.make_name(c,3))
@@ -96,7 +96,7 @@ local original_copy,original_policy,original_pb_range=store.load(s,c)
 assert(original_policy=="repeat")
 assert(original_pb_range==48)
 assert(original_copy.length==16 and original_copy.pitch_length==original.pitch_length)
-assert(#original_copy.pitch_events==64 and original_copy.pitch_events[64].note==36)
+assert(#original_copy.pitch_events==32 and original_copy.pitch_events[32].note==36)
 assert(store.save(s,3,original,"play_once",2))
 local play_once_copy,play_once_policy,play_once_pb_range=store.load(s,c)
 assert(play_once_policy=="play_once")
@@ -148,18 +148,6 @@ old.name="ACID 0.1 #3 [v1:DEADBEEF]"
 assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
 old.name="ACID 0.1 #3 [v2:DEADBEEF]"
 assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
-s.tool_data="ACID-PITCH-TIME-2\n"
-assert(not store.read(s) and not store.save(s,3,p,"repeat"))
-assert(s.tool_data=="ACID-PITCH-TIME-2\n")
-s.tool_data="ACID-PITCH-TIME-3\n"
-assert(not store.read(s) and not store.save(s,3,p,"repeat"))
-assert(s.tool_data=="ACID-PITCH-TIME-3\n")
-s.tool_data="ACID-PITCH-TIME-4\n"
-assert(not store.read(s) and not store.save(s,3,p,"repeat"))
-assert(s.tool_data=="ACID-PITCH-TIME-4\n")
-s.tool_data="ACID-PITCH-TIME-1\n"
-assert(not store.read(s) and not store.save(s,3,p,"repeat"))
-assert(s.tool_data=="ACID-PITCH-TIME-1\n")
 s.tool_data=nil
 local invalid_range,range_error=store.prepare(s,4,p,"repeat",4)
 assert(not invalid_range and range_error=="invalid PB range")

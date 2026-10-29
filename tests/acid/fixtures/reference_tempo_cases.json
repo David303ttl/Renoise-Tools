@@ -2,7 +2,7 @@
   "format": "ACID-AUDIO-ORACLE-1",
   "status": "Reference calibration and control protocols for tempo-specific acoustic qualification; protocol readiness does not imply acoustic acceptance.",
   "index_base": 0,
-  "step_unit": "one straight TIME sixteenth; 1 step = 2 phrase lines at phrase LPB 8",
+  "step_unit": "one straight TIME sixteenth; 1 step = 4 phrase lines at phrase LPB 16",
   "capture_requirements": {
     "preferred_channels": 1,
     "sample_rate": 48000,

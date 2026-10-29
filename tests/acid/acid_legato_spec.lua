@@ -4,6 +4,7 @@ local cycles=require("model.cycle_interpreter")
 local gates=require("model.control_signals")
 local legato=require("model.legato")
 local phrase_writer=require("writers.phrase_writer")
+local timing=require("model.timing")
 
 local function pattern(notes,slides,accents,commands)
   local p=seq.new_pattern(#commands)
@@ -21,7 +22,10 @@ local function plan(p)
   local timeline=assert(gates.compile(p,{plan=semantic.steady,
     successor=semantic.verification,output_policy="repeat"}))
   local physical={steps=semantic.steady.steps,loop=semantic}
-  return assert(legato.plan(physical,timeline,{lines_per_step=2,max_columns=3}))
+  local timing_layout=assert(timing.new(p.timing_mode or "straight",p.length,"repeat"))
+  local layout={lines_per_step=timing_layout.lines_per_step,
+    half_step_lines=timing_layout.half_step_lines,max_columns=3}
+  return assert(legato.plan(physical,timeline,layout))
 end
 
 local function cell(result,line,column)
@@ -38,12 +42,12 @@ local function simulate_repeat(p)
   local physical,layout=assert(phrase_writer.plan_output(p,"repeat"))
   local timeline=assert(gates.compile(p,{plan=physical,
     successor=physical.loop.steady,output_policy="repeat"}))
-  local native=assert(legato.plan(physical,timeline,{lines_per_step=2,max_columns=3}))
+  local native=assert(legato.plan(physical,timeline,layout))
   local active,active_count={},0
   local max_active=0
   local fresh_lines,rest_lines={},{}
   for _,event in ipairs(timeline.events) do
-    local line=math.floor(event.at/128)+1
+    local line=math.floor(event.at/64)+1
     if event.kind=="gate_on" then fresh_lines[line]=true end
     if event.kind=="rest" then rest_lines[line]=true end
   end
@@ -126,8 +130,8 @@ end
 -- A connected target NOTE starts at delay zero before the previous voice's
 -- OFF at delay one on the same phrase line.
 local overlap=plan(pattern({36,40},{true,false},{false,false},{"N","N"}))
-local target=assert(cell(overlap,3,2))
-local outgoing=assert(cell(overlap,3,1))
+local target=assert(cell(overlap,5,2))
+local outgoing=assert(cell(overlap,5,1))
 assert(target.note_value==40 and target.delay_value==0)
 assert(target.volume_value==89)
 assert(outgoing.note_value==legato.OFF and outgoing.delay_value==1)
@@ -135,21 +139,21 @@ assert(overlap.columns==2)
 
 -- An unconnected NOTE follows a complete midpoint gate and starts a fresh voice.
 local fresh=plan(pattern({36,39,43},{false,false,false},{false,false,false},{"N","N","N"}))
-assert(cell(fresh,2,1).note_value==legato.OFF)
-assert(cell(fresh,2,1).delay_value==0)
-assert(cell(fresh,3,fresh.source_columns[2]).note_value==39)
+assert(cell(fresh,3,1).note_value==legato.OFF)
+assert(cell(fresh,3,1).delay_value==0)
+assert(cell(fresh,5,fresh.source_columns[2]).note_value==39)
 
 -- REST releases at its boundary; TIE holds the existing note through its step.
 local rest=plan(pattern({36,40},{false,false},{false,false},{"N","R"}))
-assert(cell(rest,3,1).note_value==legato.OFF)
+assert(cell(rest,5,1).note_value==legato.OFF)
 local tied=plan(pattern({36,40},{false,false},{false,false},{"N","T","N"}))
-assert(cell(tied,3,1)==nil)
-assert(cell(tied,4,1).note_value==legato.OFF)
-assert(cell(tied,5,tied.source_columns[3]).note_value==40)
+assert(cell(tied,5,1)==nil)
+assert(cell(tied,7,1).note_value==legato.OFF)
+assert(cell(tied,9,tied.source_columns[3]).note_value==40)
 
 -- Same-pitch connected transitions hold one voice and report lost accent pressure.
 local held=plan(pattern({36,36},{true,false},{false,true},{"N","N"}))
-assert(not cell(held,3,1) and not cell(held,3,2))
+assert(not cell(held,5,1) and not cell(held,5,2))
 assert(#held.diagnostics==2 and held.diagnostics[2]:find("TIME step 02",1,true))
 
 -- Equal-pitch connected steps share a note column with their held voice, so a
@@ -158,15 +162,15 @@ local held_chain=plan(pattern({36,40,40,45},{true,true,true,false},
   {false,false,false,false},{"N","N","N","N"}))
 assert(held_chain.source_columns[2]==held_chain.source_columns[3])
 assert(held_chain.source_columns[2]~=held_chain.source_columns[4])
-assert(cell(held_chain,7,held_chain.source_columns[4]).note_value==45)
-assert(cell(held_chain,7,held_chain.source_columns[2]).note_value==legato.OFF)
+assert(cell(held_chain,13,held_chain.source_columns[4]).note_value==45)
+assert(cell(held_chain,13,held_chain.source_columns[2]).note_value==legato.OFF)
 
 -- Returning to a recently used MIDI pitch is safe after its earlier OFF; the
 -- new NOTE overlaps only the currently held, different pitch.
 local returning=plan(pattern({36,40,36},{true,true,false},
   {false,false,false},{"N","N","N"}))
-assert(cell(returning,5,returning.source_columns[3]).note_value==36)
-assert(cell(returning,5,returning.source_columns[2]).note_value==legato.OFF)
+assert(cell(returning,9,returning.source_columns[3]).note_value==36)
+assert(cell(returning,9,returning.source_columns[2]).note_value==legato.OFF)
 assert(returning.source_columns[3]~=returning.source_columns[2])
 local accented=plan(pattern({36},{false},{true},{"N"}))
 assert(cell(accented,1,1).volume_value==255)
@@ -178,8 +182,8 @@ assert(cell(triangle,1,triangle.source_columns[1]).note_value==36)
 assert(cell(triangle,1,triangle.source_columns[1]).volume_value==89)
 assert(cell(triangle,1,triangle.source_columns[3]).note_value==legato.OFF)
 assert(cell(triangle,1,triangle.source_columns[3]).delay_value==1)
-assert(cell(triangle,3,triangle.source_columns[2]).note_value==39)
-assert(cell(triangle,5,triangle.source_columns[3]).note_value==42)
+assert(cell(triangle,5,triangle.source_columns[2]).note_value==39)
+assert(cell(triangle,9,triangle.source_columns[3]).note_value==42)
 assert(triangle.source_columns[3]~=triangle.source_columns[1])
 
 -- Simulate cold intro plus two steady Repeat passes, including an odd-length
@@ -204,17 +208,17 @@ assert(one.columns==1)
 assert(not cell(one,1,1) or cell(one,1,1).note_value==36)
 assert(not cell(one,1,1) or cell(one,1,1).note_value~=legato.OFF)
 
-local long=seq.new_pattern(64)
-long.pitch_length=64
-for i=1,64 do
+local long=seq.new_pattern(32)
+long.pitch_length=32
+for i=1,32 do
   long.time_events[i]="N"
   long.pitch_events[i]=seq.new_pitch(i%12,math.floor((i-1)/12)%3-1,false,i%2==1)
 end
 local long_result=plan(long)
 assert(long_result.columns<=3)
-for step=1,64 do
+for step=1,32 do
   assert(long_result.source_columns[step]>=1 and long_result.source_columns[step]<=3)
 end
 
-assert(not legato.plan({steps={}},{events={},steps=1},{lines_per_step=1}))
+assert(not legato.plan({steps={}},{events={},steps=1},{lines_per_step=4,half_step_lines=2}))
 print("ACID plugin/MIDI legato planner checks passed")

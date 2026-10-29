@@ -32,14 +32,16 @@ function script:render_to_pattern(_,callback)
   local step,count=0,0
   for token in (values..','):gmatch('(.-),') do
     local volume=tonumber(token:match('volume = ([%d.]+)'))
-    if volume then
-      phrase.cells[(step-1)*2+1].volume_value=volume==1 and 255 or 89
-    end
     local note=tonumber(token:match('key = (%d+)'))
+    if volume then
+      local line=(step-1)*4+1
+      phrase.cells[line].volume_value=volume==1 and 255 or 89
+    end
     if note or token:find('"off"',1,true) or token:match('^%s*false%s*$') then
       step=step+1
+      local line=(step-1)*4+1
       if note or token:find('"off"',1,true) then
-        phrase.cells[(step-1)*2+1].note_value=note or 120
+        phrase.cells[line].note_value=note or 120
         count=count+1
       end
     end
@@ -109,9 +111,12 @@ for _=1,6 do idle:fire() end
 assert_complete('committed')
 assert(status_message(status):find('generated',1,true),status.message)
 local target=instrument.phrases[1]
+assert(target.number_of_lines==12 and target.lpb==16 and not target.looping
+  and target.loop_start==1 and target.loop_end==12)
 assert(target.cells[1].note_value==48)
-assert(target.cells[2].note_value==121 and target.cells[4].note_value==121)
-assert(target.cells[6].note_value==120,'Play Once NTT must release at 2.5 steps')
+assert(target.cells[2].note_value==121 and target.cells[3].note_value==121
+  and target.cells[4].note_value==121)
+assert(target.cells[11].note_value==120,'Play Once NTT must release at the final step midpoint')
 assert(ownership.status(target)=='owned')
 local initial_source,initial_policy,initial_pb_range=store.load(song,target)
 assert(initial_source and initial_policy=='play_once' and initial_pb_range==12,
@@ -139,7 +144,7 @@ assert(status_message(status):find('injected persistence failure',1,true),status
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],target))
 assert(song.tool_data==raw and target.name==name and ownership.status(target)=='owned')
 assert(target.cells[1].note_value==48 and target.cells[2].note_value==121)
-assert(target.cells[6].note_value==120)
+assert(target.cells[11].note_value==120)
 contaminate=true
 generate(pattern)
 assert_complete('error')
@@ -161,9 +166,9 @@ wrong_volume=nil
 generate(pattern)
 assert_complete('committed')
 assert(status_message(status):find('generated',1,true),status.message)
-assert(target.cells[1].note_value==50 and target.cells[2].note_value==120)
-assert(target.cells[3].note_value==48 and target.cells[4].note_value==121)
-assert(target.cells[6].note_value==120)
+assert(target.cells[1].note_value==50 and target.cells[3].note_value==120)
+assert(target.cells[5].note_value==48 and target.cells[7].note_value==121)
+assert(target.cells[11].note_value==120)
 local restored,output_policy,restored_pb_range=store.load(song,target)
 assert(restored and output_policy=='play_once' and restored.time_events[2]=='N'
   and restored.pitch_events[1].note==50)
@@ -199,7 +204,7 @@ wrong_volume=nil
 generate(pattern)
 assert_complete('committed')
 assert(status_message(status):find('generated',1,true),status.message)
-assert(target.cells[1].volume_value==255 and target.cells[3].volume_value==89)
+assert(target.cells[1].volume_value==255 and target.cells[5].volume_value==89)
 assert(store.load(song,target).pitch_events[1].accent)
 
 -- Seeded legal-source writer coverage across all target layer combinations.
@@ -210,8 +215,8 @@ local function next_random(limit)
 end
 local function property_pattern(length)
   local source=seq.new_pattern(length)
-  source.pitch_length=1+next_random(64)
-  for index=1,64 do
+  source.pitch_length=1+next_random(32)
+  for index=1,32 do
     source.pitch_events[index]=seq.new_pitch(next_random(13),next_random(3)-1,
       next_random(2)==1,next_random(2)==1)
     source.time_events[index]='N'
@@ -224,7 +229,7 @@ local function property_pattern(length)
   return source
 end
 local lengths={}
-for length=1,64 do lengths[#lengths+1]=length end
+for length=1,32 do lengths[#lengths+1]=length end
 local target_layers={
   {samples={{sample_buffer={has_sample_data=true}}},plugin_loaded=false,midi_device=''},
   {samples={},plugin_loaded=true,midi_device=''},
@@ -247,7 +252,7 @@ for target_index,layers in ipairs(target_layers) do
     assert(ownership.status(target)=='owned')
     local saved,policy=store.load(song,target)
     assert(saved and policy=='play_once' and saved.length==length)
-    assert(target.number_of_lines==length*2)
+    assert(target.number_of_lines==length*4)
     assert(#instrument.phrases==1,'writer left a staging or recovery phrase')
   end
 end
@@ -292,7 +297,7 @@ assert(writer.generate(1,function(value)status=value end,wide_slide,1,
   {output_policy='repeat'}))
 for _=1,6 do idle:fire() end
 assert(status.status=='approximate',status.message)
-assert(target.cells[5].effect_number_string=='0G' and target.cells[5].effect_amount_value==255,
+assert(target.cells[9].effect_number_string=='0G' and target.cells[9].effect_amount_value==255,
   'FF instant transition should retain the target pitch when normal glide duration cannot fit')
 local previous_name,previous_raw=target.name,song.tool_data
 local invalid_started,invalid_result=writer.generate(1,function()end,{},1,

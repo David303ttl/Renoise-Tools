@@ -1,5 +1,7 @@
 -- Add disposable native phrase controls for 0G rate, REST cancellation, and fresh NOTE.
 local song = assert(renoise.song(), "Open the disposable articulation song first")
+local LINES_PER_STEP=4
+local PHRASE_LPB=16
 local instrument
 for _, candidate in ipairs(song.instruments) do
   if candidate.name == "ACID ARTICULATION PROBE" then
@@ -54,7 +56,7 @@ end
 local function expected_cells(case)
   local notes, effects = {}, {}
   for _, event in ipairs(case.notes) do
-    local line_index = event.step * 2 + 1
+    local line_index = event.step * LINES_PER_STEP + 1
     notes[line_index] = event.note_off and renoise.PatternLine.NOTE_OFF or event.note
     if event.rate then
       effects[line_index] = event.rate
@@ -64,7 +66,7 @@ local function expected_cells(case)
           next_event_step = candidate.step
         end
       end
-      for continuation = line_index + 1, next_event_step * 2 do
+      for continuation = line_index + 1, next_event_step * LINES_PER_STEP do
         effects[continuation] = 0
       end
     end
@@ -76,11 +78,11 @@ local function validate_existing_phrase(phrase, case)
   assert(phrase.name == case.name, "Phrase name changed: " .. case.name)
   assert(phrase.playback_mode == renoise.InstrumentPhrase.PLAY_PATTERN,
     "Unexpected phrase playback mode: " .. case.name)
-  assert(phrase.number_of_lines == case.length * 2 + 1,
+  assert(phrase.number_of_lines == case.length * LINES_PER_STEP,
     "Unexpected line count: " .. case.name)
   assert(phrase.visible_note_columns == 1 and phrase.visible_effect_columns == 1,
     "Unexpected visible columns: " .. case.name)
-  assert(not phrase.instrument_column_visible and phrase.lpb == 8
+  assert(not phrase.instrument_column_visible and phrase.lpb == PHRASE_LPB
     and phrase.shuffle == 0 and not phrase.autoseek and not phrase.looping
     and phrase.key_tracking == renoise.InstrumentPhrase.KEY_TRACKING_NONE,
     "Unexpected playback settings: " .. case.name)
@@ -180,18 +182,18 @@ for _, case in ipairs(missing_cases) do
   local phrase = instrument:insert_phrase_at(#instrument.phrases + 1)
   phrase.name = case.name
   phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
-  phrase.number_of_lines = case.length * 2 + 1
+  phrase.number_of_lines = case.length * LINES_PER_STEP
   phrase.visible_note_columns = 1
   phrase.visible_effect_columns = 1
   phrase.instrument_column_visible = false
   phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-  phrase.lpb = 8
+  phrase.lpb = PHRASE_LPB
   phrase.shuffle = 0
   phrase.autoseek = false
   phrase.looping = false
 
   for _, event in ipairs(case.notes) do
-    local line_index = event.step * 2 + 1
+    local line_index = event.step * LINES_PER_STEP + 1
     local cell = phrase:line(line_index).note_columns[1]
     if event.note_off then
       cell.note_value = renoise.PatternLine.NOTE_OFF
@@ -211,7 +213,8 @@ for _, case in ipairs(missing_cases) do
           next_event_step = candidate.step
         end
       end
-      for line_index = event.step * 2 + 2, next_event_step * 2 do
+      for line_index = event.step * LINES_PER_STEP + 2,
+        next_event_step * LINES_PER_STEP do
         put_effect(phrase:line(line_index), 0)
       end
     end

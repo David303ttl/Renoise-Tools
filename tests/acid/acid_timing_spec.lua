@@ -5,20 +5,20 @@ local compiler=require('model.cycle_interpreter')
 local pattrns=require('writers.pattrns_writer')
 local writer=require('writers.phrase_writer')
 
--- Fixed musical examples: 12 straight steps span three beats, while 64
--- triplet steps span 21 beats and one triplet subdivision.
+-- Fixed musical examples: 12 straight steps span three beats, while 32
+-- triplet steps span ten beats and two triplet subdivisions.
 local examples={
-  {mode='straight', length=12, policy='play_once', lpb=8, lines=24,
-    loop_start=1, loop_end=24, points={{1,0,3,1,2,1},{12,66,69,23,24,12}}},
-  {mode='straight', length=12, policy='repeat', lpb=8, lines=49,
-    loop_start=25, loop_end=49, points={{12,66,69,23,24,12},
-      {13,72,75,25,26,1},{24,138,141,47,48,12}}},
-  {mode='triplet', length=64, policy='play_once', lpb=6, lines=128,
-    loop_start=1, loop_end=128, points={{1,0,4,1,2,1},{12,88,92,23,24,12},
-      {33,256,260,65,66,33},{49,384,388,97,98,49},{64,504,508,127,128,64}}},
-  {mode='triplet', length=64, policy='repeat', lpb=6, lines=257,
-    loop_start=129, loop_end=257, points={{64,504,508,127,128,64},
-      {65,512,516,129,130,1},{128,1016,1020,255,256,64}}}
+  {mode='straight', length=12, policy='play_once', lpb=16, lines=48,
+    loop_start=1, loop_end=48, points={{1,0,3,1,3,1},{12,66,69,45,47,12}}},
+  {mode='straight', length=12, policy='repeat', lpb=16, lines=97,
+    loop_start=49, loop_end=97, points={{12,66,69,45,47,12},
+      {13,72,75,49,51,1},{24,138,141,93,95,12}}},
+  {mode='triplet', length=32, policy='play_once', lpb=12, lines=128,
+    loop_start=1, loop_end=128, points={{1,0,4,1,3,1},{12,88,92,45,47,12},
+      {17,128,132,65,67,17},{32,248,252,125,127,32}}},
+  {mode='triplet', length=32, policy='repeat', lpb=12, lines=257,
+    loop_start=129, loop_end=257, points={{32,248,252,125,127,32},
+      {33,256,260,129,131,1},{64,504,508,253,255,32}}}
 }
 for _,example in ipairs(examples) do
   local layout=assert(timing.new(example.mode,example.length,example.policy))
@@ -33,18 +33,19 @@ for _,example in ipairs(examples) do
 end
 
 for _,mode in ipairs({'straight','triplet'}) do
-  for n=1,64 do
+  for n=1,32 do
     for _,policy in ipairs({'play_once','repeat'}) do
       local layout=assert(timing.new(mode,n,policy))
       local units=mode=='straight' and 6 or 8
       assert(layout.units_per_beat==24 and layout.units_per_step==units)
-      assert(layout.lpb==(mode=='straight' and 8 or 6))
-      assert(layout.number_of_lines==(policy=='repeat' and 4*n+1 or 2*n))
-      assert(layout.loop_start==(policy=='repeat' and 2*n+1 or 1))
+      assert(layout.lpb==(mode=='straight' and 16 or 12))
+      assert(layout.lines_per_step==4)
+      assert(layout.number_of_lines==(policy=='repeat' and 8*n+1 or 4*n))
+      assert(layout.loop_start==(policy=='repeat' and 4*n+1 or 1))
       assert(layout.loop_end==layout.number_of_lines)
       for s=1,layout.physical_steps do
         assert(layout.start_units(s)==(s-1)*units and layout.mid_units(s)==(s-1)*units+units/2)
-        assert(layout.start_line(s)==2*s-1 and layout.mid_line(s)==2*s)
+        assert(layout.start_line(s)==(s-1)*4+1 and layout.mid_line(s)==(s-1)*4+3)
         assert(layout.source_step(s)==(s-1)%n+1)
       end
       assert(not pcall(layout.start_line,0) and not pcall(layout.mid_units,1.5))
@@ -61,6 +62,6 @@ for _,mode in ipairs({'straight','triplet'}) do
   end
 end
 assert(not timing.new('unknown',16,'repeat'))
-assert(not timing.new('straight',65,'repeat'))
+assert(not timing.new('straight',33,'repeat'))
 assert(not timing.new('straight',16,'bad'))
 print('ACID integer timing and physical layouts passed')

@@ -34,24 +34,25 @@ function script:render_to_pattern(options,callback)
   local total_steps,notes,offs=0,0,0
   for token in (values..','):gmatch('(.-),') do
     local volume=tonumber(token:match('volume = ([%d.]+)'))
-    if volume then
-      phrase.cells[(total_steps-1)*2+1].volume_value=volume==1 and 255 or 89
-    end
     local note=token:match('key = (%d+)')
+    if volume then
+      phrase.cells[(total_steps-1)*4+1].volume_value=volume==1 and 255 or 89
+    end
     if note then
       total_steps=total_steps+1;notes=notes+1
-      phrase.cells[(total_steps-1)*2+1].note_value=tonumber(note)
+      local line=(total_steps-1)*4+1
+      phrase.cells[line].note_value=tonumber(note)
     elseif token:find('"off"',1,true) then
       total_steps=total_steps+1;offs=offs+1
-      phrase.cells[(total_steps-1)*2+1].note_value=120
+      phrase.cells[(total_steps-1)*4+1].note_value=120
     elseif token:match('^%s*false%s*$') then
       total_steps=total_steps+1
     end
   end
-  if options.lpb==6 then
+  if options.lpb==12 then
     assert(source:find('unit = "1/8"',1,true) and source:find('resolution = 2/3',1,true))
   else
-    assert(options.lpb==8 and source:find('unit = "1/16"',1,true))
+    assert(options.lpb==16 and source:find('unit = "1/16"',1,true))
   end
   assert(options.max_events==total_steps+8)
   render_calls[#render_calls+1]={max_events=options.max_events,steps=total_steps,
@@ -118,8 +119,8 @@ local pitch=dofile('tests/acid/pitch_fixture.lua')
 local messages={}
 local function source(length,command)
   local pattern=sequencer.new_pattern(length)
-  pattern.pitch_length=64
-  for index=1,64 do
+  pattern.pitch_length=32
+  for index=1,32 do
     pattern.pitch_events[index]=pitch(24+(index-1)%37,index%3==0,false)
   end
   for step=1,length do pattern.time_events[step]=command or 'N' end
@@ -142,13 +143,13 @@ end
 
 -- End-to-end source -> cycle plan -> pattrns render -> native phrase layout ->
 -- ownership seal and transaction -> exact source round-trip at all grid lengths.
-for _,length in ipairs({1,16,17,32,33,48,49,64}) do
+for _,length in ipairs({1,16,17,32}) do
   local pattern=source(length)
   local physical,layout=assert(writer.plan_output(pattern,'repeat'))
   assert(physical.length==2*length and #physical.steps==2*length)
-  assert(layout.looping and layout.loop_start==2*length+1)
-  assert(layout.loop_end==4*length+1 and layout.number_of_lines==4*length+1)
-  assert(layout.number_of_lines<=512)
+  assert(layout.looping and layout.loop_start==4*length+1)
+  assert(layout.loop_end==8*length+1 and layout.number_of_lines==8*length+1)
+  assert(layout.number_of_lines<=257)
   for step=1,length do
     local cold,steady=physical.steps[step],physical.steps[length+step]
     assert(cold.cycle==1 and steady.cycle==2)
@@ -164,18 +165,18 @@ for _,length in ipairs({1,16,17,32,33,48,49,64}) do
   assert(phrase.loop_end==layout.loop_end)
   assert(phrase.playback_mode==renoise.InstrumentPhrase.PLAY_PATTERN)
   assert(phrase.cells[1].note_value==pattern.pitch_events[1].note)
-  assert(phrase.cells[2*length+1].note_value==pattern.pitch_events[1].note)
-  assert(phrase.cells[4*length+1].note_value==121,
+  assert(phrase.cells[4*length+1].note_value==pattern.pitch_events[1].note)
+  assert(phrase.cells[8*length+1].note_value==121,
     'loop sentinel line must remain empty')
   assert(ownership.status(phrase)=='owned')
   local restored,policy=store.load(song,phrase)
   assert(restored and policy=='repeat')
-  assert(restored.length==length and restored.pitch_length==64)
-  for index=1,64 do
+  assert(restored.length==length and restored.pitch_length==32)
+  for index=1,32 do
     assert(restored.pitch_events[index].note==pattern.pitch_events[index].note)
     assert(restored.pitch_events[index].accent==pattern.pitch_events[index].accent)
   end
-  for step=1,64 do assert(restored.time_events[step]=='N') end
+  for step=1,32 do assert(restored.time_events[step]=='N') end
   assert(instrument.phrase_playback_mode==1 and instrument.phrase_program==3
     and instrument.phrase_editor_visible==false,
     'phrase generation changed instrument-wide trigger settings')
@@ -201,9 +202,9 @@ assert(physical.steps[8].kind=='rest' and physical.steps[8].releases)
 -- Zero-event cycles still complete, commit source, and leave every line empty.
 local rests=source(17,'R')
 local rest_phrase=generate(rests,'repeat',#instrument.phrases+1)
-assert(rest_phrase.number_of_lines==69 and rest_phrase.looping)
-assert(rest_phrase.loop_start==35 and rest_phrase.loop_end==69)
-for line=1,69 do assert(rest_phrase.cells[line].note_value==121) end
+assert(rest_phrase.number_of_lines==137 and rest_phrase.looping)
+assert(rest_phrase.loop_start==69 and rest_phrase.loop_end==137)
+for line=1,137 do assert(rest_phrase.cells[line].note_value==121) end
 local rest_source,rest_policy=store.load(song,rest_phrase)
 assert(rest_source and rest_policy=='repeat' and rest_source.length==17)
 for step=1,17 do assert(rest_source.time_events[step]=='R') end
@@ -211,16 +212,16 @@ local rest_render=render_calls[#render_calls]
 assert(rest_render.steps==34 and rest_render.notes==0 and rest_render.offs==0)
 
 -- Malformed over-limit input is refused before phrase insertion or persistence.
-local too_long=source(64)
-too_long.length=65
-too_long.time_events[65]='N'
+local too_long=source(32)
+too_long.length=33
+too_long.time_events[33]='N'
 local invalid_plan,invalid_reason=writer.plan_output(too_long,'repeat')
 assert(not invalid_plan and invalid_reason)
 local too_long_store=song.tool_data
 local rejected=writer.generate(1,function() end,too_long,#instrument.phrases+1,
   {output_policy='repeat'})
 assert(not rejected)
-assert(#instrument.phrases==9 and song.tool_data==too_long_store)
+assert(#instrument.phrases==5 and song.tool_data==too_long_store)
 
 -- Repeat and Play Once are phrase-output choices over the same source.
 local policy_source=source(4)
@@ -231,7 +232,7 @@ for i,command in ipairs({'N','T','T','R'}) do policy_source.time_events[i]=comma
 local function source_copy(input)
   local copy=sequencer.new_pattern(input.length)
   copy.pitch_length=input.pitch_length
-  for index=1,64 do
+  for index=1,32 do
     local pitch=input.pitch_events[index]
     copy.pitch_events[index]={note=pitch.note,key=pitch.key,octave=pitch.octave,
       accent=pitch.accent,slide=pitch.slide}
@@ -241,7 +242,7 @@ local function source_copy(input)
 end
 local function same_source(left,right)
   if left.length~=right.length or left.pitch_length~=right.pitch_length then return false end
-  for index=1,64 do
+  for index=1,32 do
     local a,b=left.pitch_events[index],right.pitch_events[index]
     if a.note~=b.note or a.key~=b.key or a.octave~=b.octave or
         a.accent~=b.accent or a.slide~=b.slide then return false end
@@ -257,9 +258,9 @@ local saved_repeat,saved_repeat_policy=store.load(song,repeated)
 assert(saved_repeat_policy=='repeat' and same_source(saved_repeat,original_source))
 local one_shot=generate(policy_source,'play_once',policy_target)
 assert(not one_shot.looping and ownership.status(one_shot)=='owned')
-assert(one_shot.number_of_lines==policy_source.length*2)
+assert(one_shot.number_of_lines==policy_source.length*4)
 assert(one_shot.cells[1].note_value==48 and one_shot.cells[2].note_value==121
-  and one_shot.cells[6].note_value==121 and one_shot.cells[7].note_value==120)
+  and one_shot.cells[10].note_value==121 and one_shot.cells[13].note_value==120)
 local saved_once,saved_once_policy=store.load(song,one_shot)
 assert(saved_once_policy=='play_once' and same_source(saved_once,original_source))
 local repeated_again=generate(policy_source,'repeat',policy_target)
@@ -279,7 +280,7 @@ for i,command in ipairs({'N','T','N','R'}) do slide.time_events[i]=command end
 local slide_target=#instrument.phrases+1
 local slide_phrase,slide_status=generate(slide,'repeat',slide_target)
 assert(ownership.status(slide_phrase)=='owned')
-assert(slide_phrase.cells[1].note_value==35 and slide_phrase.cells[5].note_value==60)
+assert(slide_phrase.cells[1].note_value==35 and slide_phrase.cells[9].note_value==60)
 assert(slide_status.message:find('Articulation approximation:',1,true),
   'slide or connected accent limitations must be reported as nonfatal')
 
@@ -316,17 +317,17 @@ for _,item in ipairs(targets) do
     and instrument.phrase_editor_visible==before_editor,
     item.name..' target settings were changed')
   if item.name=='empty' then
-    assert(phrase.cells[5].note_value==60)
+    assert(phrase.cells[9].note_value==60)
     assert(status.message:find('silent',1,true), 'empty target must report that playback is silent')
   elseif item.name~='sample' then
-    local onset=phrase:line(5).note_columns
+    local onset=phrase:line(9).note_columns
     assert(onset[2].note_value==60 and onset[2].delay_value==0,
       'legato target must start in another column before the preceding note ends')
     assert(onset[1].note_value==120 and onset[1].delay_value==1,
       'preceding note must release after the target NOTE')
-    assert(phrase:line(7).note_columns[2].note_value==120,
+    assert(phrase:line(13).note_columns[2].note_value==120,
       'REST must release the actual sounding column')
-    assert(not phrase.cells[5].effect_number_string,
+    assert(not phrase.cells[9].effect_number_string,
       item.name..' target received a sample-only glide command')
     assert(status.message:find('Articulation approximation:',1,true),
       item.name..' target did not report reduced glide fidelity')
@@ -376,7 +377,7 @@ local phrase_pitch_bend=require('writers.phrase_pitch_bend')
 assert(phrase_pitch_bend.delivery_enabled==true)
 phrase_pitch_bend.delivery_enabled=false
 local fallback,fallback_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
-assert(fallback:line(5).note_columns[2].note_value==43,
+assert(fallback:line(9).note_columns[2].note_value==43,
   'unverified phrase delivery must retain the target NOTE')
 assert(fallback_status.message:find('delivery is unavailable',1,true))
 local _,_,fallback_range=store.load(song,fallback)
@@ -423,7 +424,7 @@ local off=generate(bend_source,'repeat',bend_target,{pb_range=0},2)
 assert(off==bent and ownership.id(off)==bend_id and ownership.status(off)=='owned')
 local off_source,_,off_range=store.load(song,off)
 assert(off_range==0 and same_source(off_source,bend_source))
-assert(off:line(5).note_columns[2].note_value==43,'PB Off lost the overlap route')
+assert(off:line(9).note_columns[2].note_value==43,'PB Off lost the overlap route')
 bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
 assert(bent==off and ownership.id(bent)==bend_id)
 
@@ -516,20 +517,33 @@ print('ACID Repeat end-to-end mocked integration checks passed (playback checked
 
 -- Exercise both pulse modes through rendering and protected replacement.
 for _,policy in ipairs({'play_once','repeat'}) do
-  for _,length in ipairs({1,9,12,15,16,17,33,49,64}) do
+  for _,length in ipairs({1,9,12,15,16,17,32}) do
     local timed=source(length)
     timed.timing_mode='triplet'
     local target=#instrument.phrases+1
     local output=generate(timed,policy,target)
-    assert(output.lpb==6 and output.shuffle==0)
-    assert(output.number_of_lines==(policy=='repeat' and 4*length+1 or 2*length))
+    assert(output.lpb==(timed.timing_mode=='triplet' and 12 or 16) and output.shuffle==0)
+    assert(output.number_of_lines==(policy=='repeat' and 8*length+1 or 4*length))
     assert(store.load(song,output).timing_mode=='triplet')
-    for step=1,(policy=='repeat' and 2*length or length) do
-      assert(output.cells[2*step-1].note_value==timed.pitch_events[(step-1)%length+1].note)
+    local physical_steps=policy=='repeat' and 2*length or length
+    for step=1,physical_steps do
+      local start=(step-1)*4+1
+      assert(output.cells[start].note_value==timed.pitch_events[(step-1)%length+1].note)
+      assert(output.cells[start+1].note_value==121)
+      assert(output.cells[start+2].note_value==120)
+      assert(output.cells[start+3].note_value==121)
     end
     timed.timing_mode='straight'
     output=generate(timed,policy,target)
-    assert(output.lpb==8 and output.shuffle==0 and store.load(song,output).timing_mode=='straight')
+    assert(output.lpb==16 and output.shuffle==0 and store.load(song,output).timing_mode=='straight')
+    assert(output.number_of_lines==(policy=='repeat' and 8*length+1 or 4*length))
+    for step=1,physical_steps do
+      local start=(step-1)*4+1
+      assert(output.cells[start].note_value==timed.pitch_events[(step-1)%length+1].note)
+      assert(output.cells[start+1].note_value==121)
+      assert(output.cells[start+2].note_value==120)
+      assert(output.cells[start+3].note_value==121)
+    end
   end
 end
 local saved_data=song.tool_data

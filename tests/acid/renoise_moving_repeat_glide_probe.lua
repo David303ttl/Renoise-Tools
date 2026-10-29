@@ -1,5 +1,9 @@
 -- Create independent moving-slide reference phrases in the disposable probe.
 local song=assert(renoise.song(),"Open the disposable articulation song first")
+local LINES_PER_STEP=4
+local PHRASE_LPB=16
+local SOURCE_STEPS=8
+local FIRST_PHRASE_LINE=1
 local instrument_index
 for index,instrument in ipairs(song.instruments) do
  if instrument.name=="ACID ARTICULATION PROBE" then
@@ -26,18 +30,20 @@ local function add_phrase(label,target)
  local phrase=instrument:insert_phrase_at(#instrument.phrases+1)
  phrase.name=name
  phrase.playback_mode=renoise.InstrumentPhrase.PLAY_PATTERN
- phrase.number_of_lines=17
+  phrase.number_of_lines=SOURCE_STEPS*LINES_PER_STEP+1
  phrase.visible_note_columns=1
  phrase.visible_effect_columns=1
  phrase.instrument_column_visible=false
  phrase.key_tracking=renoise.InstrumentPhrase.KEY_TRACKING_NONE
- phrase.lpb=8
+  phrase.lpb=PHRASE_LPB
  phrase.shuffle=0
  phrase.autoseek=false
  phrase.looping=true
  phrase.loop_start=1
- phrase.loop_end=17
- local transitions={{line=1,note=48,amount=target-48},{line=9,note=target,amount=48-target}}
+  phrase.loop_end=phrase.number_of_lines
+  local transitions={
+   {line=FIRST_PHRASE_LINE,note=48,amount=target-48},
+   {line=4*LINES_PER_STEP+FIRST_PHRASE_LINE,note=target,amount=48-target}}
  for _,event in ipairs(transitions) do
   local cell=phrase:line(event.line).note_columns[1]
   cell.note_value=event.note

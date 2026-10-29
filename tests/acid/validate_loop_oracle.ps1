@@ -95,9 +95,11 @@ Assert-True ($oracle.format -eq 'ACID-LOOP-ORACLE-1') 'Unexpected fixture format
 Assert-True ($oracle.status -match 'native playback unverified') 'Fixture must not claim verified native playback'
 Assert-True ($oracle.cycles -ge 3) 'Oracle must cover three cycles'
 Assert-True ($oracle.index_base -eq 1) 'PITCH indices must be one-based'
-Assert-True ($oracle.capacity -eq 64) 'PITCH memory capacity must remain 64'
+Assert-True ($oracle.capacity -eq 32) 'PITCH memory capacity must remain 32'
 
 foreach ($case in $oracle.cases) {
+    Assert-True ($case.length -ge 1 -and $case.length -le 32) "$($case.id): TIME length outside source limits"
+    Assert-True ($case.pitch_length -ge 1 -and $case.pitch_length -le 32) "$($case.id): active PITCH span outside source limits"
     Assert-True ($case.expected.Count -eq $oracle.cycles) "$($case.id): wrong cycle count"
     $state = $null
     for ($cycle = 0; $cycle -lt $oracle.cycles; $cycle++) {
@@ -106,10 +108,12 @@ foreach ($case in $oracle.cases) {
 }
 
 $boundary = $oracle.boundary_family
-Assert-True ($boundary.source_generator.pitch_length -eq $oracle.capacity) 'Boundary family must use all 64 stored pitches'
+Assert-True ($boundary.source_generator.pitch_length -eq $oracle.capacity) 'Boundary family must use all stored pitches'
+Assert-True (@($boundary.source_generator.slide_pitch_indices | Where-Object { $_ -lt 1 -or $_ -gt 32 }).Count -eq 0) 'Boundary slide indices must stay within source limits'
+Assert-True (@($boundary.source_generator.time_overrides.Keys | Where-Object { [int]$_ -lt 1 -or [int]$_ -gt 32 }).Count -eq 0) 'Boundary TIME overrides must stay within source limits'
 Assert-True ($boundary.source_generator.note_formula -eq 'note = 24 + ((pitch_index - 1) modulo 37)') 'Boundary formula must stay within the editable three-octave range'
-Assert-True ($boundary.length_cases.Count -eq 8) 'Boundary family must cover eight acceptance lengths'
-$requiredLengths = @(1,16,17,32,33,48,49,64)
+Assert-True ($boundary.length_cases.Count -eq 6) 'Boundary family must cover six acceptance lengths'
+$requiredLengths = @(1,15,16,17,31,32)
 foreach ($lengthCase in $boundary.length_cases) {
     $length = [int]$lengthCase.length
     Assert-True ($requiredLengths -contains $length) "Unexpected boundary length $length"
@@ -222,11 +226,4 @@ foreach ($entry in $oracle.entry_cases) {
 
 Assert-True (@($oracle.entry_cases | Where-Object operation -eq 'enter_time').Count -eq 1) 'Missing shared leading-TIE entry normalization case'
 Assert-True (@($oracle.entry_cases | Where-Object operation -eq 'validate_source').Count -eq 1) 'Missing shared raw leading-TIE validation case'
-Assert-True ($oracle.cutover_cases.Count -ge 2) 'Missing cutover fixtures'
-$sourceCutover = @($oracle.cutover_cases | Where-Object operation -eq 'load_source')
-Assert-True ($sourceCutover.Count -eq 1 -and $sourceCutover.source_format -eq 'ACID-PITCH-TIME-2') 'Missing unsupported development-format fixture'
-Assert-True ($sourceCutover.expected_error -eq 'unsupported_source_format' -and $sourceCutover.imports -eq 0 -and $sourceCutover.writes_on_read -eq 0) 'Unsupported source read must refuse without importing or writing'
-$sealCutover = @($oracle.cutover_cases | Where-Object operation -eq 'check_ownership')
-Assert-True ($sealCutover.Count -eq 1 -and $sealCutover.expected_status -eq 'foreign' -and -not $sealCutover.adoption_allowed) 'Earlier development seal must not confer ownership or permit adoption'
-
 Write-Host "ACID fixture oracle checks passed ($($oracle.cases.Count) semantic cases, $($boundary.length_cases.Count) boundary lengths)."

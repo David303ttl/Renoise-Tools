@@ -44,12 +44,16 @@ local function physical_plan(pattern, output_policy)
   end
   local loop,err=compiler.plan_loop(pattern)
   if not loop then return nil,err end
-  local length=pattern.length*2
-  if length*2>MAX_PHRASE_LINES then
+  local cycle_plans={loop.cold,loop.steady}
+  if #cycle_plans~=layout.cycle_count then
+    return nil,"repeat cycle count does not match phrase layout"
+  end
+  local length=pattern.length*#cycle_plans
+  if layout.number_of_lines>MAX_PHRASE_LINES then
     return nil,"intro plus repeating cycle exceeds the native phrase line limit"
   end
   local steps={}
-  for cycle,source in ipairs({loop.cold,loop.steady}) do
+  for cycle,source in ipairs(cycle_plans) do
     for step,event in ipairs(source.steps) do
       local copy={}
       for key,value in pairs(event) do copy[key]=value end
@@ -79,7 +83,7 @@ local function slide_steps(plan)
   return steps
 end
 
-local function articulation_plan(plan,capabilities,timeline)
+local function articulation_plan(plan,capabilities,timeline,lines_per_step)
   local has_slide=false
   local slides=slide_steps(plan)
   has_slide=#slides>0
@@ -105,7 +109,7 @@ local function articulation_plan(plan,capabilities,timeline)
     end
     return {},approximations,1
   end
-  local early_releases,release_error=control.release_lines(timeline,2)
+  local early_releases,release_error=control.release_lines(timeline,lines_per_step)
   if not early_releases then return nil,release_error end
   local release_at={}
   for _,line in ipairs(early_releases) do release_at[line]=true end
@@ -119,8 +123,8 @@ local function articulation_plan(plan,capabilities,timeline)
         held=held+1
         index=index+1
       end
-      local available=(held+1)*2
-      local first_line=(event.step-1)*2+1
+      local available=(held+1)*lines_per_step
+      local first_line=(event.step-1)*lines_per_step+1
       for line=first_line+1,first_line+available-1 do
         if release_at[line] then
           available=line-first_line
@@ -134,7 +138,7 @@ local function articulation_plan(plan,capabilities,timeline)
   if not has_slide then return {},{},1 end
   local minimum_rate=rate
   if rate>254 then rate=255 end
-  local commands,err=articulation.plan(plan,2,rate)
+  local commands,err=articulation.plan(plan,lines_per_step,rate)
   if not commands then return nil,err end
   local places={}
   for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
@@ -182,14 +186,16 @@ local function patterns_equal(a,b)
   for _,key in ipairs({"length","pitch_length","timing_mode"}) do
     if a[key]~=b[key] then return false end
   end
-  for i=1,64 do
+  for i=1,sequencer.MAX_STEPS do
     local x,y=a.pitch_events[i],b.pitch_events[i]
     if not x or not y then return false end
     for _,key in ipairs({"note","key","octave","accent","slide"}) do
       if x[key]~=y[key] then return false end
     end
   end
-  for i=1,64 do if a.time_events[i]~=b.time_events[i] then return false end end
+  for i=1,sequencer.MAX_STEPS do
+    if a.time_events[i]~=b.time_events[i] then return false end
+  end
   return true
 end
 
@@ -372,10 +378,10 @@ local function finalize(job, event_count, skipped)
     job.phrase.loop_start=job.layout.loop_start
   end)
   if not layout_ok then complete(job,layout_error);return end
-  local volumes, volume_error = pattrns.expected_volumes(job.plan, 2,
+  local volumes, volume_error = pattrns.expected_volumes(job.plan, job.layout.lines_per_step,
     job.layout.number_of_lines, job.phrase.visible_note_columns or 1)
   if not volumes then complete(job, volume_error);return end
-  local result, validation_error = validator.verify(job.phrase, job.plan, 2,job.layout,
+  local result, validation_error = validator.verify(job.phrase, job.plan, job.layout.lines_per_step,job.layout,
     {volumes=volumes})
   if not result then
     job.failure_code="phrase.validation"
@@ -393,7 +399,7 @@ local function finalize(job, event_count, skipped)
     local applied,apply_error=gates.apply_plan(job.phrase,job.operations)
     if not applied then complete(job,apply_error);return end
   end
-  local final_result,final_validation_error=validator.verify(job.phrase,job.plan,2,job.layout,expected_articulation)
+  local final_result,final_validation_error=validator.verify(job.phrase,job.plan,job.layout.lines_per_step,job.layout,expected_articulation)
   if not final_result then
     job.failure_code="phrase.validation"
     job.failure_category="phrase"
@@ -420,7 +426,7 @@ local function finalize(job, event_count, skipped)
   if job.phrase.lpb~=job.layout.lpb or job.phrase.shuffle~=0 then
     complete(job,"Phrase timing metadata verification failed");return
   end
-  local final_verified,final_error=validator.verify(job.phrase,job.plan,2,job.layout,expected_articulation)
+  local final_verified,final_error=validator.verify(job.phrase,job.plan,job.layout.lines_per_step,job.layout,expected_articulation)
   if not final_verified then complete(job,final_error);return end
   if not token_current(job) then
     complete(job,job.invalid_reason or "generation was invalidated before commit",nil,"suspended")
@@ -444,7 +450,7 @@ local function finalize(job, event_count, skipped)
       backup.name="ACID TRANSACTION BACKUP"
       local copied,copy_error=pcall(function()
         job.target_phrase:copy_from(job.phrase)
-        local valid,validation_error=validator.verify(job.target_phrase,job.plan,2,job.layout,expected_articulation)
+        local valid,validation_error=validator.verify(job.target_phrase,job.plan,job.layout.lines_per_step,job.layout,expected_articulation)
         if not valid then error("Copied phrase validation failed: "..tostring(validation_error)) end
         local name,name_error=ownership.make_name(job.target_phrase,job.snapshot_id)
         if not name then error(name_error) end
@@ -729,7 +735,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   local source
   source,meta=pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution})
   if not source then return nil,failure("phrase.unrepresentable","phrase",meta) end
-  local timeline,timeline_error=control.compile(fixture,{gate_fraction=0.5,plan=plan,
+  local timeline,timeline_error=control.compile(fixture,{gate_fraction=control.DEFAULT_GATE_FRACTION,plan=plan,
     output_policy=output_policy,successor=plan.loop and plan.loop.steady})
   if not timeline then return nil,failure("source.invalid","source",timeline_error) end
   local native_notes
@@ -775,7 +781,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
         "Hybrid sample layers receive overlapping notes; their envelopes and glide can differ from the plugin/MIDI receiver."
     end
   else
-    commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline)
+    commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline,layout.lines_per_step)
     if commands and pb_range>0 and #slide_steps(plan)>0 then
       approximations[#approximations+1]="PB Range requires a plugin or MIDI receiver; the existing sample/note articulation is retained."
     end
@@ -784,13 +790,13 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   if song.transport.groove_enabled then
     approximations[#approximations+1]="Song groove is active; its effect on phrase timing is unverified."
   end
-  local operations,operation_error=gates.plan(timeline,plan,commands)
+  local operations,operation_error=gates.plan(timeline,plan,commands,layout.lines_per_step)
   if not operations and #commands>0 then
     local collision_error=operation_error
     for candidate_rate=math.max(1,minimum_rate+1),255 do
-      local candidate_commands=articulation.plan(plan,2,candidate_rate)
+      local candidate_commands=articulation.plan(plan,layout.lines_per_step,candidate_rate)
       if candidate_commands then
-        local candidate_operations=gates.plan(timeline,plan,candidate_commands)
+        local candidate_operations=gates.plan(timeline,plan,candidate_commands,layout.lines_per_step)
         if candidate_operations then
           commands,operations=candidate_commands,candidate_operations
           if candidate_rate==255 then
@@ -801,7 +807,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       end
     end
     if not operations then
-      operations,operation_error=gates.plan(timeline,plan,{})
+      operations,operation_error=gates.plan(timeline,plan,{},layout.lines_per_step)
       if operations then
         local places={}
         for _,step in ipairs(slide_steps(plan)) do places[#places+1]=string.format("%02d",step) end

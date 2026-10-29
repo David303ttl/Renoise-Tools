@@ -20,6 +20,7 @@ if($metadataCaseId -cne $CaseId){throw "Capture metadata case '$metadataCaseId' 
 $oracle=Get-Content -LiteralPath $OraclePath -Raw|ConvertFrom-Json -AsHashtable
 if($native){
   foreach($required in @('mapping.map_velocity_to_volume=true','sample.modulation_set_index=0','accent_velocity_cells=89,255')){if(!$record.Contains($required)){throw "Native metadata missing '$required'"}}
+  if(!$record.Contains('phrase.lpb=16')){throw 'Native accent phrase must use LPB 16'}
   $eventCount=if($CaseId -match 'alternating'){4}else{3}
   $expectedNotes=@(for($i=0;$i -lt $eventCount;$i++){48})
   if($tied){$expectedVolumes=@(89,255,89)}elseif($CaseId -match 'alternating'){$expectedVolumes=@(89,255,89,255)}else{$expectedVolumes=@(89,255,255)}
@@ -40,14 +41,14 @@ if($noteCells.Count -ne $eventCount){throw "Expected $eventCount generated NOTE 
 for($i=0;$i -lt $eventCount;$i++){
   if($noteCells[$i].note -ne $expectedNotes[$i] -or $noteCells[$i].volume -ne $expectedVolumes[$i]){throw "Emitted note/volume differs at event $($i+1)"}
 }
-if($tied){
-  $expectedLines=@(1,5,9)
-  if((@($noteCells|ForEach-Object {$_.line}) -join ',') -cne ($expectedLines -join ',')){throw 'Tied-accent NOTE cells must be authored at phrase lines 1, 5 and 9'}
-  $tieLines=@(3,7,11)
+  if($tied){
+  $expectedLines=@(1,9,17)
+  if((@($noteCells|ForEach-Object {$_.line}) -join ',') -cne ($expectedLines -join ',')){throw 'Tied-accent NOTE cells must be authored at phrase lines 1, 9 and 17'}
+  $tieLines=@(5,13,21)
   foreach($line in $tieLines){
     if($record -notmatch "(?m)^phrase\.line\.$line=121,"){throw "Expected an empty TIE cell at phrase line $line"}
   }
-  foreach($line in @(4,8,13)){if($record -notmatch "(?m)^phrase\.line\.$line=120,"){throw "Expected a midpoint or final OFF at phrase line $line"}}
+  foreach($line in @(7,15,25)){if($record -notmatch "(?m)^phrase\.line\.$line=120,"){throw "Expected a midpoint or final OFF at phrase line $line"}}
 }
 $onsetOffsetsMs=if($tied){@(0.0,250.0,500.0)}else{@(0..($eventCount-1)|ForEach-Object {$_*125.0})}
 $runResults=[System.Collections.Generic.List[object]]::new()

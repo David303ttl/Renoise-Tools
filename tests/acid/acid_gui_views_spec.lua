@@ -226,16 +226,16 @@ for _,node in ipairs(builder.nodes) do
   if node.id=="acid_pb_range" then pb_range_popup=node end
   if node.kind=="popup" and node.width==360 then phrase_popup=node end
 end
-assert(last_step and last_step.min==1 and last_step.max==64)
+assert(last_step and last_step.min==1 and last_step.max==32)
 assert(pb_range_popup and pb_range_popup.items[1]=="Off" and
   pb_range_popup.items[2]=="±2" and pb_range_popup.items[3]=="±12" and
   pb_range_popup.items[4]=="±24" and pb_range_popup.items[5]=="±48" and
   pb_range_popup.value==1,"PB Range defaults to Off and offers the documented assumptions")
 last_step:fire("32")
-assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
+assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
 output_popup:fire(1)
 pb_range_popup:fire(3)
-assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("STEPS 32/64",1,true),
+assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("STEPS 32/32",1,true),
   "PB Range changes do not mutate canonical PITCH/TIME source")
 
 local function button(text)
@@ -249,14 +249,14 @@ timing_popup:fire(2)
 assert(timing_popup.value==2)
 button("Reset Source"):fire()
 assert(timing_popup.value==1,"Reset Source restores straight timing")
-assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
+assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
 assert(output_popup.value==2,"Reset Source restores Repeat output")
 assert(pb_range_popup.value==1,"Reset Source restores PB Range Off")
 assert(button("Undo").active)
 button("Undo"):fire()
 assert(timing_popup.value==2,"Undo restores the previous timing")
-assert(builder.views.acid_source_summary.text:find("STEPS 32/64",1,true))
+assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: REST",1,true))
 assert(builder.views.acid_program_key_popup.value==2)
 assert(output_popup.value==1,"Undo restores the previous output policy")

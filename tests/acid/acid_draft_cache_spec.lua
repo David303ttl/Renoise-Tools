@@ -155,13 +155,14 @@ assert(not cache.put(song_a, instrument_a, phrase_a, sequencer.new_pattern(), "i
 assert(not cache.put(song_a,instrument_a,phrase_a,sequencer.new_pattern(),"repeat",4))
 local timing_instrument={name="Timing",phrases={}}
 local timing_song={instruments={timing_instrument}}
-local timing_source=sequencer.new_pattern(64)
+local timing_source=sequencer.new_pattern(32)
 timing_source.timing_mode="triplet"
 assert(cache.put(timing_song,timing_instrument,nil,timing_source,"repeat",0))
 package.loaded["model.draft_cache"]=nil
 local reloaded_cache=require("model.draft_cache")
 local timing_copy=assert(reloaded_cache.get(timing_song,timing_instrument,nil))
-assert(timing_copy.timing_mode=="triplet" and timing_copy.length==64)
+assert(timing_copy.timing_mode=="triplet" and timing_copy.length==32 and
+  #timing_copy.pitch_events==32 and #timing_copy.time_events==32)
 
 -- Independently scoped drafts retain their own timing and render settings on reopen.
 local other_instrument={name="Other timing",phrases={}}
@@ -172,7 +173,7 @@ package.loaded["model.draft_cache"]=nil
 reloaded_cache=require("model.draft_cache")
 local first,first_policy,first_pb=reloaded_cache.get(timing_song,timing_instrument,nil)
 local second,second_policy,second_pb=reloaded_cache.get(timing_song,other_instrument,nil)
-assert(first.timing_mode=="triplet" and first.length==64 and first_policy=="repeat" and first_pb==0)
+assert(first.timing_mode=="triplet" and first.length==32 and first_policy=="repeat" and first_pb==0)
 assert(second.timing_mode=="straight" and second.length==9 and second_policy=="play_once" and second_pb==12)
 
 -- A corrupt draft mode blocks all writes without discarding the original data.

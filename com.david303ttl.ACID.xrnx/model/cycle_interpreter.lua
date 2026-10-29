@@ -19,7 +19,7 @@ local function validate(pattern)
   local ok, err = sequencer.validate(pattern)
   if not ok then return nil, err end
   if not integer(pattern.pitch_length, 1, sequencer.MAX_STEPS) then
-    return nil, "pitch length must be 1..64"
+    return nil, "pitch length must be 1..32"
   end
   if #pattern.time_events < pattern.length then
     return nil, "time memory must have one N/T/R value per active step"

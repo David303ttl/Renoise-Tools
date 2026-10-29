@@ -35,6 +35,8 @@ assert(output_root and output_root ~= "", "TEMP environment variable is missing"
 local separator = package.config:sub(1, 1)
 local run_id = tostring(os.time())
 local sample_rate, bit_depth, lpb = 44100, 16, 8
+local LINES_PER_STEP=4
+local PHRASE_LPB=16
 local cases = {
   {
     name = "tie_seam_span3",
@@ -49,6 +51,7 @@ local cases = {
     pitch_length = 2,
   },
 }
+local COLD_SOURCE_STEPS=#cases[1].commands
 local function path_for(name)
   return output_root .. separator .. "acid_mixed_repeat_" .. run_id .. "_" .. name .. ".wav"
 end
@@ -149,21 +152,21 @@ local setup_ok, setup_error = pcall(function()
     phrase_indices[#phrase_indices + 1] = #instrument.phrases
     phrase.name = "TEMP MIXED REPEAT " .. case.name
     phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
-    phrase.number_of_lines = 33 -- cold lines 1..16, loop lines 17..32, exclusive sentinel 33
+    phrase.number_of_lines = COLD_SOURCE_STEPS*2*LINES_PER_STEP+1
     phrase.visible_note_columns = 1
     phrase.visible_effect_columns = 0
     phrase.instrument_column_visible = false
     phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-    phrase.lpb = lpb
+    phrase.lpb = PHRASE_LPB
     phrase.shuffle = 0
     phrase.autoseek = false
     phrase.looping = false
-    phrase.loop_end = 33
-    phrase.loop_start = 17
+    phrase.loop_end = phrase.number_of_lines
+    phrase.loop_start = COLD_SOURCE_STEPS*LINES_PER_STEP+1
 
     local pitch_cursor = 1
     for step, command in ipairs(case.commands) do
-      local line = phrase:line(2 * step - 1)
+      local line = phrase:line((step-1)*LINES_PER_STEP+1)
       local note = line.note_columns[1]
       if command == "N" then
         note.note_value = case.pitches[pitch_cursor]
@@ -181,7 +184,8 @@ local setup_ok, setup_error = pcall(function()
     -- voice until the first NOTE or REST. Cells repeat TIME with fixed pitches.
     pitch_cursor = 1
     for step, command in ipairs(case.commands) do
-      local line = phrase:line(16 + 2 * step - 1)
+      local line = phrase:line(COLD_SOURCE_STEPS*LINES_PER_STEP+
+        (step-1)*LINES_PER_STEP+1)
       local note = line.note_columns[1]
       if command == "N" then
         note.note_value = case.pitches[pitch_cursor]

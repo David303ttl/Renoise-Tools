@@ -33,18 +33,18 @@ local ok, err = pcall(function()
     local phrase = probe:insert_phrase_at(index)
     phrase.name = index == 1 and "Native Mono/Glide: 48 to 55" or "Native Mono/Glide: same-pitch control"
     phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
-    phrase.number_of_lines = 16
+    phrase.number_of_lines = 32
     phrase.visible_note_columns = 1
     phrase.visible_effect_columns = 1
     phrase.instrument_column_visible = false
     phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-    phrase.lpb = 8
+    phrase.lpb = 16
     phrase.shuffle = 0
     phrase.autoseek = false
     phrase.looping = false
     phrase:line(1).note_columns[1].note_value = 48
-    phrase:line(5).note_columns[1].note_value = destination
-    phrase:line(11).note_columns[1].note_value = renoise.PatternLine.NOTE_OFF
+    phrase:line(9).note_columns[1].note_value = destination
+    phrase:line(21).note_columns[1].note_value = renoise.PatternLine.NOTE_OFF
   end
   probe.phrase_playback_mode = renoise.Instrument.PHRASES_PLAY_SELECTIVE
   probe.phrase_program = 1

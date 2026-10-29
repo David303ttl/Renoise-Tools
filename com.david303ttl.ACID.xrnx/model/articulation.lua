@@ -2,6 +2,7 @@
 -- Place note-column glide effects; sample voice continuity is not guaranteed.
 local M = {}
 M.DEFAULT_RATE = 0x20
+local MIN_LINES_PER_STEP=2
 
 local function integer(value, minimum, maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
@@ -11,7 +12,7 @@ function M.plan(plan, lines_per_step, rate)
   if type(plan) ~= "table" or type(plan.steps) ~= "table"
     or type(plan.length) ~= "number" or plan.length % 1 ~= 0
     or type(lines_per_step) ~= "number" or lines_per_step % 1 ~= 0
-    or lines_per_step < 2 then
+    or lines_per_step < MIN_LINES_PER_STEP then
     return nil, "invalid glide plan or step resolution"
   end
   rate=rate or M.DEFAULT_RATE
@@ -60,7 +61,10 @@ function M.plan(plan, lines_per_step, rate)
 end
 
 function M.apply(phrase, plan, lines_per_step, rate, options)
-  if lines_per_step~=2 then return nil,"articulation output requires 2 lines per step" end
+  if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<MIN_LINES_PER_STEP
+    or lines_per_step~=lines_per_step then
+    return nil,"articulation output requires at least 2 lines per step"
+  end
   options=options or {}
   if type(options)~="table" then return nil,"invalid articulation output options" end
   local commands,err=M.plan(plan,lines_per_step,rate)
@@ -69,10 +73,11 @@ function M.apply(phrase, plan, lines_per_step, rate, options)
   local gates=require("writers.gate_writer")
   local timeline
   timeline,err=control.compile({}, {plan=plan,successor=options.successor,
-    output_policy=options.output_policy or "repeat",gate_fraction=0.5})
+    output_policy=options.output_policy or "repeat",
+    gate_fraction=control.DEFAULT_GATE_FRACTION})
   if not timeline then return nil,err end
   local merged
-  merged,err=gates.plan(timeline,plan,commands)
+  merged,err=gates.plan(timeline,plan,commands,lines_per_step)
   if not merged then return nil,err end
   local applied
   applied,err=gates.apply_plan(phrase,merged)

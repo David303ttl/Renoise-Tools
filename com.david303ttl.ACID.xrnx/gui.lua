@@ -122,8 +122,8 @@ function M.show()
   local summary=vb:text{id="acid_source_summary",width=820,font="bold",text=""}
   local map_text=vb:text{id="acid_preview_summary",width=820,font="bold",text=""}
   local length_items={}
-  for n=1,64 do length_items[n]=tostring(n) end
-  local last_step_box=vb:valuebox{width=78,min=1,max=64,steps={1,8},value=16,
+  for n=1,sequencer.MAX_STEPS do length_items[n]=tostring(n) end
+  local last_step_box=vb:valuebox{width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=16,
     tostring=function(value)return string.format("%d",math.floor(value+0.5))end,
     tonumber=function(value)return tonumber(value)end}
   local view_popup=vb:popup{id="acid_editor_view",items={"Program","Grid"},width=105,value=1,
@@ -201,7 +201,7 @@ function M.show()
     view_heading.text=editor_view==1 and "PROGRAM VIEW" or "GRID VIEW"
     view_hint.text=editor_view==1 and
       "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
-      "Edit sixteen PITCH positions and TIME steps directly; use pages to reach 01–64."
+      "Edit sixteen PITCH positions and TIME steps directly across two pages (01–32)."
     if program_panel then program_panel.visible=editor_view==1 end
     if grid_panel then grid_panel.visible=editor_view==2 end
     pitch_length_popup.value=pattern.pitch_length or 16
@@ -222,7 +222,7 @@ function M.show()
     preview_popup.active=true
     last_step_box.value=pattern.length
     last_step_box.active=true
-    for page=1,4 do
+    for page=1,editor.MAX_PAGES do
       local first=(page-1)*16+1
       local last=math.min(page*16,pattern.length)
       pitch_page_buttons[page].text=string.format("P %02d-%02d%s",
@@ -294,7 +294,7 @@ function M.show()
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
     summary.text=string.format(
-      "STEPS %d/64   |   NOTE triggers %d   |   PITCH active %d, stored %d, used %d",
+      "STEPS %d/32   |   NOTE triggers %d   |   PITCH active %d, stored %d, used %d",
       pattern.length,projection.note_count,pattern.pitch_length,#pattern.pitch_events,count)
     local pitch_usage=projection.used[selected_pitch] and "USED" or "UNUSED"
     map_text.text=string.format("TIME %02d Start: %s  |  Repeating: %s  |  PITCH P%02d: %s",
@@ -414,7 +414,7 @@ function M.show()
   accent:add_notifier(change_pitch)
   slide:add_notifier(change_pitch)
   local pitch_items,time_items={},{}
-  for index=1,64 do
+  for index=1,sequencer.MAX_STEPS do
     pitch_items[index]=string.format("P%02d",index)
     time_items[index]=string.format("TIME %02d",index)
   end
@@ -468,7 +468,7 @@ function M.show()
   local preview_grid=vb:column{spacing=4}
   local pitch_pages=vb:row{spacing=6}
   local time_pages=vb:row{spacing=6}
-  for p=1,4 do
+  for p=1,editor.MAX_PAGES do
     local page=p
     pitch_page_buttons[p]=vb:button{width=155,text="P",notifier=function()
       pitch_page=page;update() end}
@@ -518,7 +518,7 @@ function M.show()
     if updating then return end
     n=tonumber(n)
     if not n then update();return end
-    n=math.max(1,math.min(64,math.floor(n+0.5)))
+    n=math.max(1,math.min(sequencer.MAX_STEPS,math.floor(n+0.5)))
     pattern.length=n
     if selected_step>n then selected_step=n end
     if editor.page_for(selected_step)~=time_page then
@@ -964,7 +964,6 @@ function M.show()
       undo_button,
       redo_button,
       vb:text{text="Undo and Redo include source, phrase output, and PB Range."}},
-    vb:text{text="64-step extension: four continuous pages of 16. Roland PITCH/TIME semantics remain separate."},
     view_heading,view_hint,program_panel,grid_panel,
     summary,map_text,diagnostic,diagnostic_jump,
     vb:row{spacing=6,vb:text{text="Target instrument"},target,

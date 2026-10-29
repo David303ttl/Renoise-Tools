@@ -12,12 +12,12 @@ local function checked_pb_range(value)
 end
 
 function M.page_for(index)
-  assert(type(index)=="number" and index%1==0 and index>=1 and index<=64)
+  assert(type(index)=="number" and index%1==0 and index>=1 and index<=seq.MAX_STEPS)
   return math.floor((index-1)/16)+1
 end
 
 function M.index_on_page(page, cell)
-  assert(type(page)=="number" and page%1==0 and page>=1 and page<=4)
+  assert(type(page)=="number" and page%1==0 and page>=1 and page<=M.MAX_PAGES)
   assert(type(cell)=="number" and cell%1==0 and cell>=1 and cell<=16)
   return (page-1)*16+cell
 end
@@ -118,7 +118,7 @@ local function same_state(a,b)
       a.pattern.length~=b.pattern.length or
       a.pattern.pitch_length~=b.pattern.pitch_length or
       a.pattern.timing_mode~=b.pattern.timing_mode then return false end
-  for i=1,64 do
+  for i=1,seq.MAX_STEPS do
     local x,y=a.pattern.pitch_events[i],b.pattern.pitch_events[i]
     if x.note~=y.note or x.key~=y.key or x.octave~=y.octave or
         x.accent~=y.accent or x.slide~=y.slide or

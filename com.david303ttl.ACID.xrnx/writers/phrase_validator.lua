@@ -27,6 +27,9 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
     or lines_per_step % 1 ~= 0 then
     return nil, "invalid lines-per-step"
   end
+  if layout and layout.lines_per_step and layout.lines_per_step~=lines_per_step then
+    return nil,"lines-per-step layout mismatch"
+  end
   local musical_lines = plan.length * lines_per_step
   local expected_lines = layout and layout.number_of_lines or musical_lines
   if type(expected_lines)~="number" or expected_lines<musical_lines or
@@ -45,14 +48,17 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
       return nil,"invalid phrase loop layout"
     end
     if layout.looping then
+      local sentinel_lines=layout.sentinel_lines
       if type(layout.loop_start)~="number" or type(layout.loop_end)~="number"
         or layout.loop_start%1~=0 or layout.loop_end%1~=0
         or layout.loop_start<1 or layout.loop_end<=layout.loop_start
-        or layout.loop_end>expected_lines then
+        or layout.loop_end>expected_lines or type(sentinel_lines)~="number"
+        or sentinel_lines%1~=0 or sentinel_lines<0 then
         return nil,"invalid phrase loop range"
       end
-      if expected_lines~=musical_lines+1 or layout.loop_end~=expected_lines
-        or plan.length%2~=0 or layout.loop_start~=musical_lines/2+1 then
+      if expected_lines~=musical_lines+sentinel_lines or layout.loop_end~=expected_lines
+        or plan.length~=layout.physical_steps
+        or layout.loop_start~=layout.length*lines_per_step+1 then
         return nil,"loop phrase requires one empty exclusive-end sentinel line"
       end
     end

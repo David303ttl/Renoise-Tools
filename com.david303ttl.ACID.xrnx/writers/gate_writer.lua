@@ -2,32 +2,38 @@
 -- Merge gate and glide operations before touching native phrase cells.
 local control=require("model.control_signals")
 local M={}
+local UNITS_PER_STEP=control.UNITS_PER_STEP
+local MIN_LINES_PER_STEP=1
 local function location(op)
   return string.format("TIME step %02d, cycle %d, phrase line 0x%02X",
     op.time_step or op.step or 1,op.cycle or 1,op.line-1)
 end
 M.location=location
 
-function M.plan(timeline,semantic,commands)
-  local lines,err=control.release_lines(timeline,2)
+function M.plan(timeline,semantic,commands,lines_per_step)
+  if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<MIN_LINES_PER_STEP
+    or lines_per_step~=lines_per_step then
+    return nil,"gate output requires a positive integer lines-per-step"
+  end
+  local lines,err=control.release_lines(timeline,lines_per_step)
   if not lines then
     local edge
     for _,event in ipairs(timeline.events or {}) do
       if event.kind=="gate_off" and event.reason~="rest" then edge=event;break end
     end
-    return nil,location({line=edge and math.floor(edge.at/128)+1 or 1,
+    return nil,location({line=edge and math.floor(edge.at*lines_per_step/UNITS_PER_STEP)+1 or 1,
       time_step=edge and edge.step,cycle=edge and edge.cycle})..": "..err
   end
   local merged={operations={},release_lines={},effects={}}
   local occupied={}
   local function append(op)
-    local event=semantic and semantic.steps[math.floor((op.line-1)/2)+1]
+    local event=semantic and semantic.steps[math.floor((op.line-1)/lines_per_step)+1]
     op.time_step=op.time_step or (event and (event.source_step or event.step))
     op.cycle=op.cycle or (event and event.cycle) or 1
-    if op.line<1 or op.line%1~=0 or op.line>timeline.steps*2 then
+    if op.line<1 or op.line%1~=0 or op.line>timeline.steps*lines_per_step then
       return nil,location(op)..": operation outside musical phrase lines"
     end
-    if op.kind=="release" and event and op.line%2==1
+    if op.kind=="release" and event and (op.line-1)%lines_per_step==0
       and (event.kind=="note" or (event.kind=="rest" and event.releases)) then
       return nil,location(op)..": OFF conflicts with semantic note or release"
     end
@@ -100,8 +106,8 @@ function M.apply_plan(phrase,merged)
   return {early_releases=#lines,release_lines=lines}
 end
 
-function M.apply(phrase,timeline)
-  local merged,err=M.plan(timeline,timeline.semantic)
+function M.apply(phrase,timeline,lines_per_step)
+  local merged,err=M.plan(timeline,timeline.semantic,nil,lines_per_step)
   if not merged then return nil,err end
   return M.apply_plan(phrase,merged)
 end

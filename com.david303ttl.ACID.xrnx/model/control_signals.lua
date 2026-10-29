@@ -1,7 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Physical gate edges in 256 subdivisions per sequencer step.
 local compiler=require("model.cycle_interpreter")
-local M={}
+-- Articulation timeline units are independent of phrase-line resolution.
+local M={UNITS_PER_STEP=256,DEFAULT_GATE_FRACTION=0.5}
+local UNITS_PER_STEP=M.UNITS_PER_STEP
+local ROUND_HALF_UP=0.5
 
 local function add(out,at,kind,ev,more)
   local e={at=at,kind=kind,step=ev.source_step or ev.step,cycle=ev.cycle}
@@ -11,7 +14,7 @@ end
 
 function M.compile(pattern,options)
   options=options or {}
-  local fraction=options.gate_fraction or 0.5
+  local fraction=options.gate_fraction or M.DEFAULT_GATE_FRACTION
   if type(fraction)~="number" or fraction<=0 or fraction>=1 or fraction~=fraction then
     return nil,"gate_fraction must be between 0 and 1"
   end
@@ -41,9 +44,9 @@ function M.compile(pattern,options)
   local gate=first.transition=="slide" or first.holds==true or first.releases==true
   local note=first.from_note or (gate and (first.note or first.released_note)) or nil
   local events={}
-  local gap=math.floor(256*fraction+0.5)
+  local gap=math.floor(UNITS_PER_STEP*fraction+ROUND_HALF_UP)
   for step,ev in ipairs(plan.steps) do
-    local start=(step-1)*256
+    local start=(step-1)*UNITS_PER_STEP
     if ev.kind=="note" then
       if gate and ev.transition=="slide" then
         add(events,start,"pitch_target",ev,{note=ev.note,from_note=note,
@@ -69,7 +72,7 @@ function M.compile(pattern,options)
       gate,note=false,nil
     end
   end
-  return {events=events,steps=plan.length,units_per_step=256,
+  return {events=events,steps=plan.length,units_per_step=UNITS_PER_STEP,
     gate_fraction=fraction,boundary=plan.boundary,output_policy=output_policy,
     open_at_end=gate,final_note=note,semantic=plan,successor=successor}
 end
@@ -77,16 +80,26 @@ end
 -- Return exactly representable midpoint edges; REST edges belong to the
 -- semantic renderer and remain in the timeline for merged-plan validation.
 function M.release_lines(timeline,lines_per_step)
-  if lines_per_step~=2 or timeline.gate_fraction~=0.5 then
-    return nil,"gate output requires 2 lines per step and 50% gate"
+  if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<1
+    or lines_per_step~=lines_per_step then
+    return nil,"gate output requires a positive integer lines-per-step"
+  end
+  -- Every non-REST release sits a fixed gate width past a step start, so the
+  -- width alone decides whether releases can land on phrase lines.
+  local gap=math.floor(UNITS_PER_STEP*(timeline.gate_fraction or M.DEFAULT_GATE_FRACTION)+ROUND_HALF_UP)
+  if (gap*lines_per_step)%UNITS_PER_STEP~=0 then
+    return nil,"gate width is not representable on a phrase line at this resolution"
   end
   local lines={}
   for _,ev in ipairs(timeline.events) do
     if ev.kind=="gate_off" and ev.reason~="rest" then
-      if ev.at%128~=0 or ev.at<0 or ev.at>=timeline.steps*256 then
+      if ev.at<0 or ev.at>=timeline.steps*UNITS_PER_STEP then
         return nil,"gate edge is not representable inside the phrase"
       end
-      lines[#lines+1]=ev.at/128+1
+      if (ev.at*lines_per_step)%UNITS_PER_STEP~=0 then
+        return nil,"gate edge is not representable on a phrase line at this resolution"
+      end
+      lines[#lines+1]=math.floor(ev.at*lines_per_step/UNITS_PER_STEP)+1
     end
   end
   return lines

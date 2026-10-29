@@ -4,7 +4,7 @@ local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("writers.phrase_ownership")
 local M = {}
-local MAGIC = "ACID-PITCH-TIME-5"
+local MAGIC = "ACID-PITCH-TIME-1"
 local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}
 local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local MAX_ID = 2147483647
@@ -67,8 +67,8 @@ local function decode(raw)
       local key=tostring(draft_instrument)..":"..tostring(draft_phrase)
       if draft_instrument<1 or draft_phrase<0 or drafts[key] or not OUTPUT_POLICIES[draft_policy] or
           not valid_pb_range(draft_pb_range) or
-          not draft_pitch_length or draft_pitch_length<1 or draft_pitch_length>64 or
-          not draft_length or draft_length<1 or draft_length>64 or #draft_time~=64 then
+          not draft_pitch_length or draft_pitch_length<1 or draft_pitch_length>sequencer.MAX_STEPS or
+          not draft_length or draft_length<1 or draft_length>sequencer.MAX_STEPS or #draft_time~=sequencer.MAX_STEPS then
         return nil,"Invalid ACID draft header at line "..line_number
       end
       local pattern=sequencer.new_pattern(draft_length)
@@ -82,10 +82,10 @@ local function decode(raw)
         if not pitch then return nil,err end
         pattern.pitch_events[#pattern.pitch_events+1]=pitch
       end
-      if table.concat(normalized_tokens,",")~=draft_pitch_data or #pattern.pitch_events~=64 then
+      if table.concat(normalized_tokens,",")~=draft_pitch_data or #pattern.pitch_events~=sequencer.MAX_STEPS then
         return nil,"Invalid ACID draft pitch data at line "..line_number
       end
-      for step=1,64 do pattern.time_events[step]=draft_time:sub(step,step) end
+      for step=1,sequencer.MAX_STEPS do pattern.time_events[step]=draft_time:sub(step,step) end
       local ok,err=interpreter.compile_cycle(pattern)
       if not ok then return nil,"Invalid ACID draft source: "..err end
       local instrument_name=decode_text(draft_name)
@@ -100,8 +100,8 @@ local function decode(raw)
     id,pitch_length,length=tonumber(id),tonumber(pitch_length),tonumber(length)
     if not id or not valid_id(id) or entries[id] or not OUTPUT_POLICIES[output_policy] or
         not valid_pb_range(pb_range) or
-        not pitch_length or pitch_length<1 or pitch_length>64 or
-        not length or length<1 or length>64 or not time or #time~=64 then
+        not pitch_length or pitch_length<1 or pitch_length>sequencer.MAX_STEPS or
+        not length or length<1 or length>sequencer.MAX_STEPS or not time or #time~=sequencer.MAX_STEPS then
       return nil,"Invalid ACID snapshot header at line "..line_number
     end
     local pattern=sequencer.new_pattern(length)
@@ -118,8 +118,11 @@ local function decode(raw)
     if table.concat(normalized_tokens,",")~=pitch_data then
       return nil,"Invalid pitch separators at line "..line_number
     end
-    if #pattern.pitch_events~=64 then return nil,"ACID source must store exactly 64 pitches at line "..line_number end
-    for step=1,64 do pattern.time_events[step]=time:sub(step,step) end
+    if #pattern.pitch_events~=sequencer.MAX_STEPS then
+      return nil,string.format("ACID source must store exactly %d pitches at line %d",
+        sequencer.MAX_STEPS,line_number)
+    end
+    for step=1,sequencer.MAX_STEPS do pattern.time_events[step]=time:sub(step,step) end
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID source: "..err end
     entries[id]={pattern=pattern,output_policy=output_policy,pb_range=pb_range}
@@ -144,9 +147,9 @@ local function encode(entries,drafts)
     if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid phrase output policy" end
     if not valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
     local pitches={}
-    for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
+    for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     local time={}
-    for step=1,64 do time[step]=pattern.time_events[step] or "N" end
+    for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
     lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),pattern.timing_mode,
       tostring(pattern.pitch_length),tostring(pattern.length),
       table.concat(pitches,","),table.concat(time)},"|")
@@ -166,8 +169,8 @@ local function encode(entries,drafts)
     if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid ACID draft output policy" end
     if not valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
     local pitches,time={},{}
-    for index=1,64 do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
-    for step=1,64 do time[step]=pattern.time_events[step] or "N" end
+    for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
+    for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
     lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),
       item.output_policy,tostring(item.pb_range),pattern.timing_mode,
       tostring(pattern.pitch_length),tostring(pattern.length),

@@ -18,7 +18,7 @@ local function fixture(mode)
   end
   function script:render_to_pattern(options, done)
     self.renders = self.renders + 1
-    assert(options.lpb == 8)
+    assert(options.lpb == 16)
     self.done = done
     if mode == "refuse" then return false, "busy" end
     if mode == "throw" then error("native failure") end
@@ -27,7 +27,7 @@ local function fixture(mode)
     return true
   end
   local calls, rendering, result = 0, 0
-  local runner = runner_module.new(script, {lpb=8}, {
+  local runner = runner_module.new(script, {lpb=16}, {
     rendering=function()
       rendering=rendering+1
       if mode == "hook_error" then error("status callback failed") end

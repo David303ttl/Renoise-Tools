@@ -6,8 +6,8 @@ instrument phrases. The runtime targets Renoise 3.5, scripting API 6.2 and Lua
 
 ## Source and interpretation
 
-Canonical source contains 64 valid PITCH entries, 64 stored TIME commands, an
-active TIME length of 1–64 and an independent active PITCH span of 1–64.
+Canonical source contains 32 valid PITCH entries, 32 stored TIME commands, an
+active TIME length of 1–32 and an independent active PITCH span of 1–32.
 ACCENT and outgoing SLIDE belong to PITCH entries. Inactive stored entries are
 preserved. Editor view, output policy and target capabilities are separate from
 musical source and its ownership hash.
@@ -25,7 +25,7 @@ original TB-303 CPU cursor behavior and analog fidelity are not established.
 
 ## Editor and output
 
-Program and Grid edit the same source. Both reach all 64 positions. Selection,
+Program and Grid edit the same source. Both reach all 32 positions. Selection,
 view changes and Start/Repeating preview never edit source or queue regeneration.
 Fresh drafts have C pitches, NOTE commands, TIME length 16 and PITCH span 16.
 Reducing active length preserves hidden entries. Reset is explicit and undoable.
@@ -48,13 +48,19 @@ articulation. `model/control_signals.lua` expresses gate edges in 256 units per
 TIME step and includes the Repeat successor cycle. A fresh NOTE successor or
 Play Once tail releases at the final held-step midpoint. A REST successor
 releases at the REST boundary. A connected slide holds into its target.
+Articulation resolution is a timing-layout property threaded through gate,
+glide, legato, pitch-bend and validation planning, not a fixed module
+assumption.
 
 Sample glide commands are budgeted against available lines and releases.
 Plugin/MIDI routes use a periodic multi-column legato plan. A connected target
-NOTE precedes the delayed predecessor OFF by 1/256 phrase line. Same-pitch
-connections hold the existing voice. Source-step coloring preserves cold and
-steady Repeat seams with up to three note columns. Receiver mono/legato
-portamento supplies glide; sample 0G commands are not sent to these routes.
+NOTE at delay 0 precedes the delayed predecessor OFF by the explicit minimum
+positive note-column delay constant (1/256 phrase line). This is a per-event
+offset, bounded and quantized to host ticks, not sample-accurate and never
+cumulative step rounding. Same-pitch connections hold the existing voice.
+Source-step coloring preserves cold and steady Repeat seams with up to three
+note columns. Receiver mono/legato portamento supplies glide; sample 0G commands
+are not sent to these routes.
 The final validator checks every planned column and delayed OFF. Unrepresentable continuity,
 connected dynamics and target envelope limitations produce explicit sonic
 approximations. They never invalidate a legal musical source.
@@ -62,13 +68,17 @@ approximations. They never invalidate a legal musical source.
 PB Range is a phrase render setting, independent of canonical source and its
 hash. Off preserves the overlap route. An assumed ±2/±12/±24/±48 range requests
 channel-wide native M1 bends for a single held plugin/MIDI note. Connected
-transitions use a linear series at the existing two-lines-per-step phrase
-resolution and accumulate relative to that note anchor. Same-pitch connections
-hold without a retrigger; range overflow uses ordered
-notes with a nonfatal approximation. Release and unrelated attacks require
-center cleanup. The receiver range and isolated monophonic routing remain user
-configuration. Samples retain their automatic glide path; hybrid sample layers
-need separate playback observation.
+transitions use a linear series at the timing layout's phrase resolution and
+accumulate relative to that note anchor. Straight and triplet use four phrase
+lines per step at LPB 16 and 12. A 32-step Repeat phrase has 257 lines,
+including its empty exclusive-end sentinel, within the 512-line phrase limit.
+Same-pitch connections hold without a retrigger; range overflow uses ordered
+notes with a nonfatal approximation. A fresh NOTE uses delay 1 with a center
+reset only when the bend channel is not known centered; otherwise both attack
+and reset delay are 0. The 1/256-line ordering is per event and host-tick
+quantized, bounded, and not sample-accurate. The receiver range and isolated
+monophonic routing remain user configuration. Samples retain their automatic
+glide path; hybrid sample layers need separate playback observation.
 
 M1 uses `panning_string = "M1"` in the rightmost note column and a target
 instrument value. The first effect column carries two hexadecimal MIDI data
@@ -106,10 +116,9 @@ arrives. A missing callback therefore blocks new writes and requires restarting
 Renoise. Document release and tool unload detach observers and host references
 without treating an unfinished render as complete.
 
-`model/pattern_store.lua` stores the current `ACID-PITCH-TIME-5` source records and separate
-phrase output policy and PB Range in song-scoped tool data. `writers/phrase_ownership.lua`
-seals generated contents and loop properties. Only the current source and seal
-contracts are accepted.
+`model/pattern_store.lua` stores the current WIP `ACID-PITCH-TIME-1` source
+records and separate phrase output policy and PB Range in song-scoped tool data.
+`writers/phrase_ownership.lua` seals generated contents and loop properties.
 
 ## Live Edit and drafts
 

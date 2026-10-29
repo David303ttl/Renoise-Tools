@@ -24,20 +24,20 @@ function script:commit()
   idle:add_notifier(on_idle)
 end
 function script:render_to_pattern(opts, cb)
-  assert(opts.lpb == 8)
+  assert(opts.lpb == 16)
   local target = instrument and instrument.phrases[#instrument.phrases] or phrase
   local first_note=tonumber(self.paragraphs[1]:match("key = (%d+)"))
-  local notes = {[1]=first_note,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
-  for i=1,16 do
+  local notes = {[1]=first_note,[9]=39,[13]=120,[17]=43,[21]=41,[29]=120}
+  for i=1,32 do
     target.cells[i].note_value = notes[i] or 121
-    target.cells[i].volume_value = i==5 and 255 or (notes[i] and notes[i]<120 and 89 or 255)
+    target.cells[i].volume_value = i==9 and 255 or (notes[i] and notes[i]<120 and 89 or 255)
   end
   cb(nil, 8, 0)
 end
-phrase = {script=script,name="", number_of_lines=16,visible_note_columns=1,
-  loop_start=1,loop_end=16,instrument_column_visible=false,volume_column_visible=false,
+phrase = {script=script,name="", number_of_lines=32,visible_note_columns=1,
+  loop_start=1,loop_end=32,instrument_column_visible=false,volume_column_visible=false,
   panning_column_visible=false,delay_column_visible=false,cells={}}
-for i=1,16 do phrase.cells[i] = {note_value=121} end
+for i=1,32 do phrase.cells[i] = {note_value=121} end
 function phrase:line(i) return {note_columns={self.cells[i]}} end
 function phrase:column_is_muted() return false end
 function phrase:copy_from(other)
@@ -61,10 +61,10 @@ instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}},
 function instrument:insert_phrase_at(i)
   assert(i == #self.phrases+1)
   if i == 1 then self.phrases[1]=phrase; return phrase end
-  local temp = {script=script,name="",number_of_lines=16,visible_note_columns=1,
-    loop_start=1,loop_end=16,instrument_column_visible=false,volume_column_visible=false,
+  local temp = {script=script,name="",number_of_lines=32,visible_note_columns=1,
+    loop_start=1,loop_end=32,instrument_column_visible=false,volume_column_visible=false,
     panning_column_visible=false,delay_column_visible=false,cells={}}
-  for j=1,16 do temp.cells[j]={note_value=121} end
+  for j=1,32 do temp.cells[j]={note_value=121} end
   function temp:line(j)return {note_columns={self.cells[j]}}end
   function temp:column_is_muted()return false end
   function temp:copy_from(other)
@@ -132,8 +132,8 @@ assert(ok,err)
 idle:fire()
 idle:fire()
 idle:fire()
-assert(phrase.playback_mode==1 and phrase.lpb==8)
-assert(phrase.number_of_lines==16 and phrase.looping==false)
+assert(phrase.playback_mode==1 and phrase.lpb==16)
+assert(phrase.number_of_lines==32 and phrase.looping==false)
 assert(instrument.phrase_playback_mode==2 and instrument.phrase_program==7
   and instrument.phrase_editor_visible==false)
 assert_terminal_status("committed")
@@ -142,23 +142,23 @@ assert(message_text(messages[#messages]):find("4 notes, 4 OFF",1,true))
 local repeat_source=source_fixture()
 local repeat_plan,repeat_layout=assert(writer.plan_output(repeat_source,"repeat"))
 assert(repeat_plan.length==16 and repeat_layout.looping)
-assert(repeat_layout.loop_start==17 and repeat_layout.loop_end==33)
-assert(repeat_layout.number_of_lines==33)
+assert(repeat_layout.loop_start==33 and repeat_layout.loop_end==65)
+assert(repeat_layout.number_of_lines==65)
 assert(repeat_plan.steps[1].cycle==1 and repeat_plan.steps[9].cycle==2)
-for _,length in ipairs({1,16,17,32,33,48,49,64}) do
+for _,length in ipairs({1,16,17,32}) do
   local pattern=require("model.sequencer").new_pattern(length)
   for step=1,length do pattern.time_events[step]="N" end
   local physical,layout=assert(writer.plan_output(pattern,"repeat"))
   assert(physical.length==2*length)
-  assert(layout.looping and layout.loop_start==2*length+1)
-  assert(layout.loop_end==4*length+1 and layout.number_of_lines==4*length+1)
-  assert(layout.number_of_lines<=512)
+  assert(layout.looping and layout.loop_start==4*length+1)
+  assert(layout.loop_end==8*length+1 and layout.number_of_lines==8*length+1)
+  assert(layout.number_of_lines<=257)
   assert(physical.steps[physical.length].step==physical.length)
 end
 local before_repeat=#instrument.phrases
 local repeat_slide=require("model.sequencer").new_pattern(4)
 for i,command in ipairs({"N","T","N","R"}) do repeat_slide.time_events[i]=command end
-for i=1,64 do repeat_slide.pitch_events[i]=pitch(36+i%12) end
+for i=1,32 do repeat_slide.pitch_events[i]=pitch(36+i%12) end
 repeat_slide.pitch_events[1].slide=true
 local slide_plan,slide_layout=assert(writer.plan_output(repeat_slide,"repeat"))
 assert(slide_plan.loop and slide_layout.looping,
@@ -195,7 +195,7 @@ assert(messages[#messages].code=="transaction.render_pending")
 local overlapping,overlap_error=generate(function()end,delayed,1)
 assert(not overlapping and overlap_error.code=="transaction.busy")
 script.render_to_pattern=base_render
-base_render(script,{lpb=8},pending_render)
+base_render(script,{lpb=16},pending_render)
 assert(message_text(messages[#messages]):find("generated",1,true))
 assert(first.cells[1].note_value==37)
 local restored_source=source_fixture()
@@ -401,10 +401,10 @@ end
 local original_render=script.render_to_pattern
 function script:render_to_pattern(opts,cb)
   local target=instrument.phrases[#instrument.phrases]
-  local notes={36,121,121,121,44,121,36,121}
-  for line=1,8 do
-    target.cells[line]={note_value=notes[line],
-      volume_value=(line==1 or line==5 or line==7) and 89 or 255,
+  local notes={[1]=36,[9]=44,[13]=36}
+  for line=1,16 do
+    target.cells[line]={note_value=notes[line] or 121,
+      volume_value=(line==1 or line==9 or line==13) and 89 or 255,
       instrument_value=255,panning_value=255,delay_value=0,
       effect_number_value=0,effect_amount_value=0}
   end
@@ -420,11 +420,11 @@ assert(type(slide_status)=='table' and
   (slide_status.status=='committed' or slide_status.status=='approximate'),
   slide_status and slide_status.message)
 assert(slide_status.message:find("generated",1,true),slide_status.message)
-assert(slide_phrase.cells[5].effect_number_string=="0G",
+assert(slide_phrase.cells[9].effect_number_string=="0G",
   "sample slide must retain its native glide command")
-assert(slide_phrase.cells[5].effect_amount_value==128,
+assert(slide_phrase.cells[9].effect_amount_value==64,
   "glide rate must fit before the following midpoint release")
-assert(slide_phrase.cells[6].note_value==120,
+assert(slide_phrase.cells[11].note_value==120,
   "the glide continuation line is reserved for the midpoint OFF")
 local first_phrase=instrument.phrases[1]
 local first_note=first_phrase.cells[1].note_value
@@ -452,14 +452,14 @@ triplet_source.timing_mode="triplet"
 local triplet_status
 local triplet_target=#instrument.phrases+1
 local render_triplet=function(self,opts,cb)
-  assert(opts.lpb==6, "triplet script was rendered at the wrong LPB")
+  assert(opts.lpb==12, "triplet script was rendered at the wrong LPB")
   assert(self.paragraphs[1]:find('unit = "1/8"',1,true))
   assert(self.paragraphs[1]:find('resolution = 2/3',1,true))
   local target=instrument.phrases[#instrument.phrases]
-  local notes={[1]=36,[5]=39,[7]=120,[9]=43,[11]=41,[15]=120}
-  for line=1,16 do
+  local notes={[1]=36,[9]=39,[13]=120,[17]=43,[21]=41,[29]=120}
+  for line=1,32 do
     target.cells[line]={note_value=notes[line] or 121,
-      volume_value=line==5 and 255 or (notes[line] and notes[line]<120 and 89 or 255)}
+      volume_value=line==9 and 255 or (notes[line] and notes[line]<120 and 89 or 255)}
   end
   cb(nil,8,0)
 end
@@ -468,15 +468,15 @@ assert(generate(function(value)triplet_status=value end,triplet_source,triplet_t
 idle:fire();idle:fire();idle:fire()
 assert(triplet_status.status=='committed' or triplet_status.status=='approximate',triplet_status.message)
 local triplet_phrase=instrument.phrases[triplet_target]
-assert(triplet_phrase.lpb==6 and triplet_phrase.shuffle==0 and triplet_phrase.number_of_lines==16)
+assert(triplet_phrase.lpb==12 and triplet_phrase.shuffle==0 and triplet_phrase.number_of_lines==32)
 assert(store.load(song,triplet_phrase).timing_mode=='triplet')
 local triplet_store=song.tool_data
 local triplet_first=triplet_phrase.cells[1].note_value
 function script:render_to_pattern(opts,cb)
   return render_triplet(self,opts,function(...)
     local target=instrument.phrases[#instrument.phrases]
-    target.cells[5].note_value=121
-    target.cells[6].note_value=39
+     target.cells[9].note_value=121
+     target.cells[10].note_value=39
     cb(...)
   end)
 end
@@ -494,7 +494,7 @@ for _,field in ipairs({"note", "lpb", "shuffle"}) do
     copy(self,other)
     if other.name==writer.PHRASE_NAME then
       if field=="note" then self.cells[1].note_value=37
-      elseif field=="lpb" then self.lpb=8
+      elseif field=="lpb" then self.lpb=16
       else self.shuffle=1 end
     end
   end
@@ -506,7 +506,7 @@ for _,field in ipairs({"note", "lpb", "shuffle"}) do
     triplet_status.message)
   assert(instrument.phrases[triplet_target]==triplet_phrase and #instrument.phrases==triplet_target)
   assert(triplet_phrase.name==original_name and triplet_phrase.cells[1].note_value==triplet_first)
-  assert(triplet_phrase.lpb==6 and triplet_phrase.shuffle==0 and song.tool_data==triplet_store)
+  assert(triplet_phrase.lpb==12 and triplet_phrase.shuffle==0 and song.tool_data==triplet_store)
 end
 script.render_to_pattern=original_render
 -- Reported host limits are checked before replacing an owned destination.
