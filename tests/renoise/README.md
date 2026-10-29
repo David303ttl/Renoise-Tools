@@ -42,8 +42,9 @@ is bounded.
 
 The focused tests use mocked SocketServer and document observables. They verify
 transport behavior, not a real Renoise connection or host-side document load.
-The PowerShell runner and automated native smoke are still pending. Run the
-deterministic packaging and transport checks with:
+The PowerShell runner is implemented, but no real Renoise connection or automated
+native smoke has been recorded. Run the deterministic packaging and transport
+checks with:
 
 ~~~powershell
 pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
@@ -53,6 +54,55 @@ lua ./tests/renoise/remote_driver_spec.lua
 The packaging test compiles each generated `main.lua` with Lua 5.1 without
 executing the Renoise bootstrap. If `lua` is not Lua 5.1, pass the interpreter
 name with `-LuaCommand lua5.1`.
+
+## Interactive runner
+
+Run the developer-controlled PowerShell 7 runner from the repository root:
+
+```powershell
+pwsh -NoProfile -File ./scripts/run_interactive_tests.ps1
+pwsh -NoProfile -File ./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Scenario transport `
+  -RenoiseExe '<Renoise.exe path>' -ApproveDisposableSong -Install
+pwsh -NoProfile -File ./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native `
+  -RenoiseProcessId <pid> -ApproveDisposableSong -Install
+```
+
+The default suite is `Native`; `Keyboard` and `All` are accepted, and an
+optional local JSON `TestEnvironment` can provide `RenoiseExe` and keyboard
+mapping data. The runner discovers a registered Renoise installation when no
+executable is provided and validates the current user, interactive session,
+version-matched Tools directory, and selected process. It builds a fresh
+development bundle and refuses to install it unless `-Install` is present.
+`-ApproveDisposableSong` records the operator's confirmation that the open
+document is disposable. The current `transport` scenario authenticates, checks
+capabilities and runtime/API versions, then requests `document.new`. It waits
+for the driver's terminal response after the native new-document barrier and
+requires an advanced document epoch, an inventory whose instrument count matches
+readback, no phrases, stable read-only snapshots, and zero pending or queued
+commands. If a dirty-song
+prompt appears, handle it in Renoise yourself; the runner never chooses Save or
+Discard. An unresolved prompt times out, leaves an uncertain host state, and
+prevents automatic restoration while the driver may still be loaded.
+
+With no PID, the runner starts Renoise and requests a normal window close. If it
+does not exit within the bounded close period, the runner rechecks the exact
+launch identity and terminates only that runner-launched process. The selected
+disposable song approval applies to this cleanup. For an explicitly selected
+process, the runner never closes or terminates it. After the smoke, disable or
+reload the temporary ACID development tool when prompted. The runner verifies
+that the loopback listener has stopped before restoring the prior installation.
+If it cannot verify the process, driver shutdown, or unchanged installed files,
+it retains the restoration backup and returns nonzero. Run reports, development
+bundles, and any restoration backup remain under ignored `tmp/`; same-volume
+recovery folders remain beside the Renoise Tools target only if restoration
+cannot safely finish. Reports do not contain session tokens.
+
+`Keyboard` currently reports a skipped-with-reason result without installing or
+launching Renoise until the keyboard journeys are added. In `All`, its required
+skip keeps the overall result nonzero after the Native scenario runs. Setup
+failures, timeouts, host errors, changed snapshots, and incomplete cleanup also
+return nonzero. The runner does not equate a connected listener or an
+acknowledged queued command with a completed native operation.
 
 ## Pinned API 6.2 contract
 
@@ -82,7 +132,7 @@ request return or fixed delay.
 ## Host preflight and behavior spike
 
 Development tests use the current Windows desktop and an explicitly selected Renoise
-process, or a process started by the future runner. No dedicated account, VM, profile
+process, or a process started by the T0.4 runner. No dedicated account, VM, profile
 marker, fixed installation path or administrator provisioning is required. Start
 with a disposable song, not an unsaved working project. Local evidence records
 host observations; it is not a permission to modify tools or songs.

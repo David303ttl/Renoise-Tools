@@ -85,8 +85,8 @@ account, VM or special profile is required. Check the detected Renoise executabl
 version, current session and selected PID before host tests. Use a fresh disposable
 song; save or close working projects first. Never silently replace an existing
 ACID installation, rewrite the user's keymap or terminate an existing Renoise
-process. The future interactive runner will support both an explicitly selected
-PID and a process it launches itself.
+process. The T0.4 interactive runner supports both an explicitly selected PID
+and a process it launches itself.
 
 ```powershell
 pwsh -NoProfile -File ./scripts/test_host_preflight.ps1
@@ -94,10 +94,11 @@ lua tests/renoise/spike_tool_spec.lua
 ```
 
 These are synthetic checks, not native E2E. For the current real-host manual
-probe and live preflight invocation, see [Renoise test host](../tests/renoise/README.md).
-T0.3 adds a mocked transport test; the PowerShell runner and automated
-Native/Keyboard smoke remain pending T0.4–T0.8. Never count the manual behavior
-spike or mocked transport as an automated Renoise scenario pass.
+probe, live preflight invocation and T0.4 PowerShell runner, see [Renoise test
+host](../tests/renoise/README.md). The runner is implemented, but no automated
+Native smoke has been run against Renoise; Keyboard coverage remains pending
+T0.6. Never count the manual behavior spike or mocked transport as an automated
+Renoise scenario pass.
 
 Plain-Lua tests verify model logic and mocked API interactions. Actual playback,
 native phrase rendering, GUI behavior, undo and save/reload require Renoise.

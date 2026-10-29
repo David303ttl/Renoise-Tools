@@ -38,7 +38,9 @@ lua tests/renoise/spike_tool_spec.lua
 The live Windows preflight/spike requires an explicitly selected Renoise PID
 and a disposable song. It may run on the current desktop; a separate Windows
 account or VM is not required. Automated Native/Keyboard E2E remains pending
-until the T0 runner is implemented; manual observations are not automated passes.
+host acceptance. The T0.4 runner is implemented; its read-only smoke has not yet
+been run against an approved disposable Renoise session, and Keyboard coverage
+remains pending T0.6. Manual observations are not automated passes.
 
 For other manual checks, use a disposable song and follow the relevant guides:
 

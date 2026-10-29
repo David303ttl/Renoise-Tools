@@ -710,7 +710,7 @@ M4 remains open and Step 8 remains required.
 
 ### Step T0 — Establish automated real-Renoise verification before 2.2
 
-**Status:** T0.1–T0.3 are complete; T0.4–T0.8 and Gate T0 remain pending. T0.1–T0.3 checks are automated, but the transport checks use mocked Renoise APIs and are not an in-host E2E pass. Keep Steps 2.2–2.9 in order and all Step 3–8 acceptance obligations.
+**Status:** T0.1–T0.3 and the T0.4 runner implementation are complete; fresh-launch/existing-PID host acceptance, T0.5–T0.8 and Gate T0 remain pending. The transport adapter checks use mocked Renoise APIs and are not an in-host E2E pass. Keep Steps 2.2–2.9 in order and all Step 3–8 acceptance obligations.
 
 **Purpose:** make native Renoise API and keyboard E2E checks repeatable from PowerShell 7 on a developer's current Windows desktop. An existing Renoise process may be explicitly selected or a new process launched; a separate account or VM is optional, never required. Use disposable songs, native API readback, and independent assertions. Use keyboard input only where user interaction and focus matter; a harness smoke pass is not evidence that the legacy writer is safe.
 
@@ -814,6 +814,23 @@ native E2E and the PowerShell runner remain pending T0.4–T0.8.
 5. Emit per-scenario PASS/FAIL/ERROR/SKIP-with-reason, expected/actual diffs, host and tool versions, source commit, elapsed time, document epoch and operation trace. Keep artifacts in a run-specific temporary location (and on failure where configured). Exit 0 only if every required scenario passes; assertion failures, missing mandatory prerequisites, unexpected skips, crashes and timeouts return nonzero. Never convert an infrastructure error to a green suite.
 
 **Complete when:** fresh launch and explicit existing-PID runs work; invalid executable/PID, missing opt-in, startup timeout, crash, hung command, failure and disconnect produce nonzero status and safe cleanup. Existing songs, keymaps and developer-owned Renoise processes remain untouched unless their specific disposable test operations were approved.
+
+**T0.4 implementation result (2026-10-29):** `scripts/run_interactive_tests.ps1`
+and `tests/renoise/runner.psm1` provide executable discovery, safety
+preflight, disposable packaging, explicit install consent, verified backup and
+restore, exact-PID checks, authenticated loopback transport, observed
+new-document barriers, bounded command waits and run reports. Existing ACID
+replacement is gated by the preflight's repository-match check; uncertain
+selected-process state retains installation backups, and only a runner-launched
+process can be terminated. Keyboard-only requests report a required skip without
+launching or installing; `All` remains nonzero until Keyboard coverage exists.
+Local verification passed: PowerShell parsing and `git diff --check`, the dev
+package checks, the transport adapter spec, host-preflight checks, and all 47
+ACID specs. Read-only runner checks confirmed an unknown scenario and the
+unimplemented Keyboard suite return nonzero with per-run reports. No real
+Renoise process was attached, launched, or modified, so fresh-launch, explicit
+PID, timeout/crash, and host reset acceptance remain pending; this does not close
+T0.4's host acceptance gate or permit Step 2.2 to begin.
 
 #### T0.5 — Establish independent native fixtures, assertions and scenario isolation
 

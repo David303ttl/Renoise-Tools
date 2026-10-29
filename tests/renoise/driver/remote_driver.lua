@@ -564,7 +564,8 @@ end
 
 local function settle_transition(current)
   local transition = current.transition
-  if not transition or not transition.observed_epoch or transition.observed_epoch <= transition.expected_epoch then return end
+  if not transition or not transition.release_seen or not transition.observed_epoch or
+      transition.observed_epoch <= transition.expected_epoch then return end
   local record = transition.record
   if not record or record.done then
     clear_transition(current)
