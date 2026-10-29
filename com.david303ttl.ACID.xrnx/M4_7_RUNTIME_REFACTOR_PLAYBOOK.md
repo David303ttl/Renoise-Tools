@@ -783,6 +783,15 @@ runs, runtime implementation or normal tool use.
 - [x] Exercise controlled host timeout/disconnection and verify nonzero results,
   cleanup or retained recovery files, and preservation of unrelated instances.
 
+Second-pass runner review corrected reset/snapshot epoch validation and strict
+JSON success-envelope validation, with focused offline regressions. Fresh-launch
+Native smoke was rerun with successful driver shutdown and installation
+restoration; see the dated commands and report identifiers in
+[host verification](../tests/renoise/host_verification.md#runner-verification-rerun-2026-10-29).
+Earlier selected-instance/concurrency/interruption observations remain identified
+separately from this rerun. This closes runner review only; later native scenario
+and keyboard coverage remain pending below.
+
 #### T0.5 — Independent native fixtures and scenario isolation
 
 - [x] Read native inventory and selection positions; compare stable value snapshots.

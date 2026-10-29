@@ -266,6 +266,7 @@ try {
         if ($reset.operation -cne 'document.new' -or $reset.document_epoch -le $before.document_epoch) { throw 'New-document command did not return an advanced observed document epoch.' }
         Add-Trace -Operation 'document.new' -Status 'PASS' -Details @{ previous_epoch = $before.document_epoch; observed_epoch = $reset.document_epoch }
         $snapshotBefore = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+        $snapshotBeforeEpochMatches = $snapshotBefore.document_epoch -eq $reset.document_epoch
         $lastExpected = 'new document has self-consistent instrument/phrase inventory and no phrases'
         $lastActual = @{ instrument_count = $snapshotBefore.instrument_count; phrase_count = $snapshotBefore.phrase_count; document_epoch = $snapshotBefore.document_epoch }
         $reportedInstrumentCount = [int]$snapshotBefore.instrument_count
@@ -275,19 +276,21 @@ try {
         foreach ($instrument in @($snapshotBefore.instruments)) { $actualPhraseCount += @($instrument.phrases).Count }
         $selectionMatchesInventory = $snapshotBefore.selected_instrument_index -ge 1 -and $snapshotBefore.selected_instrument_index -le $actualInstrumentCount -and $snapshotBefore.selected_phrase_index -eq 0
         $inventoryDiff = @{
+            snapshot_epoch_matches_reset = $snapshotBeforeEpochMatches
             instrument_count_matches_inventory = ($reportedInstrumentCount -eq $actualInstrumentCount)
             phrase_count_matches_inventory = ($reportedPhraseCount -eq $actualPhraseCount)
             unexpected_phrases = ($actualPhraseCount -ne 0)
             selection_matches_inventory = $selectionMatchesInventory
         }
         $lastDiff = $inventoryDiff
-        if ($reportedInstrumentCount -ne $actualInstrumentCount -or $reportedPhraseCount -ne $actualPhraseCount -or $actualPhraseCount -ne 0 -or -not $selectionMatchesInventory) {
-            throw 'New document inventory did not match its native instrument/phrase inventory or contains unexpected phrases.'
+        if (-not $snapshotBeforeEpochMatches -or $reportedInstrumentCount -ne $actualInstrumentCount -or $reportedPhraseCount -ne $actualPhraseCount -or $actualPhraseCount -ne 0 -or -not $selectionMatchesInventory) {
+            throw 'New document snapshot epoch or inventory did not match the observed reset state.'
         }
         $snapshotBeforeJson = $snapshotBefore | ConvertTo-Json -Depth 20 -Compress
         $snapshotBeforeJson | Set-Content -LiteralPath (Join-Path $artifactRoot 'snapshot-before.json') -Encoding utf8NoBOM
         $snapshotBeforeHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($snapshotBeforeJson))).ToLowerInvariant()
         $snapshotAfter = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+        $snapshotAfterEpochMatches = $snapshotAfter.document_epoch -eq $reset.document_epoch
         $snapshotAfterJson = $snapshotAfter | ConvertTo-Json -Depth 20 -Compress
         $snapshotAfterJson | Set-Content -LiteralPath (Join-Path $artifactRoot 'snapshot-after.json') -Encoding utf8NoBOM
         $snapshotAfterHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($snapshotAfterJson))).ToLowerInvariant()
@@ -296,6 +299,8 @@ try {
         $lastActual = @{ before_sha256 = $snapshotBeforeHash; after_sha256 = $snapshotAfterHash; before_epoch = $before.document_epoch; after_epoch = $after.document_epoch; pending = $after.pending_commands; queued = $after.queued_commands; transition_uncertain = $after.document_transition_uncertain }
         $lastDiff = @{
             snapshot_changed = ($snapshotBeforeHash -cne $snapshotAfterHash)
+            before_snapshot_epoch_matches_reset = $snapshotBeforeEpochMatches
+            after_snapshot_epoch_matches_reset = $snapshotAfterEpochMatches
             epoch_changed = ($after.document_epoch -ne $reset.document_epoch)
             pending = $after.pending_commands
             queued = $after.queued_commands
@@ -306,7 +311,7 @@ try {
             selection_matches_inventory = $inventoryDiff.selection_matches_inventory
         }
         $lastExpected = 'New document release/new epoch observed; consistent instrument inventory, zero phrases, stable snapshots, and zero pending commands'
-        if ($snapshotBeforeHash -cne $snapshotAfterHash -or $after.document_epoch -ne $reset.document_epoch -or
+        if (-not $snapshotBeforeEpochMatches -or -not $snapshotAfterEpochMatches -or $snapshotBeforeHash -cne $snapshotAfterHash -or $after.document_epoch -ne $reset.document_epoch -or
             $after.pending_commands -ne 0 -or $after.queued_commands -ne 0 -or $after.document_transition_uncertain) {
             throw 'Reset document snapshot or diagnostics did not match the expected settled state.'
         }

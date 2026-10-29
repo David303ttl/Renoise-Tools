@@ -7,7 +7,7 @@ function Reject([scriptblock]$Action, [string]$Pattern) {
     throw "Expected rejection: $Pattern"
 }
 # A separate runspace supplies real fragmented TCP responses without Renoise.
-foreach ($mode in @('valid','wrong','invalid','lost','timeout','shutdown','shutdown-missing')) {
+foreach ($mode in @('valid','wrong','invalid','string-ok','numeric-ok','missing-ok','missing-result','false-missing-error','lost','timeout','shutdown','shutdown-missing')) {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $listener.Start()
     $client = Connect-RenoiseDriver -Session ([pscustomobject]@{Port=$listener.LocalEndpoint.Port}) -TimeoutSeconds 2 -ProcessCheck {}
@@ -24,7 +24,11 @@ foreach ($mode in @('valid','wrong','invalid','lost','timeout','shutdown','shutd
         if ($Mode -eq 'timeout') { Start-Sleep -Seconds 2; return }
         $id = if ($Mode -eq 'wrong') { 'wrong' } else { $request.id }
         $result = if ($Mode -like 'shutdown*') { @{shutdown_requested=$true} } else { @{value=42} }
-        $line = if ($Mode -eq 'invalid') { "bad-json`n" } else { (@{id=$id;ok=$true;result=$result} | ConvertTo-Json -Compress) + "`n" }
+        $ok = if ($Mode -eq 'string-ok') { 'true' } elseif ($Mode -eq 'numeric-ok') { 1 } elseif ($Mode -eq 'false-missing-error') { $false } else { $true }
+        $envelope = @{id=$id;ok=$ok;result=$result}
+        if ($Mode -eq 'missing-ok') { $envelope.Remove('ok') }
+        if ($Mode -eq 'missing-result') { $envelope.Remove('result') }
+        $line = if ($Mode -eq 'invalid') { "bad-json`n" } else { ($envelope | ConvertTo-Json -Compress) + "`n" }
         foreach ($byte in [Text.Encoding]::UTF8.GetBytes($line)) { $stream.WriteByte($byte); $stream.Flush(); Start-Sleep -Milliseconds 2 }
         if ($Mode -eq 'shutdown') { [IO.File]::WriteAllText($SessionPath + '.' + $Nonce + '.stopped', $Nonce) }
     }).AddArgument($peer).AddArgument($mode).AddArgument($sessionPath).AddArgument($session.Nonce)
@@ -39,12 +43,27 @@ foreach ($mode in @('valid','wrong','invalid','lost','timeout','shutdown','shutd
             Reject { Stop-RenoiseDriver -Client $client -Session $session -SessionPath $sessionPath -TimeoutSeconds 5 -ProcessCheck {} } 'finish shutdown'
         }
         elseif ($mode -eq 'valid') { Assert ((& $action).value -eq 42) 'fragmented response failed' }
-        else { Reject $action (@{wrong='unexpected request ID';invalid='JSON';lost='closed the transport';timeout='Timed out'}[$mode]) }
+        else { Reject $action (@{wrong='unexpected request ID';invalid='JSON';'string-ok'='invalid response envelope';'numeric-ok'='invalid response envelope';'missing-ok'='invalid response envelope';'missing-result'='invalid response envelope';'false-missing-error'='invalid response envelope';lost='closed the transport';timeout='Timed out'}[$mode]) }
         $identity = [pscustomobject]@{Id=123;StartTimeUtc=[datetime]::UtcNow}
         Assert-RenoiseListenerOwner -Client $client -Identity $identity -CheckIdentity {} -GetListeners { param($Port) [pscustomobject]@{LocalAddress='127.0.0.1';OwningProcess=123} }
         Reject { Assert-RenoiseListenerOwner -Client $client -Identity $identity -CheckIdentity {} -GetListeners { [pscustomobject]@{LocalAddress='127.0.0.1';OwningProcess=456} } } 'ownership'
     } finally { $client.Dispose(); $listener.Stop(); $worker.EndInvoke($pending); $worker.Dispose(); $peer.Dispose() }
 }
+$closedListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$closedListener.Start()
+$closedPort = $closedListener.LocalEndpoint.Port
+$closedListener.Stop()
+$checkCounter = [pscustomobject]@{ Count = 0 }
+Reject { Connect-RenoiseDriver -Session ([pscustomobject]@{Port=$closedPort}) -TimeoutSeconds 1 -ProcessCheck { $checkCounter.Count++ } } 'Timed out.*loopback listener'
+Assert ($checkCounter.Count -gt 0) 'startup retry did not revalidate the selected Renoise process'
+$guardListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$guardListener.Start()
+$guardClient = Connect-RenoiseDriver -Session ([pscustomobject]@{Port=$guardListener.LocalEndpoint.Port}) -TimeoutSeconds 2 -ProcessCheck {}
+$guardPeer = $guardListener.AcceptTcpClient()
+try {
+    Reject { Invoke-RenoiseDriverRequest -Client $guardClient -Session ([pscustomobject]@{Token='test'}) -Operation ping -Arguments @{} -TimeoutSeconds 2 -ProcessCheck { throw 'identity changed' } } 'identity changed'
+    Assert (-not $guardPeer.GetStream().DataAvailable) 'request bytes were sent after process identity validation failed'
+} finally { $guardClient.Dispose(); $guardPeer.Dispose(); $guardListener.Stop() }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('runner-spec-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $root | Out-Null
 function Add-Trace { param($Operation,$Status,$Details) }

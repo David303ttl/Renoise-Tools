@@ -91,6 +91,7 @@ function Invoke-RenoiseDriverRequest {
         [Parameter(Mandatory)][int]$TimeoutSeconds,
         [Parameter(Mandatory)][scriptblock]$ProcessCheck
     )
+    & $ProcessCheck
     $stream = $Client.GetStream()
     $requestId = 'ps-' + [guid]::NewGuid().ToString('N')
     $request = [ordered]@{ id = $requestId; op = $Operation; args = $Arguments; token = $Session.Token } | ConvertTo-Json -Depth 8 -Compress
@@ -110,8 +111,16 @@ function Invoke-RenoiseDriverRequest {
             if ($buffer[$index] -eq 10) {
                 $line = [Text.UTF8Encoding]::new($false, $true).GetString($responseBytes.ToArray()).TrimEnd("`r")
                 $response = $line | ConvertFrom-Json -Depth 16
-                if ([string]$response.id -cne $requestId) { throw 'Renoise returned a response for an unexpected request ID.' }
-                if ($response.ok -ne $true) {
+                if ($null -eq $response -or $response -is [array] -or
+                    -not $response.PSObject.Properties['id'] -or $response.id -isnot [string] -or
+                    -not $response.PSObject.Properties['ok'] -or $response.ok -isnot [bool]) {
+                    throw 'Renoise returned an invalid response envelope.'
+                }
+                if ($response.id -cne $requestId) { throw 'Renoise returned a response for an unexpected request ID.' }
+                if ($response.ok) {
+                    if (-not $response.PSObject.Properties['result']) { throw 'Renoise returned an invalid response envelope.' }
+                } else {
+                    if (-not $response.PSObject.Properties['error']) { throw 'Renoise returned an invalid response envelope.' }
                     $code = if ($response.error.code) { [string]$response.error.code } else { 'host_error' }
                     throw "Renoise command '$Operation' failed ($code): $($response.error.message)"
                 }
