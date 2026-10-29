@@ -1,4 +1,8 @@
 #Requires -Version 7.0
+[CmdletBinding()]
+param(
+  [string] $LuaCommand = 'lua'
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
@@ -15,6 +19,11 @@ $testRoot = Join-Path $repoTempRoot ('renoise-package-dev-spec-日本語-' + [gu
 $sourceToolName = 'com.david303ttl.ACID.xrnx'
 $runtimeExtensions = @('.lua', '.xml', '.txt', '.json', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.wav', '.aif', '.aiff', '.flac', '.ogg', '.bin')
 $bootstrapMarker = '-- ACID development bootstrap'
+$luaCommandInfo = Get-Command -Name $LuaCommand -ErrorAction Stop
+$luaVersion = (& $luaCommandInfo.Source -v 2>&1 | Out-String).Trim()
+if ($luaVersion -notmatch 'Lua 5\.1(?:\.|\s)') {
+  throw "Lua 5.1 is required to check generated entrypoint syntax. '$LuaCommand' reported: $luaVersion"
+}
 
 function Assert-True {
   param([bool] $Condition, [string] $Message)
@@ -56,6 +65,29 @@ function Invoke-PackageDev {
   return [pscustomobject]@{ ExitCode = $exitCode; Output = ($output | Out-String) }
 }
 
+function Assert-Lua51Syntax {
+  param([string] $MainPath, [string] $Context)
+  $previousLocation = Get-Location
+  try {
+    Set-Location -LiteralPath (Split-Path -Parent $MainPath)
+    $checker = @'
+local chunk, compile_error = loadfile("main.lua")
+if not chunk then
+  io.stderr:write(compile_error, "\n")
+  os.exit(1)
+end
+'@
+    $output = @($checker | & $luaCommandInfo.Source - 2>&1)
+    $exitCode = $LASTEXITCODE
+  }
+  finally {
+    Set-Location $previousLocation
+  }
+  if ($exitCode -ne 0) {
+    throw "$Context failed Lua 5.1 syntax validation:$([string][char]10)$($output | Out-String)"
+  }
+}
+
 function New-FixtureRepository {
   param([string] $Root)
   $sourceToolName = 'com.david303ttl.ACID.xrnx'
@@ -87,7 +119,7 @@ function New-FixtureRepository {
 </RenoiseScriptingTool>
 '@
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'manifest.xml'), $manifest, [System.Text.UTF8Encoding]::new($false))
-  [System.IO.File]::WriteAllText((Join-Path $toolRoot 'main.lua'), [string]::Join([string][char]10, @('-- fixture entrypoint', 'return true', '')), [System.Text.UTF8Encoding]::new($false))
+  [System.IO.File]::WriteAllText((Join-Path $toolRoot 'main.lua'), [string]::Join([string][char]10, @('-- fixture entrypoint', 'local fixture_entrypoint = true', '')), [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'LICENSE'), 'Fixture license text', [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'model/compiler.lua'), 'return {compile = function() return true end}', [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'data/settings.json'), '{"schema":1,"enabled":true}', [System.Text.UTF8Encoding]::new($false))
@@ -165,6 +197,60 @@ function Remove-TestRoot {
   Remove-Item -LiteralPath $resolved -Recurse -Force
 }
 
+function Remove-RepositoryTempOutput {
+  param([string] $Path)
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  $resolved = [System.IO.Path]::GetFullPath($Path)
+  if (-not $resolved.StartsWith($repoTempPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Integration cleanup path '$resolved' is outside repository tmp/."
+  }
+  if (((Get-Item -LiteralPath $resolved -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw 'Integration cleanup target became a reparse point.'
+  }
+  Remove-Item -LiteralPath $resolved -Recurse -Force
+}
+
+function Test-RealDevelopmentBundle {
+  $outputRelative = 'tmp/acid-dev-integration-' + [guid]::NewGuid().ToString('N')
+  $outputPath = Join-Path $repoRoot $outputRelative
+  try {
+    $result = Invoke-PackageDev -FixtureRoot $repoRoot -OutputPath $outputRelative
+    if ($result.ExitCode -ne 0) { throw "Real ACID development bundle build failed:$([string][char]10)$($result.Output)" }
+
+    $devTool = Join-Path $outputPath $sourceToolName
+    $sessionPath = Join-Path $outputPath 'acid-test-session.conf'
+    Assert-True (Test-Path -LiteralPath $devTool -PathType Container) 'Real ACID development tool folder is missing.'
+    Assert-True (Test-Path -LiteralPath $sessionPath -PathType Leaf) 'Real ACID development session file is missing.'
+
+    $toolRoot = Join-Path $repoRoot $sourceToolName
+    $sourceFiles = @(Get-ChildItem -LiteralPath $toolRoot -File -Recurse | Where-Object {
+      $_.Extension.ToLowerInvariant() -in $runtimeExtensions -or $_.Name -eq 'LICENSE'
+    })
+    $expectedPaths = @($sourceFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
+    $expectedPaths += '__dev/remote_driver.lua'
+    $actualPaths = @(Get-ChildItem -LiteralPath $devTool -File -Recurse | ForEach-Object {
+      Get-RelativePath -Root $devTool -Path $_.FullName
+    } | Sort-Object)
+    $expectedPaths = @($expectedPaths | Sort-Object)
+    Assert-True (($actualPaths -join '|') -ceq ($expectedPaths -join '|')) 'Real ACID development bundle has an unexpected or missing payload file.'
+
+    $mainSource = Join-Path $toolRoot 'main.lua'
+    $mainDev = Join-Path $devTool 'main.lua'
+    $sourceBytes = [System.IO.File]::ReadAllBytes($mainSource)
+    $devBytes = [System.IO.File]::ReadAllBytes($mainDev)
+    Assert-True ($devBytes.Length -gt $sourceBytes.Length) 'Real ACID development entrypoint has no appended bootstrap.'
+    for ($index = 0; $index -lt $sourceBytes.Length; $index++) {
+      Assert-True ($devBytes[$index] -eq $sourceBytes[$index]) 'Real ACID production entrypoint bytes changed in the development bundle.'
+    }
+    $mainText = [System.Text.Encoding]::UTF8.GetString($devBytes)
+    Assert-True (([regex]::Matches($mainText, [regex]::Escape($bootstrapMarker))).Count -eq 1) 'Real ACID development bootstrap is missing or duplicated.'
+    Assert-Lua51Syntax -MainPath $mainDev -Context 'Real ACID development entrypoint'
+  }
+  finally {
+    Remove-RepositoryTempOutput -Path $outputPath
+  }
+}
+
 if (-not (Test-Path -LiteralPath $repoTempRoot -PathType Container)) {
   New-Item -ItemType Directory -Path $repoTempRoot | Out-Null
 }
@@ -240,6 +326,7 @@ try {
   ))
   Assert-True ($bootstrapText -ceq $expectedBootstrap) 'Development bootstrap contains unexpected or machine-specific data.'
   Assert-True (-not $bootstrapText.Contains($devOutputOne)) 'Development bootstrap contains its temporary output path.'
+  Assert-Lua51Syntax -MainPath $mainDevPath -Context 'Synthetic development entrypoint'
 
   foreach ($file in $sourcePayloadFiles) {
     $relative = Get-RelativePath -Root $toolRoot -Path $file.FullName
@@ -357,7 +444,9 @@ try {
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $archiveRepo $archiveOutputRelative))) "$variant archive left a development output behind."
   }
 
-  Write-Output 'Development package checks passed: release exclusion, dev payload hashes, session ACL, bootstrap, Unicode paths, port availability, output path rejection, repeat builds and archive rejection cases.'
+  Test-RealDevelopmentBundle
+
+  Write-Output 'Development package checks passed: release exclusion, dev payload hashes, session ACL, Lua 5.1 entrypoint syntax, real ACID integration build, bootstrap, Unicode paths, port availability, output path rejection, repeat builds and archive rejection cases.'
 }
 finally {
   Remove-TestRoot

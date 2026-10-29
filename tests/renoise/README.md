@@ -36,6 +36,10 @@ pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
 lua ./tests/renoise/remote_driver_spec.lua
 ~~~
 
+The packaging test compiles each generated `main.lua` with Lua 5.1 without
+executing the Renoise bootstrap. If `lua` is not Lua 5.1, pass the interpreter
+name with `-LuaCommand lua5.1`.
+
 ## Pinned API 6.2 contract
 
 These signatures come from `sdk/renoise-api-6.2/definitions/` and the matching
