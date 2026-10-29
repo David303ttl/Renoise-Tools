@@ -27,11 +27,11 @@ request return or fixed delay.
 
 ## Host preflight and behavior spike
 
-Development tests use the current desktop and an explicitly selected Renoise
-process, starting with a fresh disposable song. A separate Windows account,
-administrator provisioning, and protected profile markers are not prerequisites.
-Local evidence records reproducible observations; it is not a security credential
-and does not prove account isolation.
+Development tests use the current Windows desktop and an explicitly selected Renoise
+process, or a process started by the future runner. No dedicated account, VM, profile
+marker, fixed installation path or administrator provisioning is required. Start
+with a disposable song, not an unsaved working project. Local evidence records
+host observations; it is not a permission to modify tools or songs.
 
 `host_preflight.psm1` exports `Test-RenoiseHostPreflight`. It reads the current
 Windows identity, session, desktop, APPDATA, executable metadata, and Renoise
@@ -40,9 +40,12 @@ executable, owner, session, start time, and profile paths. It never launches,
 attaches to, or terminates Renoise. Execution mode requires a local evidence JSON
 whose raw trace and source hashes match the current environment and selected PID.
 The evidence stores observations and context, not caller-supplied verification
-booleans.
+booleans. `Safety` performs non-destructive checks; `Execution` validates local
+host evidence. Neither mode implicitly authorizes installing/replacing ACID,
+changing a developer's working song, or terminating an existing Renoise process.
 
-The standalone probe in `spike_tool/` has no ACID runtime dependency. Copy its
+The standalone probe in `spike_tool/` has no ACID runtime dependency and is a
+manual diagnostic, not an automated E2E suite. Copy its
 contents into a separate tool directory named
 `com.david303ttl.RenoiseTestHostSpike.xrnx` beneath the current profile's
 `Scripts\Tools`. Invoke **Tools → Renoise Test Host Spike → Initialize log and
@@ -142,6 +145,9 @@ Run the separate Windows integration checks against the selected process:
 lua tests/renoise/spike_tool_spec.lua
 ```
 
-`InstallReplacementAuthorized` is separate from behavioral execution approval.
-An existing ACID installation that differs from the repository bundle cannot be
-replaced by this preflight. The standalone spike does not modify ACID.
+`InstallReplacementAuthorized` is a preflight compatibility result, not consent
+to install. A runner must obtain explicit developer approval before changing an
+existing ACID installation and preserve any existing files for restoration.
+An existing ACID installation that differs from the repository bundle cannot
+be replaced by the current preflight. A selected existing Renoise process must
+never be killed by the runner. The standalone spike does not modify ACID.

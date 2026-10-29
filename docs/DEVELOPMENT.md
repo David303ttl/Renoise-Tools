@@ -75,8 +75,28 @@ or local workspace locations.
    ```
 
 5. Install the archive from `dist/` into Renoise, or use the tool's documented
-   development installation. Perform the relevant [manual checks](../tests/README.md)
+   development installation. Perform the relevant [Renoise checks](../tests/README.md)
    in a disposable song.
 
+## Real Renoise testing
+
+Use the current Windows desktop and Renoise installation. No dedicated test
+account, VM or special profile is required. Check the detected Renoise executable,
+version, current session and selected PID before host tests. Use a fresh disposable
+song; save or close working projects first. Never silently replace an existing
+ACID installation, rewrite the user's keymap or terminate an existing Renoise
+process. The future interactive runner will support both an explicitly selected
+PID and a process it launches itself.
+
+```powershell
+pwsh -NoProfile -File ./scripts/test_host_preflight.ps1
+lua tests/renoise/spike_tool_spec.lua
+```
+
+These are synthetic checks, not native E2E. For the current real-host manual
+probe and live preflight invocation, see [Renoise test host](../tests/renoise/README.md).
+Automated Native/Keyboard smoke remains pending T0.2–T0.8; never count the
+manual behavior spike as an automated scenario pass.
+
 Plain-Lua tests verify model logic and mocked API interactions. Actual playback,
-native phrase rendering, GUI behavior, undo, and save/reload require Renoise.
+native phrase rendering, GUI behavior, undo and save/reload require Renoise.
