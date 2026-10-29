@@ -4,6 +4,7 @@
 local M = {}
 local ownership=require("renoise.phrase_ownership")
 local planner=require("model.output_planner")
+local policies=require("model.policies")
 local store=require("renoise.pattern_store")
 local EMPTY, OFF = 121, 120
 
@@ -276,7 +277,7 @@ local function compatibility(phrase,committed,capabilities,capacities,options)
   end
   if type(capacities)~="table" or getmetatable(capacities)~=nil then return nil,"Invalid native capacities" end
   if type(committed)~="table" or
-      (committed.output_policy~="repeat" and committed.output_policy~="play_once") or
+      not policies.valid_output_policy(committed.output_policy) or
       type(committed.pb_range)~="number" then return nil,"Invalid committed source settings" end
   local baseline,snapshot_error=ownership.snapshot(phrase)
   if not baseline then return nil,snapshot_error end

@@ -1,12 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Resolve complete TIME traversals without relying on Renoise playback.
 local sequencer = require("model.sequencer")
+local policies = require("model.policies")
 local M = { MAX_CYCLES = 128 }
 
-local function integer(value, minimum, maximum)
-  return type(value) == "number" and value % 1 == 0 and
-    value >= minimum and value <= maximum
-end
+local integer = policies.in_integer_range
 
 local function copy_voice(voice)
   if not voice then return nil end
@@ -24,7 +22,7 @@ local function validate(pattern)
   if #pattern.time_events < pattern.length then
     return nil, "time memory must have one N/T/R value per active step"
   end
-  if pattern.time_events[1] == "T" then
+  if sequencer.is_leading_tie(1, pattern.time_events[1]) then
     return nil, "leading TIE must be entered as NOTE"
   end
   for _, command in ipairs(pattern.time_events) do
@@ -54,15 +52,6 @@ local function validate_state(state)
     if key==nil then return nil,"invalid cycle voice: "..octave_or_error end
   end
   return true
-end
-
-function M.normalize_time_entry(step, command)
-  if not integer(step, 1, sequencer.MAX_STEPS) then return nil, "invalid time step" end
-  if command ~= "N" and command ~= "T" and command ~= "R" then
-    return nil, "invalid timing command"
-  end
-  if step == 1 and command == "T" then return "N" end
-  return command
 end
 
 local function run_cycle(pattern, state)

@@ -57,6 +57,19 @@ local extended=sequencer.new_pattern(32)
 assert(extended.pitch_length==16 and sequencer.validate(extended))
 assert(sequencer.set_pitch_length(extended,3))
 local source=sequencer.new_pattern(16)
+for step=1,sequencer.MAX_STEPS do
+  assert(sequencer.is_leading_tie(step,"T")==(step==1))
+  for _,command in ipairs({"N","T","R"}) do
+    assert(sequencer.normalize_time_entry(step,command)==
+      (step==1 and command=="T" and "N" or command))
+  end
+end
+assert(not sequencer.normalize_time_entry(0,"N"))
+assert(not sequencer.normalize_time_entry(1.5,"N"))
+assert(not sequencer.normalize_time_entry(0/0,"N"))
+source.time_events[1]="T"
+local leading_ok,leading_error=sequencer.validate(source)
+assert(not leading_ok and leading_error=="leading TIE must be entered as NOTE")
 assert(sequencer.set_time(source,1,"T")=="N")
 assert(source.time_events[1]=="N")
 assert(not sequencer.set_time(source,17,"N"))

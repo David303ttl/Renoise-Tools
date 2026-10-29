@@ -4,6 +4,18 @@ local editor=require("model.editor_state")
 local interpreter=require("model.cycle_interpreter")
 local pattrns=require("writers.pattrns_writer")
 
+assert(editor.MAX_PAGES==seq.MAX_STEPS/seq.PAGE_SIZE)
+for index=1,seq.MAX_STEPS do
+  local page=editor.page_for(index)
+  local cell=(index-1)%seq.PAGE_SIZE+1
+  assert(editor.index_on_page(page,cell)==index)
+end
+for _,invalid in ipairs({0,seq.MAX_STEPS+1,1.5,0/0}) do
+  assert(not pcall(editor.page_for,invalid))
+end
+assert(not pcall(editor.index_on_page,editor.MAX_PAGES+1,1))
+assert(not pcall(editor.index_on_page,1,seq.PAGE_SIZE+1))
+
 local history_source=seq.new_pattern(16)
 local history=editor.new_history(history_source,"repeat",0)
 history_source.pitch_events[1]=seq.new_pitch(4,1,true,true)

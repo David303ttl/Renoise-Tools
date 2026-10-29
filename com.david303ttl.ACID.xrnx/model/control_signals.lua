@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Physical gate edges in 256 subdivisions per sequencer step.
 local compiler=require("model.cycle_interpreter")
+local policies=require("model.policies")
 -- Articulation timeline units are independent of phrase-line resolution.
 local M={UNITS_PER_STEP=256,DEFAULT_GATE_FRACTION=0.5}
 local UNITS_PER_STEP=M.UNITS_PER_STEP
@@ -18,8 +19,8 @@ function M.compile(pattern,options)
   if type(fraction)~="number" or fraction<=0 or fraction>=1 or fraction~=fraction then
     return nil,"gate_fraction must be between 0 and 1"
   end
-  local output_policy=options.output_policy or "repeat"
-  if output_policy~="repeat" and output_policy~="play_once" then
+  local output_policy=options.output_policy or policies.DEFAULT_OUTPUT_POLICY
+  if not policies.valid_output_policy(output_policy) then
     return nil,"output_policy must be repeat or play_once"
   end
   local plan,successor=options.plan,options.successor

@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Object-local drafts with verified baselines and detached session recovery.
+local policies=require("model.policies")
 local sequencer=require("model.sequencer")
 local store=require("renoise.pattern_store")
 local ownership=require("renoise.phrase_ownership")
@@ -10,7 +11,6 @@ local M={}
 local NEW={}
 local sessions=setmetatable({},{__mode="k"})
 local captures=setmetatable({},{__mode="k"})
-local PB_RANGES={[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local serial=0
 local function next_token() serial=serial+1;return serial end
 local function object(value,class)
@@ -90,11 +90,11 @@ local function proof(song,instrument,phrase,options)
       settings=result.settings,snapshot=result.baseline,planning_inputs=result.planning_inputs})
   end)
   if not readable then return nil,"Cannot inspect verified draft baseline" end
-  if not baseline or type(baseline.id)~="number" or baseline.id%1~=0 or baseline.id<1 or
+  if not baseline or not policies.is_integer(baseline.id) or baseline.id<1 or
       type(baseline.settings)~="table" or type(baseline.snapshot)~="table" or
       type(baseline.planning_inputs)~="table" or
-      (baseline.settings.output_policy~="repeat" and baseline.settings.output_policy~="play_once") or
-      not PB_RANGES[baseline.settings.pb_range] then
+      not policies.valid_output_policy(baseline.settings.output_policy) or
+      not policies.valid_pb_range(baseline.settings.pb_range) then
     return nil,baseline_error or "Incomplete verified draft baseline"
   end
   return baseline
@@ -149,10 +149,10 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   if not options_valid then return nil,options_error end
   local source,err=sequencer.copy_source(pattern)
   if not source then return nil,err end
-  output_policy=output_policy or "repeat"
-  pb_range=pb_range==nil and 0 or pb_range
-  if output_policy~="repeat" and output_policy~="play_once" then return nil,"invalid phrase output policy" end
-  if type(pb_range)~="number" or not PB_RANGES[pb_range] then
+  output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+  pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
+  if not policies.valid_output_policy(output_policy) then return nil,"invalid phrase output policy" end
+  if not policies.valid_pb_range(pb_range) then
     return nil,"invalid PB range"
   end
   local verified,validation_error=baseline(song,instrument,phrase,options)

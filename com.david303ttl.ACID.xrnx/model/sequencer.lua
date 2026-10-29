@@ -1,15 +1,14 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- ACID pitch/time memory. Drafts can be partially entered.
 -- Pitch and time memories have independent contents and 32-slot capacity.
+local policies = require("model.policies")
 local M = {}
 M.MAX_STEPS = 32
 M.PAGE_SIZE = 16
 M.BASE_NOTE = 36 -- C-3 in Renoise
 local SOURCE_FIELDS={length=true,pitch_length=true,timing_mode=true,pitch_events=true,time_events=true}
 
-local function integer_between(v, a, b)
-  return type(v) == "number" and v % 1 == 0 and v >= a and v <= b
-end
+local integer_between = policies.in_integer_range
 
 local function array_size(a)
   if type(a) ~= "table" then return nil end
@@ -25,7 +24,7 @@ end
 
 function M.new_pattern(length,...)
   assert(select("#",...)==0,"new_pattern accepts only LAST STEP")
-  length = length or 16
+  length = length or M.PAGE_SIZE
   assert(integer_between(length, 1, M.MAX_STEPS), "length must be 1..32")
   -- PITCH and TIME memories are fixed-capacity; LAST STEP selects the active
   -- TIME prefix. Untouched PITCH positions play C with no ACCENT or SLIDE.
@@ -35,7 +34,7 @@ function M.new_pattern(length,...)
   end
   local time_events = {}
   for i=1,M.MAX_STEPS do time_events[i] = "N" end
-  return {length=length, pitch_length=16, timing_mode="straight", pitch_events=pitches,
+  return {length=length, pitch_length=M.PAGE_SIZE, timing_mode="straight", pitch_events=pitches,
     time_events=time_events}
 end
 
@@ -48,6 +47,18 @@ function M.set_pitch_length(pattern, pitch_length)
   return true
 end
 
+function M.is_leading_tie(step, command)
+  return step == 1 and command == "T"
+end
+
+function M.normalize_time_entry(step, command)
+  if not integer_between(step, 1, M.MAX_STEPS) then return nil, "invalid time step" end
+  if command ~= "N" and command ~= "T" and command ~= "R" then
+    return nil, "invalid timing command"
+  end
+  return M.is_leading_tie(step, command) and "N" or command
+end
+
 function M.set_time(pattern, step, command)
   if type(pattern) ~= "table" or not integer_between(pattern.length, 1, M.MAX_STEPS)
     or type(pattern.time_events)~="table" then
@@ -56,10 +67,9 @@ function M.set_time(pattern, step, command)
   if not integer_between(step, 1, pattern.length) then
     return nil, "invalid time step"
   end
-  if command ~= "N" and command ~= "T" and command ~= "R" then
-    return nil, "invalid timing command"
-  end
-  if step == 1 and command == "T" then command = "N" end
+  local normalized, err = M.normalize_time_entry(step, command)
+  if not normalized then return nil, err end
+  command = normalized
   pattern.time_events[step] = command
   return command
 end
@@ -136,7 +146,7 @@ function M.validate(pattern)
       return false, "invalid timing command at step " .. i
     end
   end
-  if pattern.time_events[1] == "T" then
+  if M.is_leading_tie(1, pattern.time_events[1]) then
     return false, "leading TIE must be entered as NOTE"
   end
   return true

@@ -6,17 +6,18 @@ local sequencer=require("model.sequencer")
 local control=require("model.control_signals")
 local articulation=require("model.articulation")
 local legato=require("model.legato")
+local policies=require("model.policies")
 local M={}
 local UNITS_PER_STEP=control.UNITS_PER_STEP
-local PB_RANGES={[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
+
 function M.plan_output(pattern, output_policy, max_lines)
   local valid,err=sequencer.validate(pattern)
   if not valid then return nil,err end
   if type(max_lines)~="number" or max_lines%1~=0 or max_lines<1 then
     return nil,"native phrase line capacity is required"
   end
-  output_policy=output_policy or "repeat"
-  if output_policy~="repeat" and output_policy~="play_once" then
+  output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+  if not policies.valid_output_policy(output_policy) then
     return nil,"Invalid phrase output policy"
   end
   local layout,layout_error=timing.new(pattern.timing_mode,pattern.length,output_policy)
@@ -209,19 +210,14 @@ function M.plan_gates(timeline,semantic,commands,lines_per_step)
   return merged
 end
 
-local function valid_volume(value)
-  return type(value) == 'number' and value >= 0 and value <= 1
-    and value == value -- reject NaN
-end
-
 -- Derive native volume expectations from source events, never rendered cells.
 -- Renoise's pattrns renderer truncates sub-unity volume * 128, and emits
 -- the empty/full-volume sentinel 255 for unity volume.
 function M.expected_volumes(plan, lines_per_step, number_of_lines, columns, options)
   options = options or {}
-  local normal = options.normal_volume or 0.7
-  local accent = options.accent_volume or 1.0
-  if not valid_volume(normal) or not valid_volume(accent) then
+  local normal = options.normal_volume or policies.NORMAL_VOLUME
+  local accent = options.accent_volume or policies.ACCENT_VOLUME
+  if not policies.valid_volume(normal) or not policies.valid_volume(accent) then
     return nil, 'volumes must be numbers between 0 and 1'
   end
   if type(plan) ~= 'table' or type(plan.steps) ~= 'table'
@@ -244,8 +240,8 @@ function M.expected_volumes(plan, lines_per_step, number_of_lines, columns, opti
     end
     if event.kind == 'note' then
       -- Match the emitter's six-decimal volume before native quantization.
-      local volume = tonumber(string.format('%.6f', event.accent and accent or normal))
-      volumes[(step - 1) * lines_per_step + 1][1] = volume == 1 and 255 or math.floor(volume * 128)
+      local volume = policies.note_volume(event.accent, normal, accent)
+      volumes[(step - 1) * lines_per_step + 1][1] = policies.quantize_volume(volume)
     elseif event.kind ~= 'rest' and event.kind ~= 'tie' then
       return nil, 'invalid semantic kind at step ' .. step
     end
@@ -254,7 +250,7 @@ function M.expected_volumes(plan, lines_per_step, number_of_lines, columns, opti
 end
 
 local function positive_integer(value)
-  return type(value)=="number" and value%1==0 and value>=1
+  return policies.is_integer(value) and value>=1
 end
 
 function M.empty_note()
@@ -352,9 +348,9 @@ end
 function M.plan(source,output_policy,pb_range,capacities,capabilities,options)
   local fixture,source_error=sequencer.copy_source(source)
   if not fixture then return nil,source_error end
-  output_policy=output_policy or "repeat"
-  pb_range=pb_range==nil and 0 or pb_range
-  if not PB_RANGES[pb_range] then return nil,"invalid PB range" end
+  output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+  pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
+  if not policies.valid_pb_range(pb_range) then return nil,"invalid PB range" end
   if type(capacities)~="table" or not positive_integer(capacities.max_lines) or
       not positive_integer(capacities.max_note_columns) or
       type(capacities.max_effect_columns)~="number" or capacities.max_effect_columns%1~=0 or

@@ -4,13 +4,9 @@
 local interpreter = require('model.cycle_interpreter')
 local timing = require('model.timing')
 local sequencer = require('model.sequencer')
+local policies = require("model.policies")
 local M = {}
 local MAX_PHYSICAL_STEPS=sequencer.MAX_STEPS*timing.REPEAT_CYCLES
-
-local function valid_volume(value)
-  return type(value) == 'number' and value >= 0 and value <= 1
-    and value == value -- reject NaN
-end
 
 local function count_pulses(n)
   local items = {}
@@ -36,9 +32,9 @@ function M.emit(plan, options)
       resolution == timing.TRIPLET_PULSE_RESOLUTION)) then
     return nil, 'invalid timing pulse'
   end
-  local normal_volume = options.normal_volume or 0.7
-  local accent_volume = options.accent_volume or 1.0
-  if not valid_volume(normal_volume) or not valid_volume(accent_volume) then
+  local normal_volume = options.normal_volume or policies.NORMAL_VOLUME
+  local accent_volume = options.accent_volume or policies.ACCENT_VOLUME
+  if not policies.valid_volume(normal_volume) or not policies.valid_volume(accent_volume) then
     return nil, 'volumes must be numbers between 0 and 1'
   end
 
@@ -53,8 +49,8 @@ function M.emit(plan, options)
         or event.note < 0 or event.note > 119 then
         return nil, 'invalid note at step ' .. index
       end
-      local velocity = event.accent and accent_volume or normal_volume
-      items[index] = string.format('{ key = %d, volume = %.6f }', event.note, velocity)
+      local velocity = policies.note_volume(event.accent, normal_volume, accent_volume)
+      items[index] = string.format('{ key = %d, volume = %s }', event.note, policies.format_volume(velocity))
       note_count = note_count + 1
       if event.transition == 'slide' then
         slide_count = slide_count + 1

@@ -2,6 +2,7 @@
 -- Native ViewBuilder PITCH/TIME editor.
 local M = {}
 local sequencer=require("model.sequencer")
+local policies=require("model.policies")
 local editor=require("model.editor_state")
 local interpreter=require("model.cycle_interpreter")
 local live_regen=require("model.live_regen")
@@ -89,16 +90,15 @@ function M.show()
   local song=renoise.song()
   if not song then renoise.app():show_warning("Open a song first.");return end
   local vb=renoise.ViewBuilder()
-  local pattern=sequencer.new_pattern(16)
-  for i=1,pattern.length do pattern.time_events[i]="N" end
+  local pattern=sequencer.new_pattern()
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
   local updating=false
   local preview_cycle=1
   local update
   local opened=generation
-  local output_policy="repeat"
-  local pb_range=0
+  local output_policy=policies.DEFAULT_OUTPUT_POLICY
+  local pb_range=policies.DEFAULT_PB_RANGE
   local history=editor.new_history(pattern,output_policy,pb_range)
   local undo_button
   local redo_button
@@ -124,7 +124,7 @@ function M.show()
   local map_text=vb:text{id="acid_preview_summary",width=820,font="bold",text=""}
   local length_items={}
   for n=1,sequencer.MAX_STEPS do length_items[n]=tostring(n) end
-  local last_step_box=vb:valuebox{width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=16,
+  local last_step_box=vb:valuebox{width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=sequencer.PAGE_SIZE,
     tostring=function(value)return string.format("%d",math.floor(value+0.5))end,
     tonumber=function(value)return tonumber(value)end}
   local view_popup=vb:popup{id="acid_editor_view",items={"Program","Grid"},width=105,value=1,
@@ -141,11 +141,14 @@ function M.show()
   local program_pitch_popup,program_time_popup,program_time_command
   local program_pitch_summary,program_time_summary
   local program_key_popup,program_octave_popup,program_accent,program_slide
-  local pitch_length_popup=vb:popup{items=length_items,width=78,value=16}
+  local pitch_length_popup=vb:popup{items=length_items,width=78,value=sequencer.PAGE_SIZE}
   local timing_popup=vb:popup{id="acid_timing",items={"Straight","Triplet"},width=105,value=1}
   local playback_popup=vb:popup{items={"Play Once","Repeat"},width=105,value=2}
-  local pb_range_values={0,2,12,24,48}
-  local pb_range_items={"Off","±2","±12","±24","±48"}
+  local pb_range_values=policies.PB_CHOICES
+  local pb_range_items={}
+  for index,value in ipairs(pb_range_values) do
+    pb_range_items[index]=value==0 and "Off" or string.format("±%d",value)
+  end
   local pb_range_popup=vb:popup{id="acid_pb_range",items=pb_range_items,width=92,value=1}
   local preview_popup=vb:popup{items={"Start","Repeating"},width=105,value=1,
     notifier=function(value)
@@ -205,7 +208,7 @@ function M.show()
       "Edit sixteen PITCH positions and TIME steps directly across two pages (01–32)."
     if program_panel then program_panel.visible=editor_view==1 end
     if grid_panel then grid_panel.visible=editor_view==2 end
-    pitch_length_popup.value=pattern.pitch_length or 16
+    pitch_length_popup.value=pattern.pitch_length or sequencer.PAGE_SIZE
     pitch_length_popup.active=true
     timing_popup.value=pattern.timing_mode=="triplet" and 2 or 1
     step_division.text=pattern.timing_mode=="triplet" and
@@ -224,15 +227,15 @@ function M.show()
     last_step_box.value=pattern.length
     last_step_box.active=true
     for page=1,editor.MAX_PAGES do
-      local first=(page-1)*16+1
-      local last=math.min(page*16,pattern.length)
+      local first=(page-1)*sequencer.PAGE_SIZE+1
+      local last=math.min(page*sequencer.PAGE_SIZE,pattern.length)
       pitch_page_buttons[page].text=string.format("P %02d-%02d%s",
-        first,page*16,page==pitch_page and " [*]" or "")
+        first,page*sequencer.PAGE_SIZE,page==pitch_page and " [*]" or "")
       time_page_buttons[page].text=string.format("T %02d-%02d%s",
-        first,page*16,page==time_page and " [*]" or "")
+        first,page*sequencer.PAGE_SIZE,page==time_page and " [*]" or "")
       time_page_buttons[page].active=first<=pattern.length
     end
-    for cell=1,16 do
+    for cell=1,sequencer.PAGE_SIZE do
       local i=editor.index_on_page(pitch_page,cell)
       local p=pitch_at(i)
       local b=pitch_cells[cell]
@@ -393,7 +396,7 @@ function M.show()
   end)
   pb_range_popup:add_notifier(function(value)
     if updating then return end
-    pb_range=pb_range_values[value] or 0
+    pb_range=pb_range_values[value] or policies.DEFAULT_PB_RANGE
     status.text=pb_range==0 and
       "Pitch bend off; connected plugin/MIDI SLIDE uses overlapping notes." or
       string.format("PB Range ±%d assumed; set the receiver to match.",pb_range)
@@ -576,23 +579,21 @@ function M.show()
         source_available=true
         pattern=source
         output_policy=output_policy_or_error
-        pb_range=stored_pb_range or 0
+        pb_range=stored_pb_range or policies.DEFAULT_PB_RANGE
         selected_pitch=1;selected_step=1
         pitch_page=1;time_page=1
         status.text=string.format("Restored ACID source for phrase %02d.",target)
       else
-        pattern=sequencer.new_pattern(16)
-        for i=1,pattern.length do pattern.time_events[i]="N" end
-        output_policy="repeat"
-        pb_range=0
+        pattern=sequencer.new_pattern()
+        output_policy=policies.DEFAULT_OUTPUT_POLICY
+        pb_range=policies.DEFAULT_PB_RANGE
         status.text="Source unavailable: "..tostring(output_policy_or_error)..
           " | choose a new phrase; existing audio is protected."
       end
     else
-      pattern=sequencer.new_pattern(16)
-      for i=1,pattern.length do pattern.time_events[i]="N" end
-      output_policy="repeat"
-      pb_range=0
+      pattern=sequencer.new_pattern()
+      output_policy=policies.DEFAULT_OUTPUT_POLICY
+      pb_range=policies.DEFAULT_PB_RANGE
       status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
     end
     local draft,policy,draft_pb_range=drafts.get(song,bound_instrument,bound_phrase)
@@ -601,7 +602,7 @@ function M.show()
         (source_available and "SOURCE COMMITTED" or "SOURCE UNAVAILABLE"))
     if draft then
       pattern,output_policy=draft,policy
-      pb_range=draft_pb_range or 0
+      pb_range=draft_pb_range or policies.DEFAULT_PB_RANGE
       status.text="Recovered saved draft. Live Edit applies it automatically when enabled."
     elseif policy then
       status.text="DRAFT RECOVERY ERROR: "..tostring(policy).."; existing phrase output is protected."
@@ -895,7 +896,7 @@ function M.show()
     if source then
       pattern=source
       output_policy=policy
-      pb_range=source_pb_range or 0
+      pb_range=source_pb_range or policies.DEFAULT_PB_RANGE
       local saved,save_error=save_draft()
       status.text=saved and "Edit undone and saved with the song." or
         "Edit undone; session recovery only: "..tostring(save_error)
@@ -907,7 +908,7 @@ function M.show()
     if source then
       pattern=source
       output_policy=policy
-      pb_range=source_pb_range or 0
+      pb_range=source_pb_range or policies.DEFAULT_PB_RANGE
       local saved,save_error=save_draft()
       status.text=saved and "Edit redone and saved with the song." or
         "Edit redone; session recovery only: "..tostring(save_error)
@@ -955,9 +956,8 @@ function M.show()
     vb:row{spacing=8,
       vb:button{text="Reset Source",notifier=function()
         pattern=sequencer.new_pattern(last_step_box.value)
-        for i=1,pattern.length do pattern.time_events[i]="N" end
-        output_policy="repeat"
-        pb_range=0
+        output_policy=policies.DEFAULT_OUTPUT_POLICY
+        pb_range=policies.DEFAULT_PB_RANGE
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
         status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
         update();changed()

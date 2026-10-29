@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Sparse plugin/MIDI NOTE/OFF plan for connected phrase transitions.
+local policies=require("model.policies")
 local M = { MAX_COLUMNS=3, EMPTY=121, OFF=120 }
 local control=require("model.control_signals")
 M.IMMEDIATE_DELAY = 0
@@ -169,9 +170,9 @@ end
 
 local function bend_plan(semantic,timeline,layout,options,lines_per_step)
   local range=options.pb_range
-  if range~=2 and range~=12 and range~=24 and range~=48 then return nil,"invalid pitch-bend range" end
+  if range==0 or not policies.valid_pb_range(range) then return nil,"invalid pitch-bend range" end
   local target=options.instrument_value
-  if type(target)~="number" or target%1~=0 or target<0 or target>255 then
+  if not policies.in_integer_range(target,0,255) then
     return nil,"pitch bend requires a valid phrase channel field"
   end
   if type(timeline)~="table" or type(timeline.events)~="table" then return nil,"gate timeline is incomplete" end
@@ -215,7 +216,7 @@ local function bend_plan(semantic,timeline,layout,options,lines_per_step)
     if layout.looping and not entry_state and line>=layout.loop_start then entry_state=state() end
     if event.kind=="gate_on" then
       column=1
-      put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,
+      put(line,column,{note_value=event.note,volume_value=policies.note_velocity(event.accent),
         delay_value=centered and M.IMMEDIATE_DELAY or M.ORDER_DELAY})
       anchor,pitch,accent=event.note,event.note,event.accent
       if not centered then bend(line,M.IMMEDIATE_DELAY) end
@@ -225,7 +226,7 @@ local function bend_plan(semantic,timeline,layout,options,lines_per_step)
       if math.abs(offset)>range then
         put(line,column,{note_value=M.OFF,delay_value=M.IMMEDIATE_DELAY})
         column=3-column
-        put(line,column,{note_value=event.note,volume_value=event.accent and 255 or 89,
+        put(line,column,{note_value=event.note,volume_value=policies.note_velocity(event.accent),
           delay_value=M.ORDER_DELAY})
         bend(line,M.IMMEDIATE_DELAY)
         anchor,pitch,accent=event.note,event.note,event.accent
@@ -331,7 +332,7 @@ function M.plan(semantic,timeline,layout,options)
       local step=source_step(event)
       local column=colors[step]
       if not column then return nil,"gate NOTE has no semantic source TIME step" end
-      local velocity=event.accent and 255 or 89
+      local velocity=policies.note_velocity(event.accent)
       local ok,cell_error=add_cell(cells,line,column,{note_value=event.note,
         volume_value=velocity,delay_value=M.IMMEDIATE_DELAY})
       if not ok then return nil,cell_error end
@@ -353,7 +354,7 @@ function M.plan(semantic,timeline,layout,options)
           return nil,"connected NOTE columns are not isolated"
         end
         local ok,cell_error=add_cell(cells,line,column,{note_value=event.note,
-          volume_value=event.accent and 255 or 89,delay_value=M.IMMEDIATE_DELAY})
+          volume_value=policies.note_velocity(event.accent),delay_value=M.IMMEDIATE_DELAY})
         if not ok then return nil,cell_error end
         ok,cell_error=add_cell(cells,line,previous_column,
           {note_value=M.OFF,delay_value=M.ORDER_DELAY})

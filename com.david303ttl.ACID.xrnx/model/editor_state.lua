@@ -2,24 +2,24 @@
 -- Pure projection of canonical ACID memories into the paged editor.
 local seq = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
+local policies = require("model.policies")
 local M = { PAGE_SIZE=seq.PAGE_SIZE, MAX_PAGES=seq.MAX_STEPS/seq.PAGE_SIZE }
-local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 
 local function checked_pb_range(value)
-  value=value==nil and 0 or value
-  assert(type(value)=="number" and value%1==0 and PB_RANGES[value],"invalid PB range")
+  value=value==nil and policies.DEFAULT_PB_RANGE or value
+  assert(policies.valid_pb_range(value),"invalid PB range")
   return value
 end
 
 function M.page_for(index)
-  assert(type(index)=="number" and index%1==0 and index>=1 and index<=seq.MAX_STEPS)
-  return math.floor((index-1)/16)+1
+  assert(policies.in_integer_range(index,1,seq.MAX_STEPS))
+  return math.floor((index-1)/seq.PAGE_SIZE)+1
 end
 
 function M.index_on_page(page, cell)
-  assert(type(page)=="number" and page%1==0 and page>=1 and page<=M.MAX_PAGES)
-  assert(type(cell)=="number" and cell%1==0 and cell>=1 and cell<=16)
-  return (page-1)*16+cell
+  assert(policies.in_integer_range(page,1,M.MAX_PAGES))
+  assert(policies.in_integer_range(cell,1,seq.PAGE_SIZE))
+  return (page-1)*seq.PAGE_SIZE+cell
 end
 
 local function missing_step(pattern)

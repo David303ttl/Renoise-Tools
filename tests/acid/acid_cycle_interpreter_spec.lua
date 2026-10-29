@@ -83,7 +83,7 @@ for _, entry in ipairs(oracle.entry_cases) do
     local case = {length=entry.length, pitch_length=entry.pitch_length,
       pitches=entry.pitches, time={}}
     for step, command in ipairs(entry.input_time) do
-      case.time[step] = assert(interpreter.normalize_time_entry(step, command))
+      case.time[step] = assert(seq.normalize_time_entry(step, command))
       equal(case.time[step], entry.expected_time[step], entry.id)
     end
     local p = source(case)
@@ -209,8 +209,8 @@ assert(not interpreter.compile_cycles(p, 0))
 assert(not interpreter.compile_cycles(p, interpreter.MAX_CYCLES+1))
 assert(not interpreter.compile_cycle(p, {cycle=1, voice=pitch(36)}))
 assert(not pcall(seq.new_pattern,33))
-assert(interpreter.normalize_time_entry(32, 'T')=='T')
-assert(not interpreter.normalize_time_entry(33, 'T'))
-assert(not interpreter.normalize_time_entry(1, 'X'))
+assert(seq.normalize_time_entry(32, 'T')=='T')
+assert(not seq.normalize_time_entry(33, 'T'))
+assert(not seq.normalize_time_entry(1, 'X'))
 
 print('ACID repeating cycle interpreter checks passed')

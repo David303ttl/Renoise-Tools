@@ -1,22 +1,17 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Exact, song-local storage for canonical ACID sources and phrase render settings.
+local policies=require("model.policies")
 local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("renoise.phrase_ownership")
 local M = {}
 local MAGIC = "ACID-PITCH-TIME-1"
-local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}
-local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local MAX_ID = 2147483647
 local candidates=setmetatable({}, {__mode="k"})
 local function synchronous_guard()return true end
 
-local function valid_pb_range(value)
-  return type(value)=="number" and value%1==0 and PB_RANGES[value]
-end
-
 local function valid_id(id)
-  return type(id)=="number" and id%1==0 and id>=1 and id<=MAX_ID
+  return policies.in_integer_range(id,1,MAX_ID)
 end
 
 local function raw_data(song)
@@ -67,8 +62,8 @@ local function decode(raw)
       draft_pb_range=tonumber(draft_pb_range)
       draft_pitch_length,draft_length=tonumber(draft_pitch_length),tonumber(draft_length)
       local key=tostring(draft_instrument)..":"..tostring(draft_phrase)
-      if draft_instrument<1 or draft_phrase<0 or drafts[key] or not OUTPUT_POLICIES[draft_policy] or
-          not valid_pb_range(draft_pb_range) or
+      if draft_instrument<1 or draft_phrase<0 or drafts[key] or not policies.valid_output_policy(draft_policy) or
+          not policies.valid_pb_range(draft_pb_range) or
           not draft_pitch_length or draft_pitch_length<1 or draft_pitch_length>sequencer.MAX_STEPS or
           not draft_length or draft_length<1 or draft_length>sequencer.MAX_STEPS or #draft_time~=sequencer.MAX_STEPS then
         return nil,"Invalid ACID draft header at line "..line_number
@@ -100,8 +95,8 @@ local function decode(raw)
       line:match("^(%d+)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
     pb_range=tonumber(pb_range)
     id,pitch_length,length=tonumber(id),tonumber(pitch_length),tonumber(length)
-    if not id or not valid_id(id) or entries[id] or not OUTPUT_POLICIES[output_policy] or
-        not valid_pb_range(pb_range) or
+    if not id or not valid_id(id) or entries[id] or not policies.valid_output_policy(output_policy) or
+        not policies.valid_pb_range(pb_range) or
         not pitch_length or pitch_length<1 or pitch_length>sequencer.MAX_STEPS or
         not length or length<1 or length>sequencer.MAX_STEPS or not time or #time~=sequencer.MAX_STEPS then
       return nil,"Invalid ACID snapshot header at line "..line_number
@@ -146,8 +141,8 @@ local function encode(entries,drafts)
     local pattern=item.pattern
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID source: "..err end
-    if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid phrase output policy" end
-    if not valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
+    if not policies.valid_output_policy(item.output_policy) then return nil,"invalid phrase output policy" end
+    if not policies.valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
     local pitches={}
     for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     local time={}
@@ -168,8 +163,8 @@ local function encode(entries,drafts)
     local pattern=item.pattern
     local ok,err=interpreter.compile_cycle(pattern)
     if not ok then return nil,"Invalid ACID draft source: "..err end
-    if not OUTPUT_POLICIES[item.output_policy] then return nil,"invalid ACID draft output policy" end
-    if not valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
+    if not policies.valid_output_policy(item.output_policy) then return nil,"invalid ACID draft output policy" end
+    if not policies.valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
     local pitches,time={},{}
     for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
     for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
@@ -190,8 +185,8 @@ function M.read(song)
 end
 
 local function draft_key(instrument_index,phrase_id)
-  if type(instrument_index)~="number" or instrument_index%1~=0 or instrument_index<1 or
-      type(phrase_id)~="number" or phrase_id%1~=0 or phrase_id<0 then
+  if not policies.is_integer(instrument_index) or instrument_index<1 or
+      not policies.is_integer(phrase_id) or phrase_id<0 then
     return nil,"invalid ACID draft destination"
   end
   return tostring(instrument_index)..":"..tostring(phrase_id)
@@ -276,10 +271,10 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
   else
     local valid,validation_error=interpreter.compile_cycle(pattern)
     if not valid then return nil,validation_error end
-    output_policy=output_policy or "repeat"
-    pb_range=pb_range==nil and 0 or pb_range
-    if not OUTPUT_POLICIES[output_policy] then return nil,"invalid phrase output policy" end
-    if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
+    output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+    pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
+    if not policies.valid_output_policy(output_policy) then return nil,"invalid phrase output policy" end
+    if not policies.valid_pb_range(pb_range) then return nil,"invalid PB range" end
     drafts[key]={pattern=pattern,output_policy=output_policy,pb_range=pb_range,
       instrument_name=tostring(instrument_name or ""),instrument_index=instrument_index,
       phrase_id=phrase_id}
@@ -340,7 +335,7 @@ local function capture_removal(song,id,entries,drafts,descriptor)
       (descriptor.kind~="new" and descriptor.kind~="existing") or
       (descriptor.kind=="existing" and descriptor.phrase==nil) or
       (descriptor.kind=="new" and descriptor.phrase~=nil) or descriptor.token==nil or
-      type(descriptor.revision)~="number" or descriptor.revision<0 or descriptor.revision%1~=0 then
+      not policies.is_integer(descriptor.revision) or descriptor.revision<0 then
     return nil,"Invalid captured ACID draft destination"
   end
   local index,phrase_id,name=draft_target(song,descriptor.instrument,descriptor.phrase,entries)
@@ -367,10 +362,10 @@ function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
   if type(guard)~="function" then return nil,"An ACID request guard is required" end
   local current,current_error=ownership.is_current(song)
   if not current then return nil,current_error end
-  output_policy=output_policy or "repeat"
-  pb_range=pb_range==nil and 0 or pb_range
-  if not OUTPUT_POLICIES[output_policy] then return nil,"invalid phrase output policy" end
-  if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
+  output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+  pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
+  if not policies.valid_output_policy(output_policy) then return nil,"invalid phrase output policy" end
+  if not policies.valid_pb_range(pb_range) then return nil,"invalid PB range" end
   local copied,copy_error=sequencer.copy_source(pattern)
   if not copied then return nil,copy_error end
   local previous,err=raw_data(song)

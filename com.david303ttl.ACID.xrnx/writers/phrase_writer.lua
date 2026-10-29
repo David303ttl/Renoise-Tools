@@ -17,7 +17,7 @@ M.PHRASE_NAME = "ACID 0.1 TEST"
 local busy = false
 local current = nil
 local MAX_PHRASE_LINES = 512
-local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
+local policies = require("model.policies")
 
 local function failure(code, category, message, status)
   message=tostring(message or "Phrase generation failed")
@@ -480,12 +480,12 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   end
   options=options or {}
   if type(options)~="table" then return nil,failure("source.options","source","Invalid generation options") end
-  local output_policy=options.output_policy or "repeat"
-  if output_policy~="repeat" and output_policy~="play_once" then
+  local output_policy=options.output_policy or policies.DEFAULT_OUTPUT_POLICY
+  if not policies.valid_output_policy(output_policy) then
     return nil,failure("source.output_policy","source","Invalid phrase output policy")
   end
-  local pb_range=options.pb_range==nil and 0 or options.pb_range
-  if type(pb_range)~="number" or pb_range%1~=0 or not PB_RANGES[pb_range] then
+  local pb_range=options.pb_range==nil and policies.DEFAULT_PB_RANGE or options.pb_range
+  if not policies.valid_pb_range(pb_range) then
     return nil,failure("source.pb_range","source","Invalid PB range")
   end
   if type(callback) ~= "function" then

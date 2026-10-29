@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Integer musical timing and native phrase layout.
 local sequencer=require("model.sequencer")
+local policies=require("model.policies")
 local M = {}
 local UNITS_PER_BEAT=24
 local STRAIGHT_UNITS_PER_STEP=6
@@ -44,13 +45,13 @@ end
 function M.new(mode, length, output_policy)
   local spec=modes[mode]
   if not spec then return nil,"Invalid timing mode" end
-  if type(length)~="number" or length%1~=0 or length<1 or length>sequencer.MAX_STEPS then
+  if not policies.in_integer_range(length,1,sequencer.MAX_STEPS) then
     return nil,"Invalid timing length"
   end
   if spec.lpb*spec.units_per_step/UNITS_PER_BEAT~=LINES_PER_STEP then
     return nil,"timing mode does not match the phrase-line layout"
   end
-  if output_policy~="repeat" and output_policy~="play_once" then
+  if not policies.valid_output_policy(output_policy) then
     return nil,"Invalid phrase output policy"
   end
   local repeating=output_policy=="repeat"
