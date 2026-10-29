@@ -10,6 +10,48 @@
 
 ## Fixed decisions and responsibility boundaries
 
+### Current implementation gaps
+
+Earlier audit on 2026-10-29 recorded a clean working tree. The Step 0 rerun on
+the same date inspected `feature/hardening4` at `a2c25d4` (two commits ahead
+of its upstream), with three preexisting staged documentation changes preserved.
+Pinned SDK setup succeeded and all 34 ACID specs passed again.
+**Step 0 complete (2026-10-29):** inventory, pinned API review, storage review,
+34-spec baseline and native feasibility observations are recorded in the
+[prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record).
+The preservation and source/output association contracts below incorporate
+the observed failures. Step 1 may proceed under those revised contracts;
+runtime safety and M4 acceptance remain unverified.
+
+Native follow-up on 2026-10-29 reached Renoise 3.5.4 Demo / API 6.2 through
+the installed development tool. Undo of a synchronous phrase/content/source
+change restored the old notes and valid seal but retained the newer valid
+`song.tool_data` source. The existing loader accepted that mismatched pair
+after undo and idle settlement. This is a failed foundational assumption,
+not a preservation pass: seal validity, source validity and unique ID alone
+do not establish a safe source/output association. The revised contract
+requires independent compatibility validation or blocked regeneration, with
+implementation and regression coverage assigned to Steps 1, 3 and 6 and
+native acceptance assigned to Step 8.
+
+| Current gap | Responsible gate / existing code |
+| --- | --- |
+| Arming Live Edit and loading New/recovered drafts while armed request rendering; the GUI test expects the arming write | Steps 2/5: `gui.lua`, `tests/acid/acid_gui_views_spec.lua` |
+| Durable draft reads/writes/clears use a sealed ID without requiring a unique live holder; Make Independent is absent | Steps 1/4/5: `model/draft_cache.lua`, `model/pattern_store.lua` |
+| The persisted seal omits hidden/tail cells and some metadata; complete snapshot, preflight and destination preservation remain missing | Steps 1/3: `writers/phrase_ownership.lua`, `writers/phrase_writer.lua` |
+| Retained recovery material does not establish a persistent song integrity blocker or read-only Revalidate workflow; cleanup failures need checked outcomes | Steps 3/5: `writers/phrase_writer.lua`, `model/live_regen.lua` |
+| Writer accepts an omitted destination and selects phrase 1/append; staging insertion precedes busy/current registration | Step 3: `writers/phrase_writer.lua` |
+| Native instrument/phrase inventory and rename reconciliation are incomplete | Steps 2/6: `gui.lua` |
+| Source commit preserves current durable drafts, while GUI completion clears the target draft separately | Steps 1/3/5: `model/pattern_store.lua`, `gui.lua` |
+| Undo descriptions and native undo/redo consistency acceptance remain open | Steps 3/6/8: writer and native manual checks |
+
+Adjacent cleanup: source copying is duplicated in `model/editor_state.lua` and
+`model/draft_cache.lua`. `model/memory_status.lua` has no runtime caller found;
+its only code consumer is `tests/acid/acid_regeneration_spec.lua`. Treat it as
+a candidate for test-helper relocation or removal after checking its assertions,
+rather than assuming a runtime responsibility. Neither cleanup satisfies a
+write-safety gate.
+
 This plan retains the existing asynchronous phrase-script renderer, staging/backup transaction, and song-local source/draft store. It does not require a new renderer, persistence layer, event bus, general transaction framework, or controller hierarchy.
 
 | Responsibility | Single owner / existing home |
@@ -26,11 +68,11 @@ Validation at the request boundary and writer boundary is intentional. Share pur
 
 **Ownership is two coordinated pieces:** the current ID/seal in `phrase.name`, and canonical source plus output policy/PB range under that ID in `song.tool_data`. A phrase does not carry its own complete source record. Same-song copies may retain a name referencing the shared song record; cross-song or imported instrument copies may have no such record. Never infer source from matching notes.
 
-Source association means the existing current-song ID record plus a valid seal; it does not prove physical provenance. An imported phrase with a unique valid ID matching an existing local record is indistinguishable from an existing owner under this format. Do not promise detection of that case without new provenance data, which is outside scope. Missing records always block; duplicate groups use the stricter resolution checks below.
+The current-song ID record and valid seal identify a candidate source association. Musical writes and Make Independent additionally require independent source/output compatibility validation; validity of each piece alone is insufficient after the observed undo mismatch. This does not prove physical provenance. An imported phrase with a unique valid ID and compatible output matching an existing local record is indistinguishable from an existing owner under this format. Do not promise detection of that case without new provenance data, which is outside scope. Missing records always block; duplicate groups use the stricter resolution checks below.
 
 **Copy policy:** native list notifications do not prove copy provenance. This work adds **no automatic re-keying**. Duplicate IDs block musical writes for all holders until the user selects a particular phrase and invokes **Make Independent**. That action changes its ownership name and clones its committed source/settings under a fresh ID; it never renders. Source-less imports remain Foreign; importing/adopting them is outside scope. Do not add provenance snapshots or heuristic copy detection.
 
-**Live Edit policy:** retain immediate, serialized edits with one latest pending request; do not introduce a debounce timer. This supersedes contradictory debounce wording in the roadmap when Step 0 updates that section.
+**Live Edit policy:** retain immediate, serialized edits with one latest pending request; do not introduce a debounce timer. The roadmap uses this same policy.
 
 ## Invariants and target behavior
 
@@ -51,7 +93,7 @@ Source association means the existing current-song ID record plus a valid seal; 
 | Foreign | Show reason; retain outgoing editor draft | Block | Keep edits recoverable; no musical write |
 | Unavailable | Preserve detached draft and explain reason | Block | Keep edits recoverable; no musical write |
 
-Owned requires a valid current seal, valid song source/settings, song-wide unique ID, and the content checks below. A recognized ID with a collision, corrupt/missing record, or changed content is Unavailable; content with no recognized ACID identity is Foreign. A copied/imported phrase with no local source is never adopted, regardless of which blocked label applies.
+Owned requires a valid current seal, valid song source/settings, independently verified source/output compatibility, song-wide unique ID, and the content checks below. A recognized ID with a collision, corrupt/missing record, incompatible or unverifiable source/output association, or changed content is Unavailable; content with no recognized ACID identity is Foreign. A copied/imported phrase with no local source is never adopted, regardless of which blocked label applies.
 
 ## Step 0 — Inventory, verify API constraints, and fix the plan inputs
 
@@ -67,11 +109,27 @@ Owned requires a valid current seal, valid song source/settings, song-wide uniqu
 | API 6.2 reference under `sdk/renoise-api-6.2/` | Required constraint |
 |---|---|
 | `definitions/library/renoise/song.lua`; offline `docs/API/renoise/renoise.Song.html` | Selected instrument/phrase objects and indices are read-only. Use `selected_instrument_observable` and `selected_phrase_observable`; there is no documented selected-phrase-index observable. `song.tool_data` is bundle-specific song data, accessed from the installed tool, not an arbitrary terminal script. |
-| `definitions/library/renoise/song/instrument.lua`; corresponding Instrument docs | Phrase capacity is `renoise.Instrument.MAX_NUMBER_OF_PHRASES` (126 in this SDK). `insert_phrase_at(index)` returns the inserted phrase; `delete_phrase_at(index)` deletes by current index. |
-| `definitions/library/renoise/song/instrument/phrase_script.lua`; corresponding InstrumentPhraseScript docs | Set script paragraphs, call `commit()`, wait for commit/compile settlement, then `render_to_pattern(options, callback)`. Compile errors update **after** committed notification. Render result is delivered to the callback. Clipboard rendering is not a synchronous payload API. |
-| `definitions/library/renoise/song/instrument/phrase.lua`; corresponding InstrumentPhrase docs | Use documented property observables and `add_line_notifier` / `remove_line_notifier`. Keyboard-only line-edited callbacks do not cover all mutations. Phrase equality compares line content and ignores other properties; use `rawequal` for identity. `copy_from` is not a promise of native copy provenance, complete metadata coverage, or source-data transfer. |
-| `definitions/library/renoise/tool.lua`; corresponding ScriptingTool docs | Release runs while old song is current; new-document attaches to the new song. Idle interval is unspecified. Keep stable notifier identities and detach at lifecycle boundaries. |
-| Song definitions/docs and `docs/guide/observables.html` | List changes do not observe item renames. `is_undo_redoing()` identifies undo/redo processing. `describe_undo` / `describe_batch_undo` describe/batch changes; they do not guarantee cross-callback atomicity. |
+| `definitions/library/renoise/song/instrument.lua`; offline `docs/API/renoise/renoise.Instrument.html` | Phrase capacity is `renoise.Instrument.MAX_NUMBER_OF_PHRASES` (126 in this SDK). `insert_phrase_at(index)` returns the inserted phrase; `delete_phrase_at(index)` deletes by current index. |
+| `definitions/library/renoise/song/instrument/phrase_script.lua`; offline `docs/API/renoise/renoise.InstrumentPhraseScript.html` | Set script paragraphs, call `commit()`, observe committed notification before `render_to_pattern(options, callback)`. Compile errors update **after** committed notification; no separate compile-complete event or fixed latency is documented. Render callback results and output validation determine success; observed native settlement is recorded below without a latency guarantee. Clipboard rendering is not a synchronous payload API. |
+| `definitions/library/renoise/song/instrument/phrase.lua`; offline `docs/API/renoise/renoise.InstrumentPhrase.html` | Use documented property observables and `add_line_notifier` / `remove_line_notifier`. Keyboard-only line-edited callbacks do not cover all mutations. Phrase equality compares line content and ignores other properties; use `rawequal` for identity. `copy_from` is not a promise of native copy provenance, complete metadata coverage, or source-data transfer. |
+| `definitions/library/renoise/tool.lua`; offline `docs/API/renoise/renoise.ScriptingTool.html` | Release runs while old song is current; new-document attaches to the new song. Idle interval is unspecified. Keep stable notifier identities and detach at lifecycle boundaries. |
+| Song definitions/docs; `definitions/library/renoise/document/observable.lua`; `docs/API/renoise/renoise.Document.ObservableList.html`; `docs/guide/observables.html` | List changes do not observe item renames. `is_undo_redoing()` identifies undo/redo processing. `describe_undo` / `describe_batch_undo` describe/batch changes; they do not guarantee cross-callback atomicity. |
+
+**SDK verification (2026-10-29):** `setup_sdk.ps1` succeeded against the installed pinned starter pack. The definitions and offline pages above were read together. Phrase equality is specified in `phrase.lua` under operators (line content only), but omitted from the generated phrase HTML. `copy_from` documents only copying contents, without field-by-field guarantees. The mapping reference has no explicit read-only annotation in either pinned reference; avoiding reference assignment is a preservation policy, not a verified access restriction. The observable guide demonstrates song-specific reattachment and name observation; the explicit layout-only list contract is in the ObservableList references. These sources establish signatures and restrictions, but do not establish native copy coverage, notification ordering, compile settlement latency, or cross-callback undo consistency. Native observations are recorded separately below.
+
+**Native qualifications (2026-10-29, Renoise 3.5.4 Demo / API 6.2):** The
+[feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record)
+records the observed exceptions. `copy_from` did not create a backup mapping;
+destination mappings survived copying, so snapshot and independently verify
+their fields rather than treating the backup as complete. Inactive script
+copying lost the committed/editor distinction and parameter override after
+settlement. Reject nonempty inactive scripts, parameters or pending changes
+unless their complete preservation is independently demonstrated; this may
+block existing generated targets and must remain visible. Native assignment
+to `script.editor_visible` was rejected as read-only despite the SDK annotation;
+do not assign it. Commit/error/render timing varied across runs; callback
+results remain authoritative and ambiguous notification origin requires
+cancellation. Undo exposed the source/output mismatch described above.
 
 **Native feasibility before Step 1:** Use an installed development tool and disposable XRNS, with temporary probes kept outside runtime/package inputs. Record host/API version, fixture, observed values, pass/fail, and chosen fallback in the existing manual-test guidance. These are prerequisite observations, not acceptance of unimplemented operations.
 
@@ -81,6 +139,20 @@ Owned requires a valid current seal, valid song source/settings, song-wide uniqu
 
 **Gate 0:** Call sites, baseline, storage, API signatures, fixed policies, and native feasibility outcomes are known. Any missing SDK/API evidence is resolved from the official API-6.2 sources before runtime changes; do not substitute newer online docs or guessed members. If native access is unavailable, record the gate as pending and stop dependent runtime implementation; documentation and pure feasibility preparation do not count as a native pass. Unsupported fields may be blocked only through an explicit, tested preflight predicate; failure of a foundational undo/lifecycle assumption requires revising this plan, not silently weakening acceptance.
 
+**Gate 0 disposition: complete.** Native feasibility has been performed;
+completion records the following decisions, not a pass for the current runtime.
+
+| Finding | Required contract / implementation gate | Acceptance gate |
+| --- | --- | --- |
+| Backup omits mapping; destination mapping survives copying | Steps 1/3: snapshot and independently verify mapping presence/fields before mutation and rollback; reject unpreservable targets | Steps 3/8: exact mapping preservation and rollback |
+| Inactive script copy loses committed/editor state and parameter overrides | Steps 1/3: use the natively tested rejection predicate for nonempty paragraphs, parameters, pending changes or failed access; do not promise regeneration for rejected targets | Steps 1/3/8: mutation-free rejection, or separately proven complete preservation |
+| Selection/notification origin and render latency are not guaranteed | Steps 2/3/6: reconcile object identity, cancel ambiguous work, use authoritative render results and output validation | Steps 6/8: internal/external notifications and native lifecycle |
+| Undo can leave an old valid seal with a newer valid source; async grouping was not established | Steps 1/3/4/6: independent read-only source/output compatibility validation before regeneration or Make Independent, block unknown/mismatching associations, and retain meaningful undo requirements | Steps 1/6/8: incompatible pairs rejected after undo and reload; real transaction undo/redo and intervening actions |
+
+No schema/version change, automatic repair, source inference from notes, or
+relaxed native acceptance follows from this disposition. The next gate must
+implement these contracts before its consumers can authorize writes.
+
 ## Step 1 — Establish shared validation and storage contracts
 
 Implement these small helpers in existing ownership/store modules before callers depend on them:
@@ -88,7 +160,8 @@ Implement these small helpers in existing ownership/store modules before callers
 1. Normal owned-source load still rejects duplicate IDs across the **entire live song**. Read names for the global ID inventory; do not repeatedly hash every phrase during GUI refresh.
 2. Add a narrow source-entry read for Make Independent: decode/validate the entry for a specified old ID without declaring any colliding phrase uniquely owned. Do not weaken normal `store.load`.
 3. Preserve the current persisted seal format. Add one deterministic, session-only content snapshot/comparison used for target checks, metadata-only verification, and rollback. Compare actual values, not only the existing short hash.
-4. Cover the values the transaction can overwrite: all note/effect fields in every available column, including hidden columns, through the API's full phrase line range; line count, LPB, shuffle, loop/key/playback/autoseek settings, visibility, and column mute/name values. Check mapping/script preservation by the existing copy/rollback mechanism; add comparison only where that mechanism can alter them. Inspect each relevant definition before reading it. The mapping reference is read-only; preserve its documented fields rather than assign a mapping object. Do not toggle playback mode merely to inspect a script.
+   Before classifying an existing destination as writable, independently verify that its musical output matches its saved canonical source and output settings using the deterministic compiler/layout/articulation validators plus complete field preflight. Prove the validator's coverage; do not assume the current validator already establishes this association. A source record whose expected output differs from the unchanged sealed phrase must fail, including after undo, save and reload. This establishes output compatibility, not historical provenance: distinct sources producing identical verified output are indistinguishable. Reconstruct receiver/PB-dependent expectations only when their inputs are known; otherwise block. If the association cannot be verified without rendering or changing native state, block regeneration and preserve source for explicit recovery to New. A session baseline may retain a previously verified exact source/output pair, but a fresh session must not seed trust from seal and source validity alone. No schema or seal-format migration is authorized.
+4. Cover the values the transaction can overwrite: all note/effect fields in every available column, including hidden columns, through the API's full phrase line range; line count, LPB, shuffle, loop/key/playback/autoseek settings, visibility, and column mute/name values. Check mapping/script preservation by the existing copy/rollback mechanism; add comparison only where that mechanism can alter them. Inspect each relevant definition before reading it. Preserve the mapping through its documented fields rather than assigning a mapping object; the pinned reference does not explicitly document whether that reference is writable. Do not toggle playback mode merely to inspect a script.
 5. The old persisted seal does not protect hidden cells. For previously generated owned phrases, reject nonempty hidden note/effect cells or retained cells beyond the active line count before destructive regeneration; generated output must leave those cells empty. If inactive script/mapping data cannot be preserved and verified using the existing transaction, block that target rather than erase it. Do not extend the persisted schema to disguise an unverifiable baseline.
 6. Store candidates preserve unrelated committed entries and **current** durable drafts. A successful musical commit removes only its own committed target draft in the same guarded store candidate; the draft rebase must not reintroduce that entry. Failed commits restore it. A create clears its own New scratch record only if it is still the captured draft/destination; otherwise preserve it. Compare source/draft preconditions before commit. Restore prior raw `tool_data` only if current data still equals this transaction's written candidate; otherwise retain newer data and report an integrity blocker.
 7. Define draft precedence now for later integration: validate committed ownership/source first; restore a matching dirty draft for the same object/ID ahead of committed source; if none, use committed source. Session drafts retain the source/content baseline captured when first edited; if that baseline changes, detach the draft instead of rebasing silently. Existing durable drafts have no historical baseline field: after reload, restore them only against a uniquely owned, valid current target with the matching ID, and describe them as recovered edits. Do not claim historical-baseline verification across restart or add a schema migration. New Phrase restores that instrument's scratch draft.
@@ -119,7 +192,7 @@ Represent detached recovery entries in `draft_cache` with session-local keys, ca
 6. Provide a minimal internal-mutation scope and registered transaction-object set for the writer. Observer callbacks within a synchronous mutation scope only mark dirty. Never keep that scope active across the asynchronous render wait; external edits must remain detectable.
 7. Represent integrity blockers in this runtime context, keyed by song object/epoch, with reason and exact retained-object records. They block Generate, Live Edit writes, and Make Independent throughout that song; ordinary Foreign/Unavailable classification blocks only that target. Reopening the dialog does not clear a blocker. A separate global writer occupancy protects an unresolved native render even after document release; it is not cleared by changing songs. Step 5 defines the explicit revalidation action.
 
-Keep this context outside the dialog's lifetime. Exact recovery-object records live only while their song is current and are dropped on document release along with all nested listeners and old-song references. XRNS reload creates a new epoch: reconstruct safety from current ownership/source validation, not the previous session's blocker or baseline. Neutral recovery phrases reload as Foreign and are never automatically deleted or adopted by their names. Session blocker persistence across host restart/song reload is not promised by the unchanged storage format; the Step 0 undo/reload feasibility checks must establish that persisted inconsistent states cannot silently regain authorization.
+Keep this context outside the dialog's lifetime. Exact recovery-object records live only while their song is current and are dropped on document release along with all nested listeners and old-song references. XRNS reload creates a new epoch: reconstruct safety from current ownership/source validation, not the previous session's blocker or baseline. Neutral recovery phrases reload as Foreign and are never automatically deleted or adopted by their names. Session blocker persistence across host restart/song reload is not promised by the unchanged storage format; Steps 1/6 must implement and test independent source/output compatibility validation after reload, and Step 8 must verify that persisted inconsistent states cannot silently regain authorization. Step 0 observed the undo failure; it did not establish reload safety.
 
 **Gate 2:** State/guard tests use a stub request sink/authorization predicate; the writer facade is integrated in Step 3. Prove navigation and arming make zero generation requests, blocked targets cannot authorize a request, and stale targets/sessions/edits fail guards. Include two distinct phrase mocks sharing a content-based `__eq`: identical lines must not merge targets, draft keys, or temporary-object membership. The state contracts needed by the writer are implemented, not deferred to GUI integration.
 
@@ -162,7 +235,7 @@ Temporary objects may exist visibly during rendering, so “no write” tests di
 This is one metadata/source transaction in the writer, sharing Step 1 store/ownership helpers; it is not another render path.
 
 1. Accept the instrument/phrase objects from the currently bound **ACID destination dropdown**, expected old name/ID/content/source baseline, and current session guard. Native selection may differ; do not read it as this action's target or write it. The writer uses the existing store allocator immediately before the transaction; never trust a GUI-allocated fresh ID.
-2. Require exact live membership, a current valid seal, an existing old-ID collision, and valid committed source/settings under that old ID. Every live holder of that ID must have the same exact ownership name/seal and protected content snapshot as the selected phrase (compare values, not enclosing object references). Different valid seals, changed content, or a modified holder block resolution for the group: the shared record's intended association cannot be chosen safely. Use the narrow Step 1 reader, not a guessed original phrase. For 3+ matching holders, resolve only the selected holder and re-evaluate the remaining group.
+2. Require exact live membership, a current valid seal, an existing old-ID collision, valid committed source/settings under that old ID, and Step 1's independent source/output compatibility check. Every live holder of that ID must have the same exact ownership name/seal and protected content snapshot as the selected phrase (compare values, not enclosing object references). Different valid seals, changed content, incompatible or unverifiable output, or a modified holder block resolution for the group: the shared record's intended association cannot be chosen safely. Use the narrow Step 1 reader, not a guessed original phrase. For 3+ matching holders, resolve only the selected holder and re-evaluate the remaining group.
 3. Invalidate/cancel pending generation before this action and wait for verified cleanup. Revalidate selection, content, old record, and allocated fresh-ID uniqueness across live phrase names and stored entries after cancellation and immediately before commit. A missing source, modified content, active undo/redo, or integrity blocker rejects.
 4. Prepare a clone of the old **committed** source/settings under the new ID, preserving the old entry, other entries, and durable drafts. Do not clone another holder's dirty draft. Keep per-object session drafts detached until matching baselines are checked.
 5. Describe undo; in a short synchronous internal-mutation scope, commit the new source entry and change only the selected phrase's ownership name using the current name/seal format. The visible ID changes because the ID is stored in the name. Do not promise byte-identical names. Do not insert/delete, compile/render, change notes/effects or another holder.
@@ -194,6 +267,7 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 5. Reconcile after internal changes without adopting a stage/backup or detaching an unchanged destination solely because temporary membership changed. Own final content/name changes update baselines only after verified commit. External edits never refresh the expected baseline into permission to overwrite them.
 6. On release: invalidate, cancel with Step 3's in-flight-render recovery rule, detach nested listeners, clear old-song refs. On new document: fresh epoch, attach once, reconstruct live choices. On dialog close: invalidate/cancel and detach dialog-scoped listeners; retain writer completion handling until safe same-song cleanup and keep draft storage. On unload: invalidate jobs, detach all listeners/idle handlers, and preserve/report any stage still in use; do not assume native render cancellation.
 7. Undo/redo notifications invalidate generation and request reconciliation only. Use documented `is_undo_redoing()` when needed; it is not copy authorization. Re-read persisted source/ownership after native undo, detaching incompatible drafts.
+   Native undo was observed to leave `tool_data` at its newer value while restoring old phrase content/seal. Keep the affected association blocked after `is_undo_redoing()` becomes false until Step 1's independent source/output validation succeeds. Re-reading a valid record or adopting the restored seal as a new baseline cannot clear that block. Revalidation remains read-only and never rewrites source to match an inferred undo state.
 
 **Gate 6:** Meaningful notifier mocks cover internal insert/copy/name/cleanup notifications without self-cancellation, external changes during async waits, native selection changes, New preservation on refresh, blocked duplicates, undo/redo invalidation, repeated opens/song changes, and zero old-song callbacks/leaked registrations.
 

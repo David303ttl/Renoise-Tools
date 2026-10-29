@@ -89,7 +89,7 @@ PB Off/on safety, range overflow and receiver-independent structural behavior be
 
 1. Save and reopen the XRNS. Confirm current source and Repeat/Play Once policy
 restore for each owned phrase.
-2. Explicitly select New Phrase, then enable Live Edit and confirm one owned phrase is created and bound. Make a source edit and confirm rendering starts
+2. Explicitly select New Phrase, then enable Live Edit and confirm no phrase is created. Make a source edit and confirm exactly one owned phrase is created and bound, with rendering starting
    immediately without Generate or a debounce wait. Make several edits during
    rendering and confirm the latest source applies automatically next.
    Disable Live Edit during an in-flight
@@ -132,6 +132,190 @@ and diagnostic text can be selected. Use Go to source error and confirm the
 reported TIME/PITCH location is selected without modifying source.
 
 ## M4.7 acceptance record
+
+### Prerequisite feasibility record
+
+Native feasibility ran on 2026-10-29 in Renoise **3.5.4 Demo / API 6.2**
+using the installed development ACID tool and a disposable XRNS. The probes
+found inactive-script preservation and ownership/source undo failures.
+**Step 0 is complete:** observed outcomes, the tested script-state rejection
+predicate and revised safety contracts are recorded. Steps 1/3/4/6 implement
+the fixes and Step 8 verifies native acceptance; neither the current runtime
+nor those later gates are marked passed. The pinned SDK setup and all 34 ACID
+specs passed.
+
+#### Native ownership/source undo probe (2026-10-29)
+
+**Failed: association contract revised; runtime fix and final acceptance remain pending.**
+The second-pass native run used Renoise **3.5.4 Demo / scripting API 6.2**, an
+installed development ACID bundle and the disposable feasibility song. Probe
+commands executed from the tool's idle callback, preserving the required
+bundle-specific `song.tool_data` context. The temporary probe and raw logs are
+untracked development artifacts; the observations below are the durable record.
+
+The fixture was a newly inserted instrument with one 16-line phrase and a unique
+ACID ID. Canonical valid source A was `new_pattern(4)` with first pitch C-3;
+source B changed its first pitch to G-3. Native phrase sentinels A/B placed C-3
+or G-3 on line 1 and recomputed the current-format ownership seal. This is an
+association feasibility fixture, not a complete generated-output or playback
+check. Every snapshot called the actual `phrase_ownership.status` and
+`pattern_store.load`; source availability therefore reflects current runtime
+validation rather than a custom imitation.
+
+| Action | Native observation |
+| --- | --- |
+| Synchronous phrase content/name plus source A → B | Final B phrase had a valid seal and loaded B. During the name notification, B briefly loaded A; reconciliation must defer such internal notifications. |
+| Native undo of that synchronous action | Both the return-time and subsequent idle snapshots showed **phrase A, valid A seal, loaded source B**. `is_undo_redoing()` was already false at these stable snapshots. The current loader silently accepted the inconsistent association. |
+| Native redo | Restored phrase B, valid B seal and loaded B at return and idle. |
+| Content/name and source across separate idle callbacks, `describe_batch_undo(...,5000)` | Content B initially loaded A; after source commit B loaded B. `can_undo()` and `can_redo()` were false after settlement and the attempted native undo changed nothing. Successful batching was not established. |
+| Same split with an intervening native track rename | The rename remained visible; source commit ended at B/B. Later snapshots still reported no undo/redo availability, and native undo changed neither phrase nor track. This does not validate preservation or grouping of intervening user actions. The intervening action used the native track-name API with a separate undo description, not a physical keyboard edit. |
+| Name-only rekey to an otherwise unused ID | Seal remained valid but source loading rejected the missing source record. |
+| Source-only A → B while phrase A/name A remained unchanged | Phrase remained owned and source B loaded successfully, independently confirming that the seal does not bind the source record. |
+
+The corrected run used a 5000 ms batch timeout. An earlier attempt used 20000 ms,
+which Renoise rejected (native accepted range: 0–10000); subsequent snapshots in
+that invalid attempt crossed fixture lifetime boundaries and are excluded from
+the split/interruption evidence. The corrected probe checked raw object
+membership and blocked undo beyond each fixture case. Its observers were removed
+at completion. Native undo was invoked through the documented song API; keyboard
+undo and a real generated ACID transaction remain later acceptance checks.
+
+**Fallback:** an unchanged seal and valid persisted source cannot authorize a
+write by themselves. The revised playbook requires independent, read-only
+comparison of saved source/settings with expected musical output, including
+known receiver/PB inputs and complete unsupported-field preflight. Unknown or
+mismatching associations block writes and preserve detachable source drafts;
+undo reconciliation must not repair phrase names, content or persisted source.
+Identical-output source variants may be compatible without proving historical
+provenance. Session-only verified tuples cannot establish safety after reload.
+This native failure resolves the feasibility question but is not a passing undo
+acceptance result; implement and verify the revised contract before relying on
+source/ownership reconciliation.
+#### Native copy, notification and script probes (2026-10-29)
+
+The second-pass copy fixture used a fresh, unselected instrument with destination,
+staging and backup phrases. Distinguishable values occupied all seven note-cell
+fields and both effect-cell fields at lines 1, 16, 17 and 512 in all 12 note and
+8 effect columns. Visibility and active length were then reduced to one column
+and 16 lines; native reads confirmed retained hidden/tail sentinels. Comparison
+read every available column through line 512, all documented phrase settings,
+12 column names/mutes, mapping presence/fields, and inactive script editor state.
+
+Destination → backup and stage → destination preserved the compared pattern,
+column and phrase values with zero unsupported reads. Mapping was **not copied**:
+the backup had no mapping and copying an unmapped stage retained the destination
+mapping. The mapping sentinel used range 36–47, base note 43, key tracking 3,
+loop enabled, endpoints 2–14. Backup → destination restored every compared value
+with zero differences, including that existing mapping. Raw destination identity
+was preserved. Therefore rollback must snapshot/compare the destination mapping
+fields separately; a backup phrase alone does not contain its mapping.
+
+A separate inactive-script fixture remained in pattern playback mode throughout.
+Its committed integer parameter defaulted to 13, settled on idle 2, and was changed
+to 23. Pending editor text then changed the default to 31 (`pending_changes=3`).
+After `copy_from`, the backup contained that editor text with pending count zero;
+on subsequent idles its parameter settled to **31**, losing the committed version
+and value 23. Complete inactive-script preservation therefore **failed**.
+The temporary preflight predicate accepted an empty script and rejected both
+committed nonempty and pending script fixtures: reject if any paragraph contains
+non-whitespace text, any parameter exists, pending changes are nonzero, or access
+fails. This predicate was exercised natively; it is not yet a runtime guard.
+Generated ACID phrases may retain scripts, so later implementation must establish
+safe supported preservation or explicitly block such regeneration. Do not erase
+scripts to make targets pass. Setting inactive `editor_visible` raised a native
+read-only error despite the pinned writable-looking declaration; the final probe
+only read it. No playback mode toggle was used to inspect inactive scripts.
+
+Insert/delete list events, name changes and copy line changes were synchronous in
+the observed calls. Copies emitted destination-name notification before changed
+lines 1, 16, 17 and 512. Mutating the unselected fixture preserved native selection
+through three later idles; an earlier selected-instrument probe changed selection
+after structural mutations. Neither observation establishes mutation origin or
+universal selection behavior; reconcile on idle and cancel ambiguous jobs.
+
+A valid committed script rendered two events, zero skipped, with callback on the
+next idle. The invalid script's render callback reported a syntax error while
+`compile_error` was still empty; that property changed on the following idle.
+The runtime-error script's committed notification still exposed the preceding
+compile error; later compile/runtime observables and the callback settled.
+Thus no fixed idle delay or committed-notification error snapshot authorizes a
+write. Callback results and independently validated output remain authoritative.
+Missing/duplicate callbacks, busy-host timing, lifecycle cancellation and actual
+playback were not established by these feasibility probes. All final probe
+observers were removed; temporary scripts and logs remain outside package inputs.
+
+#### Runtime inventory
+
+The 2026-10-29 source audit classifies existing paths as **verify** (retain and
+exercise), **correct** (change an existing path), or **complete** (fill a missing
+part in its existing owner). Paths below are relative to
+`com.david303ttl.ACID.xrnx/`; these observations are not native passes.
+
+| Responsibility / current entry points | Classification and required follow-up |
+| --- | --- |
+| Runtime target and presentation: `gui.lua` `show`, `load_target`, `select_instrument`, `live_target`, `refresh_phrase_choices` | **Correct:** consolidate captured song/instrument/phrase objects, revision and session checks. Local instrument/phrase positions remain in use; preserve existing `rawequal` membership checks. |
+| Musical requests: `gui.lua` calls `phrase_writer.generate` from the `live_regen.new` renderer and the Generate button | **Correct:** route both callers through one request boundary. `changed` saves a draft and requests Live Edit; checkbox arming and `load_target` also request writes today. Arming, navigation and recovery must stop doing so. |
+| Serialized scheduling: `model/live_regen.lua` `new`, `invalidate`, `run_one`, `settle`; writer `cancel`, `release`, `complete` | **Verify/correct:** retain immediate single-flight/latest-pending behavior and cancellation ownership; verify terminal settlement and global occupancy across release. No debounce or second scheduler is needed. |
+| Native mutation: `writers/phrase_writer.lua` `generate_impl`, `finalize`, `remove_phrase`, `mutate_phrases` | **Correct/complete:** staging insertion, backup insertion, destination-to-backup, stage-to-destination and backup-to-destination copies, and deletion all live here. Remove omitted-target phrase-1/append fallback; register occupancy before insertion; add complete preflight, preservation and checked recovery. The exceptional insertion-failure path deletes only a tail phrase matching `job.phrase` by `rawequal`; retain and verify that guard. |
+| Script execution: `writers/script_runner.lua` `new` / `start`; writer `begin_wait` | **Correct/verify:** paragraphs are assigned by the writer; the runner attaches `committed_observable`, calls `commit`, then calls `render_to_pattern` directly from that notification. Writer idle handling waits for output settlement. Compile settlement after notification needs the pinned-API contract and native probe; retain authoritative callback results. |
+| Selection, listeners and lifecycle: `gui.lua` `bind_selected_phrase_watch`, `apply_pending_selected_phrase_selection`, `detach_dialog_watch`, `release_context` | **Complete:** selected phrase notifications are queued and applied on idle; native selected objects and initial instrument index are read, with no native selection assignments found. Add selected-instrument, inventory, rename/content and undo reconciliation. Existing release/new-document/unload listeners invalidate work; dialog idle detects closing and detaches its watch. Verify repeated open/release cleanup rather than adding another idle loop. |
+| Persistence: `model/pattern_store.lua` `prepare`, `commit`, `restore`, draft helpers; `model/draft_cache.lua` `put`, `get`, `clear`; GUI completion handlers | **Correct/verify:** keep these owners. Store commit rebases current drafts; GUI clears the committed draft afterward in a separate write. Make target-draft clearing atomic with musical commit and require unique live ID holders before durable draft access. Preserve the guarded newer-data rollback check. |
+| Undo: GUI editor history buttons versus native phrase/source mutations | **Complete:** editor `history:undo` / `redo` changes source/drafts only. No `describe_undo`, `describe_batch_undo` or `is_undo_redoing` call exists in the current runtime. Native consistency and meaningful grouping remain prerequisite observations and later implementation work. |
+
+#### Current storage contract
+
+`writers/phrase_ownership.lua` recognizes the exact name shape
+`ACID 0.1 #<id> [v3:<eight hex digits>]`, bounds IDs to 1–2147483647 and
+compares the persisted seal against current content. The seal covers active
+lines and visible note/effect columns plus selected phrase properties and note
+column mutes. It omits hidden/tail cells, column names, mapping and script
+state. Preserve the name/version format; complete session comparison and
+unsupported-field preflight belong in the same ownership/writer modules.
+
+`model/pattern_store.lua` stores newline-terminated text in bundle-specific
+`song.tool_data`, headed `ACID-PITCH-TIME-1`. Committed rows contain ID, output
+policy, PB range, timing mode, pitch span, length, all 32 pitch events and all
+32 TIME commands. `DRAFT` rows additionally contain instrument index, phrase
+ID (0 for New) and a hex-encoded instrument name. Preserve these identifiers
+and strict parsing: unknown headers, incomplete final lines, blank rows,
+duplicate record keys, invalid policies/PB ranges, malformed pitch separators,
+wrong event counts and invalid compiled sources are rejected. Normal `load`
+requires a valid seal, one ID holder across the entire song and a valid source
+record; notes alone never supply source.
+
+`model/draft_cache.lua` keeps session drafts keyed by song/instrument/phrase
+objects and a private New sentinel, copying source/settings on put/get.
+Durable positive-ID lookup follows the ID across instrument positions; New
+scratch recovery checks the stored instrument name and unique current name.
+Durable phrase draft access checks the seal but not song-wide live-holder
+uniqueness; cached session reads return the object-keyed draft directly.
+A durable write/clear removes matching-ID draft rows, so collisions
+must be blocked before those calls. Current durable records contain no
+historical content/source baseline; do not infer one or migrate the schema.
+
+The baseline rerun passed **34/34 ACID specs**. Native observations and required
+fallbacks are recorded above; final runtime acceptance remains open.
+
+The installed-tool/disposable-XRNS observations above establish these Step 0
+decisions. Repeat the relevant probes against the final writer at Step 8:
+
+| Probe | Required evidence | Result |
+| --- | --- | --- |
+| Full phrase copy/restore | Sentinel values in visible/hidden/tail cells, column metadata, phrase properties, mapping and inactive script state; compare destination → backup, stage → destination and backup → destination, including raw object identity | Qualified field roundtrip; inactive committed/editor/parameter state lost. Native rejection predicate tested; runtime guard pending. |
+| Notifications and render settlement | Insert/copy/name/delete order, immediate/delayed selection effects, committed/compile-error timing and render callback settlement; cancel when origin cannot be distinguished | Observed synchronous structural events and asynchronous error/callback settlement; no origin or latency guarantee. |
+| Ownership/source undo consistency | Phrase name plus tool data across idle callbacks and an intervening native action; inspect every undo/redo state for an inconsistent association that could authorize writing | Failed natively; stable undo mismatch accepted by current loader. Contract revised; runtime fix pending. See native probe record above. |
+
+Do not treat unsupported preservation as a pass: record a detectable preflight
+rejection and test it. A foundational undo/lifecycle failure requires revising
+the playbook contract before runtime implementation continues.
+
+Step 0 closeout also verified that the installed development tool's `main.lua`
+was restored byte-for-byte from its pre-probe backup, all temporary bridge and
+probe observers were removed by tool reload, and the disposable fixture was
+saved. Probe code/logs, fixture and SDK remain untracked and outside package
+inputs. Independent second-pass review checked the native observations against
+the recorded results; whitespace checks passed. No runtime layout, manifest,
+tool version or persisted schema changed, so packaging was not required.
 
 | Check | Result |
 | --- | --- |

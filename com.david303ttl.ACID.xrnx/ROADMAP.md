@@ -428,7 +428,7 @@ not run in this workspace; functional acceptance remains open.
 - Model states explicitly: **CLEAN, RENDERING, COMMITTED, APPROXIMATE, ERROR**. Expose last successful commit, current pending edit, active target and any error; "APPROXIMATE" means successful audio-limited render.
 - Serialize regeneration and coalesce intermediate edits. Validate job token/document identity both before mutation and before commit. An edit while rendering enqueues the latest full canonical source and regenerates once the in-flight job resolves.
 - On transient failure, retain the last-good sealed phrase, keep source draft and pending status, remain armed, and retry on the next relevant change or user Retry. Do not spin on a permanent error. Start valid edits immediately without a debounce timer or manual Generate prerequisite. Edits arriving during a render apply immediately after it settles; editor-view and cursor-only changes never rebuild.
-- New, foreign, modified or deleted phrase destinations create a separate ACID-owned phrase automatically on the explicitly selected instrument. Preserve unrelated phrases and bind subsequent edits to the generated phrase. Song changes invalidate and stop the session; missing instrument or corrupt persistence reports an error without disabling Live Edit.
+- Only explicit New Phrase plus Generate or a real source/settings edit while Live Edit is armed may create a destination. Arming, navigation and draft restoration never render. Foreign, modified or deleted destinations block writes and preserve drafts; they never fall back to creation. Song changes invalidate and stop the session; missing instrument or corrupt persistence reports an error without disabling Live Edit.
 - Closing/switching the dialog does not create a partially owned phrase. Define and test save/reopen of a dirty canonical draft separately from the last committed seal; user is warned before any unsaved draft would be lost.
 - Avoid string-matching success messages as the Live Edit completion API: use typed success/failure/approximation results with structured diagnostics; manual Generate uses the same result contract.
 
@@ -651,7 +651,7 @@ defect.
 
 Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). Its fixed policies are normative. Complete each gate before its dependent work; failed evidence returns to the responsible contract.
 
-- [ ] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility.
+- [x] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility; findings incorporated into the playbook contracts.
 - [ ] Shared validation/store contracts and complete field-preservation policy.
 - [ ] Runtime context, raw object identity, guards, and blocker state.
 - [ ] Explicit create/regenerate writer and one cancellation/completion handshake.
@@ -662,6 +662,22 @@ Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_R
 - [ ] Pass native acceptance A–E, including field preservation, drafts, cancellation, copies, and undo.
 - [ ] Final documentation/review and focused commit; keep M4 open until acceptance passes.
 
+Gate 0 repository evidence was rechecked on 2026-10-29: pinned SDK setup
+succeeded, definitions and offline docs were inspected, runtime/storage call
+sites were inventoried, and all 34 ACID specs passed. The
+[prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record)
+contains the inventory, native observations and tested unsupported-script
+rejection predicate. **Step 0 is complete**; Step 1 proceeds under the revised
+contracts. This closes the prerequisite investigation, not native acceptance.
+Native follow-up in Renoise 3.5.4 / API 6.2 found that undo can restore old
+notes/seal while retaining the newer source record; the existing loader accepts
+the mismatch. The playbook therefore
+requires independent source/output compatibility validation, including after
+reload, or blocked regeneration with explicit source recovery to New. Valid
+seal plus valid source alone cannot authorize writing. Steps 1/3/4/6 implement
+and test these requirements; Step 8 verifies the finished native behavior.
+
+- **Live Edit scheduling:** real edits dispatch immediately through one serialized request pipeline, retaining only the latest pending snapshot. Arming, no-op edits, navigation and restoration enqueue nothing. A canceled in-flight render retains occupancy until its terminal callback; stale or blocked completion cannot automatically authorize another write. No debounce timer.
 - **Live inventory:** newly added, deleted, renamed and reordered Renoise instruments appear in ACID without reopening. Track native selected instrument and phrase using supported API 6.2 observables and a guarded idle update. Detach notifiers on close/song change.
 - **Binding:** resolve the exact instrument object and ACID-owned phrase identity, not a cached index. Follow user-initiated native selection; ignore internal staging selection changes. Preserve per-phrase source, timing, PB Range, output policy and uncommitted drafts on A → B → C → A switches.
 - **Regenerate:** require a valid, explicit bound owned phrase. Replace it in place; keep phrase count, identity and native playback program stable. Do not fall back to the first phrase or to append on missing, modified, foreign or deleted destinations.
