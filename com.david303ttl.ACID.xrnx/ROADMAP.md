@@ -66,7 +66,7 @@ Implemented on `develop`:
 | Destination | Select an existing ACID-owned phrase or append a new phrase to a chosen instrument |
 | Persistence | Original source snapshots via song-scoped `tool_data`, associated with sealed phrase IDs |
 | Protection | Ownership checks, temporary render, guarded replacement and rollback attempts |
-| Live Edit | Opt-in debounced (350 ms), serialized automatic regeneration; manual Generate/Regenerate retained |
+| Live Edit | Opt-in immediate, serialized automatic regeneration; manual Generate/Regenerate retained; M4.7 unifies request and cancellation handling |
 | Verification | User-confirmed local Lua regressions and in-Renoise testing for M1, phrase selection/persistence, and Live Edit |
 
 **Do not infer from the M1 baseline** that repeat playback, authentic slide envelopes, timing feel, or release characteristics are complete. M2 provides baseline Repeat phrase generation and has passed the recorded pitch/grid renders plus the available writer-cell, Live Edit, ownership, and source-persistence checks. M3 now adds the verified diagnostic-profile gate/glide/accent render matrix and packaged GUI checks described in section 5. Live transport acceptance and TB-303 hardware fidelity remain unverified.
@@ -701,15 +701,28 @@ Results are retained in [timing evidence](../tests/acid/acid_timing_manual.md) a
 
 ### M4.7 — Instrument/phrase synchronization and regeneration safety (P0)
 
+Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). Its fixed policies supersede earlier blueprint debounce guidance. Complete each gate before its dependent work; failed evidence returns to the responsible contract.
+
+- [ ] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility.
+- [ ] Shared validation/store contracts and complete field-preservation policy.
+- [ ] Runtime context, raw object identity, guards, and blocker state.
+- [ ] Explicit create/regenerate writer and one cancellation/completion handshake.
+- [ ] Explicit Make Independent for matching valid collision groups; no automatic re-keying or source-less adoption.
+- [ ] Draft precedence, recovery chooser, read-only revalidation, and one manual/Live Edit request pipeline.
+- [ ] Native observers, internal mutation reconciliation, and release/late-callback handling.
+- [ ] Remove competing paths; pass all 35 focused regressions, existing suites, and required package checks.
+- [ ] Pass native acceptance A–E, including field preservation, drafts, cancellation, copies, and undo.
+- [ ] Final documentation/review and focused commit; keep M4 open until acceptance passes.
+
 - **Live inventory:** newly added, deleted, renamed and reordered Renoise instruments appear in ACID without reopening. Track native selected instrument and phrase using supported API 6.2 observables and a guarded idle update. Detach notifiers on close/song change.
 - **Binding:** resolve the exact instrument object and ACID-owned phrase identity, not a cached index. Follow user-initiated native selection; ignore internal staging selection changes. Preserve per-phrase source, timing, PB Range, output policy and uncommitted drafts on A → B → C → A switches.
 - **Regenerate:** require a valid, explicit bound owned phrase. Replace it in place; keep phrase count, identity and native playback program stable. Do not fall back to the first phrase or to append on missing, modified, foreign or deleted destinations.
-- **Create:** append exactly one phrase only after explicit New Phrase/Generate intent. Selecting a newly added or empty instrument never creates a phrase. Instrument/phrase switching alone never commits or starts Live Edit generation.
+- **Create:** create exactly one final destination through Generate or a real source/settings edit while Live Edit is armed and New Phrase is explicitly bound. Navigation, arming, and draft recovery never generate. Create needs one staging slot; regenerate needs two temporary slots and keeps the same destination object.
 - **Asynchronous safety:** capture instrument/phrase identity and selection revision; reject stale or deleted targets and in-flight output on user context changes without touching unrelated content. Failed commits preserve last-good phrases and editable drafts. No automatic reroute to a different instrument.
 - **UI:** keep instrument and destination options current and show a clear Create versus Regenerate action. A missing or unsafe destination reports the actual reason and requires explicit resolution.
 - **Tests:** deterministic notifier, add/delete/reorder/rename, duplicate-ID, rapid-switch, stale-callback, ownership and rollback regressions; one Renoise session exercising selection, generation, Live Edit and save/reopen.
 
-**M4 closure:** M4.7 passes local regressions and the short Renoise manual smoke. No additional acoustic research is required.
+**M4 closure:** M4.7 passes the playbook's local/package gates and native acceptance A–E. An unresolved native feasibility or integrity blocker keeps M4 open. No additional acoustic research is required.
 
 ---
 
