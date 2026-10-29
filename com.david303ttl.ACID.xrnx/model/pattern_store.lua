@@ -290,11 +290,18 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
   if current==nil and current_error then return nil,current_error end
   if current~=previous then return nil,"ACID song data changed while saving draft" end
   local ok,write_error=pcall(function() song.tool_data=next_raw end)
-  if not ok then return nil,"Could not save ACID draft: "..tostring(write_error) end
   local written,verify_error=raw_data(song)
-  if not written then return nil,verify_error end
-  if written~=next_raw then return nil,"ACID draft write did not persist" end
-  return true
+  if verify_error then
+    return nil,"ACID draft write outcome is uncertain; readback failed: "..verify_error
+  end
+  if written==next_raw then return true end
+  if written==previous then
+    if not ok then
+      return nil,"Could not save ACID draft; stored data is unchanged: "..tostring(write_error)
+    end
+    return nil,"ACID draft write did not persist; stored data is unchanged"
+  end
+  return nil,"ACID draft write outcome is uncertain; stored data differs from both the previous and requested values"
 end
 
 function M.write_draft(song,instrument,phrase,pattern,output_policy,pb_range,excluded)

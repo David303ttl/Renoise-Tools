@@ -9,6 +9,7 @@ local pitch_bend=require("writers.phrase_pitch_bend")
 local M={}
 local NEW={}
 local sessions=setmetatable({},{__mode="k"})
+local captures=setmetatable({},{__mode="k"})
 local PB_RANGES={[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local serial=0
 local function next_token() serial=serial+1;return serial end
@@ -228,30 +229,69 @@ function M.restore(song,instrument,phrase,options)
     verified.settings.pb_range,{origin="committed"}
 end
 
+local function same_capture_descriptor(descriptor,captured)
+  return type(descriptor)=="table" and getmetatable(descriptor)==nil and
+    descriptor.kind==captured.kind and rawequal(descriptor.instrument,captured.instrument) and
+    rawequal(descriptor.phrase,captured.phrase) and descriptor.token==captured.token and
+    descriptor.revision==captured.revision and descriptor.instrument_index==captured.instrument_index and
+    descriptor.instrument_name==captured.instrument_name and
+    descriptor.instrument_name_unique==captured.instrument_name_unique and
+    descriptor.phrase_id==captured.phrase_id
+end
+
+local function current_capture(song,captured)
+  if not rawequal(song,captured.song) or not valid_target(song,captured.instrument,captured.phrase) or
+      not ownership.membership(song,captured.instrument,captured.phrase) then return false end
+  local records=bucket(song,captured.instrument,false)
+  local record=records and records[captured.phrase or NEW]
+  if not record or record.detached or record.token~=captured.token or
+      record.revision~=captured.revision then return false end
+  if captured.kind=="new" then
+    local destination=scratch_baseline(song,captured.instrument)
+    return destination~=nil and destination.index==captured.instrument_index and
+      destination.name==captured.instrument_name and
+      destination.durable==captured.instrument_name_unique
+  end
+  local id=ownership.validate_identity(song,captured.instrument,captured.phrase)
+  return id~=nil and id==captured.phrase_id
+end
+
 function M.capture(song,instrument,phrase,options)
   local record,err=resolve(song,instrument,phrase,options)
   if not record then return nil,err or "No current session draft" end
-  local descriptor={kind=phrase and "existing" or "new",instrument=instrument,phrase=phrase,
+  local kind=phrase and "existing" or "new"
+  local captured={kind=kind,song=song,instrument=instrument,phrase=phrase,
     token=record.token,revision=record.revision}
-  local captured={kind=descriptor.kind,instrument=instrument,phrase=phrase,
+  local descriptor={kind=kind,instrument=instrument,phrase=phrase,
     token=record.token,revision=record.revision}
+  if kind=="new" then
+    local destination=scratch_baseline(song,instrument)
+    if not destination then return nil,"Cannot capture New Phrase destination identity" end
+    captured.instrument_index=destination.index
+    captured.instrument_name=destination.name
+    captured.instrument_name_unique=destination.durable
+    descriptor.instrument_index=destination.index
+    descriptor.instrument_name=destination.name
+    descriptor.instrument_name_unique=destination.durable
+  else
+    local id=ownership.validate_identity(song,instrument,phrase)
+    if not id or id~=record.baseline.id then
+      return nil,"Cannot capture a unique ACID phrase identity"
+    end
+    captured.phrase_id=id
+    descriptor.phrase_id=id
+  end
+  captures[descriptor]=captured
   return descriptor,function(token,revision)
-    return token==captured.token and revision==captured.revision and
-      M.is_current(song,captured)
+    return token==captured.token and revision==captured.revision and current_capture(song,captured)
   end
 end
 
 -- This guard remains valid after an authorized destination mutation.
 function M.is_current(song,descriptor)
-  if type(descriptor)~="table" or getmetatable(descriptor)~=nil or
-      (descriptor.kind~="new" and descriptor.kind~="existing") or
-      (descriptor.kind=="new" and descriptor.phrase~=nil) or
-      (descriptor.kind=="existing" and descriptor.phrase==nil) then return false end
-  if not valid_target(song,descriptor.instrument,descriptor.phrase) then return false end
-  if not ownership.membership(song,descriptor.instrument,descriptor.phrase) then return false end
-  local records=bucket(song,descriptor.instrument,false)
-  local record=records and records[descriptor.phrase or NEW]
-  return record~=nil and not record.detached and record.token==descriptor.token and record.revision==descriptor.revision
+  local captured=type(descriptor)=="table" and captures[descriptor]
+  return captured~=nil and same_capture_descriptor(descriptor,captured) and
+    current_capture(song,captured)
 end
 
 function M.compare_and_clear(song,descriptor,created)

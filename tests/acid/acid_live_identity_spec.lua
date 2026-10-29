@@ -123,4 +123,52 @@ a.line=line
 assert(store.clear_draft(song,first,a))
 assert(store.read_draft(song,first,a)==nil)
 assert(store.clear_draft(song,first,a)==false)
+
+local prior_current=current
+local prior_song_accessor=renoise.song
+renoise.song=function()return current end
+local function draft_write_fixture(mode)
+  local backing,fail_readback
+  local destination={name="Draft write",phrases={}}
+  local draft_song=setmetatable({instruments={destination}},{
+    __index=function(_,key)
+      if key=="tool_data" then
+        if fail_readback then error("readback unavailable") end
+        return backing
+      end
+    end,
+    __newindex=function(target,key,value)
+      if key~="tool_data" then rawset(target,key,value);return end
+      if mode=="unchanged" then error("setter rejected write") end
+      if mode=="partial_then_throw" then backing="partial ACID record";error("setter failed after partial mutation") end
+      backing=value
+      if mode=="mutate_then_throw" then error("setter failed after mutation") end
+      if mode=="failed_readback" then fail_readback=true end
+    end})
+  return draft_song,destination,function()return backing end
+end
+local write_source=seq.new_pattern(2)
+local partial_song,partial_instrument,partial_data=draft_write_fixture("mutate_then_throw")
+current=partial_song
+assert(rawequal(renoise.song(),partial_song))
+local persisted,partial_error=store.write_draft(partial_song,partial_instrument,nil,write_source,"repeat",0)
+assert(persisted,partial_error or "a setter error with exact requested readback is verified success")
+assert(type(partial_data())=="string" and partial_data():find("DRAFT|",1,true))
+local unchanged_song,unchanged_instrument,unchanged_data=draft_write_fixture("unchanged")
+current=unchanged_song
+local unchanged,unchanged_error=store.write_draft(unchanged_song,unchanged_instrument,nil,write_source,"repeat",0)
+assert(not unchanged and unchanged_error:find("unchanged",1,true) and unchanged_data()==nil,
+  "a failed setter with verified previous storage is classified as unchanged")
+local partial_song,partial_instrument,partial_value=draft_write_fixture("partial_then_throw")
+current=partial_song
+local partial,partial_error=store.write_draft(partial_song,partial_instrument,nil,write_source,"repeat",0)
+assert(not partial and partial_error:find("uncertain",1,true) and partial_value()=="partial ACID record",
+  "a visible partial mutation is reported as uncertain")
+local unreadable_song,unreadable_instrument,unreadable_data=draft_write_fixture("failed_readback")
+current=unreadable_song
+local unreadable,unreadable_error=store.write_draft(unreadable_song,unreadable_instrument,nil,write_source,"repeat",0)
+assert(not unreadable and unreadable_error:find("uncertain",1,true) and type(unreadable_data())=="string",
+  "a failed readback after mutation is classified as uncertain")
+current=prior_current
+renoise.song=prior_song_accessor
 print("ACID live identity and guarded durable draft checks passed")

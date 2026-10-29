@@ -46,6 +46,12 @@ local saved,sp,sb,meta=cache.restore(song,instrument,b)
 assert(saved.length==1 and sp=="play_once" and sb==0 and meta.origin=="committed")
 local descriptor,guard=cache.capture(song,instrument,a)
 assert(guard(descriptor.token,descriptor.revision))
+local duplicate_owner=phrase(1)
+other.phrases={duplicate_owner}
+assert(not cache.is_current(song,descriptor),"a captured phrase ID must remain unique")
+assert(not cache.compare_and_clear(song,descriptor),"duplicate ownership cannot clear a captured draft")
+other.phrases={}
+assert(cache.is_current(song,descriptor))
 local live_token,live_revision=descriptor.token,descriptor.revision
 instrument.phrases={b}
 assert(not cache.is_current(song,descriptor) and not guard(live_token,live_revision))
@@ -63,6 +69,13 @@ a.lines[1].note_columns[1].note_value=37
 assert(cache.is_current(song,descriptor) and checks==calls,
   "commit token guard does not validate old output after authorized mutation")
 a.lines[1].note_columns[1].note_value=36
+local authorized=assert(cache.capture(song,instrument,a))
+a.lines[1].note_columns[1].note_value=37
+a.name=assert(own.make_name(a,1))
+assert(cache.compare_and_clear(song,authorized),
+  "a verified regeneration may change phrase content while retaining its unique ID")
+a.lines[1].note_columns[1].note_value=36
+a.name=assert(own.make_name(a,1))
 assert(cache.put(song,instrument,a,seq.new_pattern(4),"repeat",0))
 assert(cache.put(song,instrument,a,dirty,"repeat",12))
 assert(not guard(descriptor.token,descriptor.revision),"equal-valued newer edits invalidate old revision")
@@ -75,6 +88,20 @@ assert(store.commit(song,candidate))
 assert(store.read_draft(song,instrument,a)==nil)
 assert(cache.compare_and_clear(song,latest))
 assert(not cache.get(song,instrument,a))
+
+assert(cache.put(song,other,nil,dirty,"repeat",0))
+local scratch_capture=assert(cache.capture(song,other,nil))
+local original_instruments=song.instruments
+song.instruments={other,instrument}
+assert(not cache.is_current(song,scratch_capture),"reordered New Phrase bindings invalidate captured drafts")
+assert(not cache.compare_and_clear(song,scratch_capture))
+song.instruments=original_instruments
+assert(cache.is_current(song,scratch_capture))
+other.name="Renamed scratch"
+assert(not cache.compare_and_clear(song,scratch_capture),"renamed New Phrase bindings cannot clear captured drafts")
+other.name="Scratch"
+assert(cache.is_current(song,scratch_capture))
+assert(cache.clear(song,other,nil))
 
 assert(cache.put(song,instrument,a,dirty,"repeat",12))
 a.column_names[12]="changed preserved metadata"

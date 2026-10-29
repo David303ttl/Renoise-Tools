@@ -133,12 +133,10 @@ function M.inventory(song,excluded)
   return result
 end
 
-function M.validate_live(song,instrument,phrase,excluded)
+function M.validate_identity(song,instrument,phrase,excluded)
   if phrase==nil then return nil,"An existing ACID phrase is required" end
   local instrument_index,phrase_index=M.membership(song,instrument,phrase)
   if not instrument_index then return nil,phrase_index end
-  local ok,status=pcall(M.status,phrase)
-  if not ok or status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
   local groups,err=M.inventory(song,excluded)
   if not groups then return nil,err end
   local inspected,id=pcall(M.id,phrase)
@@ -147,6 +145,14 @@ function M.validate_live(song,instrument,phrase,excluded)
   if not holders or #holders~=1 or not rawequal(holders[1].phrase,phrase) then
     return nil,"Duplicate or missing ACID phrase ID; cannot choose safely"
   end
+  return id,instrument_index,phrase_index
+end
+
+function M.validate_live(song,instrument,phrase,excluded)
+  local id,instrument_index,phrase_index=M.validate_identity(song,instrument,phrase,excluded)
+  if not id then return nil,instrument_index end
+  local ok,status=pcall(M.status,phrase)
+  if not ok or status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
   return id,instrument_index,phrase_index
 end
 
