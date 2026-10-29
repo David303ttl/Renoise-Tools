@@ -717,8 +717,9 @@ through ordinary Renoise installation without it or its dependencies.
 
 **Current implementation:** development packaging, authenticated loopback driver,
 PowerShell runner, native document-reset and inventory smoke, and offline runner
-regressions. Fresh-launch and controlled selected-PID Native smoke pass, including
-concurrent-instance and restoration checks. Keyboard coverage is not implemented.
+regressions. T0.4 runner acceptance passes for fresh launches, loaded selected
+instances, concurrent instances and timeout/disconnection recovery. T0.5–T0.8
+remain pending. Keyboard coverage is not implemented.
 Missing keyboard coverage does not block Native
 runs, runtime implementation or normal tool use.
 
@@ -745,30 +746,104 @@ runs, runtime implementation or normal tool use.
    failed assertion, timeout, wrong target or failed backup/restore. No process
    count, desktop, profile-attestation or historical-evidence gate.
 
-#### Test implementation
+#### T0.1 — API contract and basic preflight
 
-- Keep test driver/bootstrap/config outside normal release packages. Use the
-  existing package checks to verify this; preserve manifest/API/tool versions.
-- Keep the driver small: loopback JSON requests, one run token, fixed operations,
-  bounded idle processing, observed document completion and read-only snapshots.
-  `shutdown` acknowledges the request; a per-run completion file confirms stopped
-  callbacks/listener before restoration. Snapshots use native values and selection
-  positions, not Lua wrapper identities.
-  A closed socket alone does not prove driver shutdown.
-- Add fixtures and independent expected readback only for behaviors being changed.
-  Avoid a second writer, arbitrary Lua execution and a duplicated test framework.
-- Add keyboard tests only where shortcuts or focus are the behavior under test.
-  Their focus checks apply only during input, not to Native API tests or normal
-  tool use. Do not rewrite developer keymaps. Missing keyboard coverage stays
-  explicit and does not invalidate an independently selected Native run.
-- Offline checks: `scripts/test_host_preflight.ps1`,
-  `tests/renoise/runner_spec.ps1`, `tests/renoise/test_package_dev.ps1`, and
-  `tests/renoise/remote_driver_spec.lua`. Run relevant checks after changes.
-- Native checks remain required before claiming native correctness. Record what
-  ran and what did not; mocks do not prove playback, undo, GUI or host lifecycle.
-  Step 8 retains behavioral acceptance, using automated or documented manual
-  checks as appropriate. Unfinished harness infrastructure is not permission to
-  misreport acceptance, and is not a prohibition on developing or using tools.
+- [x] Inspect pinned API 6.2 definitions and offline docs for sockets, document
+  lifecycle, undo and keybindings; keep API constraints in `tests/renoise/README.md`.
+- [x] Check executable/version, selected PID and writable temporary paths without
+  changing tools or songs. Other instances and desktops remain usable.
+- [x] Keep manual prompt/lifecycle diagnostics separate from automated assertions.
+
+#### T0.2 — Development-only package
+
+- [x] Build disposable bundles under ignored `tmp/`, with loopback configuration
+  and per-run credentials outside the tool bundle.
+- [x] Verify release exclusion, source payload hashes, unchanged manifests,
+  bootstrap isolation, archive paths and repeated builds.
+- [x] Keep the driver, configuration, fixtures and keyboard helpers out of releases.
+
+#### T0.3 — Asynchronous Renoise transport
+
+- [x] Authenticate and validate bounded JSON frames; dispatch fixed operations
+  through idle callbacks without arbitrary Lua/module execution.
+- [x] Observe release/new-document barriers, epochs, timeouts and cancellation;
+  reject late or incomplete transitions.
+- [x] Cover framing, malformed requests, token/ID errors, limits, reconnects and
+  cleanup offline. Confirm native shutdown through the per-run completion file.
+
+#### T0.4 — PowerShell runner
+
+- [x] Discover/configure Renoise, build/install with consent, verify backups,
+  check target/listener identity, reset disposable songs and report results.
+- [x] Verify transport and installation failure cleanup without Renoise.
+- [x] Pass fresh-launch and controlled selected-PID Native smoke with a concurrent
+  instance; restore files and leave developer-owned processes open.
+- [x] Verify reloading ACID already loaded in a selected instance, then running
+  the smoke and restoring/reloading the original installation.
+- [x] Exercise controlled host timeout/disconnection and verify nonzero results,
+  cleanup or retained recovery files, and preservation of unrelated instances.
+
+#### T0.5 — Independent native fixtures and scenario isolation
+
+- [x] Read native inventory and selection positions; compare stable value snapshots.
+- [ ] Add a small scenario definition under `tests/renoise/acid/scenarios/` with
+  fixture/preconditions, actions, observed waits, expected changes and unchanged data.
+- [ ] Extend read-only snapshots for relevant phrase properties, used/hidden/tail
+  note/effect fields, mappings and `tool_data` bytes/digests. Keep diagnostics
+  separate from independent host assertions.
+- [ ] Use canonical values with stable ordering and explicit empty/nil handling;
+  assert foreign content, counts, IDs, source, settings and unaffected columns.
+  For identity-sensitive cases, establish a native-proven identity check; neither
+  Lua wrapper identity nor an unchanged index proves persistent host identity.
+- [ ] Share deterministic inputs and independent golden expectations with existing
+  Lua tests; never derive expected output from the production writer under test.
+- [ ] Verify fixture load/reset, notifier cleanup and test-order independence;
+  preserve deliberate cross-document interruption cases.
+- [ ] Run two successive scenarios and a deliberate assertion failure. Verify
+  exact diffs, no read-only undo/selection/musical changes and no state leakage.
+
+#### T0.6 — Targeted keyboard E2E
+
+- [ ] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`; verify target
+  window and focus only while sending input. Do not rewrite developer keymaps.
+- [ ] Open ACID through a configured genuine shortcut; verify dialog visibility,
+  focus and native instrument selection/navigation through observable readback.
+- [ ] Reject missing mappings, wrong PID, stolen focus and GUI timeouts without
+  typing into another window. Do not use fixed delays or coordinates as assertions.
+- [ ] Keep Native and Keyboard independently selectable. Add later editing journeys
+  with their owning features; do not bypass GUI handlers with test-only actions.
+
+#### T0.7 — Verification integration and failure classification
+
+- [x] Pass offline preflight, transport, runner, Lua and package-exclusion checks.
+- [x] Document portable commands and separate offline, Native, Keyboard and manual
+  checks in the existing test/development guides.
+- [ ] Include relevant harness specs in normal test discovery without adding a
+  second mock framework or requiring Renoise for offline tests.
+- [ ] Run a repeatable host smoke covering ping/capabilities, new document,
+  independent snapshot, fixture load, reset and keyboard shortcut/focus; include
+  a repeated scenario and a deliberate failure/timeout.
+- [ ] Verify PASS, FAIL, ERROR, SKIP and MANUAL classification: missing required
+  assertions or skipped requested coverage must not produce a green suite.
+
+#### T0.8 — Coverage handoff and closeout
+
+- [ ] Check dependency/package boundaries; remove unused test hooks and duplicate
+  fixtures. Preserve production interfaces, manifest/API versions and wire formats.
+- [ ] Add a compact case-to-test table with owning step, Step 8 A–E acceptance
+  case, Native/Keyboard/Manual status and independent assertion.
+- [ ] Map document/session lifetime, selection, inventory and release/reload to
+  Steps 2.2–2.9; create/regenerate/rollback and occupancy to Step 3; explicit copy
+  resolution to Step 4; drafts/scheduling/persistence to Step 5; notifications and
+  late callbacks to Step 6. Add cases with the owning implementation.
+- [ ] Execute applicable automated and manual Step 8 checks, including native
+  undo/redo, save/reload and audible/visual checks; mocks do not establish these.
+- [ ] Close T0 only when its remaining checks pass; list unexecuted coverage
+  explicitly. T0 completion does not certify unimplemented writer behavior.
+
+T0 tracks test implementation and coverage. Its unfinished items do not block
+running available suites, normal tool use or runtime development. Requested
+coverage must pass before that coverage is reported complete.
 
 ### 2.2 — Implement context lifetime and revocable delivery records
 
