@@ -502,10 +502,35 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 ### 1A.1 — Freeze the post-Gate-1 baseline and dependency graph
 
 1. Recheck `git status --short --branch` and current head; preserve unrelated work. Run `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` and record the actual outcome, not the historic 41-spec Gate 1 result as a new run.
-2. Enumerate all static and function-local `require` edges across the 24 runtime modules, GUI and relevant test mocks. Record actual runtime callers and test-only callers for ``articulation.apply`, `gate_writer.apply`, `pattrns_writer.generate`, `memory_status`, `sequencer.describe`, `draft_cache.close`, `draft_cache.capture/is_current/compare_and_clear`, `draft_cache.list/discard/copy_to_new/restore`, and `live_regen.armed`. Mark **remove now / needed by Steps 2–6 / keep because it enforces a boundary**.
+2. Enumerate all static and function-local `require` edges across the 24 runtime modules, GUI and relevant test mocks. Record actual runtime callers and test-only callers for `articulation.apply`, `gate_writer.apply`, `pattrns_writer.generate`, `memory_status`, `sequencer.describe`, `draft_cache.close`, `draft_cache.capture/is_current/compare_and_clear`, `draft_cache.list/discard/copy_to_new/restore`, and `live_regen.armed`. Mark **remove now / needed by Steps 2–6 / keep because it enforces a boundary**. Test-only callers do not establish runtime use: move valid assertions to the canonical path or remove stale assertions, then remove obsolete APIs.
 3. Establish byte/field-equivalence fixtures using existing `acid_output_planner_spec.lua`, `acid_pattrns_spec.lua`, `acid_legato_spec.lua`, `acid_pitch_bend_spec.lua`, `acid_phrase_persistence_spec.lua` and `acid_store_candidate_spec.lua`. Cover default/accent/unity velocity, Off and all supported PB ranges, straight/triplet and repeat/play-once, source/draft wire bytes, strict invalid input and unchanged output snapshots. Reuse the existing fixtures rather than create a second conformance matrix.
 
 **Check:** call-site inventory has no inferred "unused" API, and baseline behavior is executable. Failed baseline tests are resolved or explicitly isolated before changing dependencies.
+
+**1A.1 record:** baseline at `5c12c85`; initial worktree clean; baseline ACID run passed 41 specs. After adding the byte fixtures, both focused specs and the full ACID suite passed again (41 specs). Fixed byte assertions cover the complete committed source record in `tests/acid/acid_phrase_persistence_spec.lua` and the complete source-plus-draft store payload in `tests/acid/acid_store_candidate_spec.lua`. Gate 1A remains pending.
+
+| Module group | `require` edges |
+| --- | --- |
+| Model | `cycle_interpreter → sequencer`; `control_signals → cycle_interpreter`; `legato → control_signals`; `timing → sequencer`; `editor_state → sequencer, cycle_interpreter`; `output_planner → cycle_interpreter, timing, sequencer, control_signals, articulation, legato`; `pattern_store → sequencer, cycle_interpreter, writers.phrase_ownership`; `draft_cache → sequencer, pattern_store, writers.phrase_ownership, writers.phrase_validator, target_capabilities, writers.phrase_pitch_bend`. |
+| Function-local model edges | `articulation → control_signals, writers.gate_writer`; the latter closes the cycle `articulation → gate_writer → output_planner → articulation`. |
+| Writers | `gate_writer → output_planner`; `pattrns_writer → cycle_interpreter, timing, sequencer, output_planner`; `phrase_validator → writers.phrase_ownership, output_planner, pattern_store`; `phrase_writer → pattrns_writer, phrase_validator, gate_writer, phrase_ownership, pattern_store, target_capabilities, sequencer, legato_writer, phrase_pitch_bend, script_runner, output_planner`. |
+| Entry points | `main → gui`; `gui → sequencer, editor_state, cycle_interpreter, live_regen, draft_cache, pattern_store, phrase_ownership, phrase_writer, selection_context, sampler_audit`. |
+
+`renoise/*`, `target_capabilities`, `sequencer`, `memory_status`, `live_regen`, `legato_writer`, `phrase_ownership`, `phrase_pitch_bend` and `script_runner` have no module imports. `acid_gui_views_spec.lua`, `acid_gui_recovery_spec.lua`, `acid_gui_timing_race_spec.lua` and `acid_writer_capture_spec.lua` replace modules through `package.loaded`; these mocks do not validate the production graph. Model-to-writer imports remain in `pattern_store`, `draft_cache` and the lazy articulation path. `target_capabilities`, `draft_cache` and `pattern_store` also access Renoise host data from `model`; relocate the host owners in 1A.2.
+
+| API | Production callers | Test callers and disposition |
+| --- | --- | --- |
+| `articulation.apply` | None; production uses `articulation.plan`. | `acid_articulation_spec`, `acid_articulation_resolution_spec`, `acid_glide_overlap_spec`; remove in 1A.3 after moving behavior checks to the planner and canonical writer path. |
+| `gate_writer.apply` | None; `phrase_writer` uses `apply_plan`. | `acid_control_signals_spec`; remove in 1A.3 after redirecting checks to `apply_plan`. |
+| `pattrns_writer.generate` | None; `phrase_writer` uses `emit`. | `acid_pattrns_spec`; remove in 1A.8 and exercise compile plus `emit`. |
+| `memory_status` | None. | `acid_regeneration_spec`; remove in 1A.8 while retaining ownership checks. |
+| `sequencer.describe` | None. | `acid_sequencer_spec`; remove in 1A.8; the only assertion is display formatting. |
+| `draft_cache.close` | None; GUI releases drafts with `drafts.release(song)`. | `acid_draft_recovery_spec`; remove in 1A.8; it is a no-op. |
+| `draft_cache.capture/is_current/compare_and_clear` | None yet. | `acid_draft_recovery_spec`; retain for Step 5's exact-revision completion guard or a proven equivalent. |
+| `draft_cache.list/discard/copy_to_new/restore` | None yet. | `acid_draft_recovery_spec`; `list` is also used by `acid_repeat_integration_spec`; retain until Step 5 wires and verifies Recover Draft, Copy to New and discard. |
+| `live_regen.armed` | Set and returned internally; GUI reads `state().enabled`. | `acid_live_regen_spec`; consolidate with the single arming state in Step 5. |
+
+`gate_writer.plan` is used only by `acid_articulation_resolution_spec.lua`, `acid_gate_operations_spec.lua` and an alias assertion in `acid_output_planner_spec.lua`; redirect these checks to `output_planner.plan_gates` and remove the alias in 1A.3. `gate_writer.location` has no callers; remove its export in 1A.3. Keep the function-local `location` helper used for writer diagnostics.
 
 ### 1A.2 — Restore dependency direction without compatibility shims
 

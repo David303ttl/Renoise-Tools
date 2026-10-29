@@ -41,6 +41,23 @@ assert(store.restore(s,initial) and s.tool_data==nil)
 assert(store.allocate(s)==2)
 assert(store.save(s,1,p,"play_once",12))
 assert(s.tool_data:match("^ACID%-PITCH%-TIME%-1\n"))
+local expected_pitches={}
+local expected_time={}
+for i=1,32 do
+  expected_pitches[i]="36:0:0:00"
+  expected_time[i]="N"
+end
+expected_pitches[2]="51:3:1:11"
+expected_pitches[32]="40:4:0:10"
+expected_time[16]="T"
+expected_time[17]="R"
+expected_time[32]="T"
+local expected_source=table.concat({
+  "ACID-PITCH-TIME-1",
+  table.concat({"1","play_once","12","triplet","3","17",
+    table.concat(expected_pitches,","),table.concat(expected_time)},"|")
+},"\n").."\n"
+assert(s.tool_data==expected_source,"committed source wire format changed")
 local restored,output_policy,pb_range=store.load(s,s.instruments[1],a)
 assert(restored and output_policy=="play_once" and pb_range==12)
 assert(restored.length==17 and #restored.pitch_events==32)

@@ -22,6 +22,12 @@ local function fresh()
   assert(store.save(song,2,seq.new_pattern(4),"repeat",0))
   return song,ins,a,b,other
 end
+local default_pitches=string.rep("36:0:0:00,",31).."36:0:0:00"
+local default_time=string.rep("N",32)
+local function source_row(id)
+  return table.concat({tostring(id),"repeat","0","straight","16","4",
+    default_pitches,default_time},"|")
+end
 local function removal(ins,p,token,revision)
   return {kind=p and "existing" or "new",instrument=ins,phrase=p,
     token=token or {},revision=revision or 1}
@@ -32,6 +38,11 @@ end
 local song,ins,a,b,other=fresh()
 local source=seq.new_pattern(7)
 assert(store.write_draft(song,ins,a,source,"repeat",24))
+local expected_draft=table.concat({"DRAFT","1","1","4669727374","repeat","24",
+  "straight","16","7",default_pitches,default_time},"|")
+local expected_store=table.concat({"ACID-PITCH-TIME-1",source_row(1),source_row(2),
+  expected_draft},"\n").."\n"
+assert(song.tool_data==expected_store,"source and draft wire format changed")
 assert(store.write_draft(song,ins,b,source,"repeat",2))
 assert(store.write_draft(song,other,nil,source,"repeat",0))
 local descriptor=removal(ins,a)
