@@ -1,6 +1,6 @@
 dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
-local store=require("model.pattern_store")
+local store=require("renoise.pattern_store")
 
 local source=seq.new_pattern(4)
 source.pitch_events[32]=seq.new_pitch(12,1,true,true)

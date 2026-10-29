@@ -1,11 +1,11 @@
 package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
 
 local sequencer = require("model.sequencer")
-local ownership=require("writers.phrase_ownership")
+local ownership=require("renoise.phrase_ownership")
 ownership.id=function(phrase) return phrase and phrase.id end
 ownership.status=function(phrase)return phrase and phrase.id and "owned" or "foreign" end
 dofile("tests/acid/draft_baseline_stub.lua")
-local cache = require("model.draft_cache")
+local cache = require("runtime.draft_cache")
 
 local instrument_a, instrument_b = {name="A",phrases={}}, {name="B",phrases={}}
 local song_a, song_b = {instruments={instrument_a,instrument_b}}, {instruments={}}
@@ -18,7 +18,7 @@ setmetatable(instrument_b,host_object)
 setmetatable(phrase_a,host_object)
 setmetatable(phrase_b,host_object)
 instrument_a.phrases={phrase_a,phrase_b}
-local pattern_store=require("model.pattern_store")
+local pattern_store=require("renoise.pattern_store")
 assert(pattern_store.save(song_a,41,sequencer.new_pattern(17),"repeat",0))
 assert(pattern_store.save(song_a,42,sequencer.new_pattern(8),"repeat",0))
 local source = sequencer.new_pattern(17)
@@ -66,14 +66,14 @@ assert(cache.get(song_a,instrument_a,nil).length==23,
 instrument_a.phrases[#instrument_a.phrases]=nil
 
 -- Drafts survive a new editor session and committed source rewrites preserve them.
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 local durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.pitch_events[3].note==53)
 assert(durable_pb==24)
 assert(pattern_store.save(song_a,77,sequencer.new_pattern(4),"repeat",12))
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.time_events[17]=="R")
 assert(durable_pb==24)
@@ -81,15 +81,15 @@ assert(durable_pb==24)
 -- Existing phrase drafts resolve by sealed ID after instrument reordering.
 song_a.instruments={instrument_b,instrument_a}
 assert(cache.get(song_a,instrument_a,phrase_a).length==17)
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 assert(cache.get(song_a,instrument_b,nil)==nil,
   "a reordered new-phrase destination is never rebound by index alone")
 local named_instrument={name="Unique",phrases={}}
 local named_song={instruments={named_instrument}}
 assert(cache.put(named_song,named_instrument,nil,sequencer.new_pattern(6),"repeat"))
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 named_song.instruments={named_instrument,{name="Unique",phrases={}}}
 assert(cache.get(named_song,named_instrument,nil)==nil,
   "ambiguous instrument names block new-phrase draft recovery")
@@ -110,8 +110,8 @@ local committed,commit_error=pattern_store.commit(song_a,candidate)
 assert(committed,commit_error)
 local merged=assert(pattern_store.read(song_a))
 assert(merged[88].pattern.length==5 and merged[88].pb_range==48)
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 local recovered,_,recovered_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(recovered.length==19 and recovered.pitch_events[2].note==43,
   "commit preserves the newest dirty draft while storing the rendered source")
@@ -160,8 +160,8 @@ local timing_song={instruments={timing_instrument}}
 local timing_source=sequencer.new_pattern(32)
 timing_source.timing_mode="triplet"
 assert(cache.put(timing_song,timing_instrument,nil,timing_source,"repeat",0))
-package.loaded["model.draft_cache"]=nil
-local reloaded_cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+local reloaded_cache=require("runtime.draft_cache")
 local timing_copy=assert(reloaded_cache.get(timing_song,timing_instrument,nil))
 assert(timing_copy.timing_mode=="triplet" and timing_copy.length==32 and
   #timing_copy.pitch_events==32 and #timing_copy.time_events==32)
@@ -171,8 +171,8 @@ local other_instrument={name="Other timing",phrases={}}
 timing_song.instruments[2]=other_instrument
 local straight_source=sequencer.new_pattern(9)
 assert(reloaded_cache.put(timing_song,other_instrument,nil,straight_source,"play_once",12))
-package.loaded["model.draft_cache"]=nil
-reloaded_cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+reloaded_cache=require("runtime.draft_cache")
 local first,first_policy,first_pb=reloaded_cache.get(timing_song,timing_instrument,nil)
 local second,second_policy,second_pb=reloaded_cache.get(timing_song,other_instrument,nil)
 assert(first.timing_mode=="triplet" and first.length==32 and first_policy=="repeat" and first_pb==0)

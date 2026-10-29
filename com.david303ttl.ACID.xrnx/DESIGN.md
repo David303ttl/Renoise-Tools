@@ -116,9 +116,9 @@ arrives. A missing callback therefore blocks new writes and requires restarting
 Renoise. Document release and tool unload detach observers and host references
 without treating an unfinished render as complete.
 
-`model/pattern_store.lua` stores the current WIP `ACID-PITCH-TIME-1` source
+`renoise/pattern_store.lua` stores the current WIP `ACID-PITCH-TIME-1` source
 records and separate phrase output policy and PB Range in song-scoped tool data.
-`writers/phrase_ownership.lua` seals generated contents and loop properties.
+`renoise/phrase_ownership.lua` seals generated contents and loop properties.
 
 ## Live Edit and drafts
 

@@ -140,12 +140,12 @@ package.loaded["writers.phrase_writer"]={
   cancel=function() return true end,
   release=function() writer_releases=writer_releases+1 end
 }
-package.loaded["writers.phrase_ownership"]={
+package.loaded["renoise.phrase_ownership"]={
   status=function() return "owned" end,
   id=function(phrase) return phrase.id end
 }
 local persisted_drafts={}
-package.loaded["model.pattern_store"]={load=function(_,instrument,phrase)
+package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
   local source=require("model.sequencer").new_pattern(16)
   for i=1,source.length do source.time_events[i]="N" end
   return source,"repeat",phrase.id==22 and 24 or 0
@@ -327,7 +327,7 @@ local created_phrase={id=23,name="Generated phrase"}
 instrument.phrases[3]=created_phrase
 generation_callback({kind="complete",status="committed",message="Phrase generated.",
   diagnostics={},target={phrase_index=3}})
-local draft_cache=require("model.draft_cache")
+local draft_cache=require("runtime.draft_cache")
 local recovered,recovered_policy,recovered_pb_range=draft_cache.get(song,instrument,created_phrase)
 assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat" and
   recovered_pb_range==48,
@@ -429,7 +429,7 @@ local after_cancel=render_calls
 
 -- Passive selection of a foreign phrase must never start a new render.
 instrument.phrases[3].foreign=true
-package.loaded["writers.phrase_ownership"].status=function(phrase)
+package.loaded["renoise.phrase_ownership"].status=function(phrase)
   return phrase.foreign and "foreign" or "owned"
 end
 select_native_phrase(3)

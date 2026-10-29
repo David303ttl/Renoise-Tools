@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
-local own=require("writers.phrase_ownership")
-local store=require("model.pattern_store")
+local own=require("renoise.phrase_ownership")
+local store=require("renoise.pattern_store")
 local host={__eq=function() error("host equality is not identity") end}
 local function phrase(id)
   local cell={note_value=48,instrument_value=255,volume_value=255,panning_value=255,

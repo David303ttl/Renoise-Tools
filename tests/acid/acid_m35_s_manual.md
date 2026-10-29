@@ -309,7 +309,7 @@ part in its existing owner). Paths below are relative to
 
 #### Current storage contract
 
-`writers/phrase_ownership.lua` recognizes the exact name shape
+`renoise/phrase_ownership.lua` recognizes the exact name shape
 `ACID 0.1 #<id> [v3:<eight hex digits>]`, bounds IDs to 1–2147483647 and
 compares the persisted seal against current content. The seal covers active
 lines and visible note/effect columns plus selected phrase properties and note
@@ -317,7 +317,7 @@ column mutes. It omits hidden/tail cells, column names, mapping and script
 state. Preserve the name/version format; complete session comparison and
 unsupported-field preflight belong in the same ownership/writer modules.
 
-`model/pattern_store.lua` stores newline-terminated text in bundle-specific
+`renoise/pattern_store.lua` stores newline-terminated text in bundle-specific
 `song.tool_data`, headed `ACID-PITCH-TIME-1`. Committed rows contain ID, output
 policy, PB range, timing mode, pitch span, length, all 32 pitch events and all
 32 TIME commands. `DRAFT` rows additionally contain instrument index, phrase
@@ -328,7 +328,7 @@ wrong event counts and invalid compiled sources are rejected. Normal `load`
 requires a valid seal, one ID holder across the entire song and a valid source
 record; notes alone never supply source.
 
-`model/draft_cache.lua` keeps session drafts keyed by song/instrument/phrase
+`runtime/draft_cache.lua` keeps session drafts keyed by song/instrument/phrase
 objects and a private New sentinel, copying source/settings on put/get.
 Durable positive-ID lookup follows the ID across instrument positions; New
 scratch recovery checks the stored instrument name and unique current name.

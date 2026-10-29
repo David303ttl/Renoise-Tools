@@ -17,7 +17,7 @@ assert(main:find("Main Menu:Tools:ACID...", 1, true))
 assert(main:find("Pattern Editor:ACID...", 1, true))
 
 local gui = read(root .. "gui.lua")
-local store = read(root .. "model/pattern_store.lua")
+local store = read(root .. "renoise/pattern_store.lua")
 assert(gui:find("show_custom_dialog(\"ACID - PITCH/TIME\"", 1, true))
 assert(gui:find('items={"Program","Grid"}', 1, true))
 assert(gui:find('items={"Play Once","Repeat"}', 1, true))

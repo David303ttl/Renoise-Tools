@@ -2,9 +2,9 @@
 -- Verify phrase note and OFF cells against the semantic event plan.
 -- Native Renoise note_value: 0..119 = notes, 120 = OFF, 121 = empty.
 local M = {}
-local ownership=require("writers.phrase_ownership")
+local ownership=require("renoise.phrase_ownership")
 local planner=require("model.output_planner")
-local store=require("model.pattern_store")
+local store=require("renoise.pattern_store")
 local EMPTY, OFF = 121, 120
 
 local function verify_fields(cell,has_note,line,column,delay,midi)

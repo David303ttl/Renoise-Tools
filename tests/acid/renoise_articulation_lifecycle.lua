@@ -56,7 +56,7 @@ local old_path = package.path
 package.path = root .. "/com.david303ttl.ACID.xrnx/?.lua;" .. old_path
 local loaded, writer, sequencer, ownership, store, live = pcall(function()
   return require("writers.phrase_writer"), require("model.sequencer"),
-    require("writers.phrase_ownership"), require("model.pattern_store"),
+    require("renoise.phrase_ownership"), require("renoise.pattern_store"),
     require("model.live_regen")
 end)
 package.path = old_path
@@ -66,8 +66,8 @@ for name, entry in pairs({
   writer={writer.generate,"writers/phrase_writer.lua"},
   sequencer={sequencer.new_pattern,"model/sequencer.lua"},
   live={live.new,"model/live_regen.lua"},
-  ownership={ownership.status,"writers/phrase_ownership.lua"},
-  store={store.load,"model/pattern_store.lua"}
+  ownership={ownership.status,"renoise/phrase_ownership.lua"},
+  store={store.load,"renoise/pattern_store.lua"}
 }) do
   module_sources[name]=provenance.describe(root,entry[1],entry[2])
 end

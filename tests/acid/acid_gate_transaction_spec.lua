@@ -84,8 +84,8 @@ _G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
 local writer=require('writers.phrase_writer')
 local seq=require('model.sequencer')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
-local store=require('model.pattern_store')
-local ownership=require('writers.phrase_ownership')
+local store=require('renoise.pattern_store')
+local ownership=require('renoise.phrase_ownership')
 local status
 local function status_message(value)
   return type(value)=='table' and value.message or value

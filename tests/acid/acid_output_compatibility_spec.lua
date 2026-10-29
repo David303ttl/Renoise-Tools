@@ -1,8 +1,8 @@
 dofile('tests/bootstrap.lua')('acid')
 local validator=require('writers.phrase_validator')
-local ownership=require('writers.phrase_ownership')
+local ownership=require('renoise.phrase_ownership')
 local planner=require('model.output_planner')
-local store=require('model.pattern_store')
+local store=require('renoise.pattern_store')
 local seq=require('model.sequencer')
 local phrase_fixture=dofile('tests/acid/complete_phrase_fixture.lua')
 local capacities={max_lines=512,max_note_columns=12,max_effect_columns=8,play_pattern=1,key_tracking_none=1}

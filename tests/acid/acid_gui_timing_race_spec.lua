@@ -67,7 +67,7 @@ function app:show_warning(message) warnings[#warnings+1]=message end
 local persisted_drafts={}
 local fail_draft_persistence=false
 local fail_draft_clear=false
-package.loaded["model.pattern_store"]={load=function(_,instrument,phrase)
+package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
   local source=require("model.sequencer").new_pattern(16)
   if phrase.id==12 then source.timing_mode="triplet" end
   return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
@@ -96,7 +96,7 @@ end,
     return true
   end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
-package.loaded["writers.phrase_ownership"]={
+package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
   id=function(phrase)return phrase.id end
 }

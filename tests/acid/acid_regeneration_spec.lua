@@ -1,6 +1,6 @@
 dofile("tests/bootstrap.lua")("acid")
 local memory=require("model.memory_status")
-local ownership=require("writers.phrase_ownership")
+local ownership=require("renoise.phrase_ownership")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local state=seq.new_pattern(8)

@@ -1,6 +1,6 @@
 -- Draft integration fixtures supply verified values independently of native cells.
-local ownership=require("writers.phrase_ownership")
-local real=assert(loadfile("com.david303ttl.ACID.xrnx/writers/phrase_ownership.lua"))()
+local ownership=require("renoise.phrase_ownership")
+local real=assert(loadfile("com.david303ttl.ACID.xrnx/renoise/phrase_ownership.lua"))()
 ownership.copy_snapshot=real.copy_snapshot
 ownership.compare=real.compare
 ownership.membership=real.membership
@@ -14,7 +14,7 @@ local function validate(song,instrument,phrase)
   local member,err=ownership.membership(song,instrument,phrase)
   if not member or not phrase then return nil,err end
   if ownership.status(phrase)~="owned" then return nil,"Unverified target" end
-  local source,policy,pb=require("model.pattern_store").load(song,instrument,phrase)
+  local source,policy,pb=require("renoise.pattern_store").load(song,instrument,phrase)
   if not source then return nil,policy end
   return {source=source,settings={output_policy=policy,pb_range=pb},
     baseline={content=phrase.baseline_revision or 0},planning_inputs={}}

@@ -60,9 +60,9 @@ This plan retains the existing asynchronous phrase-script renderer, staging/back
 | User controls and presentation | `gui.lua`; widgets dispatch user actions and render state |
 | Serialized generation and cancellation | Existing `model.live_regen` and writer job lifecycle; reuse them behind one request entry point |
 | Phrase mutation, staging, backup, verification, cleanup | `writers.phrase_writer`; two explicit musical operations sharing private helpers |
-| Ownership parsing, seal, complete phrase comparison | `writers.phrase_ownership`; no second ownership implementation |
-| Canonical source/settings and durable draft serialization | `model.pattern_store`; preserve its format and guarded commit/restore helpers |
-| Object-keyed session drafts and restoration precedence | `model.draft_cache`; preserve existing durable drafts where unambiguous |
+| Ownership parsing, seal, complete phrase comparison | `renoise.phrase_ownership`; no second ownership implementation |
+| Canonical source/settings and durable draft serialization | `renoise.pattern_store`; preserve its format and guarded commit/restore helpers |
+| Object-keyed session drafts and restoration precedence | `runtime.draft_cache`; preserve existing durable drafts where unambiguous |
 
 Validation at the request boundary and writer boundary is intentional. Share pure validation helpers; the writer still checks live membership and ownership independently.
 

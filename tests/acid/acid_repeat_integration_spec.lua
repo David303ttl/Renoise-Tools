@@ -113,8 +113,8 @@ _G.renoise={
 
 local writer=require('writers.phrase_writer')
 local sequencer=require('model.sequencer')
-local store=require('model.pattern_store')
-local ownership=require('writers.phrase_ownership')
+local store=require('renoise.pattern_store')
+local ownership=require('renoise.phrase_ownership')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
 local messages={}
 local function source(length,command)
@@ -483,7 +483,7 @@ assert(writer.generate(1,function(value)render_status=value end,rendering_source
 for _=1,6 do idle:fire() end
 assert(delayed_callback,'native render did not start')
 dofile("tests/acid/draft_baseline_stub.lua")
-local draft_cache=require('model.draft_cache')
+local draft_cache=require('runtime.draft_cache')
 assert(draft_cache.put(song,instrument,instrument.phrases[1],latest_source,'repeat'))
 script.render_to_pattern=original_render
 original_render(script,delayed_options,delayed_callback)

@@ -1,5 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
-local ownership=require('writers.phrase_ownership')
+local ownership=require('renoise.phrase_ownership')
 local fixture=dofile('tests/acid/complete_phrase_fixture.lua')
 local phrase=fixture()
 phrase.mapping={key_tracking=3,base_note=43,note_range={36,47},looping=true,loop_start=2,loop_end=14}

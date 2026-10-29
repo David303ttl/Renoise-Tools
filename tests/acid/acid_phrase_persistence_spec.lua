@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
-local ownership=require("writers.phrase_ownership")
-local store=require("model.pattern_store")
+local ownership=require("renoise.phrase_ownership")
+local store=require("renoise.pattern_store")
 local function phrase(note)
   local p={name="",number_of_lines=4,lpb=8,looping=false,loop_start=1,loop_end=4,playback_mode=1,
     key_tracking=1,visible_note_columns=1,visible_effect_columns=0,

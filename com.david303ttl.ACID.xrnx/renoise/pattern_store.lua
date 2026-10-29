@@ -2,7 +2,7 @@
 -- Exact, song-local storage for canonical ACID sources and phrase render settings.
 local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
-local ownership = require("writers.phrase_ownership")
+local ownership = require("renoise.phrase_ownership")
 local M = {}
 local MAGIC = "ACID-PITCH-TIME-1"
 local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}

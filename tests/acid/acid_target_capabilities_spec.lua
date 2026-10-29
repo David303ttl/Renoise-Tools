@@ -1,5 +1,5 @@
 dofile('tests/bootstrap.lua')('acid')
-local capabilities = require('model.target_capabilities')
+local capabilities = require('renoise.target_capabilities')
 
 local function target(sample, plugin, midi, alias)
   return {

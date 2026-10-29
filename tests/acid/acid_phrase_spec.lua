@@ -98,7 +98,7 @@ _G.renoise={
   tool=function()return {app_idle_observable=idle} end
 }
 local writer=require("writers.phrase_writer")
-local store=require("model.pattern_store")
+local store=require("renoise.pattern_store")
 local sequencer=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local messages={}
@@ -176,7 +176,7 @@ idle:fire();idle:fire();idle:fire()
 assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(message_text(messages[#messages]):find("generated",1,true),message_text(messages[#messages]))
 assert(first.cells[1].note_value==38)
-assert(require("model.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
+assert(require("renoise.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
 -- A missing render callback retains staging and blocks overlapping writes.
 local base_render=script.render_to_pattern
 local render_calls,pending_render=0,nil
@@ -351,7 +351,7 @@ assert(instrument.phrases[2].cells[1].note_value==38)
 instrument:delete_phrase_at(2)
 -- Restore the test destination after simulating the intentionally failed rollback.
 first.cells[1].note_value=38
-first.name=assert(require("writers.phrase_ownership").make_name(first,1))
+first.name=assert(require("renoise.phrase_ownership").make_name(first,1))
 
 -- A committed phrase remains valid when a redundant backup cannot be removed.
 local original_delete=instrument.delete_phrase_at
@@ -366,7 +366,7 @@ idle:fire();idle:fire();idle:fire()
 instrument.delete_phrase_at=original_delete
 assert(message_text(messages[#messages]):find("recovery backup remains",1,true),message_text(messages[#messages]))
 assert(#instrument.phrases==2 and instrument.phrases[2].name=="ACID RECOVERY BACKUP")
-assert(require("model.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
+assert(require("renoise.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
 instrument:delete_phrase_at(2)
 
 -- Cancellation settles even when temporary phrase removal fails.

@@ -1,10 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Object-local drafts with verified baselines and detached session recovery.
 local sequencer=require("model.sequencer")
-local store=require("model.pattern_store")
-local ownership=require("writers.phrase_ownership")
+local store=require("renoise.pattern_store")
+local ownership=require("renoise.phrase_ownership")
 local validator=require("writers.phrase_validator")
-local capabilities=require("model.target_capabilities")
+local capabilities=require("renoise.target_capabilities")
 local pitch_bend=require("writers.phrase_pitch_bend")
 local M={}
 local NEW={}

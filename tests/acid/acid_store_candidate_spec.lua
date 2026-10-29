@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
-local own=require("writers.phrase_ownership")
-local store=require("model.pattern_store")
+local own=require("renoise.phrase_ownership")
+local store=require("renoise.pattern_store")
 local current
 renoise={song=function()return current end}
 local function yes()return true end

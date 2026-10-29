@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local planner=require("model.output_planner")
-local capabilities=require("model.target_capabilities")
+local capabilities=require("renoise.target_capabilities")
 local gates=require("writers.gate_writer")
 local pattrns=require("writers.pattrns_writer")
 assert(gates.plan==planner.plan_gates and pattrns.expected_volumes==planner.expected_volumes)
