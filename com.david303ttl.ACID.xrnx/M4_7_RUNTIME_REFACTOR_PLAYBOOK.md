@@ -580,6 +580,8 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.7 — Deduplicate the store codec without changing its contract
 
+**Status:** implemented. `renoise/pattern_store` shares entry/header parsing and source token encoding/decoding for snapshots and drafts. Strict grammar, error categories, stored bytes and transaction guards are preserved. Codec fixtures, malformed-record checks, persistence, ownership, source-value, candidate and draft-recovery tests pass; ACID suite: 45 specs; full repository suite: 48 specs. Second-pass differential verification matches decoded values, exact errors and encoded bytes across 21,591 records; package root/private-module/exclusion checks pass. Native Renoise checks remain Step 8; Gate 1A remains pending.
+
 1. In `renoise/pattern_store` extract one shared header/entry parser and one shared source token encoder/decoder for snapshot and DRAFT forms. Keep existing strict grammar, token ordering, field validation, maximum steps, `v3:`/magic markers and visible error categories. Do not invent a new blob protocol or silently accept malformed prior data.
 2. Remove repeated pitch/TIME serialization and redundant recompilation **inside parsing** only when the resulting validation path is identical. Preserve candidate staging, captured/proposed source checks, verified write/readback, guarded restore, and atomic exact-draft removal. Raw-string equality alone is **not** transaction or destination authorization.
 3. Compare pre/post refactor encoded bytes using saved fixtures, parse valid legacy/current records, reject malformed records, and replay uncertain/partial `tool_data` writes and late-draft scenarios with existing tests.

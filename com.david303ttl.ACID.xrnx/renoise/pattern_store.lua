@@ -44,6 +44,71 @@ local function decode_text(value)
   return (value:gsub("..",function(pair) return string.char(tonumber(pair,16)) end))
 end
 
+local SOURCE_FIELDS="([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$"
+
+local function parse_entry(line,line_number,entries,drafts)
+  local instrument,phrase,name,source=line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|(.+)$")
+  local output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time
+  local id,key,is_draft
+  if instrument then
+    output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time=source:match("^"..SOURCE_FIELDS)
+    is_draft=output_policy~=nil
+  end
+  if is_draft then
+    instrument,phrase=tonumber(instrument),tonumber(phrase)
+    key=tostring(instrument)..":"..tostring(phrase)
+  else
+    id,output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time=
+      line:match("^(%d+)|"..SOURCE_FIELDS)
+    id=tonumber(id)
+  end
+  pb_range,pitch_length,length=tonumber(pb_range),tonumber(pitch_length),tonumber(length)
+  local invalid_destination=is_draft and (instrument<1 or phrase<0 or drafts[key]) or
+    (not is_draft and (not id or not valid_id(id) or entries[id]))
+  if invalid_destination or not policies.valid_output_policy(output_policy) or
+      not policies.valid_pb_range(pb_range) or
+      not pitch_length or pitch_length<1 or pitch_length>sequencer.MAX_STEPS or
+      not length or length<1 or length>sequencer.MAX_STEPS or not time or #time~=sequencer.MAX_STEPS then
+    return nil,"Invalid ACID "..(is_draft and "draft" or "snapshot").." header at line "..line_number
+  end
+  return {id=id,key=key,instrument_index=instrument,phrase_id=phrase,instrument_name=name,
+    output_policy=output_policy,pb_range=pb_range,timing_mode=timing_mode,
+    pitch_length=pitch_length,length=length,pitch_data=pitch_data,time=time},is_draft
+end
+
+local function decode_source(item,is_draft,line_number)
+  local pattern=sequencer.new_pattern(item.length)
+  pattern.pitch_length=item.pitch_length
+  pattern.timing_mode=item.timing_mode
+  pattern.pitch_events={}
+  local tokens={}
+  for token in item.pitch_data:gmatch("[^,]+") do
+    tokens[#tokens+1]=token
+    local pitch,err=decode_pitch(token,line_number)
+    if not pitch then return nil,err end
+    pattern.pitch_events[#pattern.pitch_events+1]=pitch
+  end
+  if table.concat(tokens,",")~=item.pitch_data then
+    return nil,(is_draft and "Invalid ACID draft pitch data at line " or "Invalid pitch separators at line ")..line_number
+  end
+  if #pattern.pitch_events~=sequencer.MAX_STEPS then
+    if is_draft then return nil,"Invalid ACID draft pitch data at line "..line_number end
+    return nil,string.format("ACID source must store exactly %d pitches at line %d",sequencer.MAX_STEPS,line_number)
+  end
+  for step=1,sequencer.MAX_STEPS do pattern.time_events[step]=item.time:sub(step,step) end
+  local ok,err=interpreter.compile_cycle(pattern)
+  if not ok then return nil,(is_draft and "Invalid ACID draft source: " or "Invalid ACID source: ")..err end
+  return pattern
+end
+
+local function encode_source(pattern)
+  local pitches,time={},{}
+  for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
+  for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
+  return table.concat({pattern.timing_mode,tostring(pattern.pitch_length),tostring(pattern.length),
+    table.concat(pitches,","),table.concat(time)},"|")
+end
+
 local function decode(raw)
   if raw=="" then return {},{} end
   if raw:sub(-1)~="\n" then return nil,"ACID song data is incomplete" end
@@ -54,75 +119,20 @@ local function decode(raw)
   for line_number=2,#lines do
     local line=lines[line_number]
     if line=="" then return nil,"Unexpected blank ACID entry at line "..line_number end
-    local draft_instrument,draft_phrase,draft_name,draft_policy,draft_pb_range,
-      draft_mode,draft_pitch_length,draft_length,draft_pitch_data,draft_time=
-      line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
-    if draft_instrument then
-      draft_instrument,draft_phrase=tonumber(draft_instrument),tonumber(draft_phrase)
-      draft_pb_range=tonumber(draft_pb_range)
-      draft_pitch_length,draft_length=tonumber(draft_pitch_length),tonumber(draft_length)
-      local key=tostring(draft_instrument)..":"..tostring(draft_phrase)
-      if draft_instrument<1 or draft_phrase<0 or drafts[key] or not policies.valid_output_policy(draft_policy) or
-          not policies.valid_pb_range(draft_pb_range) or
-          not draft_pitch_length or draft_pitch_length<1 or draft_pitch_length>sequencer.MAX_STEPS or
-          not draft_length or draft_length<1 or draft_length>sequencer.MAX_STEPS or #draft_time~=sequencer.MAX_STEPS then
-        return nil,"Invalid ACID draft header at line "..line_number
-      end
-      local pattern=sequencer.new_pattern(draft_length)
-      pattern.pitch_length=draft_pitch_length
-      pattern.timing_mode=draft_mode
-      pattern.pitch_events={}
-      local normalized_tokens={}
-      for token in draft_pitch_data:gmatch("[^,]+") do
-        normalized_tokens[#normalized_tokens+1]=token
-        local pitch,err=decode_pitch(token,line_number)
-        if not pitch then return nil,err end
-        pattern.pitch_events[#pattern.pitch_events+1]=pitch
-      end
-      if table.concat(normalized_tokens,",")~=draft_pitch_data or #pattern.pitch_events~=sequencer.MAX_STEPS then
-        return nil,"Invalid ACID draft pitch data at line "..line_number
-      end
-      for step=1,sequencer.MAX_STEPS do pattern.time_events[step]=draft_time:sub(step,step) end
-      local ok,err=interpreter.compile_cycle(pattern)
-      if not ok then return nil,"Invalid ACID draft source: "..err end
-      local instrument_name=decode_text(draft_name)
-      if not instrument_name then return nil,"Invalid ACID draft instrument identity at line "..line_number end
-      drafts[key]={pattern=pattern,output_policy=draft_policy,pb_range=draft_pb_range,
-        instrument_name=instrument_name,
-        instrument_index=draft_instrument,phrase_id=draft_phrase}
+    local item,is_draft=parse_entry(line,line_number,entries,drafts)
+    if not item then return nil,is_draft end
+    local pattern,err=decode_source(item,is_draft,line_number)
+    if not pattern then return nil,err end
+    local entry={pattern=pattern,output_policy=item.output_policy,pb_range=item.pb_range}
+    if is_draft then
+      local name=decode_text(item.instrument_name)
+      if not name then return nil,"Invalid ACID draft instrument identity at line "..line_number end
+      entry.instrument_name=name
+      entry.instrument_index=item.instrument_index
+      entry.phrase_id=item.phrase_id
+      drafts[item.key]=entry
     else
-    local id,output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time=
-      line:match("^(%d+)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$")
-    pb_range=tonumber(pb_range)
-    id,pitch_length,length=tonumber(id),tonumber(pitch_length),tonumber(length)
-    if not id or not valid_id(id) or entries[id] or not policies.valid_output_policy(output_policy) or
-        not policies.valid_pb_range(pb_range) or
-        not pitch_length or pitch_length<1 or pitch_length>sequencer.MAX_STEPS or
-        not length or length<1 or length>sequencer.MAX_STEPS or not time or #time~=sequencer.MAX_STEPS then
-      return nil,"Invalid ACID snapshot header at line "..line_number
-    end
-    local pattern=sequencer.new_pattern(length)
-    pattern.pitch_length=pitch_length
-    pattern.timing_mode=timing_mode
-    pattern.pitch_events={}
-    local normalized_tokens={}
-    for token in pitch_data:gmatch("[^,]+") do
-      normalized_tokens[#normalized_tokens+1]=token
-      local pitch,err=decode_pitch(token,line_number)
-      if not pitch then return nil,err end
-      pattern.pitch_events[#pattern.pitch_events+1]=pitch
-    end
-    if table.concat(normalized_tokens,",")~=pitch_data then
-      return nil,"Invalid pitch separators at line "..line_number
-    end
-    if #pattern.pitch_events~=sequencer.MAX_STEPS then
-      return nil,string.format("ACID source must store exactly %d pitches at line %d",
-        sequencer.MAX_STEPS,line_number)
-    end
-    for step=1,sequencer.MAX_STEPS do pattern.time_events[step]=time:sub(step,step) end
-    local ok,err=interpreter.compile_cycle(pattern)
-    if not ok then return nil,"Invalid ACID source: "..err end
-    entries[id]={pattern=pattern,output_policy=output_policy,pb_range=pb_range}
+      entries[item.id]=entry
     end
   end
   return entries,drafts
@@ -143,13 +153,8 @@ local function encode(entries,drafts)
     if not ok then return nil,"Invalid ACID source: "..err end
     if not policies.valid_output_policy(item.output_policy) then return nil,"invalid phrase output policy" end
     if not policies.valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
-    local pitches={}
-    for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
-    local time={}
-    for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
-    lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),pattern.timing_mode,
-      tostring(pattern.pitch_length),tostring(pattern.length),
-      table.concat(pitches,","),table.concat(time)},"|")
+    lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),
+      encode_source(pattern)},"|")
   end
   local draft_keys={}
   for key in pairs(drafts or {}) do draft_keys[#draft_keys+1]=key end
@@ -165,13 +170,8 @@ local function encode(entries,drafts)
     if not ok then return nil,"Invalid ACID draft source: "..err end
     if not policies.valid_output_policy(item.output_policy) then return nil,"invalid ACID draft output policy" end
     if not policies.valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
-    local pitches,time={},{}
-    for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
-    for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
     lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),
-      item.output_policy,tostring(item.pb_range),pattern.timing_mode,
-      tostring(pattern.pitch_length),tostring(pattern.length),
-      table.concat(pitches,","),table.concat(time)},"|")
+      item.output_policy,tostring(item.pb_range),encode_source(pattern)},"|")
   end
   return table.concat(lines,"\n").."\n"
 end
