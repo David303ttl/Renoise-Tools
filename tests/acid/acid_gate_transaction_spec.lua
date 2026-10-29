@@ -14,7 +14,7 @@ local function observable()
   }
 end
 local idle,committed=observable(),observable()
-local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}}}
+local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""}}
 local contaminate=false
 local wrong_volume=nil
 local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed}
@@ -118,7 +118,7 @@ assert(target.cells[2].note_value==121 and target.cells[3].note_value==121
   and target.cells[4].note_value==121)
 assert(target.cells[11].note_value==120,'Play Once NTT must release at the final step midpoint')
 assert(ownership.status(target)=='owned')
-local initial_source,initial_policy,initial_pb_range=store.load(song,target)
+local initial_source,initial_policy,initial_pb_range=store.load(song,instrument,target)
 assert(initial_source and initial_policy=='play_once' and initial_pb_range==12,
   'writer did not freeze and persist the requested PB range')
 assert(initial_source.pitch_events[1].note==48 and pattern.pitch_events[1].note==48,
@@ -132,7 +132,7 @@ assert(song.tool_data==raw and target.name==name and #instrument.phrases==1,
   'invalid PB range mutated the phrase destination')
 local original_commit=store.commit
 store.commit=function(target_song,candidate)
-  target_song.tool_data=candidate.raw
+  assert(original_commit(target_song,candidate))
   error('injected persistence failure after gate application')
 end
 for i,command in ipairs({'N','N','T'}) do pattern.time_events[i]=command end
@@ -169,15 +169,15 @@ assert(status_message(status):find('generated',1,true),status.message)
 assert(target.cells[1].note_value==50 and target.cells[3].note_value==120)
 assert(target.cells[5].note_value==48 and target.cells[7].note_value==121)
 assert(target.cells[11].note_value==120)
-local restored,output_policy,restored_pb_range=store.load(song,target)
+local restored,output_policy,restored_pb_range=store.load(song,instrument,target)
 assert(restored and output_policy=='play_once' and restored.time_events[2]=='N'
   and restored.pitch_events[1].note==50)
 assert(restored_pb_range==0,'omitted PB range defaults to Off')
 assert(ownership.status(target)=='owned')
 raw,name=song.tool_data,target.name
 local original_load=store.load
-store.load=function(target_song,phrase)
-  local source,policy,pb_range=original_load(target_song,phrase)
+store.load=function(target_song,target_instrument,phrase)
+  local source,policy,pb_range=original_load(target_song,target_instrument,phrase)
   return source,policy,pb_range==12 and 24 or (pb_range==0 and 12 or pb_range)
 end
 assert(writer.generate(1,function(value)status=value end,pattern,1,
@@ -205,7 +205,7 @@ generate(pattern)
 assert_complete('committed')
 assert(status_message(status):find('generated',1,true),status.message)
 assert(target.cells[1].volume_value==255 and target.cells[5].volume_value==89)
-assert(store.load(song,target).pitch_events[1].accent)
+assert(store.load(song,instrument,target).pitch_events[1].accent)
 
 -- Seeded legal-source writer coverage across all target layer combinations.
 local random_state=303503
@@ -231,10 +231,10 @@ end
 local lengths={}
 for length=1,32 do lengths[#lengths+1]=length end
 local target_layers={
-  {samples={{sample_buffer={has_sample_data=true}}},plugin_loaded=false,midi_device=''},
+  {samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""},plugin_loaded=false,midi_device=''},
   {samples={},plugin_loaded=true,midi_device=''},
   {samples={},plugin_loaded=false,midi_device='MIDI Capture'},
-  {samples={{sample_buffer={has_sample_data=true}}},plugin_loaded=true,midi_device='MIDI Capture'},
+  {samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""},plugin_loaded=true,midi_device='MIDI Capture'},
   {samples={},plugin_loaded=false,midi_device=''},
 }
 for target_index,layers in ipairs(target_layers) do
@@ -250,7 +250,7 @@ for target_index,layers in ipairs(target_layers) do
     assert(status.status=='committed' or status.status=='approximate',
       string.format('target %d length %d: %s',target_index,length,status.message))
     assert(ownership.status(target)=='owned')
-    local saved,policy=store.load(song,target)
+    local saved,policy=store.load(song,instrument,target)
     assert(saved and policy=='play_once' and saved.length==length)
     assert(target.number_of_lines==length*4)
     assert(#instrument.phrases==1,'writer left a staging or recovery phrase')
@@ -279,7 +279,7 @@ for target_index,layers in ipairs(target_layers) do
     generate(candidate)
     assert(status.status=='committed' or status.status=='approximate',
       string.format('target %d interval %+d: %s',target_index,interval,status.message))
-    local saved=assert(store.load(song,target))
+    local saved=assert(store.load(song,instrument,target))
     assert(saved.pitch_events[2].note-saved.pitch_events[1].note==interval)
     assert(#instrument.phrases==1,'extreme interval render left a staging phrase')
   end

@@ -67,23 +67,29 @@ function app:show_warning(message) warnings[#warnings+1]=message end
 local persisted_drafts={}
 local fail_draft_persistence=false
 local fail_draft_clear=false
-package.loaded["model.pattern_store"]={load=function(_,phrase)
+package.loaded["model.pattern_store"]={load=function(_,instrument,phrase)
   local source=require("model.sequencer").new_pattern(16)
   return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
 end,
-  write_draft=function(_,index,phrase_id,name,pattern,policy,pb_range)
+  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end
     persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,
       pb_range=pb_range,name=name}
     return true
   end,
-  read_draft=function(_,index,phrase_id,name)
+  read_draft=function(song,instrument,phrase)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id,name=phrase and phrase.id or 0,instrument.name
     local item=persisted_drafts[index..":"..phrase_id]
     if not item then return nil end
     assert(item.name==name)
     return item.pattern,item.policy,item.pb_range
   end,
-  clear_draft=function(_,index,phrase_id)
+  clear_draft=function(song,instrument,phrase)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id=phrase and phrase.id or 0
     if fail_draft_clear then return nil,"test cleanup failure" end
     persisted_drafts[index..":"..phrase_id]=nil
     return true
@@ -132,6 +138,7 @@ renoise={
   app=function()return app end
 }
 
+dofile("tests/acid/draft_baseline_stub.lua")
 local function open_gui()
   require("gui").show()
   return current_builder,dialogs[#dialogs]

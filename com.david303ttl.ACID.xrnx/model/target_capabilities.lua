@@ -3,21 +3,32 @@
 local M = {}
 
 local function has_sample(instrument)
-  for _, sample in ipairs(instrument.samples or {}) do
+  if instrument.samples==nil then error("sample inventory is unavailable") end
+  for _, sample in ipairs(instrument.samples) do
     local buffer = sample.sample_buffer
-    if buffer and buffer.has_sample_data then return true end
+    if not buffer or type(buffer.has_sample_data)~="boolean" then
+      error("sample buffer state is unavailable")
+    end
+    if buffer.has_sample_data then return true end
   end
   return false
 end
 
-function M.inspect(instrument)
-  local instrument_type=type(instrument)
-  if instrument_type ~= "Instrument" and instrument_type ~= "table"
-      and instrument_type ~= "userdata" then
-    return nil, "invalid instrument target"
-  end
+local function inspect(instrument)
   local plugin_properties = instrument.plugin_properties
   local midi_properties = instrument.midi_output_properties
+  if not plugin_properties or not midi_properties or
+      type(plugin_properties.plugin_loaded)~="boolean" or
+      type(midi_properties.device_name)~="string" then
+    error("receiver properties are unavailable")
+  end
+  for _,field in ipairs({"alias_instrument_index","alias_fx_track_index","alias_fx_device_index",
+      "midi_output_routing_index"}) do
+    local value=plugin_properties[field]
+    if type(value)~="number" or value%1~=0 or value<0 then
+      error("receiver property is unavailable: "..field)
+    end
+  end
   local plugin_loaded = plugin_properties and plugin_properties.plugin_loaded == true or false
   local alias_instrument = plugin_properties and plugin_properties.alias_instrument_index or 0
   local alias_fx_track = plugin_properties and plugin_properties.alias_fx_track_index or 0
@@ -90,6 +101,19 @@ function M.inspect(instrument)
   end
   if #result.diagnostics>0 then result.diagnostic=table.concat(result.diagnostics," ") end
   return result
+end
+
+function M.inspect(instrument)
+  local instrument_type=type(instrument)
+  if instrument_type ~= "Instrument" and instrument_type ~= "table"
+      and instrument_type ~= "userdata" then
+    return nil, "invalid instrument target"
+  end
+  local ok,result=pcall(inspect,instrument)
+  if ok then return result end
+  local reason="Could not inspect receiver: "..tostring(result)
+  return {kind="unknown",read_error=reason,signature="unknown|"..reason,
+    diagnostics={reason},diagnostic=reason}
 end
 
 return M

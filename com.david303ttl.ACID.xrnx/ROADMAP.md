@@ -652,7 +652,7 @@ defect.
 Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). Its fixed policies are normative. Complete each gate before its dependent work; failed evidence returns to the responsible contract.
 
 - [x] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility; findings incorporated into the playbook contracts.
-- [ ] Shared validation/store contracts and complete field-preservation policy.
+- [x] Shared validation/store contracts and complete field-preservation policy; [Gate 1 verification](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#18--close-gate-1-and-hand-contracts-to-runtime-integration).
 - [ ] Runtime context, raw object identity, guards, and blocker state.
 - [ ] Explicit create/regenerate writer and one cancellation/completion handshake.
 - [ ] Explicit Make Independent for matching valid collision groups; no automatic re-keying or source-less adoption.
@@ -667,8 +667,9 @@ succeeded, definitions and offline docs were inspected, runtime/storage call
 sites were inventoried, and all 34 ACID specs passed. The
 [prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record)
 contains the inventory, native observations and tested unsupported-script
-rejection predicate. **Step 0 is complete**; Step 1 proceeds under the revised
-contracts. This closes the prerequisite investigation, not native acceptance.
+rejection predicate. **Steps 0–1 are complete**; the playbook's Gate 1 table
+maps the shared contracts to passing tests and native helper checks. Runtime
+integration and native acceptance remain open.
 Native follow-up in Renoise 3.5.4 / API 6.2 found that undo can restore old
 notes/seal while retaining the newer source record; the existing loader accepts
 the mismatch. The playbook therefore

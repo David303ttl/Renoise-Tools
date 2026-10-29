@@ -1,20 +1,16 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Render native phrases with guarded replacement and source persistence.
 local pattrns = require("writers.pattrns_writer")
-local compiler = require("model.cycle_interpreter")
 local validator = require("writers.phrase_validator")
-local articulation = require("model.articulation")
-local control = require("model.control_signals")
 local gates = require("writers.gate_writer")
 local ownership = require("writers.phrase_ownership")
 local store = require("model.pattern_store")
 local target_capabilities = require("model.target_capabilities")
 local sequencer = require("model.sequencer")
-local timing = require("model.timing")
-local legato = require("model.legato")
 local legato_writer = require("writers.legato_writer")
 local phrase_pitch_bend = require("writers.phrase_pitch_bend")
 local script_runner = require("writers.script_runner")
+local output_planner=require("model.output_planner")
 local M = {}
 
 M.PHRASE_NAME = "ACID 0.1 TEST"
@@ -29,175 +25,11 @@ local function failure(code, category, message, status)
     message=message,diagnostics={message}}
 end
 
-local function physical_plan(pattern, output_policy)
-  output_policy=output_policy or "repeat"
-  if output_policy~="repeat" and output_policy~="play_once" then
-    return nil,"Invalid phrase output policy"
-  end
-  local layout,layout_error=timing.new(pattern.timing_mode,pattern.length,output_policy)
-  if not layout then return nil,layout_error end
-  if output_policy == "play_once" then
-    local plan, err=compiler.compile_cycle(pattern)
-    if not plan then return nil,err end
-    plan.source_length=plan.length
-    return plan,layout
-  end
-  local loop,err=compiler.plan_loop(pattern)
-  if not loop then return nil,err end
-  local cycle_plans={loop.cold,loop.steady}
-  if #cycle_plans~=layout.cycle_count then
-    return nil,"repeat cycle count does not match phrase layout"
-  end
-  local length=pattern.length*#cycle_plans
-  if layout.number_of_lines>MAX_PHRASE_LINES then
-    return nil,"intro plus repeating cycle exceeds the native phrase line limit"
-  end
-  local steps={}
-  for cycle,source in ipairs(cycle_plans) do
-    for step,event in ipairs(source.steps) do
-      local copy={}
-      for key,value in pairs(event) do copy[key]=value end
-      copy.source_step=step
-      copy.step=(cycle-1)*pattern.length+step
-      copy.absolute_step=copy.step
-      steps[#steps+1]=copy
-    end
-  end
-  return {length=length,steps=steps,note_count=loop.cold.note_count+loop.steady.note_count,
-    pitch_length=pattern.pitch_length,loop=loop,source_length=pattern.length},
-    layout
-end
-M.plan_output=physical_plan
-
-local function slide_steps(plan)
-  local steps,seen={},{}
-  for _,event in ipairs(plan.steps) do
-    if event.kind=="note" and event.transition=="slide" then
-      local step=event.source_step or event.step
-      if not seen[step] then
-        seen[step]=true
-        steps[#steps+1]=step
-      end
-    end
-  end
-  return steps
+function M.plan_output(pattern,output_policy)
+  return output_planner.plan_output(pattern,output_policy,MAX_PHRASE_LINES)
 end
 
-local function articulation_plan(plan,capabilities,timeline,lines_per_step)
-  local has_slide=false
-  local slides=slide_steps(plan)
-  has_slide=#slides>0
-  if has_slide and not capabilities.sample then
-    local places={}
-    for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
-    local approximations={"TIME steps "..table.concat(places,",")..
-      ": target has no sample glide operator; ordered note events are retained and slide continuity is approximate"}
-    for index,event in ipairs(plan.steps) do
-      if event.kind=="note" and event.transition=="slide" then
-        local previous
-        for cursor=index-1,1,-1 do
-          local candidate=plan.steps[cursor]
-          if candidate.kind=="rest" then break end
-          if candidate.kind=="note" then previous=candidate;break end
-        end
-        if event.accent or (previous and previous.accent) then
-          approximations[#approximations+1]=string.format(
-            "TIME step %02d: connected ACCENT change is represented by NOTE velocity; continuous dynamics depend on the target",
-            event.source_step or event.step)
-        end
-      end
-    end
-    return {},approximations,1
-  end
-  local early_releases,release_error=control.release_lines(timeline,lines_per_step)
-  if not early_releases then return nil,release_error end
-  local release_at={}
-  for _,line in ipairs(early_releases) do release_at[line]=true end
-  local rate=1
-  for _,event in ipairs(plan.steps) do
-    if event.kind=="note" and event.transition=="slide" then
-      local held=0
-      local index=event.step+1
-      while plan.steps[index] and plan.steps[index].kind=="tie"
-        and plan.steps[index].holds do
-        held=held+1
-        index=index+1
-      end
-      local available=(held+1)*lines_per_step
-      local first_line=(event.step-1)*lines_per_step+1
-      for line=first_line+1,first_line+available-1 do
-        if release_at[line] then
-          available=line-first_line
-          break
-        end
-      end
-      local interval=math.abs(event.note-event.from_note)
-      rate=math.max(rate,math.ceil(interval*16/available))
-    end
-  end
-  if not has_slide then return {},{},1 end
-  local minimum_rate=rate
-  if rate>254 then rate=255 end
-  local commands,err=articulation.plan(plan,lines_per_step,rate)
-  if not commands then return nil,err end
-  local places={}
-  for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
-  local approximations={"TIME steps "..table.concat(places,",")..
-    ": native slide continuity and envelope response depend on the target instrument"}
-  for index,event in ipairs(plan.steps) do
-    if event.kind=="note" and event.transition=="slide" then
-      local previous
-      for cursor=index-1,1,-1 do
-        local candidate=plan.steps[cursor]
-        if candidate.kind=="rest" then break end
-        if candidate.kind=="note" then previous=candidate;break end
-      end
-      if event.accent or (previous and previous.accent) then
-        approximations[#approximations+1]=string.format(
-          "connected accent change at TIME step %02d may not be reproduced",
-          event.source_step or event.step)
-      end
-    end
-  end
-  if rate==255 then
-    local places={}
-    for _,step in ipairs(slides) do places[#places+1]=string.format("%02d",step) end
-    approximations[#approximations+1]="TIME steps "..table.concat(places,",")..
-      ": native glide duration exceeded the 01..FE command range; 0G FF instant transitions were emitted"
-  end
-  return commands,approximations,minimum_rate
-end
-
-local function copy_pattern(pattern)
-  local copy={length=pattern.length,timing_mode=pattern.timing_mode,
-    pitch_length=pattern.pitch_length,
-    pitch_events={},time_events={}}
-  for i,pitch in ipairs(pattern.pitch_events) do
-    local item={}
-    for key,value in pairs(pitch) do item[key]=value end
-    copy.pitch_events[i]=item
-  end
-  for i,command in ipairs(pattern.time_events) do copy.time_events[i]=command end
-  return copy
-end
-
-local function patterns_equal(a,b)
-  if type(a)~="table" or type(b)~="table" then return false end
-  for _,key in ipairs({"length","pitch_length","timing_mode"}) do
-    if a[key]~=b[key] then return false end
-  end
-  for i=1,sequencer.MAX_STEPS do
-    local x,y=a.pitch_events[i],b.pitch_events[i]
-    if not x or not y then return false end
-    for _,key in ipairs({"note","key","octave","accent","slide"}) do
-      if x[key]~=y[key] then return false end
-    end
-  end
-  for i=1,sequencer.MAX_STEPS do
-    if a.time_events[i]~=b.time_events[i] then return false end
-  end
-  return true
-end
+local patterns_equal=sequencer.same_source
 
 local function notify(job, message, force)
   if (force or not job.cancelled) and job.callback then
@@ -378,9 +210,7 @@ local function finalize(job, event_count, skipped)
     job.phrase.loop_start=job.layout.loop_start
   end)
   if not layout_ok then complete(job,layout_error);return end
-  local volumes, volume_error = pattrns.expected_volumes(job.plan, job.layout.lines_per_step,
-    job.layout.number_of_lines, job.phrase.visible_note_columns or 1)
-  if not volumes then complete(job, volume_error);return end
+  local volumes=job.volumes
   local result, validation_error = validator.verify(job.phrase, job.plan, job.layout.lines_per_step,job.layout,
     {volumes=volumes})
   if not result then
@@ -528,7 +358,7 @@ local function finalize(job, event_count, skipped)
       if status~="owned" or ownership.id(phrase)~=job.snapshot_id then
         error("final phrase seal verification failed")
       end
-      local saved,saved_policy,saved_pb_range=store.load(job.song,phrase)
+      local saved,saved_policy,saved_pb_range=store.load(job.song,job.instrument,phrase)
       if not saved then error("final phrase source association verification failed: "..tostring(saved_policy)) end
       if saved_policy~=job.output_policy then error("final phrase output policy verification failed") end
       if saved_pb_range~=job.pb_range then error("final phrase PB range verification failed") end
@@ -717,109 +547,25 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   end
   local capabilities,capability_error=target_capabilities.inspect(instrument)
   if not capabilities then return nil,failure("capability.inspect","capability",capability_error) end
-  local fixture=copy_pattern(custom_pattern)
-  local plan,layout_or_error=physical_plan(fixture,output_policy)
-  if not plan then return nil,failure("source.invalid","source",layout_or_error) end
-  local layout=layout_or_error
   local phrase_api=renoise.InstrumentPhrase
-  local line_capacity=phrase_api.MAX_NUMBER_OF_LINES or MAX_PHRASE_LINES
-  if layout.number_of_lines>line_capacity then
-    local line=line_capacity+1
-    local physical_step=math.min(math.floor((line-1)/layout.lines_per_step)+1,layout.physical_steps)
-    return nil,failure("phrase.unrepresentable","phrase",string.format(
-      "TIME step %02d, cycle %d, phrase line %d exceeds the host line limit %d",
-      layout.source_step(physical_step),math.floor((physical_step-1)/fixture.length)+1,
-      line,line_capacity))
-  end
-  local meta
-  local source
-  source,meta=pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution})
+  local planned,planning_error=output_planner.plan(custom_pattern,output_policy,pb_range,{
+    max_lines=phrase_api.MAX_NUMBER_OF_LINES or MAX_PHRASE_LINES,
+    max_note_columns=phrase_api.MAX_NUMBER_OF_NOTE_COLUMNS or 12,
+    max_effect_columns=phrase_api.MAX_NUMBER_OF_EFFECT_COLUMNS or 8,
+    play_pattern=phrase_api.PLAY_PATTERN,key_tracking_none=phrase_api.KEY_TRACKING_NONE
+  },capabilities,{pitch_bend_delivery=phrase_pitch_bend.delivery_enabled})
+  if not planned then return nil,failure("phrase.unrepresentable","phrase",planning_error) end
+  local fixture,plan,layout=planned.source,planned.plan,planned.layout
+  local native_notes,operations,approximations=planned.native_notes,planned.operations,planned.approximations
+  local source,meta=pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution})
   if not source then return nil,failure("phrase.unrepresentable","phrase",meta) end
-  local timeline,timeline_error=control.compile(fixture,{gate_fraction=control.DEFAULT_GATE_FRACTION,plan=plan,
-    output_policy=output_policy,successor=plan.loop and plan.loop.steady})
-  if not timeline then return nil,failure("source.invalid","source",timeline_error) end
-  local native_notes
-  if (capabilities.plugin or capabilities.midi or capabilities.alias) and
-      (#slide_steps(plan)>0 or pb_range>0) then
-    local native_error
-    native_notes,native_error=legato.plan(plan,timeline,layout,
-      {pb_range=phrase_pitch_bend.delivery_enabled and pb_range or 0,
-        instrument_value=255})
-    if not native_notes then return nil,failure("phrase.legato_plan","phrase",native_error) end
-    if pb_range>0 and not phrase_pitch_bend.delivery_enabled then
-      native_notes.diagnostics[#native_notes.diagnostics+1]=
-        "Phrase pitch-bend delivery is unavailable; NOTE overlap is retained for the whole phrase."
-    end
-  end
-  local note_capacity=phrase_api.MAX_NUMBER_OF_NOTE_COLUMNS or 12
-  local effect_capacity=phrase_api.MAX_NUMBER_OF_EFFECT_COLUMNS or 8
-  if note_capacity<1 or (native_notes and (native_notes.columns>note_capacity or
-      (next(native_notes.midi_commands or {}) and effect_capacity<1))) then
-    local line=1
-    if native_notes and note_capacity>=1 then
-      for candidate=1,layout.number_of_lines do
-        local cells=native_notes.cells[candidate] or {}
-        local command=native_notes.midi_commands and native_notes.midi_commands[candidate]
-        local exceeds=command and (effect_capacity<1 or native_notes.columns>note_capacity)
-        for column in pairs(cells) do
-          if column>note_capacity then exceeds=true;break end
-        end
-        if exceeds then line=candidate;break end
-      end
-    end
-    local physical_step=math.min(math.floor((line-1)/layout.lines_per_step)+1,layout.physical_steps)
-    return nil,failure("phrase.unrepresentable","phrase",
-      string.format("TIME step %02d, cycle %d, phrase line %d: host phrase column capacity is insufficient for articulation",
-        layout.source_step(physical_step),math.floor((physical_step-1)/fixture.length)+1,line))
-  end
-  local commands,approximations,minimum_rate
-  if native_notes then
-    commands,approximations,minimum_rate={},native_notes.diagnostics,1
-    if capabilities.sample then
-      approximations[#approximations+1]=next(native_notes.midi_commands or {}) and
-        "Hybrid sample layers may respond differently to receiver pitch bend; samples and routing are unchanged." or
-        "Hybrid sample layers receive overlapping notes; their envelopes and glide can differ from the plugin/MIDI receiver."
-    end
-  else
-    commands,approximations,minimum_rate=articulation_plan(plan,capabilities,timeline,layout.lines_per_step)
-    if commands and pb_range>0 and #slide_steps(plan)>0 then
-      approximations[#approximations+1]="PB Range requires a plugin or MIDI receiver; the existing sample/note articulation is retained."
-    end
-  end
-  if not commands then return nil,failure("phrase.unrepresentable","phrase",approximations) end
   if song.transport.groove_enabled then
     approximations[#approximations+1]="Song groove is active; its effect on phrase timing is unverified."
   end
-  local operations,operation_error=gates.plan(timeline,plan,commands,layout.lines_per_step)
-  if not operations and #commands>0 then
-    local collision_error=operation_error
-    for candidate_rate=math.max(1,minimum_rate+1),255 do
-      local candidate_commands=articulation.plan(plan,layout.lines_per_step,candidate_rate)
-      if candidate_commands then
-        local candidate_operations=gates.plan(timeline,plan,candidate_commands,layout.lines_per_step)
-        if candidate_operations then
-          commands,operations=candidate_commands,candidate_operations
-          if candidate_rate==255 then
-            approximations[#approximations+1]="native glide placement required 0G FF instant transitions; continuity is approximate"
-          end
-          break
-        end
-      end
-    end
-    if not operations then
-      operations,operation_error=gates.plan(timeline,plan,{},layout.lines_per_step)
-      if operations then
-        local places={}
-        for _,step in ipairs(slide_steps(plan)) do places[#places+1]=string.format("%02d",step) end
-        approximations[#approximations+1]=tostring(collision_error)..
-          "; TIME steps "..table.concat(places,",")..
-          " glide commands conflicted with gate timing at all rates, and ordered pitch events were retained"
-        commands={}
-      end
-    end
-  end
-  if not operations then return nil,failure("phrase.unrepresentable","phrase",operation_error) end
-  local store_candidate,prepare_error=store.prepare(song,snapshot_id,fixture,output_policy,pb_range)
+  local request_token=options.token
+  local store_candidate,prepare_error=store.prepare(song,snapshot_id,fixture,output_policy,pb_range,function()
+    return request_token==nil or request_token:is_current()==true
+  end)
   if not store_candidate then return nil,failure("transaction.persistence_prepare","transaction",prepare_error) end
   local target_phrase=replace and instrument.phrases[target_index] or nil
   local job = {
@@ -829,6 +575,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     target_name=target_phrase and target_phrase.name or nil,
     expected_events = meta.note_count + meta.off_count,
     plan = plan, layout=layout, pattern=fixture, output_policy=output_policy,
+    volumes=planned.volumes,
     pb_range=pb_range,
     operations=operations,approximations=approximations,native_notes=native_notes,
     target_warning=capabilities.diagnostic,

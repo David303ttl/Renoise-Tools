@@ -2,6 +2,9 @@
 -- Verify phrase note and OFF cells against the semantic event plan.
 -- Native Renoise note_value: 0..119 = notes, 120 = OFF, 121 = empty.
 local M = {}
+local ownership=require("writers.phrase_ownership")
+local planner=require("model.output_planner")
+local store=require("model.pattern_store")
 local EMPTY, OFF = 121, 120
 
 local function verify_fields(cell,has_note,line,column,delay,midi)
@@ -74,9 +77,11 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
   local effects=articulation and articulation.effects or {}
   local volumes=articulation and articulation.volumes or {}
   local native=articulation and articulation.native_notes
-  if native and columns~=native.columns then return nil,"Legato column count mismatch" end
+  if native and columns<native.columns then return nil,"Legato column count mismatch" end
   local midi_commands=native and native.midi_commands
-  if midi_commands and phrase.visible_effect_columns~=1 then return nil,"Pitch-bend effect column count mismatch" end
+  if midi_commands and next(midi_commands) and (phrase.visible_effect_columns or 0)<1 then
+    return nil,"Pitch-bend effect column count mismatch"
+  end
   for step = 1, plan.length do
     local event = plan.steps[step]
     if not event or event.step ~= step then
@@ -128,7 +133,7 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
         end
         local fields_ok,fields_error=verify_fields(cell,wanted<OFF,line_number,column,
           native_cell and native_cell.delay_value,
-          column==columns and midi_commands and midi_commands[line_number])
+          column==(native and native.columns) and midi_commands and midi_commands[line_number])
         if not fields_ok then return nil,fields_error end
         local expected_volume=native and (native_cell and native_cell.volume_value or 255)
           or (volumes[line_number] and volumes[line_number][column])
@@ -178,7 +183,7 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
         end
         local fields_ok,fields_error=verify_fields(cell,false,line_number,column)
         if not fields_ok then return nil,fields_error end
-        if volumes[line_number] and volumes[line_number][column]~=(cell.volume_value or 255) then
+        if volumes[line_number] and (volumes[line_number][column] or 255)~=(cell.volume_value or 255) then
           return nil,string.format("Phrase volume mismatch at line 0x%02X column %d",line_number-1,column)
         end
       end
@@ -191,6 +196,135 @@ function M.verify(phrase, plan, lines_per_step, layout, articulation)
     end
   end
   return {notes=note_count, offs=off_count, lines=expected_lines}
+end
+
+local function protected(check,...)
+  local ok,result,err=pcall(check,...)
+  if not ok then return nil,"Cannot validate phrase: "..tostring(result) end
+  return result,err
+end
+
+local function visibility(snapshot,output)
+  local properties,required=snapshot.properties,output.required_visibility
+  for _,key in ipairs({"visible_note_columns","visible_effect_columns"}) do
+    if properties[key]<required[key] then return nil,"Insufficient phrase visibility: "..key end
+  end
+  for _,key in ipairs({"instrument_column_visible","volume_column_visible",
+      "panning_column_visible","delay_column_visible","sample_effects_column_visible"}) do
+    if required[key] and not properties[key] then return nil,"Insufficient phrase visibility: "..key end
+  end
+  return true
+end
+
+local function preflight(snapshot,output)
+  local empty,script_error=ownership.empty_script(snapshot)
+  if not empty then return nil,script_error end
+  local visible,visibility_error=visibility(snapshot,output)
+  if not visible then return nil,visibility_error end
+  local properties=snapshot.properties
+  if snapshot.mapping.present and properties.number_of_lines~=output.expected.properties.number_of_lines then
+    return nil,"Mapped phrase length changes are unsupported"
+  end
+  for line_index=1,512 do
+    local line=snapshot.lines[line_index]
+    for column=1,12 do
+      if (line_index>properties.number_of_lines or column>properties.visible_note_columns)
+          and not line.notes[column].is_empty then
+        return nil,"Phrase contains hidden or inactive note data"
+      end
+    end
+    for column=1,8 do
+      if (line_index>properties.number_of_lines or column>properties.visible_effect_columns)
+          and not line.effects[column].is_empty then
+        return nil,"Phrase contains hidden or inactive effect data"
+      end
+    end
+  end
+  return true
+end
+
+-- Preflight consumes a detached baseline and a plan derived from the proposed source.
+function M.preflight(snapshot,output)
+  return protected(preflight,snapshot,output)
+end
+
+local function expected_output(snapshot,output)
+  local generated={}
+  for key in pairs(output.expected.properties) do generated[key]=snapshot.properties[key] end
+  local same,reason=ownership.compare(generated,output.expected.properties)
+  if not same then return nil,"Committed output differs: "..reason end
+  for line_index=1,512 do
+    local actual=snapshot.lines[line_index]
+    local expected=output.expected.lines[line_index]
+    for column=1,12 do
+      local wanted=expected and expected.note_columns[column] or output.expected.empty_note
+      local same,reason=ownership.compare(actual.notes[column],wanted)
+      if not same then return nil,"Committed note output differs at line "..line_index.." column "..column..": "..reason end
+    end
+    for column=1,8 do
+      local wanted=expected and expected.effect_columns[column] or output.expected.empty_effect
+      local same,reason=ownership.compare(actual.effects[column],wanted)
+      if not same then return nil,"Committed effect output differs at line "..line_index.." column "..column..": "..reason end
+    end
+  end
+  return true
+end
+
+local function compatibility(phrase,committed,capabilities,capacities,options)
+  if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
+    return nil,"Invalid compatibility options"
+  end
+  if type(capacities)~="table" or getmetatable(capacities)~=nil then return nil,"Invalid native capacities" end
+  if type(committed)~="table" or
+      (committed.output_policy~="repeat" and committed.output_policy~="play_once") or
+      type(committed.pb_range)~="number" then return nil,"Invalid committed source settings" end
+  local baseline,snapshot_error=ownership.snapshot(phrase)
+  if not baseline then return nil,snapshot_error end
+  local status=ownership.status(phrase)
+  if status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
+  local output,planning_error=planner.plan(committed.pattern,committed.output_policy,
+    committed.pb_range,capacities,capabilities,options)
+  if not output then return nil,planning_error end
+  local safe,preflight_error=preflight(baseline,output)
+  if not safe then return nil,preflight_error end
+  local matches,output_error=expected_output(baseline,output)
+  if not matches then return nil,output_error end
+  local profile,limits={},{}
+  for _,key in ipairs({"sample","plugin","midi","alias","read_error"}) do
+    profile[key]=capabilities and capabilities[key]
+  end
+  for _,key in ipairs({"max_lines","max_note_columns","max_effect_columns","play_pattern","key_tracking_none"}) do
+    limits[key]=capacities[key]
+  end
+  local inputs,input_error=ownership.copy_snapshot({capabilities=profile,capacities=limits,
+    options={pitch_bend_delivery=options and options.pitch_bend_delivery}})
+  if not inputs then return nil,input_error end
+  return {kind="owned",baseline=baseline,output=output,source=output.source,settings=output.settings,
+    planning_inputs=inputs}
+end
+
+-- Complete compatibility authorizes only the saved source/output association.
+-- verify() checks an intermediate renderer payload; it is not ownership permission.
+function M.compatibility(phrase,committed,capabilities,capacities,options)
+  return protected(compatibility,phrase,committed,capabilities,capacities,options)
+end
+
+function M.classify(song,instrument,phrase,capabilities,capacities,options)
+  if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
+    return nil,"Invalid classification options","unavailable"
+  end
+  local member,membership_error=ownership.membership(song,instrument,phrase)
+  if not member or phrase==nil then return nil,membership_error or "An existing phrase is required","unavailable" end
+  local readable,id=pcall(ownership.id,phrase)
+  if not readable then return nil,"Cannot inspect phrase identity","unavailable" end
+  if not id then return nil,"Phrase has no recognized ACID identity","foreign" end
+  local ok,source,policy,pb_range=pcall(store.load,song,instrument,phrase,options and options.excluded)
+  if not ok then return nil,"Cannot read committed source: "..tostring(source),"unavailable" end
+  if not source then return nil,policy,"unavailable" end
+  local candidate,err=M.compatibility(phrase,{pattern=source,output_policy=policy,pb_range=pb_range},
+    capabilities,capacities,options)
+  if not candidate then return nil,err,"unavailable" end
+  return candidate
 end
 
 return M

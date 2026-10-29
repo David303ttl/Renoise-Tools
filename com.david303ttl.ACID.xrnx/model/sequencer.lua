@@ -142,6 +142,33 @@ function M.validate(pattern)
   return true
 end
 
+function M.copy_source(pattern)
+  local valid,err=M.validate(pattern)
+  if not valid then return nil,err end
+  local copy={length=pattern.length,pitch_length=pattern.pitch_length,
+    timing_mode=pattern.timing_mode,pitch_events={},time_events={}}
+  for i=1,M.MAX_STEPS do
+    local pitch=pattern.pitch_events[i]
+    copy.pitch_events[i]={note=pitch.note,key=pitch.key,octave=pitch.octave,
+      accent=pitch.accent,slide=pitch.slide}
+    copy.time_events[i]=pattern.time_events[i]
+  end
+  return copy
+end
+
+function M.same_source(a,b)
+  if not M.validate(a) or not M.validate(b) then return false end
+  if a.length~=b.length or a.pitch_length~=b.pitch_length or
+      a.timing_mode~=b.timing_mode then return false end
+  for i=1,M.MAX_STEPS do
+    local x,y=a.pitch_events[i],b.pitch_events[i]
+    if x.note~=y.note or x.key~=y.key or x.octave~=y.octave or
+        x.accent~=y.accent or x.slide~=y.slide or
+        a.time_events[i]~=b.time_events[i] then return false end
+  end
+  return true
+end
+
 function M.describe(pattern)
   local ok, err = M.validate(pattern)
   if not ok then return nil, err end

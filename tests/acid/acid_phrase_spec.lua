@@ -56,7 +56,7 @@ function phrase:copy_from(other)
     for k,v in pairs(other.cells[i]) do self.cells[i][k]=v end
   end
 end
-instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}},
+instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""},
   phrase_playback_mode=2,phrase_program=7,phrase_editor_visible=false}
 function instrument:insert_phrase_at(i)
   assert(i == #self.phrases+1)
@@ -176,7 +176,7 @@ idle:fire();idle:fire();idle:fire()
 assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(message_text(messages[#messages]):find("generated",1,true),message_text(messages[#messages]))
 assert(first.cells[1].note_value==38)
-assert(require("model.pattern_store").load(song,first).pitch_events[1].note==38)
+assert(require("model.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
 -- A missing render callback retains staging and blocks overlapping writes.
 local base_render=script.render_to_pattern
 local render_calls,pending_render=0,nil
@@ -310,7 +310,7 @@ assert(message_text(messages[#messages]):find("generated",1,true))
 -- A partially applied store write must restore the exact old source and phrase.
 old_store=song.tool_data
 store.commit=function(target,candidate)
-  target.tool_data=candidate.raw
+  assert(original_commit(target,candidate))
   error("injected exception after source write")
 end
 assert(generate(function(value)messages[#messages+1]=value end,edited,1))
@@ -366,7 +366,7 @@ idle:fire();idle:fire();idle:fire()
 instrument.delete_phrase_at=original_delete
 assert(message_text(messages[#messages]):find("recovery backup remains",1,true),message_text(messages[#messages]))
 assert(#instrument.phrases==2 and instrument.phrases[2].name=="ACID RECOVERY BACKUP")
-assert(require("model.pattern_store").load(song,first).pitch_events[1].note==38)
+assert(require("model.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
 instrument:delete_phrase_at(2)
 
 -- Cancellation settles even when temporary phrase removal fails.
@@ -469,7 +469,7 @@ idle:fire();idle:fire();idle:fire()
 assert(triplet_status.status=='committed' or triplet_status.status=='approximate',triplet_status.message)
 local triplet_phrase=instrument.phrases[triplet_target]
 assert(triplet_phrase.lpb==12 and triplet_phrase.shuffle==0 and triplet_phrase.number_of_lines==32)
-assert(store.load(song,triplet_phrase).timing_mode=='triplet')
+assert(store.load(song,song.instruments[1],triplet_phrase).timing_mode=='triplet')
 local triplet_store=song.tool_data
 local triplet_first=triplet_phrase.cells[1].note_value
 function script:render_to_pattern(opts,cb)
@@ -522,7 +522,7 @@ end
 local bend_source=source_fixture()
 bend_source.timing_mode="triplet"
 bend_source.pitch_events[1].slide=true
-instrument.plugin_properties={plugin_loaded=true}
+instrument.plugin_properties={plugin_loaded=true,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0}
 local saved_effect_limit=renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS
 renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=0
 local accepted,reason=generate(function(value)triplet_status=value end,bend_source,triplet_target,{pb_range=12})
@@ -530,7 +530,7 @@ assert(not accepted and reason and reason.code=='phrase.unrepresentable', 'effec
 assert(instrument.phrases[triplet_target]==triplet_phrase and triplet_phrase.cells[1].note_value==triplet_first)
 assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
 renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=saved_effect_limit
-instrument.plugin_properties=nil
+instrument.plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0}
 print("ACID triplet renderer metadata and transaction checks passed")
 
 -- Document release leaves only a tombstone until native rendering settles.

@@ -101,30 +101,11 @@ function M.step_text(projection, step, cycle)
     event.accent and " ACC" or "",event.slide and " OUT" or "",transition)
 end
 
-local function copy_source(pattern)
-  local copy={length=pattern.length,pitch_length=pattern.pitch_length,timing_mode=pattern.timing_mode,
-    pitch_events={},time_events={}}
-  for i,pitch in ipairs(pattern.pitch_events) do
-    local item={}
-    for key,value in pairs(pitch) do item[key]=value end
-    copy.pitch_events[i]=item
-  end
-  for i,command in ipairs(pattern.time_events) do copy.time_events[i]=command end
-  return copy
-end
+local copy_source=seq.copy_source
 
 local function same_state(a,b)
-  if a.output_policy~=b.output_policy or a.pb_range~=b.pb_range or
-      a.pattern.length~=b.pattern.length or
-      a.pattern.pitch_length~=b.pattern.pitch_length or
-      a.pattern.timing_mode~=b.pattern.timing_mode then return false end
-  for i=1,seq.MAX_STEPS do
-    local x,y=a.pattern.pitch_events[i],b.pattern.pitch_events[i]
-    if x.note~=y.note or x.key~=y.key or x.octave~=y.octave or
-        x.accent~=y.accent or x.slide~=y.slide or
-        a.pattern.time_events[i]~=b.pattern.time_events[i] then return false end
-  end
-  return true
+  return a.output_policy==b.output_policy and a.pb_range==b.pb_range and
+    seq.same_source(a.pattern,b.pattern)
 end
 
 local function snapshot(pattern,output_policy,pb_range)

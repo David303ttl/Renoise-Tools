@@ -1,10 +1,10 @@
 package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
 
 local sequencer = require("model.sequencer")
-package.loaded["writers.phrase_ownership"]={
-  id=function(phrase) return phrase and phrase.id end,
-  status=function(phrase)return phrase and phrase.id and "owned" or "foreign" end
-}
+local ownership=require("writers.phrase_ownership")
+ownership.id=function(phrase) return phrase and phrase.id end
+ownership.status=function(phrase)return phrase and phrase.id and "owned" or "foreign" end
+dofile("tests/acid/draft_baseline_stub.lua")
 local cache = require("model.draft_cache")
 
 local instrument_a, instrument_b = {name="A",phrases={}}, {name="B",phrases={}}
@@ -18,6 +18,9 @@ setmetatable(instrument_b,host_object)
 setmetatable(phrase_a,host_object)
 setmetatable(phrase_b,host_object)
 instrument_a.phrases={phrase_a,phrase_b}
+local pattern_store=require("model.pattern_store")
+assert(pattern_store.save(song_a,41,sequencer.new_pattern(17),"repeat",0))
+assert(pattern_store.save(song_a,42,sequencer.new_pattern(8),"repeat",0))
 local source = sequencer.new_pattern(17)
 source.pitch_length = 4
 source.pitch_events[3] = sequencer.new_pitch(5, 1, true, true)
@@ -57,7 +60,7 @@ assert(cache.get(song_a, instrument_a, phrase_a).length == 17)
 local foreign_phrase={}
 instrument_a.phrases[#instrument_a.phrases+1]=foreign_phrase
 assert(cache.get(song_a,instrument_a,foreign_phrase)==nil)
-assert(cache.clear(song_a,instrument_a,foreign_phrase)==false)
+assert(cache.clear(song_a,instrument_a,foreign_phrase)==nil)
 assert(cache.get(song_a,instrument_a,nil).length==23,
   "clearing a foreign phrase cannot remove the new-phrase draft")
 instrument_a.phrases[#instrument_a.phrases]=nil
@@ -68,7 +71,6 @@ cache=require("model.draft_cache")
 local durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.pitch_events[3].note==53)
 assert(durable_pb==24)
-local pattern_store=require("model.pattern_store")
 assert(pattern_store.save(song_a,77,sequencer.new_pattern(4),"repeat",12))
 package.loaded["model.draft_cache"]=nil
 cache=require("model.draft_cache")
@@ -100,7 +102,7 @@ assert(cache.get(song_a,instrument_a,phrase_a)==nil)
 instrument_a.phrases={phrase_a,phrase_b}
 
 -- A draft-only write rebases an in-flight source candidate and survives its commit.
-local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat",48))
+local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat",48,function()return true end))
 local changed=sequencer.new_pattern(19)
 changed.pitch_events[2]=sequencer.new_pitch(7,0,true,false)
 assert(cache.put(song_a,instrument_a,phrase_a,changed,"repeat",12))
@@ -118,13 +120,13 @@ assert(pattern_store.restore(song_a,candidate))
 local rolled_back=assert(pattern_store.read(song_a))
 assert(rolled_back[88]==nil,
   "rollback removes only the source snapshot from the in-flight render")
-local persisted_draft,_,persisted_pb=pattern_store.read_draft(song_a,1,41,"A")
+local persisted_draft,_,persisted_pb=pattern_store.read_draft(song_a,instrument_a,phrase_a)
 assert(persisted_draft.length==19 and persisted_draft.pitch_events[2].note==43,
   "rollback restores the rebased raw data and preserves the newest draft")
 assert(persisted_pb==12)
 
 -- A concurrent source-record change still rejects the prepared candidate.
-local stale_candidate=assert(pattern_store.prepare(song_a,89,sequencer.new_pattern(6),"repeat"))
+local stale_candidate=assert(pattern_store.prepare(song_a,89,sequencer.new_pattern(6),"repeat",nil,function()return true end))
 assert(pattern_store.save(song_a,90,sequencer.new_pattern(7),"repeat"))
 local stale,stale_error=pattern_store.commit(song_a,stale_candidate)
 assert(not stale and stale_error=="ACID song data changed during generation")
@@ -181,9 +183,9 @@ local valid_timing_data=timing_song.tool_data
 for _,replacement in ipairs({"|unknown|", "||"}) do
   local corrupt=valid_timing_data:gsub("|triplet|",replacement,1)
   timing_song.tool_data=corrupt
-  local loaded,load_error=pattern_store.read_draft(timing_song,1,0,"Timing")
+  local loaded,load_error=pattern_store.read_draft(timing_song,timing_instrument,nil)
   assert(not loaded and load_error)
-  assert(not pattern_store.write_draft(timing_song,1,0,"Timing",timing_source,"repeat",0))
+  assert(not pattern_store.write_draft(timing_song,timing_instrument,nil,timing_source,"repeat",0))
   assert(not pattern_store.save(timing_song,91,straight_source,"repeat",0))
   assert(timing_song.tool_data==corrupt)
 end

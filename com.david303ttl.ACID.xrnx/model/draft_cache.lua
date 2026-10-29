@@ -1,162 +1,346 @@
 -- SPDX-License-Identifier: GPL-3.0-only
--- Song-persistent drafts with detached session cache for active editor objects.
-local sequencer = require("model.sequencer")
-local store = require("model.pattern_store")
-local ownership = require("writers.phrase_ownership")
-local M = {}
-
-local NEW_PHRASE = {}
-local drafts = setmetatable({}, {__mode = "k"})
-local POLICIES = { ["repeat"] = true, play_once = true }
-local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
-
-local function valid_pb_range(value)
-  return type(value)=="number" and value%1==0 and PB_RANGES[value]
+-- Object-local drafts with verified baselines and detached session recovery.
+local sequencer=require("model.sequencer")
+local store=require("model.pattern_store")
+local ownership=require("writers.phrase_ownership")
+local validator=require("writers.phrase_validator")
+local capabilities=require("model.target_capabilities")
+local pitch_bend=require("writers.phrase_pitch_bend")
+local M={}
+local NEW={}
+local sessions=setmetatable({},{__mode="k"})
+local PB_RANGES={[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
+local serial=0
+local function next_token() serial=serial+1;return serial end
+local function object(value,class)
+  local kind=type(value)
+  return kind=="table" or kind=="userdata" or kind==class
 end
-
-local function clone_pattern(pattern)
-  local copy = {
-    length = pattern.length,
-    pitch_length = pattern.pitch_length,
-    timing_mode = pattern.timing_mode,
-    pitch_events = {},
-    time_events = {}
-  }
-  for i = 1, sequencer.MAX_STEPS do
-    local pitch = pattern.pitch_events[i]
-    copy.pitch_events[i] = {
-      note = pitch.note,
-      key = pitch.key,
-      octave = pitch.octave,
-      accent = pitch.accent,
-      slide = pitch.slide
-    }
-    copy.time_events[i] = pattern.time_events[i]
+local function valid_target(song,instrument,phrase)
+  if not object(song,"Song") or not object(instrument,"Instrument") then
+    return nil,"song and instrument objects are required"
   end
-  return copy
-end
-
-local function bucket(song, instrument, phrase, create)
-  if song == nil or instrument == nil then return nil end
-  local by_instrument = drafts[song]
-  if not by_instrument and create then
-    by_instrument = setmetatable({}, {__mode = "k"})
-    drafts[song] = by_instrument
-  end
-  if not by_instrument then return nil end
-  local by_phrase = by_instrument[instrument]
-  if not by_phrase and create then
-    by_phrase = {}
-    by_instrument[instrument] = by_phrase
-  end
-  if not by_phrase then return nil end
-  return by_phrase, phrase or NEW_PHRASE
-end
-
-local function instrument_index(song,instrument)
-  for index,candidate in ipairs(song.instruments or {}) do
-    if rawequal(candidate,instrument) then return index end
-  end
-end
-
-local function phrase_id(phrase)
-  if not phrase or ownership.status(phrase)~="owned" then return 0 end
-  local id=ownership.id(phrase)
-  if type(id)~="number" or id%1~=0 or id<1 then return 0 end
-  return id
-end
-
-local function phrase_belongs(instrument,phrase)
-  if not phrase or type(instrument.phrases)~="table" then return true end
-  for _,candidate in ipairs(instrument.phrases) do
-    if rawequal(candidate,phrase) then return true end
-  end
-  return false
-end
-
-function M.put(song, instrument, phrase, pattern, output_policy, pb_range)
-  if song == nil or instrument == nil then return nil, "song and instrument are required" end
-  if not phrase_belongs(instrument,phrase) then return nil,"draft phrase is no longer in the selected instrument" end
-  if type(pattern) ~= "table" then return nil, "draft source is required" end
-  local valid, err = sequencer.validate(pattern)
-  if not valid then return nil, err end
-  output_policy = output_policy or "repeat"
-  if not POLICIES[output_policy] then return nil, "invalid phrase output policy" end
-  pb_range=pb_range==nil and 0 or pb_range
-  if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
-  local by_phrase, key = bucket(song, instrument, phrase, true)
-  by_phrase[key] = {pattern = clone_pattern(pattern), output_policy = output_policy,
-    pb_range=pb_range,
-    persistent=false}
-  local index=instrument_index(song,instrument)
-  if not index then return nil,"draft instrument is no longer in this song" end
-  if phrase and phrase_id(phrase)==0 then
-    return nil,"draft phrase has no current ACID identity; it remains only in this editor session"
-  end
-  if not phrase then
-    local name=tostring(instrument.name or "")
-    local matches=0
-    for _,candidate in ipairs(song.instruments or {}) do
-      if tostring(candidate.name or "")==name then matches=matches+1 end
+  if phrase~=nil then
+    local kind=type(phrase)
+    if kind~="table" and kind~="userdata" and kind~="InstrumentPhrase" then
+      return nil,"An existing draft requires a phrase object"
     end
-    if matches~=1 then return nil,"new phrase draft destination is ambiguous; select it again after reopening" end
   end
-  local saved,save_error=store.write_draft(song,index,phrase_id(phrase),instrument.name,
-    pattern,output_policy,pb_range)
-  if not saved then return nil,save_error end
-  by_phrase[key].persistent=true
+  return true
+end
+local function valid_options(options)
+  if options~=nil and (type(options)~="table" or getmetatable(options)~=nil or
+      (options.validate~=nil and type(options.validate)~="function")) then
+    return nil,"Invalid draft options"
+  end
+  return true
+end
+local function state(song,create)
+  local result=sessions[song]
+  if not result and create then
+    result={instruments=setmetatable({},{__mode="k"}),recovery={}}
+    sessions[song]=result
+  end
+  return result
+end
+local function bucket(song,instrument,create)
+  if not song or not instrument then return nil end
+  local session=state(song,create)
+  if not session then return nil end
+  local result=session.instruments[instrument]
+  if not result and create then result={};session.instruments[instrument]=result end
+  return result
+end
+local function copied(value)
+  return ownership.copy_snapshot(value)
+end
+local function label(object,fallback)
+  local ok,name=pcall(function()return object and object.name end)
+  return ok and type(name)=="string" and name or fallback
+end
+local function labels(instrument,phrase)
+  return {instrument=label(instrument,"Unavailable instrument"),
+    phrase=phrase and label(phrase,"Unavailable phrase") or "New Phrase"}
+end
+local function metadata(record)
+  return {token=record.token,revision=record.revision,recovered=record.recovered==true,
+    persistent=record.persistent==true,warning=record.warning}
+end
+local function values(record)
+  return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record)
+end
+local function proof(song,instrument,phrase,options)
+  local ok,result,err=pcall(function()
+    if options and options.validate then return options.validate(song,instrument,phrase) end
+    local profile,profile_error=capabilities.inspect(instrument)
+    if not profile then return nil,profile_error end
+    local api=renoise.InstrumentPhrase
+    return validator.classify(song,instrument,phrase,profile,{
+      max_lines=api.MAX_NUMBER_OF_LINES,max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
+      max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,play_pattern=api.PLAY_PATTERN,
+      key_tracking_none=api.KEY_TRACKING_NONE},{pitch_bend_delivery=pitch_bend.delivery_enabled})
+  end)
+  if not ok then return nil,"Cannot validate draft baseline" end
+  if not result then return nil,err or "Draft target is unavailable" end
+  local readable,baseline,baseline_error=pcall(function()
+    local source,source_error=sequencer.copy_source(result.source)
+    if not source then return nil,source_error end
+    return copied({id=ownership.id(phrase),source=source,
+      settings=result.settings,snapshot=result.baseline,planning_inputs=result.planning_inputs})
+  end)
+  if not readable then return nil,"Cannot inspect verified draft baseline" end
+  if not baseline or type(baseline.id)~="number" or baseline.id%1~=0 or baseline.id<1 or
+      type(baseline.settings)~="table" or type(baseline.snapshot)~="table" or
+      type(baseline.planning_inputs)~="table" or
+      (baseline.settings.output_policy~="repeat" and baseline.settings.output_policy~="play_once") or
+      not PB_RANGES[baseline.settings.pb_range] then
+    return nil,baseline_error or "Incomplete verified draft baseline"
+  end
+  return baseline
+end
+local function scratch_baseline(song,instrument)
+  local index,err=ownership.membership(song,instrument,nil)
+  if not index then return nil,err end
+  local name=label(instrument,nil)
+  if not name then return nil,"Cannot inspect New Phrase instrument name" end
+  local inspected,matches=pcall(function()
+    local count=0
+    for _,candidate in ipairs(song.instruments) do if candidate.name==name then count=count+1 end end
+    return count
+  end)
+  return {index=index,name=name,durable=inspected and matches==1}
+end
+local function baseline(song,instrument,phrase,options)
+  if phrase then return proof(song,instrument,phrase,options) end
+  return scratch_baseline(song,instrument)
+end
+local function matching(phrase,left,right)
+  if phrase==nil then return left~=nil and right~=nil end
+  return left~=nil and right~=nil and ownership.compare(left,right)==true
+end
+local function scratch_changed(captured,current)
+  return captured.index~=current.index or captured.name~=current.name or not current.durable
+end
+local function scratch_warning(current)
+  if not current.durable then return "New Phrase scratch is session-only because its instrument name is ambiguous" end
+  return "New Phrase scratch is session-only because its saved instrument position or name changed"
+end
+
+function M.detach(song,instrument,phrase,reason)
+  local valid,err=valid_target(song,instrument,phrase)
+  if not valid then return nil,err end
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if not record or record.detached then return false end
+  local entry=assert(copied({token=next_token(),pattern=record.pattern,
+    output_policy=record.output_policy,pb_range=record.pb_range,baseline=record.baseline,
+    labels=record.labels,reason=type(reason)=="string" and reason or "Draft target changed",
+    session_only=true}))
+  state(song,true).recovery[entry.token]=entry
+  records[phrase or NEW]={detached=true,reason=entry.reason}
+  return entry.token
+end
+
+function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
+  local valid,target_error=valid_target(song,instrument,phrase)
+  if not valid then return nil,target_error end
+  local options_valid,options_error=valid_options(options)
+  if not options_valid then return nil,options_error end
+  local source,err=sequencer.copy_source(pattern)
+  if not source then return nil,err end
+  output_policy=output_policy or "repeat"
+  pb_range=pb_range==nil and 0 or pb_range
+  if output_policy~="repeat" and output_policy~="play_once" then return nil,"invalid phrase output policy" end
+  if type(pb_range)~="number" or not PB_RANGES[pb_range] then
+    return nil,"invalid PB range"
+  end
+  local verified,validation_error=baseline(song,instrument,phrase,options)
+  local records=bucket(song,instrument,true)
+  local previous=records[phrase or NEW]
+  if previous and previous.detached then previous=nil end
+  if previous and not matching(phrase,previous.baseline,verified) then
+    M.detach(song,instrument,phrase,validation_error or "Committed draft baseline changed")
+    verified=nil
+    validation_error=validation_error or "Committed draft baseline changed"
+  end
+  local revision=next_token()
+  local record={pattern=source,output_policy=output_policy,pb_range=pb_range,
+    baseline=phrase==nil and previous and previous.baseline or verified,
+    labels=labels(instrument,phrase),token=previous and previous.token or next_token(),
+    revision=revision,persistent=false}
+  records[phrase or NEW]=record
+  if not verified then return nil,validation_error,metadata(record) end
+  if phrase==nil and scratch_changed(record.baseline,verified) then
+    record.warning=scratch_warning(verified)
+    return nil,record.warning,metadata(record)
+  end
+  local saved,save_error=store.write_draft(song,instrument,phrase,source,output_policy,pb_range)
+  if not saved then return nil,save_error,metadata(record) end
+  record.persistent=true
+  return true,nil,metadata(record)
+end
+
+local function resolve(song,instrument,phrase,options)
+  local valid,target_error=valid_target(song,instrument,phrase)
+  if not valid then return nil,target_error end
+  local options_valid,options_error=valid_options(options)
+  if not options_valid then return nil,options_error end
+  local verified,err=baseline(song,instrument,phrase,options)
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if not verified then
+    if record then M.detach(song,instrument,phrase,err) end
+    return nil,err
+  end
+  if record and record.detached then return nil,record.reason,verified end
+  if record then
+    if not matching(phrase,record.baseline,verified) then
+      M.detach(song,instrument,phrase,"Committed draft baseline changed")
+      return nil,"Committed draft baseline changed",verified
+    end
+    if phrase==nil and scratch_changed(record.baseline,verified) then
+      record.persistent=false
+      record.warning=scratch_warning(verified)
+    end
+    return record,nil,verified
+  end
+  local source,policy,pb=store.read_draft(song,instrument,phrase)
+  if not source then return nil,policy,verified end
+  local revision=next_token()
+  record={pattern=assert(sequencer.copy_source(source)),output_policy=policy,pb_range=pb,
+    baseline=verified,labels=labels(instrument,phrase),token=next_token(),revision=revision,
+    persistent=true,recovered=true}
+  bucket(song,instrument,true)[phrase or NEW]=record
+  return record,nil,verified
+end
+
+function M.get(song,instrument,phrase,options)
+  local record,err=resolve(song,instrument,phrase,options)
+  if not record then return nil,err end
+  return values(record)
+end
+
+function M.restore(song,instrument,phrase,options)
+  local record,err,verified=resolve(song,instrument,phrase,options)
+  if record then return values(record) end
+  if not verified or not phrase then return nil,err end
+  return sequencer.copy_source(verified.source),verified.settings.output_policy,
+    verified.settings.pb_range,{origin="committed"}
+end
+
+function M.capture(song,instrument,phrase,options)
+  local record,err=resolve(song,instrument,phrase,options)
+  if not record then return nil,err or "No current session draft" end
+  local descriptor={kind=phrase and "existing" or "new",instrument=instrument,phrase=phrase,
+    token=record.token,revision=record.revision}
+  local captured={kind=descriptor.kind,instrument=instrument,phrase=phrase,
+    token=record.token,revision=record.revision}
+  return descriptor,function(token,revision)
+    return token==captured.token and revision==captured.revision and
+      M.is_current(song,captured)
+  end
+end
+
+-- This guard remains valid after an authorized destination mutation.
+function M.is_current(song,descriptor)
+  if type(descriptor)~="table" or getmetatable(descriptor)~=nil or
+      (descriptor.kind~="new" and descriptor.kind~="existing") or
+      (descriptor.kind=="new" and descriptor.phrase~=nil) or
+      (descriptor.kind=="existing" and descriptor.phrase==nil) then return false end
+  if not valid_target(song,descriptor.instrument,descriptor.phrase) then return false end
+  if not ownership.membership(song,descriptor.instrument,descriptor.phrase) then return false end
+  local records=bucket(song,descriptor.instrument,false)
+  local record=records and records[descriptor.phrase or NEW]
+  return record~=nil and not record.detached and record.token==descriptor.token and record.revision==descriptor.revision
+end
+
+function M.compare_and_clear(song,descriptor,created)
+  if not M.is_current(song,descriptor) then return false end
+  local records=bucket(song,descriptor.instrument,false)
+  local key=descriptor.phrase or NEW
+  local record=records[key]
+  if created==true and descriptor.kind=="new" and record.origin and
+      record.origin.revision==record.revision then
+    state(song,true).recovery[record.origin.token]=nil
+  end
+  records[key]=nil
   return true
 end
 
-function M.get(song, instrument, phrase)
-  if instrument and not phrase_belongs(instrument,phrase) then return nil end
-  local by_phrase, key = bucket(song, instrument, phrase, false)
-  local draft = by_phrase and by_phrase[key]
-  if draft then return clone_pattern(draft.pattern), draft.output_policy,draft.pb_range end
-  if phrase and phrase_id(phrase)==0 then return nil end
-  local index=instrument_index(song,instrument)
-  if not index then return nil,"draft instrument is no longer in this song" end
-  local pattern,policy_or_error,pb_range=
-    store.read_draft(song,index,phrase_id(phrase),instrument.name)
-  if not pattern then return nil,policy_or_error end
-  return clone_pattern(pattern),policy_or_error,pb_range
+function M.list(song)
+  local session=state(song,false)
+  local result={}
+  for _,entry in pairs(session and session.recovery or {}) do result[#result+1]=assert(copied(entry)) end
+  table.sort(result,function(a,b)return a.token<b.token end)
+  return result
 end
 
-function M.clear(song, instrument, phrase)
-  local by_phrase, key = bucket(song, instrument, phrase, false)
-  local index=instrument_index(song,instrument)
-  local removed=false
-  if index and (not phrase or phrase_id(phrase)>0) then
-    local ok,err=store.clear_draft(song,index,phrase_id(phrase),instrument.name)
-    if ok==nil then return nil,err end
-    removed=ok==true
-  end
-  if not by_phrase or not by_phrase[key] then return removed end
-  by_phrase[key] = nil
-  if next(by_phrase) == nil then
-    local by_instrument = drafts[song]
-    by_instrument[instrument] = nil
-    if next(by_instrument) == nil then drafts[song] = nil end
-  end
+function M.discard(song,token)
+  local session=state(song,false)
+  if not session or not session.recovery[token] then return false end
+  session.recovery[token]=nil
   return true
+end
+
+function M.copy_to_new(song,instrument,token,options)
+  local valid,target_error=valid_target(song,instrument,nil)
+  if not valid then return nil,target_error end
+  local options_valid,options_error=valid_options(options)
+  if not options_valid then return nil,options_error end
+  local session=state(song,false)
+  local entry=session and session.recovery[token]
+  if not entry then return nil,"Recovery entry is unavailable" end
+  local verified,err=scratch_baseline(song,instrument)
+  if not verified then return nil,err end
+  local outgoing=resolve(song,instrument,nil,options)
+  if outgoing then M.detach(song,instrument,nil,"Scratch preserved before recovery copy") end
+  local saved,save_error=M.put(song,instrument,nil,entry.pattern,entry.output_policy,entry.pb_range,options)
+  local record=bucket(song,instrument,false)[NEW]
+  if not record then return nil,save_error end
+  record.origin={token=token,revision=record.revision}
+  local source,policy,pb,meta=values(record)
+  meta.recovery_token=token
+  meta.warning=not saved and save_error or nil
+  return source,policy,pb,meta
+end
+
+function M.clear(song,instrument,phrase)
+  local valid,err=valid_target(song,instrument,phrase)
+  if not valid then return nil,err end
+  local removed,err=store.clear_draft(song,instrument,phrase)
+  if removed==nil then return nil,err end
+  local records=bucket(song,instrument,false)
+  if records and records[phrase or NEW] then records[phrase or NEW]=nil;return true end
+  return removed
 end
 
 function M.has(song)
-  local by_instrument=drafts[song]
-  local cached=by_instrument~=nil and next(by_instrument)~=nil
-  if cached then return true end
+  local session=state(song,false)
+  if session then
+    if next(session.recovery) then return true end
+    for _,records in pairs(session.instruments) do
+      for _,record in pairs(records) do if not record.detached then return true end end
+    end
+  end
   return store.has_drafts(song)
 end
 
 function M.has_volatile(song)
-  local by_instrument=drafts[song]
-  if not by_instrument then return false end
-  for _,by_phrase in pairs(by_instrument) do
-    for _,draft in pairs(by_phrase) do
-      if not draft.persistent then return true end
-    end
+  local session=state(song,false)
+  if not session then return false end
+  if next(session.recovery) then return true end
+  for _,records in pairs(session.instruments) do
+    for _,record in pairs(records) do if not record.detached and not record.persistent then return true end end
   end
   return false
+end
+
+function M.close() return true end
+
+function M.release(song)
+  local warning=M.has_volatile(song) and "Session-only ACID drafts were released" or nil
+  sessions[song]=nil
+  return true,warning
 end
 
 return M

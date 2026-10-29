@@ -144,6 +144,51 @@ the fixes and Step 8 verifies native acceptance; neither the current runtime
 nor those later gates are marked passed. The pinned SDK setup and all 34 ACID
 specs passed.
 
+#### Script-free staging feasibility
+
+**Step 1.1: passed, 2026-10-29; Renoise 3.5.4 Demo / API 6.2.**
+The disposable `acid-empty-feasibility.xrns` fixture used the installed ACID
+tool and the actual `writers.pattrns_writer.emit` output for two C-4 notes.
+Probe code, exact value snapshots and logs remain untracked under repository
+`tmp/`, outside runtime and package inputs.
+
+The verified sequence is: assign the generated paragraphs to the single
+staging phrase in `PLAY_SCRIPT`; call `commit()`; request `render_to_pattern`
+from its committed notification; require the successful callback (two rendered,
+zero skipped) and the expected C-4 on line 1; assign `script.paragraphs = {}`
+and call `commit()` while the generated stage remains in `PLAY_SCRIPT`.
+The clear notification precedes compilation settlement. Inspect later native
+state until the empty-content compilation diagnostic appears and the exact
+empty predicate passes; no fixed delay authorizes publication. Verify all
+rendered values unchanged, then change only that stage to `PLAY_PATTERN` and
+verify that this is the sole changed field. Never clear a destination script.
+
+| Check | Native result |
+| --- | --- |
+| Canonical empty script | Exactly zero paragraphs, zero parameters, `pending_changes = 0`, readable `editor_visible = true` |
+| Derived diagnostics | `compile_error` is `compile error: no script content present.`; `runtime_error` is empty. Empty compilation is expected after clearing; it is distinct from the preceding successful render callback. |
+| Clear preserves rendered output | Exact comparison passed for all 512 lines, 12 note columns, eight effect columns, all numeric cell fields and `is_empty`, phrase settings, visibility, column names/mutes and mapping state |
+| Create and two regenerations | Same live destination by `rawequal`; one final phrase after each operation; each next preflight accepted the canonical empty state |
+| Copies and rollback | Destination-to-backup, stage-to-destination, backup-to-destination and final publication preserved every compared value; backup neutral name and absent mapping were explicit exceptions only for backup/stage comparison |
+| Mapping preservation | Original destination mapping remained unchanged and was independently compared through publication and exact rollback; mapped line count remained unchanged |
+| Later native settlement | Five subsequent idle snapshots per operation matched the complete expected values; no script or parameters reappeared |
+| Save/reload | `save_song_as`, then `load_song` of the saved disposable XRNS, followed by a fresh complete snapshot, matched every persisted field including exact empty paragraphs and readable editor state |
+| Numeric command encoding | Native note/effect numbers: `00=0`, `0G=16`, `40=1024`, `7F=1807`, `0M=22`, `ZT=8989`; note panning `M1=5633`. Command digits use base-36 values packed into two bytes. |
+| Guarded store helpers in the installed bundle | Existing and New draft removal, unrelated scratch preservation, captured absence with a later draft, exact raw/draft rollback and stale revision rejection passed. The probe restored original `tool_data` and deleted only its raw-identity instrument. This tests persistence helpers, not musical source/output compatibility or writer integration. |
+| Fresh-bundle verification | Saved canonical script-free values passed the complete read-only comparison after refreshing the installed modules. |
+
+Compilation/runtime diagnostics are logged separately as derived values and
+excluded from preserved-value equality. Full source/output classification is
+Step 1.5; these comparisons prove that clearing and copying preserve the
+rendered values captured before clearing.
+
+The generated fixture has no script parameters. A parameter-bearing probe
+retained its parameter after empty commit and is unsupported; it does not
+establish a parameter-clearing contract. Existing destinations with parameters
+or nonempty scripts remain rejected. The supported publication sequence clears
+only this job's parameter-free emitted script. Full writer, lifecycle, undo and
+playback acceptance remain separate gates.
+
 #### Native ownership/source undo probe (2026-10-29)
 
 **Failed: association contract revised; runtime fix and final acceptance remain pending.**

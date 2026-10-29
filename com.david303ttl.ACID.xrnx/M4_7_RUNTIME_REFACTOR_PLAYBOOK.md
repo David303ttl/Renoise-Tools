@@ -185,7 +185,7 @@ the writer independently repeats those checks immediately before mutation.
 
 ### 1.1 — Prove script-free staging feasibility
 
-**Status:** pending native evidence; not satisfied by Step 0's earlier probes.
+**Status:** passed; see the [script-free staging feasibility record](../tests/acid/acid_m35_s_manual.md#script-free-staging-feasibility).
 
 **Depends on:** completed Step 0 and its pinned API/native feasibility record.
 Use disposable native probes outside runtime/package inputs, not a partial writer
@@ -437,6 +437,22 @@ isolation, occupied-scratch preservation, exact-revision clearing, and the state
 close/release lifetimes. No ambiguous durable record enters recovery.
 
 ### 1.8 — Close Gate 1 and hand contracts to runtime integration
+
+**Status:** complete. Steps 1.1–1.7 and the independent second-pass review pass.
+The ACID suite contains 41 passing specs; the full repository suite contains 44.
+Runtime integration and native playback/lifecycle/undo acceptance remain in
+Steps 2–8; M4 remains open.
+
+| Contract / focused cases | Verification | Result |
+| --- | --- | --- |
+| Canonical empty script, complete native copy/rollback, same-object repeated regeneration and save/reload | [Native feasibility record](../tests/acid/acid_m35_s_manual.md#script-free-staging-feasibility) | Pass: Renoise 3.5.4 Demo / API 6.2 |
+| Detached canonical source values, exact comparison and frozen candidate inputs | `tests/acid/acid_source_values_spec.lua` | Pass |
+| Raw/current membership, replacements, song-wide collisions, temporary exclusions, narrow entry reads and durable draft guards | `tests/acid/acid_live_identity_spec.lua`, `acid_phrase_persistence_spec.lua` | Pass |
+| Shared repeat/play-once and straight/triplet planning, notes/rests/ties/accent, glide/gate fallback, overlap/PB and unknown receiver rejection | `tests/acid/acid_output_planner_spec.lua`, existing articulation/legato/timing specs | Pass |
+| Complete cell/property/mapping/script snapshots, allowed differences, read failures, committed-source mismatch after undo/reload, visibility and hidden/tail preflight | `tests/acid/acid_phrase_snapshot_spec.lua`, `acid_output_compatibility_spec.lua`, `acid_legato_writer_spec.lua` | Pass |
+| Atomic captured draft removal, current-draft rebasing, absence/newer/equal-valued revisions, New slot preservation, metadata-only writes, partial setters and guarded restore | `tests/acid/acid_store_candidate_spec.lua`; native store helper smoke in the feasibility record | Pass |
+| Verified draft precedence, current-format hydration, baseline detachment, collision isolation, recovery copy/discard, occupied scratch, exact-revision clearing, live captured guards and close/release | `tests/acid/acid_draft_recovery_spec.lua`, `acid_draft_cache_spec.lua`, existing GUI/repeat specs | Pass |
+| Packaging and clean cutover | One private planner; unchanged manifest/seal/store identifiers; archive roots and development-file exclusions checked | Pass |
 
 **Depends on:** completed 1.1–1.7. Review the one shared planner and existing module
 owners for competing paths or circular dependencies. Run

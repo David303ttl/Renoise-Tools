@@ -93,7 +93,7 @@ local function make_phrase()
   return phrase
 end
 
-instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}},
+instrument={name="Repeat fixture",phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""},
   phrase_playback_mode=1,phrase_program=3,phrase_editor_visible=false}
 function instrument:insert_phrase_at(index)
   assert(index==#self.phrases+1)
@@ -169,7 +169,7 @@ for _,length in ipairs({1,16,17,32}) do
   assert(phrase.cells[8*length+1].note_value==121,
     'loop sentinel line must remain empty')
   assert(ownership.status(phrase)=='owned')
-  local restored,policy=store.load(song,phrase)
+  local restored,policy=store.load(song,instrument,phrase)
   assert(restored and policy=='repeat')
   assert(restored.length==length and restored.pitch_length==32)
   for index=1,32 do
@@ -205,7 +205,7 @@ local rest_phrase=generate(rests,'repeat',#instrument.phrases+1)
 assert(rest_phrase.number_of_lines==137 and rest_phrase.looping)
 assert(rest_phrase.loop_start==69 and rest_phrase.loop_end==137)
 for line=1,137 do assert(rest_phrase.cells[line].note_value==121) end
-local rest_source,rest_policy=store.load(song,rest_phrase)
+local rest_source,rest_policy=store.load(song,instrument,rest_phrase)
 assert(rest_source and rest_policy=='repeat' and rest_source.length==17)
 for step=1,17 do assert(rest_source.time_events[step]=='R') end
 local rest_render=render_calls[#render_calls]
@@ -254,17 +254,17 @@ local original_source=source_copy(policy_source)
 local policy_target=#instrument.phrases+1
 local repeated=generate(policy_source,'repeat',policy_target)
 assert(repeated.looping and ownership.status(repeated)=='owned')
-local saved_repeat,saved_repeat_policy=store.load(song,repeated)
+local saved_repeat,saved_repeat_policy=store.load(song,instrument,repeated)
 assert(saved_repeat_policy=='repeat' and same_source(saved_repeat,original_source))
 local one_shot=generate(policy_source,'play_once',policy_target)
 assert(not one_shot.looping and ownership.status(one_shot)=='owned')
 assert(one_shot.number_of_lines==policy_source.length*4)
 assert(one_shot.cells[1].note_value==48 and one_shot.cells[2].note_value==121
   and one_shot.cells[10].note_value==121 and one_shot.cells[13].note_value==120)
-local saved_once,saved_once_policy=store.load(song,one_shot)
+local saved_once,saved_once_policy=store.load(song,instrument,one_shot)
 assert(saved_once_policy=='play_once' and same_source(saved_once,original_source))
 local repeated_again=generate(policy_source,'repeat',policy_target)
-local saved_again,saved_again_policy=store.load(song,repeated_again)
+local saved_again,saved_again_policy=store.load(song,instrument,repeated_again)
 assert(repeated_again.looping and saved_again_policy=='repeat'
   and same_source(saved_again,original_source))
 assert(instrument.phrase_playback_mode==1 and instrument.phrase_program==3
@@ -288,7 +288,9 @@ assert(slide_status.message:find('Articulation approximation:',1,true),
 local function make_target(samples,plugin,midi)
   local target={phrases={},samples=samples,phrase_playback_mode=1,
     phrase_program=3,phrase_editor_visible=false}
-  if plugin then target.plugin_properties={plugin_loaded=true} end
+  target.plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0}
+  target.midi_output_properties={device_name=""}
+  if plugin then target.plugin_properties={plugin_loaded=true,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0} end
   if midi then target.midi_output_properties={device_name='MIDI Device'} end
   target.insert_phrase_at=instrument.insert_phrase_at
   target.delete_phrase_at=instrument.delete_phrase_at
@@ -380,7 +382,7 @@ local fallback,fallback_status=generate(bend_source,'repeat',bend_target,{pb_ran
 assert(fallback:line(9).note_columns[2].note_value==43,
   'unverified phrase delivery must retain the target NOTE')
 assert(fallback_status.message:find('delivery is unavailable',1,true))
-local _,_,fallback_range=store.load(song,fallback)
+local _,_,fallback_range=store.load(song,instrument,fallback)
 assert(fallback_range==12,'fallback discarded the selected receiver range')
 for line=1,fallback.number_of_lines do
   for _,cell in ipairs(fallback:line(line).note_columns) do
@@ -394,7 +396,7 @@ local bent,bent_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2
 assert(bent_status.message:find('depends on the receiver and routing',1,true),
   'enabled phrase commands must not imply receiver delivery is verified')
 assert(ownership.status(bent)=='owned')
-local saved_bend,saved_policy,saved_range=store.load(song,bent)
+local saved_bend,saved_policy,saved_range=store.load(song,instrument,bent)
 assert(saved_policy=='repeat' and saved_range==12 and same_source(saved_bend,bend_source))
 assert(saved_bend.pb_range==nil,'render settings leaked into canonical memories')
 local command_count,noncenter,center=0,false,false
@@ -422,7 +424,7 @@ assert(ownership.status(bent)=='owned')
 local bend_id=ownership.id(bent)
 local off=generate(bend_source,'repeat',bend_target,{pb_range=0},2)
 assert(off==bent and ownership.id(off)==bend_id and ownership.status(off)=='owned')
-local off_source,_,off_range=store.load(song,off)
+local off_source,_,off_range=store.load(song,instrument,off)
 assert(off_range==0 and same_source(off_source,bend_source))
 assert(off:line(9).note_columns[2].note_value==43,'PB Off lost the overlap route')
 bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
@@ -480,15 +482,18 @@ assert(writer.generate(1,function(value)render_status=value end,rendering_source
   {output_policy='repeat'}))
 for _=1,6 do idle:fire() end
 assert(delayed_callback,'native render did not start')
+dofile("tests/acid/draft_baseline_stub.lua")
 local draft_cache=require('model.draft_cache')
 assert(draft_cache.put(song,instrument,instrument.phrases[1],latest_source,'repeat'))
 script.render_to_pattern=original_render
 original_render(script,delayed_options,delayed_callback)
 assert(render_status.kind=='complete' and
   (render_status.status=='committed' or render_status.status=='approximate'),render_status.message)
-assert(store.load(song,instrument.phrases[1]).length==4)
-assert(draft_cache.get(song,instrument,instrument.phrases[1]).length==5,
-  'render commit discarded the newer source edit')
+assert(store.load(song,instrument,instrument.phrases[1]).length==4)
+assert(not draft_cache.get(song,instrument,instrument.phrases[1]),
+  'a changed committed baseline cannot restore the newer source edit automatically')
+assert(draft_cache.list(song)[1].pattern.length==5,
+  'a changed committed baseline preserves the newer source edit for recovery')
 assert(#instrument.phrases==count_before and ownership.status(instrument.phrases[1])=='owned',
   'ordinary in-flight editing left a recovery or staging phrase')
 -- A transport change while the native renderer runs cannot replace last-good output.
@@ -524,7 +529,7 @@ for _,policy in ipairs({'play_once','repeat'}) do
     local output=generate(timed,policy,target)
     assert(output.lpb==(timed.timing_mode=='triplet' and 12 or 16) and output.shuffle==0)
     assert(output.number_of_lines==(policy=='repeat' and 8*length+1 or 4*length))
-    assert(store.load(song,output).timing_mode=='triplet')
+    assert(store.load(song,instrument,output).timing_mode=='triplet')
     local physical_steps=policy=='repeat' and 2*length or length
     for step=1,physical_steps do
       local start=(step-1)*4+1
@@ -535,7 +540,7 @@ for _,policy in ipairs({'play_once','repeat'}) do
     end
     timed.timing_mode='straight'
     output=generate(timed,policy,target)
-    assert(output.lpb==16 and output.shuffle==0 and store.load(song,output).timing_mode=='straight')
+    assert(output.lpb==16 and output.shuffle==0 and store.load(song,instrument,output).timing_mode=='straight')
     assert(output.number_of_lines==(policy=='repeat' and 8*length+1 or 4*length))
     for step=1,physical_steps do
       local start=(step-1)*4+1

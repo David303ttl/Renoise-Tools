@@ -8,6 +8,8 @@ local MAGIC = "ACID-PITCH-TIME-1"
 local OUTPUT_POLICIES = {["repeat"]=true, play_once=true}
 local PB_RANGES = {[0]=true,[2]=true,[12]=true,[24]=true,[48]=true}
 local MAX_ID = 2147483647
+local candidates=setmetatable({}, {__mode="k"})
+local function synchronous_guard()return true end
 
 local function valid_pb_range(value)
   return type(value)=="number" and value%1==0 and PB_RANGES[value]
@@ -187,23 +189,6 @@ function M.read(song)
   return entries
 end
 
-function M.prepare(song,id,pattern,output_policy,pb_range)
-  if not valid_id(id) then return nil,"invalid ACID phrase ID" end
-  output_policy=output_policy or "repeat"
-  pb_range=pb_range==nil and 0 or pb_range
-  if not OUTPUT_POLICIES[output_policy] then return nil,"invalid phrase output policy" end
-  if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
-  local previous,err=raw_data(song)
-  if previous==nil and err then return nil,err end
-  local entries,drafts=decode(previous or "")
-  local decode_error=drafts
-  if not entries then return nil,decode_error end
-  entries[id]={pattern=pattern,output_policy=output_policy,pb_range=pb_range}
-  local next_raw,encode_error=encode(entries,drafts)
-  if not next_raw then return nil,encode_error end
-  return {previous_raw=previous,raw=next_raw,id=id}
-end
-
 local function draft_key(instrument_index,phrase_id)
   if type(instrument_index)~="number" or instrument_index%1~=0 or instrument_index<1 or
       type(phrase_id)~="number" or phrase_id%1~=0 or phrase_id<0 then
@@ -212,45 +197,77 @@ local function draft_key(instrument_index,phrase_id)
   return tostring(instrument_index)..":"..tostring(phrase_id)
 end
 
-function M.read_draft(song,instrument_index,phrase_id,instrument_name)
-  local key,err=draft_key(instrument_index,phrase_id)
-  if not key then return nil,err end
+local function draft_target(song,instrument,phrase,entries,excluded)
+  local index,err=ownership.membership(song,instrument,phrase)
+  if not index then return nil,err end
+  local ok,name=pcall(function() return instrument.name end)
+  if not ok or type(name)~="string" then return nil,"Cannot inspect ACID draft instrument name" end
+  if phrase~=nil then
+    local id,identity_error=ownership.validate_live(song,instrument,phrase,excluded)
+    if not id then return nil,identity_error end
+    if not entries[id] then return nil,"ACID source missing from song data" end
+    return index,id,name
+  end
+  local matches=0
+  local inspected=pcall(function()
+    for _,candidate in ipairs(song.instruments) do
+      if candidate.name==name then matches=matches+1 end
+    end
+  end)
+  if not inspected then return nil,"Cannot inspect ACID draft instrument names" end
+  if matches~=1 then return nil,"New phrase draft destination is ambiguous" end
+  return index,0,name
+end
+
+local function saved_phrase_draft(drafts,id)
+  local item,key
+  for candidate_key,candidate in pairs(drafts) do
+    if candidate.phrase_id==id then
+      if item then return nil,nil,"Duplicate ACID draft phrase identity" end
+      item,key=candidate,candidate_key
+    end
+  end
+  return item,key
+end
+
+function M.read_draft(song,instrument,phrase,excluded)
   local raw,read_error=raw_data(song)
   if raw==nil and read_error then return nil,read_error end
   local entries,drafts=decode(raw or "")
   if not entries then return nil,drafts end
+  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries,excluded)
+  if not instrument_index then return nil,phrase_id end
+  local key,err=draft_key(instrument_index,phrase_id)
+  if not key then return nil,err end
   local item=drafts[key]
   if phrase_id>0 then
-    local matches=0
-    for _,candidate in pairs(drafts) do
-      if candidate.phrase_id==phrase_id then item=candidate;matches=matches+1 end
-    end
-    if matches>1 then return nil,"Duplicate ACID draft phrase identity" end
+    local stored_key,identity_error
+    item,stored_key,identity_error=saved_phrase_draft(drafts,phrase_id)
+    if identity_error then return nil,identity_error end
   elseif item then
-    local name=tostring(instrument_name or "")
-    local matches=0
-    for _,instrument in ipairs(song.instruments or {}) do
-      if tostring(instrument.name or "")==name then matches=matches+1 end
-    end
-    if item.instrument_name~=name or matches~=1 then item=nil end
+    if item.instrument_name~=instrument_name then item=nil end
   end
-  return item and item.pattern or nil,item and item.output_policy or nil,
+  return item and sequencer.copy_source(item.pattern) or nil,item and item.output_policy or nil,
     item and item.pb_range or nil
 end
 
-local function write_draft(song,instrument_index,phrase_id,instrument_name,pattern,
-    output_policy,pb_range,remove)
-  local key,err=draft_key(instrument_index,phrase_id)
-  if not key then return nil,err end
+local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range,remove,excluded)
   local previous,read_error=raw_data(song)
   if previous==nil and read_error then return nil,read_error end
   local entries,drafts=decode(previous or "")
   if not entries then return nil,drafts end
+  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries,excluded)
+  if not instrument_index then return nil,phrase_id end
+  local key,err=draft_key(instrument_index,phrase_id)
+  if not key then return nil,err end
+  if phrase_id==0 and drafts[key] and drafts[key].instrument_name~=instrument_name then
+    return nil,"New phrase draft destination changed; preserved its stored draft"
+  end
   local found=false
   if phrase_id>0 then
-    for existing_key,item in pairs(drafts) do
-      if item.phrase_id==phrase_id then drafts[existing_key]=nil;found=true end
-    end
+    local item,existing_key,identity_error=saved_phrase_draft(drafts,phrase_id)
+    if identity_error then return nil,identity_error end
+    if item then drafts[existing_key]=nil;found=true end
   end
   if remove then
     if drafts[key] then found=true end
@@ -280,13 +297,12 @@ local function write_draft(song,instrument_index,phrase_id,instrument_name,patte
   return true
 end
 
-function M.write_draft(song,instrument_index,phrase_id,instrument_name,pattern,output_policy,pb_range)
-  return write_draft(song,instrument_index,phrase_id,instrument_name,pattern,
-    output_policy,pb_range,false)
+function M.write_draft(song,instrument,phrase,pattern,output_policy,pb_range,excluded)
+  return write_draft(song,instrument,phrase,pattern,output_policy,pb_range,false,excluded)
 end
 
-function M.clear_draft(song,instrument_index,phrase_id,instrument_name)
-  return write_draft(song,instrument_index,phrase_id,instrument_name,nil,nil,nil,true)
+function M.clear_draft(song,instrument,phrase,excluded)
+  return write_draft(song,instrument,phrase,nil,nil,nil,true,excluded)
 end
 
 function M.has_drafts(song)
@@ -297,54 +313,189 @@ function M.has_drafts(song)
   return next(drafts)~=nil
 end
 
-function M.commit(song,candidate)
-  if type(candidate)~="table" or type(candidate.raw)~="string" or
-      (candidate.previous_raw~=nil and type(candidate.previous_raw)~="string") then
-    return nil,"invalid ACID store candidate"
-  end
-  local current,err=raw_data(song)
-  if current==nil and err then return nil,err end
-  local previous_entries,previous_drafts=decode(candidate.previous_raw or "")
-  if not previous_entries then return nil,previous_drafts end
-  local current_entries,current_drafts=decode(current or "")
-  if not current_entries then return nil,current_drafts end
-  local next_entries,next_drafts=decode(candidate.raw)
-  if not next_entries then return nil,next_drafts end
-  local previous_sources,previous_error=encode(previous_entries,{})
-  local current_sources,current_error=encode(current_entries,{})
-  if not previous_sources or not current_sources then
-    return nil,previous_error or current_error or "Could not compare ACID source records"
-  end
-  if current_sources~=previous_sources then return nil,"ACID song data changed during generation" end
-  local rebased,encode_error=encode(next_entries,current_drafts)
-  if not rebased then return nil,encode_error end
+local function copy_draft(item)
+  if not item then return nil end
+  return {pattern=sequencer.copy_source(item.pattern),output_policy=item.output_policy,
+    pb_range=item.pb_range,instrument_name=item.instrument_name,
+    instrument_index=item.instrument_index,phrase_id=item.phrase_id}
+end
 
-  candidate.previous_raw=current
-  candidate.raw=rebased
-  local ok,write_error=pcall(function() song.tool_data=rebased end)
-  if not ok then return nil,"Could not store ACID song data: "..tostring(write_error) end
+local function same_draft(left,right)
+  return left and right and left.output_policy==right.output_policy and
+    left.pb_range==right.pb_range and left.instrument_name==right.instrument_name and
+    left.instrument_index==right.instrument_index and left.phrase_id==right.phrase_id and
+    sequencer.same_source(left.pattern,right.pattern)
+end
+
+local function capture_removal(song,id,entries,drafts,descriptor)
+  if descriptor==nil then return nil end
+  if type(descriptor)~="table" or getmetatable(descriptor)~=nil or
+      (descriptor.kind~="new" and descriptor.kind~="existing") or
+      (descriptor.kind=="existing" and descriptor.phrase==nil) or
+      (descriptor.kind=="new" and descriptor.phrase~=nil) or descriptor.token==nil or
+      type(descriptor.revision)~="number" or descriptor.revision<0 or descriptor.revision%1~=0 then
+    return nil,"Invalid captured ACID draft destination"
+  end
+  local index,phrase_id,name=draft_target(song,descriptor.instrument,descriptor.phrase,entries)
+  if not index then return nil,phrase_id end
+  if descriptor.kind=="existing" and phrase_id~=id then
+    return nil,"Draft removal must match the prepared source identity"
+  end
+  local item
+  if phrase_id>0 then
+    local key,err
+    item,key,err=saved_phrase_draft(drafts,phrase_id)
+    if err then return nil,err end
+  else
+    item=drafts[assert(draft_key(index,0))]
+    if item and item.instrument_name~=name then item=nil end
+  end
+  return {kind=descriptor.kind,instrument=descriptor.instrument,phrase=descriptor.phrase,
+    token=descriptor.token,revision=descriptor.revision,instrument_index=index,
+    instrument_name=name,phrase_id=phrase_id,draft=copy_draft(item),present=item~=nil}
+end
+
+function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
+  if not valid_id(id) then return nil,"invalid ACID phrase ID" end
+  if type(guard)~="function" then return nil,"An ACID request guard is required" end
+  local current,current_error=ownership.is_current(song)
+  if not current then return nil,current_error end
+  output_policy=output_policy or "repeat"
+  pb_range=pb_range==nil and 0 or pb_range
+  if not OUTPUT_POLICIES[output_policy] then return nil,"invalid phrase output policy" end
+  if not valid_pb_range(pb_range) then return nil,"invalid PB range" end
+  local copied,copy_error=sequencer.copy_source(pattern)
+  if not copied then return nil,copy_error end
+  local previous,err=raw_data(song)
+  if previous==nil and err then return nil,err end
+  local entries,drafts=decode(previous or "")
+  if not entries then return nil,drafts end
+  local captured,removal_error=capture_removal(song,id,entries,drafts,removal)
+  if removal_error then return nil,removal_error end
+  local captured_sources,source_error=encode(entries,{})
+  if not captured_sources then return nil,source_error end
+  entries[id]={pattern=copied,output_policy=output_policy,pb_range=pb_range}
+  local proposed_sources,proposed_error=encode(entries,{})
+  if not proposed_sources then return nil,proposed_error end
+  local proposed,encode_error=encode(entries,drafts)
+  if not proposed then return nil,encode_error end
+  local candidate={previous_raw=previous,raw=proposed,id=id}
+  candidates[candidate]={song=song,previous_raw=previous,captured_sources=captured_sources,
+    proposed_sources=proposed_sources,guard=guard,removal=captured,
+    write_attempted=false,written_verified=false,restore_verified=false,integrity_uncertain=false}
+  return candidate
+end
+
+local function candidate_state(song,candidate)
+  local state=type(candidate)=="table" and candidates[candidate]
+  if not state then return nil,"invalid ACID store candidate" end
+  if not rawequal(song,state.song) then return nil,"ACID store candidate belongs to another song" end
+  local current,err=ownership.is_current(song)
+  if not current then return nil,err end
+  return state
+end
+
+function M.candidate_status(candidate)
+  local state=type(candidate)=="table" and candidates[candidate]
+  if not state then return nil,"invalid ACID store candidate" end
+  return {write_attempted=state.write_attempted,written_verified=state.written_verified,
+    restore_verified=state.restore_verified,integrity_uncertain=state.integrity_uncertain,
+    error=state.error,previous_raw=state.previous_raw,written_raw=state.written_raw}
+end
+
+local function remove_captured_draft(song,entries,drafts,removal)
+  if not removal or not removal.present then return end
+  local index,id,name=draft_target(song,removal.instrument,removal.phrase,entries)
+  if not index or id~=removal.phrase_id then return end
+  if removal.kind=="new" and
+      (index~=removal.instrument_index or name~=removal.instrument_name) then return end
+  local item,key,err
+  if id>0 then item,key,err=saved_phrase_draft(drafts,id)
+  else key=draft_key(index,0);item=drafts[key] end
+  if not err and same_draft(item,removal.draft) then drafts[key]=nil end
+end
+
+function M.commit(song,candidate)
+  local state,err=candidate_state(song,candidate)
+  if not state then return nil,err end
+  if state.write_attempted then return nil,"ACID store candidate was already attempted" end
+  local removal=state.removal
+  local guarded,valid=pcall(state.guard,removal and removal.token,removal and removal.revision)
+  if not guarded or valid~=true then
+    state.error=guarded and "ACID request changed before source commit" or
+      "ACID request guard failed: "..tostring(valid)
+    return nil,state.error
+  end
+  local current_song,current_song_error=ownership.is_current(song)
+  if not current_song then return nil,current_song_error end
+  local current,current_error=raw_data(song)
+  if current==nil and current_error then return nil,current_error end
+  local entries,drafts=decode(current or "")
+  if not entries then return nil,drafts end
+  local sources,source_error=encode(entries,{})
+  if not sources then return nil,source_error end
+  if sources~=state.captured_sources then return nil,"ACID song data changed during generation" end
+  local proposed,decode_error=decode(state.proposed_sources)
+  if not proposed then return nil,decode_error end
+  remove_captured_draft(song,entries,drafts,removal)
+  local next_raw,encode_error=encode(proposed,drafts)
+  if not next_raw then return nil,encode_error end
+  local latest,latest_error=raw_data(song)
+  if latest==nil and latest_error then return nil,latest_error end
+  if latest~=current then return nil,"ACID song data changed before source write" end
+  state.previous_raw=current
+  state.written_raw=next_raw
+  state.write_attempted=true
+  rawset(candidate,"previous_raw",current)
+  rawset(candidate,"raw",next_raw)
+  local ok,write_error=pcall(function() song.tool_data=next_raw end)
   local written,verify_error=raw_data(song)
-  if not written then return nil,verify_error end
-  if written~=rebased then return nil,"ACID song data write did not persist the prepared source" end
+  if verify_error or written~=next_raw then
+    state.integrity_uncertain=true
+    state.error=verify_error or "ACID song data write did not persist the prepared source"
+    return nil,state.error
+  end
+  state.written_verified=true
+  if not ok then
+    state.error="Could not store ACID song data: "..tostring(write_error)
+    return nil,state.error
+  end
+  state.error=nil
   return true
 end
 
 function M.restore(song,candidate)
-  if type(candidate)~="table" or type(candidate.raw)~="string" then return nil,"invalid ACID store candidate" end
+  local state,err=candidate_state(song,candidate)
+  if not state then return nil,err end
   local current,read_error=raw_data(song)
-  if current==nil and read_error then return nil,read_error end
-  if current==candidate.previous_raw then return true end
-  if current~=candidate.raw then return nil,"ACID song data changed before rollback; preserved newer data" end
-  local ok,write_error=pcall(function() song.tool_data=candidate.previous_raw end)
-  if not ok then return nil,"Could not restore ACID song data: "..tostring(write_error) end
+  if read_error then
+    state.integrity_uncertain=state.write_attempted
+    state.error=read_error
+    return nil,read_error
+  end
+  if current==state.previous_raw then
+    state.restore_verified=true;state.integrity_uncertain=false;state.error=nil
+    return true
+  end
+  if not state.write_attempted or current~=state.written_raw then
+    state.integrity_uncertain=state.write_attempted
+    state.error="ACID song data changed before rollback; preserved newer data"
+    return nil,state.error
+  end
+  local ok,write_error=pcall(function() song.tool_data=state.previous_raw end)
   local restored,verify_error=raw_data(song)
-  if restored==nil and verify_error then return nil,verify_error end
-  if restored~=candidate.previous_raw then return nil,"ACID song data rollback could not be verified" end
+  if verify_error or restored~=state.previous_raw then
+    state.integrity_uncertain=true
+    state.error=verify_error or (not ok and "Could not restore ACID song data: "..tostring(write_error)) or
+      "ACID song data rollback could not be verified"
+    return nil,state.error
+  end
+  state.restore_verified=true;state.integrity_uncertain=false;state.error=nil
   return true
 end
 
 function M.save(song,id,pattern,output_policy,pb_range)
-  local candidate,err=M.prepare(song,id,pattern,output_policy,pb_range)
+  local candidate,err=M.prepare(song,id,pattern,output_policy,pb_range,synchronous_guard)
   if not candidate then return nil,err end
   return M.commit(song,candidate)
 end
@@ -364,24 +515,19 @@ function M.allocate(song)
   return highest+1
 end
 
-function M.load(song,phrase)
-  if ownership.status(phrase)~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
-  local id=ownership.id(phrase)
-  if not id then return nil,"ACID phrase has no current-format source snapshot" end
-  local count=0
-  for _,instrument in ipairs(song.instruments or {}) do
-    for _,existing in ipairs(instrument.phrases or {}) do
-      if ownership.id(existing)==id then count=count+1 end
-    end
-  end
-  if count~=1 then return nil,"Duplicate or missing ACID phrase ID; cannot choose safely" end
+function M.read_entry(song,id)
+  if not valid_id(id) then return nil,"invalid ACID phrase ID" end
   local entries,err=M.read(song)
   if not entries then return nil,err end
   local entry=entries[id]
   if not entry then return nil,"ACID source missing from song data" end
-  local raw=assert(encode({[id]=entry}))
-  local copied=assert(decode(raw))
-  return copied[id].pattern,copied[id].output_policy,copied[id].pb_range
+  return sequencer.copy_source(entry.pattern),entry.output_policy,entry.pb_range
+end
+
+function M.load(song,instrument,phrase,excluded)
+  local id,err=ownership.validate_live(song,instrument,phrase,excluded)
+  if not id then return nil,err end
+  return M.read_entry(song,id)
 end
 
 return M

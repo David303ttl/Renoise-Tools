@@ -41,6 +41,17 @@ _G.type=lua_type
 assert(not capabilities.inspect(nil))
 assert(not capabilities.inspect(1))
 assert(not capabilities.inspect('Instrument'))
+local missing=assert(capabilities.inspect({}))
+assert(missing.kind=='unknown' and missing.plugin==nil and missing.sample==nil and missing.read_error)
+local failed=setmetatable({}, {__index=function() error('receiver read failed') end})
+local unreadable=assert(capabilities.inspect(failed))
+assert(unreadable.kind=='unknown' and unreadable.midi==nil and unreadable.read_error:find('receiver read failed',1,true))
+local malformed=target(false,false,'')
+malformed.plugin_properties.alias_fx_track_index='missing'
+assert(assert(capabilities.inspect(malformed)).kind=='unknown')
+local unreadable_sample=target(false,false,'')
+unreadable_sample.samples={{sample_buffer={}}}
+assert(assert(capabilities.inspect(unreadable_sample)).kind=='unknown')
 
 local instrument=target(false,true,'')
 local before=assert(capabilities.inspect(instrument))

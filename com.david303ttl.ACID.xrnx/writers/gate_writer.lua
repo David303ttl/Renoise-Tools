@@ -1,63 +1,10 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Merge gate and glide operations before touching native phrase cells.
-local control=require("model.control_signals")
 local M={}
-local UNITS_PER_STEP=control.UNITS_PER_STEP
-local MIN_LINES_PER_STEP=1
-local function location(op)
-  return string.format("TIME step %02d, cycle %d, phrase line 0x%02X",
-    op.time_step or op.step or 1,op.cycle or 1,op.line-1)
-end
+local planner=require("model.output_planner")
+local location=planner.location
 M.location=location
-
-function M.plan(timeline,semantic,commands,lines_per_step)
-  if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<MIN_LINES_PER_STEP
-    or lines_per_step~=lines_per_step then
-    return nil,"gate output requires a positive integer lines-per-step"
-  end
-  local lines,err=control.release_lines(timeline,lines_per_step)
-  if not lines then
-    local edge
-    for _,event in ipairs(timeline.events or {}) do
-      if event.kind=="gate_off" and event.reason~="rest" then edge=event;break end
-    end
-    return nil,location({line=edge and math.floor(edge.at*lines_per_step/UNITS_PER_STEP)+1 or 1,
-      time_step=edge and edge.step,cycle=edge and edge.cycle})..": "..err
-  end
-  local merged={operations={},release_lines={},effects={}}
-  local occupied={}
-  local function append(op)
-    local event=semantic and semantic.steps[math.floor((op.line-1)/lines_per_step)+1]
-    op.time_step=op.time_step or (event and (event.source_step or event.step))
-    op.cycle=op.cycle or (event and event.cycle) or 1
-    if op.line<1 or op.line%1~=0 or op.line>timeline.steps*lines_per_step then
-      return nil,location(op)..": operation outside musical phrase lines"
-    end
-    if op.kind=="release" and event and (op.line-1)%lines_per_step==0
-      and (event.kind=="note" or (event.kind=="rest" and event.releases)) then
-      return nil,location(op)..": OFF conflicts with semantic note or release"
-    end
-    if occupied[op.line] then
-      return nil,location(op)..": contradictory gate/glide operations; required command cannot be omitted"
-    end
-    occupied[op.line]=true
-    merged.operations[#merged.operations+1]=op
-    return true
-  end
-  for _,line in ipairs(lines) do
-    local ok,why=append({line=line,kind="release"})
-    if not ok then return nil,why end
-    merged.release_lines[line]=true
-  end
-  for _,command in ipairs(commands or {}) do
-    local op={}
-    for key,value in pairs(command) do op[key]=value end
-    local ok,why=append(op)
-    if not ok then return nil,why end
-    merged.effects[op.line]=op.amount
-  end
-  return merged
-end
+M.plan=planner.plan_gates
 
 function M.apply_plan(phrase,merged)
   local targets={}

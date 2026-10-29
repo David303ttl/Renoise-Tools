@@ -54,6 +54,7 @@ if renoise.tool().app_release_document_observable then
       renoise.app():show_warning(
         "ACID has drafts that could not be saved with this song. They will be lost when it closes.")
     end
+    if song then drafts.release(song) end
     release_context()
   end)
 end
@@ -570,7 +571,7 @@ function M.show()
     local source_available=false
     if target and target<=#instrument.phrases then
       local source,output_policy_or_error,stored_pb_range=
-        store.load(song,instrument.phrases[target])
+        store.load(song,instrument,instrument.phrases[target])
       if source then
         source_available=true
         pattern=source
@@ -721,7 +722,7 @@ function M.show()
         if rawequal(phrase,bound_phrase) then found=position;break end
       end
       if found and ownership.status(bound_phrase)=="owned" and ownership.id(bound_phrase) then
-        local source=store.load(song,bound_phrase)
+        local source=store.load(song,instrument,bound_phrase)
         if source then
           refresh_phrase_choices(found)
           return found
