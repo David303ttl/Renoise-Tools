@@ -11,6 +11,22 @@ for i=1,32 do
   assert(not pattern.pitch_events[i].accent and not pattern.pitch_events[i].slide)
 end
 assert(sequencer.validate(pattern))
+local fresh=sequencer.new_pattern()
+assert(sequencer.same_source(pattern,fresh))
+pattern.pitch_events[32]=sequencer.new_pitch(11,1,true,true)
+pattern.time_events[32]="R"
+pattern.timing_mode="triplet"
+local frozen=sequencer.copy_source(pattern)
+assert(sequencer.same_source(pattern,frozen),"copy preserves inactive canonical memories")
+assert(not rawequal(pattern,frozen) and not rawequal(pattern.pitch_events,frozen.pitch_events)
+  and not rawequal(pattern.pitch_events[32],frozen.pitch_events[32])
+  and not rawequal(pattern.time_events,frozen.time_events),"source copies detach nested memories")
+pattern.pitch_events[32].accent=false
+pattern.time_events[32]="N"
+assert(frozen.pitch_events[32].accent and frozen.time_events[32]=="R")
+assert(fresh.pitch_events[32].note==36 and fresh.time_events[32]=="N"
+  and fresh.timing_mode=="straight","new defaults do not share mutable memories")
+pattern=sequencer.new_pattern()
 local note_only=sequencer.new_pattern(1)
 note_only.pitch_events[1]={note=36,accent=false,slide=false}
 local note_only_ok,note_only_error=sequencer.validate(note_only)

@@ -83,6 +83,10 @@ for _,length in ipairs({1,16,17,31,32}) do
   assert(seq.validate(p))
   local projection=editor.project(p)
   assert(not projection.error)
+  assert(projection.plan,"projection exposes its validated compiled plan")
+  for step=1,length do
+    assert(rawequal(projection.mapping[step],projection.plan.steps[step]))
+  end
   assert(projection.note_count==math.floor((length+3)/4))
   local plan,err=interpreter.compile_cycle(p)
   assert(plan,err)

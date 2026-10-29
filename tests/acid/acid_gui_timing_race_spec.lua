@@ -208,6 +208,9 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(live_checkbox)
 live_checkbox:fire(true)
+local before_live_edit=#tool.writer_calls
+assert(before_live_edit==3,"arming Live Edit does not write")
+builder.views.acid_program_key_popup:fire(2)
 local first=tool.writer_calls[#tool.writer_calls]
 assert(first.pattern.timing_mode=="triplet" and first.options.token:is_current(),
   "Live Edit starts with the current triplet snapshot")
@@ -271,6 +274,9 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(reopened_live)
 reopened_live:fire(true)
+local before_append=#tool.writer_calls
+builder.views.acid_program_key_popup:fire(2)
+assert(#tool.writer_calls==before_append+1,"an edit requests the armed append")
 local append=tool.writer_calls[#tool.writer_calls]
 local append_callback=render_callbacks[#render_callbacks]
 assert(append.instrument_index==2 and append.target==3 and append.pattern.timing_mode=="triplet",
@@ -281,6 +287,8 @@ assert(not append.options.token:is_current(),
 assert(other_instrument.phrases[2]==other_foreign,
   "foreign phrase remains untouched during Live Edit recovery")
 append_callback({kind="complete",status="suspended",message="invalidated"})
+assert(#tool.writer_calls==before_append+1,"navigation does not queue an append")
+builder.views.acid_program_key_popup:fire(3)
 local redirected=tool.writer_calls[#tool.writer_calls]
 assert(redirected~=append and redirected.instrument_index==2 and redirected.target==3 and
   redirected.pattern.timing_mode=="triplet" and redirected.options.token:is_current(),

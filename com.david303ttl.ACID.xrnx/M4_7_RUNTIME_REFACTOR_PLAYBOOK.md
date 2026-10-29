@@ -570,6 +570,8 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.6 — Remove duplicate model-to-GUI transformations
 
+**Status:** implemented. Canonical request snapshots use `sequencer.copy_source`; GUI initialization, New, reset and unavailable-source defaults share `reset_source` and `sequencer.new_pattern`. Editor projections expose their compiled plan and are reused by revision and raw target identity, with host invalidation. Navigation, arming and reset do not request rendering; reset invalidates queued work. Focused editor, defaults, GUI views/recovery/timing and repeat checks pass; ACID suite: 44 specs; full repository suite: 47 specs. Second-pass review and package root/private-module/exclusion checks pass. Native Renoise checks remain Step 8; Gate 1A remains pending.
+
 1. Replace `gui.lua`'s hand-copied pattern freeze with `sequencer.copy_source`, preserving complete canonical source and rejecting invalid partial drafts at the **same** request boundary as before; never silently normalize a dirty entry into a different source.
 2. Route every default/new/reset/source fallback through one `sequencer`-owned default-pattern factory and a single initialized settings policy. Remove four copied GUI `new_pattern(16)`/fill/reset implementations. Replace GUI page arithmetic with `PAGE_SIZE`, without changing two-page/32-step behavior.
 3. Project/compile once per actual editor-state revision and reuse that validated projection within the refresh and input handler. Do not cache across a real edit, instrument/phrase binding change, timing/PB/output-policy change, or host invalidation. Keep refresh and navigation read-only, and preserve existing error presentation.

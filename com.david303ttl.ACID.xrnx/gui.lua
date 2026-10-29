@@ -4,7 +4,6 @@ local M = {}
 local sequencer=require("model.sequencer")
 local policies=require("model.policies")
 local editor=require("model.editor_state")
-local interpreter=require("model.cycle_interpreter")
 local live_regen=require("model.live_regen")
 local drafts=require("runtime.draft_cache")
 local store=require("renoise.pattern_store")
@@ -90,15 +89,20 @@ function M.show()
   local song=renoise.song()
   if not song then renoise.app():show_warning("Open a song first.");return end
   local vb=renoise.ViewBuilder()
-  local pattern=sequencer.new_pattern()
+  local pattern
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
   local updating=false
   local preview_cycle=1
   local update
   local opened=generation
-  local output_policy=policies.DEFAULT_OUTPUT_POLICY
-  local pb_range=policies.DEFAULT_PB_RANGE
+  local output_policy,pb_range
+  local function reset_source(length)
+    pattern=sequencer.new_pattern(length)
+    output_policy=policies.DEFAULT_OUTPUT_POLICY
+    pb_range=policies.DEFAULT_PB_RANGE
+  end
+  reset_source()
   local history=editor.new_history(pattern,output_policy,pb_range)
   local undo_button
   local redo_button
@@ -173,6 +177,20 @@ function M.show()
   local live_target
   local bound_instrument,bound_phrase
   local revision=0
+  local projected_revision,cached_projection,projected_instrument,projected_phrase
+  local function invalidate_projection()
+    cached_projection=nil
+  end
+  local function project()
+    if not cached_projection or projected_revision~=revision or
+        not rawequal(projected_instrument,bound_instrument) or
+        not rawequal(projected_phrase,bound_phrase) then
+      cached_projection=editor.project(pattern)
+      projected_revision=revision
+      projected_instrument,projected_phrase=bound_instrument,bound_phrase
+    end
+    return cached_projection
+  end
   local update_live_state
   local function save_draft()
     revision=revision+1
@@ -201,7 +219,7 @@ function M.show()
   end
   update=function()
     updating=true
-    local projection=editor.project(pattern)
+    local projection=project()
     view_heading.text=editor_view==1 and "PROGRAM VIEW" or "GRID VIEW"
     view_hint.text=editor_view==1 and
       "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
@@ -305,16 +323,13 @@ function M.show()
       selected_step,editor.step_text(projection,selected_step,1),
       editor.step_text(projection,selected_step,2),
       selected_pitch,pitch_usage)
-    local plan,err=interpreter.compile_cycle(pattern)
+    local plan=projection.plan
     local error_info=projection.error
     if error_info then
       diagnostic.text="ERROR: "..error_info.message..
         (error_info.step and "  [TIME "..error_info.step.."]" or "")..
         (error_info.pitch_index and "  [PITCH "..error_info.pitch_index.."]" or "")
       if diagnostic_jump then diagnostic_jump.active=true end
-    elseif not plan then
-      diagnostic.text="NOT READY: "..tostring(err)
-      if diagnostic_jump then diagnostic_jump.active=false end
     else
       diagnostic.text=string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
         plan.note_count,step_division.text)
@@ -325,7 +340,7 @@ function M.show()
   local function choose_pitch(index)
     selected_pitch=index
     pitch_page=editor.page_for(index)
-    local projection=editor.project(pattern)
+    local projection=project()
     local mapping=preview_cycle==2 and projection.repeat_mapping or projection.mapping
     -- Highlight the earliest NOTE that consumes this pitch position;
     -- TIE holds do not consume another pitch.
@@ -342,7 +357,7 @@ function M.show()
   local function choose_time(index)
     selected_step=index
     time_page=editor.page_for(index)
-    local projection=editor.project(pattern)
+    local projection=project()
     local mapping=preview_cycle==2 and projection.repeat_mapping or projection.mapping
     local event=mapping[index]
     if event and event.pitch_index then
@@ -352,7 +367,7 @@ function M.show()
     update()
   end
   navigate_diagnostic=function()
-    local error_info=editor.project(pattern).error
+    local error_info=project().error
     if not error_info then return end
     if error_info.pitch_index then
       selected_pitch=error_info.pitch_index
@@ -364,11 +379,11 @@ function M.show()
     end
     update()
   end
-  local function changed()
-    history:record(pattern,output_policy,pb_range)
+  local function changed(request_live)
+    if not history:record(pattern,output_policy,pb_range) then update();return end
     local saved,save_error=save_draft()
     update()
-    if live then live:changed();update_live_state() end
+    if live and request_live~=false then live:changed();update_live_state() end
     local state=live and type(live.state)=="function" and live:state()
     if state and state.enabled then
       if state.busy then
@@ -377,7 +392,7 @@ function M.show()
       end
       if not saved then status.text=status.text.."\nDRAFT WARNING: "..tostring(save_error) end
     else
-      status.text=saved and "Draft saved; enable Live Edit to apply changes automatically."
+      status.text=saved and "Draft saved; Generate applies it, or enable Live Edit for subsequent edits."
         or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error))
     end
   end
@@ -391,7 +406,6 @@ function M.show()
     output_policy=value==2 and "repeat" or "play_once"
     status.text=output_policy=="repeat" and "Repeat output selected for this phrase."
       or "Play Once output selected for this phrase."
-    update()
     changed()
   end)
   pb_range_popup:add_notifier(function(value)
@@ -407,7 +421,6 @@ function M.show()
     fill_to(selected_pitch)
     pattern.pitch_events[selected_pitch]=sequencer.new_pitch(
       key,octave,is_accent,is_slide)
-    update()
     changed()
   end
   local function change_pitch()
@@ -436,7 +449,6 @@ function M.show()
       local command,reason=sequencer.set_time(pattern,selected_step,
         ({"N","T","R"})[choice])
       if not command then status.text=reason;return end
-      update()
       changed()
     end}
   program_key_popup=vb:popup{id="acid_program_key_popup",items=keys,width=95,value=1,
@@ -481,12 +493,13 @@ function M.show()
     pitch_pages:add_child(pitch_page_buttons[p])
     time_pages:add_child(time_page_buttons[p])
   end
+  local grid_columns=sequencer.PAGE_SIZE/2
   for row=1,2 do
     local p_row=vb:row{spacing=4}
     local t_row=vb:row{spacing=4}
     local v_row=vb:row{spacing=4}
-    for col=1,8 do
-      local cell=(row-1)*8+col
+    for col=1,grid_columns do
+      local cell=(row-1)*grid_columns+col
       pitch_cells[cell]=vb:button{id=string.format("acid_grid_pitch_%02d",cell),width=98,height=38,text="--",notifier=function()
         choose_pitch(editor.index_on_page(pitch_page,cell)) end}
       time_headers[cell]=vb:button{width=98,height=22,text="--",
@@ -501,8 +514,8 @@ function M.show()
           if step<=pattern.length then
             local command,reason=sequencer.set_time(pattern,step,( {"N","T","R"})[choice])
             if not command then status.text=reason end
-            choose_time(step)
             changed()
+            choose_time(step)
           end
         end}
       preview_cells[cell]=vb:button{width=98,height=32,text="--",notifier=function()
@@ -528,15 +541,13 @@ function M.show()
     if editor.page_for(selected_step)~=time_page then
       time_page=editor.page_for(selected_step)
     end
-    update()
     changed()
   end)
   pitch_length_popup:add_notifier(function(value)
     if updating then return end
     local ok,reason=sequencer.set_pitch_length(pattern,tonumber(value))
     if not ok then status.text=reason end
-    update()
-    if ok then changed() end
+    if ok then changed() else update() end
   end)
   local inspect=vb:button{text="Inspect selected Renoise pattern (read only)",
     notifier=function()
@@ -584,16 +595,12 @@ function M.show()
         pitch_page=1;time_page=1
         status.text=string.format("Restored ACID source for phrase %02d.",target)
       else
-        pattern=sequencer.new_pattern()
-        output_policy=policies.DEFAULT_OUTPUT_POLICY
-        pb_range=policies.DEFAULT_PB_RANGE
+        reset_source()
         status.text="Source unavailable: "..tostring(output_policy_or_error)..
           " | choose a new phrase; existing audio is protected."
       end
     else
-      pattern=sequencer.new_pattern()
-      output_policy=policies.DEFAULT_OUTPUT_POLICY
-      pb_range=policies.DEFAULT_PB_RANGE
+      reset_source()
       status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
     end
     local draft,policy,draft_pb_range=drafts.get(song,bound_instrument,bound_phrase)
@@ -603,13 +610,12 @@ function M.show()
     if draft then
       pattern,output_policy=draft,policy
       pb_range=draft_pb_range or policies.DEFAULT_PB_RANGE
-      status.text="Recovered saved draft. Live Edit applies it automatically when enabled."
+      status.text="Recovered saved draft. Generate or edit the source to apply it."
     elseif policy then
       status.text="DRAFT RECOVERY ERROR: "..tostring(policy).."; existing phrase output is protected."
     end
     history:reset(pattern,output_policy,pb_range)
     update()
-    if was_armed and (not bound_phrase or draft) then live:changed() end
     if update_live_state then update_live_state() end
   end
   local phrase_names
@@ -673,6 +679,7 @@ function M.show()
         return
       end
       local instrument=song.selected_instrument
+      invalidate_projection()
       if not instrument or
           not rawequal(song.instruments[selected_instrument],instrument) then
         return
@@ -797,16 +804,10 @@ function M.show()
     update_live_state()
     -- Freeze the source for the asynchronous renderer; subsequent UI edits
     -- are scheduled for another pass and cannot mutate the running job.
-    local copy=sequencer.new_pattern(pattern.length)
-    copy.pitch_length=pattern.pitch_length
-    copy.timing_mode=pattern.timing_mode
-    copy.pitch_events={}
-    for i,p in ipairs(pattern.pitch_events) do
-      local v={}
-      for k,val in pairs(p) do v[k]=val end
-      copy.pitch_events[i]=v
+    local copy,copy_error=sequencer.copy_source(pattern)
+    if not copy then
+      return nil,{kind="complete",status="error",message=copy_error,diagnostics={copy_error}}
     end
-    for i,t in ipairs(pattern.time_events) do copy.time_events[i]=t end
     local requested_revision=revision
     local live_token_current=token.is_current
     token.is_current=function(self)
@@ -881,8 +882,7 @@ function M.show()
     if value then
       apply_pending_selected_phrase_selection()
       live:set_enabled(true)
-      status.text="LIVE EDIT RENDERING: applying the current source."
-      live:changed()
+      status.text="Live Edit enabled; the next source edit will be applied."
       update_live_state()
     else
       live:stop()
@@ -955,12 +955,11 @@ function M.show()
       vb:text{text="Preview"},preview_popup},
     vb:row{spacing=8,
       vb:button{text="Reset Source",notifier=function()
-        pattern=sequencer.new_pattern(last_step_box.value)
-        output_policy=policies.DEFAULT_OUTPUT_POLICY
-        pb_range=policies.DEFAULT_PB_RANGE
+        if live then live:rebind("Source reset") end
+        reset_source(last_step_box.value)
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
         status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
-        update();changed()
+        changed(false)
       end},
       undo_button,
       redo_button,
@@ -975,24 +974,24 @@ function M.show()
       vb:button{text="Retry Live Edit",notifier=function()
         live:retry()
         update_live_state()
-        update_live_state()
       end}},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
         if opened~=generation then
           status.text="Song changed. Close and reopen ACID.";return
         end
-        local applied_pending=apply_pending_selected_phrase_selection()
-        if applied_pending and live:state().enabled then
-          status.text="Live Edit is applying the newly selected phrase."
-          return
-        end
-        local projection=editor.project(pattern)
+        apply_pending_selected_phrase_selection()
+        local projection=project()
         if projection.error then
           local e=projection.error
           if e.step then choose_time(e.step) end
           if e.pitch_index then choose_pitch(e.pitch_index) end
           status.text="Cannot generate: "..e.message
+          return
+        end
+        local frozen_source,freeze_error=sequencer.copy_source(pattern)
+        if not frozen_source then
+          status.text="Cannot generate: "..tostring(freeze_error)
           return
         end
         local requested_instrument=selected_instrument
@@ -1061,7 +1060,7 @@ function M.show()
               end
               status.text=describe_live_result(result):gsub("^LIVE EDIT ","GENERATION ")
             end
-          end,pattern,
+          end,frozen_source,
           requested_target,{token=manual_token,output_policy=output_policy,pb_range=requested_pb_range,
             phrase_mutation=mutate_phrases})
         if not ok then status.text="ACID error: "..tostring(generated)

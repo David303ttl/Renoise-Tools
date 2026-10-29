@@ -73,6 +73,7 @@ function M.project(pattern)
     end
     return out
   end
+  out.plan=plans[1]
   for cycle=1,2 do
     local mapping=cycle==1 and out.mapping or out.repeat_mapping
     for step,event in ipairs(plans[cycle].steps) do

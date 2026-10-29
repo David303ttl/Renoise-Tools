@@ -184,6 +184,13 @@ renoise={
 }
 
 dofile("tests/acid/draft_baseline_stub.lua")
+local editor=require("model.editor_state")
+local project=editor.project
+local projection_calls=0
+editor.project=function(...)
+  projection_calls=projection_calls+1
+  return project(...)
+end
 require("gui").show()
 assert(dialog and dialog.visible)
 local program=builder.views.acid_program_panel
@@ -197,6 +204,7 @@ local function display_snapshot()
     builder.views.acid_program_time_summary.text},"|")
 end
 local initial=display_snapshot()
+local initial_projections=projection_calls
 view:fire(2)
 assert(not program.visible and grid.visible)
 assert(display_snapshot()==initial)
@@ -205,8 +213,10 @@ view:fire(1)
 assert(program.visible and not grid.visible)
 assert(display_snapshot()==initial)
 assert(edit_notifications==0 and render_calls==0)
+assert(projection_calls==initial_projections,"view navigation reuses the validated projection")
 
 builder.views.acid_program_time_command:fire(3)
+assert(projection_calls==initial_projections+1,"a TIME edit projects once")
 assert(builder.views.acid_grid_time_01.value==3)
 assert(builder.views.acid_preview_summary.text:find("REST",1,true))
 assert(edit_notifications==0 and render_calls==0)
@@ -215,6 +225,7 @@ assert(builder.views.acid_grid_time_01.value==3)
 assert(edit_notifications==0 and render_calls==0)
 builder.views.acid_editor_view:fire(1)
 builder.views.acid_program_key_popup:fire(2)
+assert(projection_calls==initial_projections+2,"a PITCH edit projects once")
 assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
 assert(edit_notifications==0 and render_calls==0)
 builder.views.acid_editor_view:fire(2)
@@ -240,8 +251,18 @@ assert(pb_range_popup and pb_range_popup.items[1]=="Off" and
   pb_range_popup.value==1,"PB Range defaults to Off and offers the documented assumptions")
 last_step:fire("32")
 assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
+local before_settings=projection_calls
 output_popup:fire(1)
+assert(projection_calls==before_settings+1,"output-policy edits invalidate projection once")
 pb_range_popup:fire(3)
+assert(projection_calls==before_settings+2,"PB-range edits invalidate projection once")
+pb_range_popup:fire(3)
+assert(projection_calls==before_settings+2,"unchanged settings reuse projection")
+song.selected_phrase_observable:fire()
+builder.views.acid_editor_view:fire(2)
+assert(projection_calls==before_settings+3,"host invalidation refreshes the projection")
+builder.views.acid_editor_view:fire(1)
+assert(projection_calls==before_settings+3,"the refreshed host projection is reused")
 assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("STEPS 32/32",1,true),
   "PB Range changes do not mutate canonical PITCH/TIME source")
 
@@ -286,6 +307,10 @@ assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual regeneration accepts structural selection changes without altering playback")
 
 phrase_popup:fire(2)
+local rebound_projections=projection_calls
+assert(rebound_projections>before_settings+3,"phrase rebinding invalidates the prior projection")
+builder.views.acid_editor_view:fire(1)
+assert(projection_calls==rebound_projections,"rebound projection is reused during navigation")
 assert(pb_range_popup.value==4,"phrase selection restores its stored PB Range")
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request and generation_request.instrument_index==1)
@@ -345,8 +370,16 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
+assert(render_calls==3,"arming Live Edit does not request a render")
+local armed_projections=projection_calls
+builder.views.acid_editor_view:fire(2)
+assert(render_calls==3 and projection_calls==armed_projections,
+  "armed view navigation reuses projection without rendering")
+button("Reset Source"):fire()
+assert(render_calls==3,"resetting an armed source does not request a render")
+builder.views.acid_program_key_popup:fire(2)
 assert(render_calls==4 and generation_request.target_index==4,
-  "arming Live Edit immediately appends the selected new phrase")
+  "an edit after arming appends the selected new phrase")
 local appended={id=24,name="Live appended phrase"}
 instrument.phrases[4]=appended
 generation_callback({kind="complete",status="committed",message="Live append committed.",
@@ -405,8 +438,10 @@ phrase_popup:fire(1)
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native selection")
 live_checkbox:fire(true)
+assert(render_calls==7,"rearming Live Edit does not request a render")
+builder.views.acid_program_key_popup:fire(2)
 assert(render_calls==8 and generation_request.target_index==1,
-  "arming Live Edit after selecting phrase 01 targets phrase 01 after phrase 02 was generated")
+  "an edit after rearming targets the selected phrase 01")
 generation_request.options.phrase_mutation(function()
   select_native_phrase(2)
 end)
@@ -440,6 +475,18 @@ instrument.phrases[3].foreign=nil
 select_native_phrase(1)
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"owned phrase selection still synchronizes after cancellation")
+
+local before_queued_generate=render_calls
+live_checkbox:fire(true)
+select_native_phrase(2)
+assert(render_calls==before_queued_generate and phrase_popup.value==1,
+  "arming and queued native selection remain read-only")
+button("Generate / Regenerate ACID Phrase"):fire()
+assert(render_calls==before_queued_generate+1 and generation_request.target_index==2,
+  "explicit Generate applies queued native selection and renders while Live Edit is armed")
+generation_callback({kind="complete",status="committed",message="Queued destination generated.",
+  diagnostics={},target={instrument_index=1,phrase_index=2}})
+live_checkbox:fire(false)
 
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")
