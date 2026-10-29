@@ -92,6 +92,20 @@ a guarded phrase/source commit. Failed writes preserve the last-good destination
 or retain identified recovery material if rollback cannot finish. Foreign,
 manually modified and duplicate-ID destinations cannot be overwritten.
 
+Generation requires LPB transport timing. Legacy speed timing is rejected before
+phrase insertion or source-store mutation. The script runner starts native
+rendering from `committed_observable`, after the new source is committed. This
+notification does not establish compilation success; the native render callback
+and phrase validation determine the outcome. A 500-idle-callback limit bounds
+waiting for commitment. During rendering it only reports a pending-render
+diagnostic and keeps the writer occupied.
+
+Renoise exposes no render-cancel operation. Cancellation invalidates commit
+authorization; an in-flight render retains the writer slot until its callback
+arrives. A missing callback therefore blocks new writes and requires restarting
+Renoise. Document release and tool unload detach observers and host references
+without treating an unfinished render as complete.
+
 `model/pattern_store.lua` stores the current `ACID-PITCH-TIME-5` source records and separate
 phrase output policy and PB Range in song-scoped tool data. `writers/phrase_ownership.lua`
 seals generated contents and loop properties. Only the current source and seal
@@ -112,17 +126,15 @@ modified or deleted phrase targets, preserving unrelated content. A hard API or
 persistence failure reports an error while keeping the editor armed.
 Dialog close and song changes invalidate outstanding work.
 
-For the selected Renoise instrument, an existing destination selected in ACID
-also becomes the Phrase Editor selection. Native selection of an owned phrase
-loads its ACID source; foreign selections do not redirect the destination.
+For the selected Renoise instrument, native selection of an owned phrase loads
+its ACID source; foreign selections do not redirect the destination. Choosing
+an ACID destination leaves Renoise's Phrase Editor selection unchanged.
 Selecting a saved phrase alone does not schedule regeneration, while recovered
 drafts do. Synchronous temporary phrase insertions and removals suppress their
 own selection notifications; user selections between those operations remain
-observable. The playback program is independent of the editor selection.
-
-The bundled API 6.2 definitions describe `selected_phrase_index` as read-only,
-but assignment was verified in Renoise 3.5.4. ACID guards the assignment and
-does not assume it succeeds on other hosts.
+observable. Structural operations may change native selection. ACID never
+assigns native selection properties or restores selection after generation.
+The playback program is independent of the editor selection.
 
 Uncommitted drafts are stored separately from committed source in song tool
 data. Owned phrase drafts resolve by ownership ID. New phrase drafts require an

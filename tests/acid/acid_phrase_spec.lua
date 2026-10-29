@@ -15,7 +15,14 @@ local idle, committed = observable(), observable()
 local script = {paragraphs={},compile_error="",runtime_error="",committed_observable=committed}
 local phrase
 local instrument
-function script:commit() committed:fire() end
+function script:commit()
+  local on_idle
+  on_idle=function()
+    idle:remove_notifier(on_idle)
+    committed:fire()
+  end
+  idle:add_notifier(on_idle)
+end
 function script:render_to_pattern(opts, cb)
   assert(opts.lpb == 8)
   local target = instrument and instrument.phrases[#instrument.phrases] or phrase
@@ -82,8 +89,9 @@ end
 function instrument:delete_phrase_at(i)
   table.remove(self.phrases,i)
 end
-local song={instruments={instrument}}
+local song={instruments={instrument},transport={timing_model=2}}
 _G.renoise={
+  Transport={TIMING_MODEL_LPB=2,TIMING_MODEL_SPEED=1},
   InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function()return song end,
@@ -169,7 +177,7 @@ assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(message_text(messages[#messages]):find("generated",1,true),message_text(messages[#messages]))
 assert(first.cells[1].note_value==38)
 assert(require("model.pattern_store").load(song,first).pitch_events[1].note==38)
--- The idle observer starts the async renderer once while its callback is pending.
+-- A missing render callback retains staging and blocks overlapping writes.
 local base_render=script.render_to_pattern
 local render_calls,pending_render=0,nil
 local delayed=source_fixture()
@@ -180,8 +188,12 @@ function script:render_to_pattern(opts,cb)
   return true
 end
 assert(generate(function(value)messages[#messages+1]=value end,delayed,1))
-for _=1,6 do idle:fire() end
+for _=1,600 do idle:fire() end
 assert(render_calls==1 and type(pending_render)=="function")
+assert(#instrument.phrases==2 and instrument.phrases[1]==first)
+assert(messages[#messages].code=="transaction.render_pending")
+local overlapping,overlap_error=generate(function()end,delayed,1)
+assert(not overlapping and overlap_error.code=="transaction.busy")
 script.render_to_pattern=base_render
 base_render(script,{lpb=8},pending_render)
 assert(message_text(messages[#messages]):find("generated",1,true))
@@ -191,6 +203,24 @@ restored_source.pitch_events[1]=pitch(38)
 assert(generate(function(value)messages[#messages+1]=value end,restored_source,1))
 idle:fire();idle:fire();idle:fire()
 assert(first.cells[1].note_value==38)
+-- In-flight cancellation defers stage deletion until the callback arrives.
+local pending_token={valid=true,is_current=function(self)return self.valid end}
+function script:render_to_pattern(_,cb) pending_render=cb;return true end
+local saved_source=song.tool_data
+assert(generate(function(value)messages[#messages+1]=value end,edited,1,{token=pending_token}))
+idle:fire()
+pending_token.valid=false
+local cancelled,pending_status=writer.cancel(pending_token)
+assert(not cancelled and pending_status.code=="transaction.cancel_pending")
+local stage=instrument.phrases[2]
+assert(stage and #instrument.phrases==2)
+assert(not generate(function()end,edited,1))
+for _=1,600 do idle:fire() end
+assert(instrument.phrases[2]==stage and #instrument.phrases==2)
+pending_render(nil,8,0)
+assert(#instrument.phrases==1 and first.cells[1].note_value==38)
+assert(song.tool_data==saved_source)
+script.render_to_pattern=base_render
 -- Renoise document objects must use rawequal; their == metamethod may throw.
 local unsafe_equality={__eq=function()error("unsafe Renoise object equality")end}
 setmetatable(song,unsafe_equality)
@@ -502,3 +532,84 @@ assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
 renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=saved_effect_limit
 instrument.plugin_properties=nil
 print("ACID triplet renderer metadata and transaction checks passed")
+
+-- Document release leaves only a tombstone until native rendering settles.
+local released_callback
+function script:render_to_pattern(_,cb) released_callback=cb;return true end
+local release_count=#instrument.phrases
+local release_source=song.tool_data
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+idle:fire()
+local retained=instrument.phrases[#instrument.phrases]
+writer.release()
+local released_messages=#messages
+local deleted=instrument.delete_phrase_at
+instrument.delete_phrase_at=function()error("released instrument accessed")end
+for _=1,600 do idle:fire() end
+assert(not generate(function()end,source_fixture(),1))
+released_callback(nil,8,0)
+released_callback(nil,8,0)
+assert(#messages==released_messages and song.tool_data==release_source)
+assert(#instrument.phrases==release_count+1 and instrument.phrases[#instrument.phrases]==retained)
+instrument.delete_phrase_at=deleted
+instrument:delete_phrase_at(#instrument.phrases)
+script.render_to_pattern=base_render
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+idle:fire();idle:fire()
+assert(messages[#messages].kind=="complete")
+print("ACID render cancellation and release checks passed")
+
+-- Invalidated instrument handles cannot prevent terminal notification.
+local invalid_callback
+function script:render_to_pattern(_,cb) invalid_callback=cb;return true end
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+idle:fire()
+local live_phrases=instrument.phrases
+local retained_stage=live_phrases[#live_phrases]
+song.instruments={}
+instrument.phrases=nil
+setmetatable(instrument,{__index=function()error("invalid instrument handle")end})
+invalid_callback(nil,8,0)
+assert(messages[#messages].kind=="complete" and messages[#messages].status=="suspended")
+assert(messages[#messages].message:find("target instrument changed",1,true))
+setmetatable(instrument,nil)
+instrument.phrases=live_phrases
+song.instruments={instrument}
+assert(instrument.phrases[#instrument.phrases]==retained_stage)
+instrument:delete_phrase_at(#instrument.phrases)
+script.render_to_pattern=base_render
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+idle:fire();idle:fire()
+assert(messages[#messages].kind=="complete")
+print("ACID invalidated host cleanup checks passed")
+
+-- A native exception cannot prove the renderer stopped using staging.
+local thrown_callback
+function script:render_to_pattern(_,cb)
+  thrown_callback=cb
+  error("native call raised after launch")
+end
+local thrown_count=#instrument.phrases
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+for _=1,600 do idle:fire() end
+assert(#instrument.phrases==thrown_count+1 and not generate(function()end,source_fixture(),1))
+assert(messages[#messages].code=="transaction.render_pending")
+assert(messages[#messages].message:find("native call raised after launch",1,true))
+thrown_callback("render failed",0,0)
+assert(#instrument.phrases==thrown_count and messages[#messages].kind=="complete")
+script.render_to_pattern=base_render
+
+-- A missing commitment notification times out before native rendering starts.
+local commit=script.commit
+function script:commit() end
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+for _=1,500 do idle:fire() end
+assert(#instrument.phrases==thrown_count and messages[#messages].kind=="complete")
+assert(messages[#messages].message:find("Timed out waiting for script commitment",1,true))
+committed:fire()
+assert(#instrument.phrases==thrown_count)
+script.commit=commit
+assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
+idle:fire();idle:fire()
+assert(messages[#messages].kind=="complete")
+print("ACID native exception and commitment timeout checks passed")

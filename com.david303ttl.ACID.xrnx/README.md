@@ -99,8 +99,9 @@ contract. Renoise playback and routing checks for Program/Grid switching,
 Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
 pending; see the [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md).
 The full M3.5 instrument and Live Edit gates remain tracked in
-[ROADMAP.md](ROADMAP.md). Straight and triplet playback, including host groove
-and legacy speed timing, remain subject to the
+[ROADMAP.md](ROADMAP.md). Generation requires LPB transport timing and rejects
+legacy speed timing before changing phrases or saved source. Straight and
+triplet playback, including host groove, remain subject to the
 [timing checklist](../tests/acid/acid_timing_manual.md).
 
 ## Development checks

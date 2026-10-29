@@ -45,13 +45,15 @@ local function view_builder()
   return builder
 end
 
-local tool={app_new_document_observable=observable(),app_idle_observable=observable()}
+local tool={app_new_document_observable=observable(),app_idle_observable=observable(),
+  app_release_document_observable=observable(),tool_will_unload_observable=observable()}
 local instrument={name="Target",phrases={{id=21,name="ACID phrase 1"},
   {id=22,name="ACID phrase 2"}},samples={},sample_modulation_sets={},
   sample_device_chains={},phrase_program_observable=observable()}
 local instrument_two={name="Other target",phrases={{id=31,name="Other phrase"}},
   samples={},sample_modulation_sets={},sample_device_chains={},
   phrase_program_observable=observable()}
+local selection_assignment_attempts=0
 local song={selected_instrument_index=1,selected_instrument=instrument,
   selected_phrase=instrument.phrases[1],selected_phrase_observable=observable(),
   instruments={instrument,instrument_two}}
@@ -62,16 +64,17 @@ setmetatable(song,{
   end,
   __newindex=function(t,key,value)
     if key=="selected_phrase_index" then
-      rawset(t,"_selected_phrase_index",value)
-      song.selected_phrase=instrument.phrases[value]
-      song.selected_phrase_observable:fire()
+      selection_assignment_attempts=selection_assignment_attempts+1
+      error("selected_phrase_index is read-only")
     else rawset(t,key,value) end
   end
 })
 instrument.phrase_program=1
 instrument_two.phrase_program=1
 local function select_native_phrase(index)
-  song.selected_phrase_index=index
+  rawset(song,"_selected_phrase_index",index)
+  song.selected_phrase=instrument.phrases[index]
+  song.selected_phrase_observable:fire()
   assert(song.selected_phrase==instrument.phrases[index])
 end
 local builder=view_builder()
@@ -84,6 +87,7 @@ end
 function app:show_warning(message) error(message) end
 
 local render_calls,edit_notifications=0,0
+local writer_releases=0
 local generation_request,generation_callback
 package.loaded["model.live_regen"]={new=function(render,on_result)
   local self={enabled=false,busy=false,pending=false,status="CLEAN",last_result=nil,last_commit=nil}
@@ -125,13 +129,16 @@ package.loaded["writers.phrase_writer"]={
     local target_instrument=song.instruments[instrument_index]
     if instrument_index==1 and target_index<=#target_instrument.phrases then
       -- Staging changes the editor selection without touching the playback program.
-      song.selected_phrase_index=#target_instrument.phrases+1
+      options.phrase_mutation(function()
+        select_native_phrase(#target_instrument.phrases+1)
+      end)
       assert(song.selected_phrase==nil)
     end
     generation_callback=callback
     return true
   end,
-  cancel=function() return true end
+  cancel=function() return true end,
+  release=function() writer_releases=writer_releases+1 end
 }
 package.loaded["writers.phrase_ownership"]={
   status=function() return "owned" end,
@@ -268,8 +275,8 @@ button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request.target_index==1,"the first owned phrase can be generated in place")
 generation_callback({kind="complete",status="committed",message="Phrase 01 generated.",
   diagnostics={},target={phrase_index=1}})
-assert(song.selected_phrase==instrument.phrases[1] and instrument.phrase_program==1,
-  "manual regeneration restores Renoise's selected phrase after staging cleanup")
+assert(song.selected_phrase==nil and instrument.phrase_program==1,
+  "manual regeneration accepts structural selection changes without altering playback")
 
 phrase_popup:fire(2)
 assert(pb_range_popup.value==4,"phrase selection restores its stored PB Range")
@@ -283,8 +290,8 @@ assert(phrase_popup.value==2,
   "successful generation must keep the selected destination phrase")
 generation_callback({kind="complete",status="committed",message="Phrase generated.",
   diagnostics={},target={phrase_index=2}})
-assert(song.selected_phrase==instrument.phrases[2] and instrument.phrase_program==1,
-  "manual generation preserves the selected destination without changing playback")
+assert(song.selected_phrase==nil and instrument.phrase_program==1,
+  "manual generation leaves host selection unchanged after staging")
 local draft_warning
 for _,node in ipairs(builder.nodes) do
   if type(node.text)=="string" and node.text:find("DRAFT WARNING",1,true) then
@@ -359,8 +366,8 @@ assert(phrase_popup.value==2 and pb_range_popup.value==4,
 assert(render_calls==5 and song.selected_phrase==instrument.phrases[2],
   "switching to a saved phrase does not regenerate or disturb its selection")
 phrase_popup:fire(1)
-assert(phrase_popup.value==1 and render_calls==5 and song.selected_phrase==instrument.phrases[1],
-  "choosing phrase 01 in Destination stays selected without regenerating")
+assert(phrase_popup.value==1 and render_calls==5 and song.selected_phrase==instrument.phrases[2],
+  "choosing an ACID destination leaves native selection unchanged without regenerating")
 phrase_popup:fire(2)
 assert(phrase_popup.value==2 and render_calls==5 and song.selected_phrase==instrument.phrases[2],
   "choosing phrase 02 in Destination stays selected without regenerating")
@@ -371,7 +378,7 @@ instrument.phrase_program=2
 instrument.phrase_program_observable:fire()
 generation_callback({kind="complete",status="committed",message="Native phrase selection regenerated.",
   diagnostics={},target={instrument_index=1,phrase_index=2}})
-assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==2,
+assert(song.selected_phrase==nil and instrument.phrase_program==2,
   "Live Edit preserves a playback program change made during rendering")
 builder.views.acid_program_key_popup:fire(6)
 assert(render_calls==7 and generation_request.target_index==2,
@@ -401,8 +408,8 @@ generation_callback({kind="complete",status="committed",message="Live phrase 01 
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1 and generation_request.target_index==1,
   "ACID generation cannot redirect its selected phrase through native phrase notifications")
-assert(song.selected_phrase==instrument.phrases[1] and song.selected_phrase_index==1 and instrument.phrase_program==1,
-  "regenerating ACID phrase 01 restores its native selection")
+assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
+  "regenerating ACID phrase 01 leaves native structural selection unchanged")
 
 -- Cancelling a live render must not block subsequent native selections.
 builder.views.acid_program_key_popup:fire(7)
@@ -434,4 +441,17 @@ tool.app_idle_observable:fire()
 assert(song.selected_phrase_observable:listener_count()==0,
   "closing ACID removes its selected-phrase observer")
 
+local lifecycle_events={}
+draft_cache.has_volatile=function() return true end
+app.show_warning=function() lifecycle_events[#lifecycle_events+1]="warning" end
+package.loaded["writers.phrase_writer"].release=function()
+  writer_releases=writer_releases+1
+  lifecycle_events[#lifecycle_events+1]="release"
+end
+tool.app_release_document_observable:fire()
+assert(writer_releases==1 and lifecycle_events[1]=="warning" and lifecycle_events[2]=="release",
+  "document release warns about volatile drafts before releasing writer host references")
+tool.tool_will_unload_observable:fire()
+assert(writer_releases==2,"tool unload releases writer host references")
+assert(selection_assignment_attempts==0,"ACID never attempts to assign read-only native selection")
 print("ACID Program/Grid views, native phrase selection and Live Edit destination checks passed")

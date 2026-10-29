@@ -36,5 +36,6 @@ Use one disposable Renoise song after M4.7 implementation:
 3. Create one new phrase explicitly; switch instruments with Live Edit active; confirm no implicit append or stale commit.
 4. Switch Program/Grid, edit, Undo/Redo, save/reopen and verify per-phrase settings and drafts.
 5. During playback, check stop/start/seek and BPM/LPB changes using Straight and Triplet.
+6. In a legacy speed-timing song, attempt New Phrase and regeneration of an owned phrase. Both must report unsupported timing and leave phrases, saved source and transport unchanged. Return to LPB timing and confirm generation succeeds.
 
 **Not required for M4:** new WAV batches, independent beat-click captures, soundcard loopback calibration, repeated onset analysis, additional VST receiver matrices or exhaustive articulation recordings. Use an existing diagnostic tool only for a reproduced defect.

@@ -39,6 +39,25 @@
 - MIDI-only, hybrid and alias fidelity are receiver-dependent release checks, not M4 blockers.
 - Existing NOTE/TIE/REST, sample glide and reference VST PB audio results remain accepted; no repeat capture required.
 
+## Native render lifecycle
+
+1. Generate and regenerate under normal and busy host load. Confirm committed
+   source renders correctly or reports an error without replacing last-good output.
+2. Cancel during rendering. Confirm staging remains and new writes are blocked
+   until the callback arrives; canceled output must not replace the destination.
+3. Close the song or unload the tool during rendering. Confirm no stale GUI
+   updates or invalid-object errors occur. Tool reload is not a render-cancel path.
+4. In a speed-timing song, confirm generation is refused without changing phrase
+   count, saved source or transport. Switch timing during rendering and confirm
+   the last-good destination and source remain unchanged.
+
+Renoise 3.5.4 LPB check: phrases 01 and 02 were created and 02 was regenerated
+through the native callback; count stayed two. Phrase preview started and the
+Renoise output meter showed signal; Stop halted preview. Missing callbacks,
+cancellation during rendering, document release during rendering and speed
+timing remain unverified. The open song uses LPB timing; the API exposes
+`transport.timing_model` as read-only, so no live speed-timing song was tested.
+
 ## M3.6 Plugin/MIDI pitch bend
 
 **Accepted:** phrase-contained M1 delivery and ±12 bend/center reset with Surge XT VST3, Renoise 3.5.4, global slot 03. Native sample and VST glide/REST checks passed at phrase LPB 8 and 6. [Evidence](audio_capture_evidence.md#phrase-pitch-bend-receiver-check-2026-10-28).
@@ -98,10 +117,10 @@ reported TIME/PITCH location is selected without modifying source.
 | Static Straight/Triplet timing and meter playback | Passed; [timing evidence](acid_timing_manual.md) |
 | Native sample glide and Surge XT PB | Passed for bounded reference setups |
 | Add/rename/reorder/delete instrument while ACID remains open | Pending |
-| Renoise instrument/phrase selection follows 1:1 without unintended writes | Pending |
-| Existing owned phrase regenerate in place; no added phrase | Pending |
+| Renoise instrument/phrase selection follows 1:1 without unintended writes | Partial; see [phrase destination check](acid_phrase_destination_manual.md) |
+| Existing owned phrase regenerate in place; no added phrase | Passed in Renoise 3.5.4; phrase count stayed two |
 | Target deleted, modified or foreign: no automatic append/overwrite | Pending |
-| Explicit new phrase creates exactly one bound owned phrase | Pending |
+| Explicit new phrase creates exactly one bound owned phrase | Passed in Renoise 3.5.4; created phrases 01 and 02 |
 | Draft/source PB/timing/output settings survive switching and save/reopen | Pending |
 | Live Edit context changes and stale asynchronous completion | Pending |
-| One playback/transport smoke in Renoise | Pending |
+| One playback/transport smoke in Renoise | Passed; phrase preview produced output-meter activity |

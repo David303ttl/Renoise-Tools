@@ -103,7 +103,8 @@ package.loaded["writers.phrase_writer"]={
     render_callbacks[#render_callbacks+1]=callback
     return true
   end,
-  cancel=function()return true end
+  cancel=function()return true end,
+  release=function()end
 }
 local editor_module=require("model.editor_state")
 local force_diagnostic=false
@@ -183,6 +184,12 @@ assert(recovered_status.text:find("Recovered saved draft",1,true),
   "draft recovery reports song persistence")
 tool.app_release_document_observable:fire()
 assert(#warnings==0,"song-persistent drafts do not show a loss warning")
+dialog.visible=false
+builder,dialog=open_gui()
+phrase_choice=popup(builder,360)
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="multiline_textfield" then recovered_status=node end
+end
 pb_range_popup(builder):fire(1)
 button(builder,"Undo"):fire()
 assert(pb_range_popup(builder).value==2,"Undo restores the previous PB Range")
@@ -207,6 +214,10 @@ tool.app_release_document_observable:fire()
 assert(#warnings==1 and warnings[1]:find("could not be saved",1,true),
   "volatile draft persistence failure warns before song close")
 fail_draft_persistence=false
+dialog.visible=false
+builder,dialog=open_gui()
+phrase_choice=popup(builder,360)
+builder.views.acid_program_pitch_position:fire(2)
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do

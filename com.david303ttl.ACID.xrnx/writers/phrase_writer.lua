@@ -14,6 +14,7 @@ local timing = require("model.timing")
 local legato = require("model.legato")
 local legato_writer = require("writers.legato_writer")
 local phrase_pitch_bend = require("writers.phrase_pitch_bend")
+local script_runner = require("writers.script_runner")
 local M = {}
 
 M.PHRASE_NAME = "ACID 0.1 TEST"
@@ -205,6 +206,14 @@ local function token_current(job)
   return ok and value==true
 end
 
+local function lpb_timing(song)
+  local ok,valid=pcall(function()
+    local expected=renoise.Transport.TIMING_MODEL_LPB
+    return expected~=nil and song.transport.timing_model==expected
+  end)
+  return ok and valid
+end
+
 local function phrase_index(instrument, phrase)
   local found
   for index,item in ipairs(instrument.phrases) do
@@ -222,11 +231,14 @@ local function mutate_phrases(job,action)
 end
 
 local function remove_phrase(job, phrase)
-  local instrument=job.instrument
-  local index=phrase_index(instrument,phrase)
-  if not index then return false end
-  local ok=pcall(function() mutate_phrases(job,function() instrument:delete_phrase_at(index) end) end)
-  return ok and phrase_index(instrument,phrase)==nil
+  local ok,removed=pcall(function()
+    local instrument=job.instrument
+    local index=phrase_index(instrument,phrase)
+    if not index then return false end
+    mutate_phrases(job,function() instrument:delete_phrase_at(index) end)
+    return phrase_index(instrument,phrase)==nil
+  end)
+  return ok and removed
 end
 
 local function phrase_id_count(song,id)
@@ -243,6 +255,9 @@ local function context_valid(job)
   if current~=job or not token_current(job) then return false,"generation was invalidated" end
   local ok,song=pcall(renoise.song)
   if not ok or not rawequal(song,job.song) then return false,"song changed during generation" end
+  if not lpb_timing(song) then
+    return false,"transport changed to unsupported timing during generation"
+  end
   local instrument_found=false
   for index,instrument in ipairs(song.instruments) do
     if rawequal(instrument,job.instrument) then
@@ -279,13 +294,11 @@ local function context_valid(job)
 end
 
 local function unlink(job)
-  if job.commit_observer and job.on_commit then
-    pcall(function() job.commit_observer:remove_notifier(job.on_commit) end)
-  end
+  if job.runner then job.runner:detach() end
   if job.idle_observer and job.on_idle then
     pcall(function() job.idle_observer:remove_notifier(job.on_idle) end)
   end
-  job.on_commit, job.on_idle = nil, nil
+  job.idle_observer, job.on_idle = nil, nil
 end
 
 local function complete(job, error_message, rendered_events, failure_status)
@@ -550,65 +563,24 @@ local function finalize(job, event_count, skipped)
   complete(job, nil, result)
 end
 
-local function render(job)
-  if current ~= job or not token_current(job) then return end
-  if job.render_started then return end
-  local script = job.phrase.script
-  if script.compile_error and script.compile_error ~= "" then
-    complete(job, "Script compilation: " .. script.compile_error)
-    return
-  end
-  if script.runtime_error and script.runtime_error ~= "" then
-    complete(job, "Script runtime: " .. script.runtime_error)
-    return
-  end
-  job.render_started=true
-  notify(job, {kind="status",status="rendering",message="Rendering native phrase...",
-    target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
-  local ok, error_message = pcall(function()
-    local started, start_error = script:render_to_pattern({
-      lpb = job.layout.lpb,
-      max_events = job.plan.length + 8
-    }, function(render_error, rendered_events, skipped_events)
-      if current ~= job then return end
-      local safe,callback_error=pcall(function()
-        if render_error and render_error ~= "" then
-          complete(job, "Phrase rendering: " .. tostring(render_error))
-        else
-          finalize(job, rendered_events, skipped_events)
-        end
-      end)
-      if not safe then
-        pcall(complete,job,"Phrase render completion failed: "..tostring(callback_error))
-      end
-    end)
-    if started == false then
-      complete(job, "Phrase rendering could not start: " .. tostring(start_error or "unknown error"))
-    end
-  end)
-  if not ok then complete(job, error_message) end
-end
-
 local function begin_wait(job)
-  local ticks = 0
-  -- committed_observable may fire before the compile error is updated.
-  -- Wait for idle after commit before reading compile/runtime errors.
-  job.on_idle = function()
-    if current ~= job then return end
-    if not token_current(job) then
-      complete(job,job.cancel_error or "generation was invalidated")
-      return
+  job.ticks=0
+  job.on_idle=function()
+    if current~=job then return end
+    if not token_current(job) and not job.cancelled then M.cancel(job.token) end
+    if current~=job then return end
+    job.ticks=job.ticks+1
+    if job.ticks~=500 then return end
+    if job.render_started then
+      notify(job,{kind="status",status="rendering",code="transaction.render_pending",
+        message=(job.runner.error and job.runner.error..". " or "")..
+          "Native phrase rendering has not completed. New writes are blocked; restart Renoise if its callback never arrives."},true)
+    else
+      job.runner:cancel()
+      complete(job,"Timed out waiting for script commitment")
     end
-    ticks = ticks + 1
-    if ticks > 500 then
-      complete(job, "Timed out waiting for script compilation")
-      return
-    end
-    if not job.committed or ticks < job.commit_tick + 2 then return end
-    local ok, err = pcall(render, job)
-    if not ok then complete(job, err) end
   end
-  job.idle_observer = renoise.tool().app_idle_observable
+  job.idle_observer=renoise.tool().app_idle_observable
   job.idle_observer:add_notifier(job.on_idle)
 end
 
@@ -616,6 +588,13 @@ function M.cancel(token)
   if not current or (token and current.token~=token) then return false end
   local job=current
   job.cancelled=true
+  if job.render_started then
+    local result={kind="status",status="rendering",code="transaction.cancel_pending",
+      message="Cancellation pending native render completion; new writes are blocked."}
+    notify(job,result,true)
+    return false,result
+  end
+  if job.runner then job.runner:cancel() end
   local cleanup_error
   if job.temporary then
     if not remove_phrase(job,job.phrase) then
@@ -646,8 +625,23 @@ function M.cancel(token)
   return true
 end
 
+function M.release()
+  local job=current
+  if not job then return end
+  if not job.render_started then M.cancel();return end
+  unlink(job)
+  for key in pairs(job) do job[key]=nil end
+  job.released=true
+  job.render_started=true
+  job.cancelled=true
+end
+
 local function generate_impl(instrument_index, callback, custom_pattern, target_index, options)
-  if busy then return nil,failure("transaction.busy","transaction","ACID is already generating a phrase") end
+  if busy then
+    return nil,failure("transaction.busy","transaction",current and current.released and
+      "Native phrase rendering is still pending; restart Renoise if its callback never arrives." or
+      "ACID is already generating a phrase")
+  end
   options=options or {}
   if type(options)~="table" then return nil,failure("source.options","source","Invalid generation options") end
   local output_policy=options.output_policy or "repeat"
@@ -670,6 +664,10 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   end
   local song = renoise.song()
   if not song then return nil,failure("safety.no_song","safety","Open a song first") end
+  if not lpb_timing(song) then
+    return nil,failure("safety.timing_model","safety",
+      "Phrase generation requires LPB transport timing")
+  end
   if type(instrument_index) ~= "number" or instrument_index % 1 ~= 0
     or instrument_index < 1 or instrument_index > #song.instruments then
     return nil,failure("safety.instrument_missing","safety","Choose a valid instrument slot")
@@ -783,14 +781,8 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     end
   end
   if not commands then return nil,failure("phrase.unrepresentable","phrase",approximations) end
-  local transport_ok,transport=pcall(function() return song.transport end)
-  if transport_ok and transport then
-    if renoise.Transport and transport.timing_model==renoise.Transport.TIMING_MODEL_SPEED then
-      approximations[#approximations+1]="Legacy speed timing is active; phrase timing in beats is unverified."
-    end
-    if transport.groove_enabled then
-      approximations[#approximations+1]="Song groove is active; its effect on phrase timing is unverified."
-    end
+  if song.transport.groove_enabled then
+    approximations[#approximations+1]="Song groove is active; its effect on phrase timing is unverified."
   end
   local operations,operation_error=gates.plan(timeline,plan,commands)
   if not operations and #commands>0 then
@@ -837,7 +829,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     capabilities=capabilities,
     replace=replace,target_index=target_index,temporary=true,token=options.token,
     phrase_mutation=options.phrase_mutation,
-    callback = callback, committed = false, commit_tick = 0,
+    callback = callback,
     cancelled = false
   }
 
@@ -848,29 +840,42 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
     local script = job.phrase.script
     script.paragraphs = {source}
-    job.commit_observer = script.committed_observable
-    job.on_commit = function()
-      job.committed = true
-      -- Recorded from idle tick counter below; next idle is sufficient
-      -- to check result after the asynchronous commit notification.
-      job.commit_tick = job.tick or 0
-    end
-    job.commit_observer:add_notifier(job.on_commit)
-    current = job
-    busy = true
-    local old_begin_wait = begin_wait
-    old_begin_wait(job)
-    -- Track idle ticks for post-commit settle.
-    local idle = job.on_idle
-    job.on_idle = function()
-      job.tick = (job.tick or 0) + 1
-      idle()
-    end
-    -- Existing notifier must be changed to point at the wrapper.
-    job.idle_observer:remove_notifier(idle)
-    job.idle_observer:add_notifier(job.on_idle)
-    if not token_current(job) then error("generation was invalidated before compile") end
-    script:commit()
+    job.runner=script_runner.new(script,{
+      lpb=job.layout.lpb,max_events=job.plan.length+8
+    },{
+      rendering=function()
+        local valid,context_error=context_valid(job)
+        if not valid then job.suspended_reason=context_error;error(context_error) end
+        job.render_started=true
+        job.ticks=0
+        notify(job,{kind="status",status="rendering",message="Rendering native phrase...",
+          target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
+      end,
+      done=function(render_error,rendered_events,skipped_events)
+        if current~=job then return end
+        if job.released then current=nil;busy=false;return end
+        job.render_started=false
+        local safe,callback_error=pcall(function()
+          if job.cancelled or not token_current(job) then
+            complete(job,"Generation cancelled")
+          elseif render_error and render_error~="" then
+            complete(job,"Phrase rendering: "..tostring(render_error),nil,
+              job.suspended_reason and "suspended" or nil)
+          else
+            finalize(job,rendered_events,skipped_events)
+          end
+        end)
+        if not safe then complete(job,"Phrase render completion failed: "..tostring(callback_error)) end
+      end
+    })
+    current=job
+    busy=true
+    begin_wait(job)
+    if not token_current(job) then error("generation was invalidated before commit") end
+    notify(job,{kind="status",status="rendering",message="Committing phrase...",
+      target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
+    local started,start_error=job.runner:start()
+    if not started then error(start_error) end
   end)
   if not ok then
     if current == job then
@@ -884,8 +889,6 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     end
     return nil, tostring(error_message)
   end
-  notify(job, {kind="status",status="rendering",message="Compiling phrase...",
-    target={instrument_index=job.instrument_index,phrase_index=job.target_index}})
   return true
 end
 

@@ -18,7 +18,14 @@ local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}}}
 local contaminate=false
 local wrong_volume=nil
 local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed}
-function script:commit() committed:fire() end
+function script:commit()
+  local on_idle
+  on_idle=function()
+    idle:remove_notifier(on_idle)
+    committed:fire()
+  end
+  idle:add_notifier(on_idle)
+end
 function script:render_to_pattern(_,callback)
   local phrase=instrument.phrases[#instrument.phrases]
   local values=assert(self.paragraphs[1]:match('local values = { (.-) }\nreturn pattern'))
@@ -67,8 +74,9 @@ function instrument:insert_phrase_at(index)
   return phrase
 end
 function instrument:delete_phrase_at(index) table.remove(self.phrases,index) end
-local song={instruments={instrument}}
+local song={instruments={instrument},transport={timing_model=2}}
 _G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+  Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function()return song end,tool=function()return {app_idle_observable=idle} end}
 local writer=require('writers.phrase_writer')

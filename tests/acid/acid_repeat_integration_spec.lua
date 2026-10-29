@@ -19,7 +19,14 @@ local instrument
 local render_calls={}
 local script={paragraphs={},compile_error='',runtime_error='',
   committed_observable=committed}
-function script:commit() committed:fire() end
+function script:commit()
+  local on_idle
+  on_idle=function()
+    idle:remove_notifier(on_idle)
+    committed:fire()
+  end
+  idle:add_notifier(on_idle)
+end
 function script:render_to_pattern(options,callback)
   local source=assert(self.paragraphs[1])
   local values=assert(source:match('local values = { (.-) }\nreturn pattern'))
@@ -94,8 +101,9 @@ function instrument:insert_phrase_at(index)
   return phrase
 end
 function instrument:delete_phrase_at(index) table.remove(self.phrases,index) end
-local song={instruments={instrument}}
+local song={instruments={instrument},transport={timing_model=2,groove_enabled=false}}
 _G.renoise={
+  Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2},
   InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function() return song end,
@@ -482,6 +490,28 @@ assert(draft_cache.get(song,instrument,instrument.phrases[1]).length==5,
   'render commit discarded the newer source edit')
 assert(#instrument.phrases==count_before and ownership.status(instrument.phrases[1])=='owned',
   'ordinary in-flight editing left a recovery or staging phrase')
+-- A transport change while the native renderer runs cannot replace last-good output.
+local timing_destination=instrument.phrases[1]
+local timing_name,timing_data=timing_destination.name,song.tool_data
+delayed_callback=nil
+function script:render_to_pattern(options,callback)
+  delayed_options,delayed_callback=options,callback
+  return true
+end
+assert(writer.generate(1,function(value)render_status=value end,source(6),1,
+  {output_policy='repeat'}))
+for _=1,6 do idle:fire() end
+assert(delayed_callback,'native render did not start for timing change')
+song.transport.timing_model=renoise.Transport.TIMING_MODEL_SPEED
+script.render_to_pattern=original_render
+original_render(script,delayed_options,delayed_callback)
+assert(render_status.status=='suspended' and
+  render_status.message:find('unsupported timing',1,true),render_status.message)
+assert(instrument.phrases[1]==timing_destination and timing_destination.name==timing_name)
+assert(song.tool_data==timing_data and #instrument.phrases==count_before)
+assert(ownership.status(timing_destination)=='owned')
+assert(song.transport.timing_model==renoise.Transport.TIMING_MODEL_SPEED)
+song.transport.timing_model=renoise.Transport.TIMING_MODEL_LPB
 print('ACID Repeat end-to-end mocked integration checks passed (playback checked separately in Renoise)')
 
 -- Exercise both pulse modes through rendering and protected replacement.
@@ -502,9 +532,32 @@ for _,policy in ipairs({'play_once','repeat'}) do
     assert(output.lpb==8 and output.shuffle==0 and store.load(song,output).timing_mode=='straight')
   end
 end
-renoise.Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2}
-song.transport={timing_model=1,groove_enabled=true}
+local saved_data=song.tool_data
+local saved_count,saved_renders=#instrument.phrases,#render_calls
+local allocate=store.allocate
+store.allocate=function() error('unsupported timing must not allocate an ID') end
+for _,case in ipairs({{renoise.Transport.TIMING_MODEL_SPEED},{99},{}}) do
+  local model=case[1]
+  song.transport.timing_model=model
+  for _,target in ipairs({1,#instrument.phrases+1}) do
+    local started,detail=writer.generate(1,function() error('unexpected status') end,
+      source(4),target,{output_policy='repeat'})
+    assert(not started and detail.code=='safety.timing_model')
+    assert(song.tool_data==saved_data and #instrument.phrases==saved_count)
+    assert(#render_calls==saved_renders and song.transport.timing_model==model)
+  end
+end
+local lpb_model=renoise.Transport.TIMING_MODEL_LPB
+renoise.Transport.TIMING_MODEL_LPB=nil
+song.transport.timing_model=nil
+local missing_started,missing_detail=writer.generate(1,function() error('unexpected status') end,
+  source(4),#instrument.phrases+1,{output_policy='repeat'})
+assert(not missing_started and missing_detail.code=='safety.timing_model')
+assert(song.tool_data==saved_data and #instrument.phrases==saved_count and #render_calls==saved_renders)
+renoise.Transport.TIMING_MODEL_LPB=lpb_model
+store.allocate=allocate
+song.transport.timing_model=renoise.Transport.TIMING_MODEL_LPB
+song.transport.groove_enabled=true
 local _,timing_status=generate(source(4),'repeat',#instrument.phrases+1)
-assert(timing_status.message:find('Legacy speed timing',1,true))
 assert(timing_status.message:find('Song groove',1,true))
-assert(song.transport.timing_model==1 and song.transport.groove_enabled)
+assert(song.transport.timing_model==renoise.Transport.TIMING_MODEL_LPB and song.transport.groove_enabled)

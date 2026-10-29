@@ -41,6 +41,12 @@ local function stop_live_context()
   if live then live:stop() end
   if checkbox then checkbox.value=false end
 end
+local function release_context()
+  generation=generation+1
+  detach_dialog_watch()
+  stop_live_context()
+  phrase_writer.release()
+end
 if renoise.tool().app_release_document_observable then
   renoise.tool().app_release_document_observable:add_notifier(function()
     local song=renoise.song()
@@ -48,7 +54,11 @@ if renoise.tool().app_release_document_observable then
       renoise.app():show_warning(
         "ACID has drafts that could not be saved with this song. They will be lost when it closes.")
     end
+    release_context()
   end)
+end
+if renoise.tool().tool_will_unload_observable then
+  renoise.tool().tool_will_unload_observable:add_notifier(release_context)
 end
 renoise.tool().app_new_document_observable:add_notifier(function()
   generation=generation+1
@@ -153,8 +163,7 @@ function M.show()
   local bind_selected_phrase_watch
   local apply_pending_selected_phrase_selection
   local pending_selected_phrase_instrument,pending_selected_phrase
-  local native_selection_revision=0
-  local restoring_native_selection=false
+  local internal_phrase_mutation=false
   local live_checkbox
   local live
   local live_target
@@ -607,13 +616,6 @@ function M.show()
     value=#phrase_names,notifier=function(n)
       if not loading then
         pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
-        local instrument=song.instruments[selected_instrument]
-        local index=phrase_targets[n]
-        if rawequal(song.selected_instrument,instrument) and index and instrument.phrases[index] then
-          restoring_native_selection=true
-          pcall(function() song.selected_phrase_index=index end)
-          restoring_native_selection=false
-        end
         load_target(n)
       end
     end}
@@ -665,7 +667,7 @@ function M.show()
       return
     end
     local notifier=function()
-      if opened~=generation or loading or restoring_native_selection then
+      if opened~=generation or loading or internal_phrase_mutation then
         return
       end
       local instrument=song.selected_instrument
@@ -675,7 +677,6 @@ function M.show()
       end
       local phrase=song.selected_phrase
       if not phrase or ownership.status(phrase)~="owned" then return end
-      native_selection_revision=native_selection_revision+1
       pending_selected_phrase_instrument=instrument
       pending_selected_phrase=phrase
     end
@@ -750,39 +751,13 @@ function M.show()
     local phrase_name=phrase and phrase.name~="" and phrase.name or "(unnamed phrase)"
     return string.format("%s / %02d %s",instrument_name,index,phrase_name)
   end
-  local function phrase_position(instrument,phrase)
-    if not instrument or not phrase then return nil end
-    for index,item in ipairs(instrument.phrases) do
-      if rawequal(item,phrase) then return index end
-    end
-  end
-  local function capture_native_phrase_state(instrument)
-    local selected=rawequal(song.selected_instrument,instrument)
-    local phrase=selected and song.selected_phrase or nil
-    return {instrument=instrument,phrase=phrase,
-      selected_phrase_index=selected and song.selected_phrase_index or nil,
-      selection_revision=native_selection_revision,selected=selected}
-  end
   local function mutate_phrases(action)
-    local previous=restoring_native_selection
-    restoring_native_selection=true
+    local previous=internal_phrase_mutation
+    internal_phrase_mutation=true
     local ok,result=pcall(action)
-    restoring_native_selection=previous
+    internal_phrase_mutation=previous
     if not ok then error(result) end
     return result
-  end
-  local function restore_native_phrase_state(state)
-    if not state then return end
-    local instrument=state.instrument
-    if state.selected and state.selection_revision==native_selection_revision and
-        rawequal(song.selected_instrument,instrument) then
-      local index=phrase_position(instrument,state.phrase)
-      if index then
-        restoring_native_selection=true
-        pcall(function() song.selected_phrase_index=index end)
-        restoring_native_selection=false
-      end
-    end
   end
   update_live_state=function()
     if not live then
@@ -837,8 +812,6 @@ function M.show()
     end
     local requested_pb_range=pb_range
     local requested_instrument,requested_phrase=bound_instrument,bound_phrase
-    local requested_native_phrase_state=requested_phrase and
-      capture_native_phrase_state(requested_instrument) or nil
     local called,success,reason=pcall(phrase_writer.generate,selected_instrument,
       function(result)
         if type(result)=="table" and result.kind=="status" then
@@ -846,7 +819,6 @@ function M.show()
             tostring(result.message or "Building phrase.")
           return
         end
-        restore_native_phrase_state(requested_native_phrase_state)
         if type(result)~="table" or result.kind~="complete" then
           result={kind="complete",status="error",message="Phrase writer returned an invalid result.",
             diagnostics={tostring(result)}}
@@ -886,12 +858,8 @@ function M.show()
       end,copy,target_index,{token=token,output_policy=output_policy,phrase_mutation=mutate_phrases,
         pb_range=requested_pb_range})
     if not called then
-      restore_native_phrase_state(requested_native_phrase_state)
       local message=tostring(success)
       return nil,{kind="complete",status="error",message=message,diagnostics={message}}
-    end
-    if not success then
-      restore_native_phrase_state(requested_native_phrase_state)
     end
     return success,reason
   end,function(result)
@@ -1042,8 +1010,6 @@ function M.show()
         end}
         local requested_pb_range=pb_range
         local requested_object,requested_phrase=bound_instrument,bound_phrase
-        local requested_native_phrase_state=requested_phrase and
-          capture_native_phrase_state(requested_object) or nil
         local ok,generated,err=pcall(phrase_writer.generate,
           requested_instrument,function(result)
             if type(result)=="table" and result.kind=="status" then
@@ -1051,7 +1017,6 @@ function M.show()
                 tostring(result.message or "Building phrase.")
               return
             end
-            restore_native_phrase_state(requested_native_phrase_state)
             if opened==generation then
               if type(result)~="table" or result.kind~="complete" then
                 status.text="GENERATION ERROR: phrase writer returned an invalid result."
@@ -1099,9 +1064,6 @@ function M.show()
           end,pattern,
           requested_target,{token=manual_token,output_policy=output_policy,pb_range=requested_pb_range,
             phrase_mutation=mutate_phrases})
-        if not ok or not generated then
-          restore_native_phrase_state(requested_native_phrase_state)
-        end
         if not ok then status.text="ACID error: "..tostring(generated)
         elseif not generated then
           status.text=type(err)=="table" and err.message or tostring(err or "Generation refused")

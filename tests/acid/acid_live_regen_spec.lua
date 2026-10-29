@@ -67,6 +67,36 @@ assert(rebound:changed() and rebound_starts==2 and rebound.busy)
 rebound_done(result("committed","new phrase committed"))
 assert(rebound:state().last_commit.message=="new phrase committed")
 
+-- Native cancellation stays occupied until its callback, then dispatches only
+-- the latest edit for the rebound destination.
+local pending_done,pending_tokens,pending_reports={},{},{}
+local pending_cancels=0
+local pending_cancel=live.new(function(done,token)
+  pending_done[#pending_done+1]=done
+  pending_tokens[#pending_tokens+1]=token
+  return true
+end,function(value) pending_reports[#pending_reports+1]=value end,function(token,reason)
+  assert(token==pending_tokens[1] and reason=="phrase changed")
+  pending_cancels=pending_cancels+1
+  return false,{kind="status",status="rendering",code="transaction.cancel_pending",
+    message="Cancellation pending native render completion"}
+end)
+pending_cancel:set_enabled(true)
+pending_cancel:changed()
+pending_cancel:rebind("phrase changed")
+assert(pending_cancels==1 and pending_cancel.busy and not pending_cancel.pending)
+assert(not pending_tokens[1]:is_current() and #pending_done==1)
+pending_cancel:changed();pending_cancel:changed();pending_cancel:changed()
+assert(pending_cancel.busy and pending_cancel.pending and #pending_done==1)
+pending_done[1](result("error","old native rendering cancelled"))
+assert(#pending_done==2 and pending_cancel.busy and not pending_cancel.pending)
+assert(pending_tokens[2]:is_current() and #pending_reports==0)
+pending_done[1](result("committed","duplicate old callback"))
+assert(#pending_done==2 and pending_cancel.busy and #pending_reports==0)
+pending_done[2](result("committed","rebound phrase committed"))
+assert(not pending_cancel.busy and not pending_cancel.pending and #pending_reports==1)
+assert(pending_cancel:state().last_commit.message=="rebound phrase committed")
+
 -- Failed cancellation cleanup is surfaced with its recovery record and does
 -- not schedule the rebound target until a new source change arrives.
 local retained_done,retained_starts,cleanup_report= nil,0,nil
