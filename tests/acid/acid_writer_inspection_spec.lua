@@ -1,0 +1,370 @@
+-- Verify read-only writer occupancy state and temporary-object reporting.
+dofile('tests/bootstrap.lua')('acid')
+local columns=dofile('tests/acid/phrase_columns.lua')
+
+local function observable()
+  local handlers={}
+  return {
+    add_notifier=function(_,f) handlers[f]=true end,
+    remove_notifier=function(_,f) handlers[f]=nil end,
+    fire=function()
+      local pending={}
+      for f in pairs(handlers) do pending[#pending+1]=f end
+      for _,f in ipairs(pending) do f() end
+    end
+  }
+end
+local idle,committed=observable(),observable()
+local insertions,last_render,copy_observer={},nil,nil
+local pause_render,fail_delete,forced_insert=false,false,nil
+local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""}}
+local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed}
+function script:commit()
+  local on_idle
+  on_idle=function()
+    idle:remove_notifier(on_idle)
+    committed:fire()
+  end
+  idle:add_notifier(on_idle)
+end
+function script:render_to_pattern(_,callback)
+  local phrase=instrument.phrases[#instrument.phrases]
+  local values=assert(self.paragraphs[1]:match('local values = { (.-) }\nreturn pattern'))
+  local step,count=0,0
+  for token in (values..','):gmatch('(.-),') do
+    local volume=tonumber(token:match('volume = ([%d.]+)'))
+    local note=tonumber(token:match('key = (%d+)'))
+    if volume then
+      local line=(step-1)*4+1
+      phrase.cells[line].volume_value=volume==1 and 255 or 89
+    end
+    if note or token:find('"off"',1,true) or token:match('^%s*false%s*$') then
+      step=step+1
+      local line=(step-1)*4+1
+      if note or token:find('"off"',1,true) then
+        phrase.cells[line].note_value=note or 120
+        count=count+1
+      end
+    end
+  end
+  if pause_render then last_render=callback
+  else callback(nil,count,0) end
+  return true
+end
+local properties={'name','number_of_lines','lpb','playback_mode','looping',
+  'loop_start','loop_end','key_tracking','visible_note_columns','visible_effect_columns'}
+function instrument:insert_phrase_at(index)
+  if forced_insert then return forced_insert end
+  local phrase={name='',number_of_lines=16,visible_note_columns=1,
+    visible_effect_columns=0,looping=false,loop_start=1,loop_end=16,script=script,cells={}}
+  for line=1,257 do
+    phrase.cells[line]={note_value=121,instrument_value=255,volume_value=255,
+      panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
+  end
+  function phrase:line(line) return columns.line(self,line) end
+  function phrase:column_is_muted() return false end
+  function phrase:copy_from(other)
+    if copy_observer then copy_observer(self) end
+    columns.copy(self,other)
+    for _,key in ipairs(properties) do self[key]=other[key] end
+    self.cells={}
+    for line,cell in ipairs(other.cells) do
+      local copy={}
+      for key,value in pairs(cell) do copy[key]=value end
+      self.cells[line]=copy
+    end
+  end
+  table.insert(self.phrases,index,phrase)
+  insertions[#insertions+1]=phrase
+  return phrase
+end
+function instrument:delete_phrase_at(index)
+  if fail_delete then return end
+  table.remove(self.phrases,index)
+end
+local song={instruments={instrument},transport={timing_model=2}}
+_G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+  Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2},
+  Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
+  song=function()return song end,tool=function()return {app_idle_observable=idle} end}
+local writer=require('writers.phrase_writer')
+local context=require('runtime.context')
+local seq=require('model.sequencer')
+local pitch=dofile('tests/acid/pitch_fixture.lua')
+local store=require('renoise.pattern_store')
+
+local status
+local function completion(value) status=value end
+local pattern=seq.new_pattern(3)
+pattern.pitch_events[1]=pitch(48)
+pattern.pitch_events[2]=pitch(48)
+pattern.time_events[1],pattern.time_events[2],pattern.time_events[3]='N','T','T'
+
+local captured_requests,sink_requests=0,0
+local boundary=context.new{
+  writer=writer,
+  capture=function(_,request_token)
+    captured_requests=captured_requests+1
+    return {token=request_token}
+  end,
+  sink=function(request,done)
+    sink_requests=sink_requests+1
+    assert(request.token:is_current())
+    done({status='committed'})
+    return true
+  end,
+}
+
+local idle_count,token=writer.state()
+assert(idle_count=='idle' and token==nil and select('#',writer.state())==2,
+  'writer.state must expose only a detached status and token')
+assert(writer.temporaries==nil and writer.register_temporary==nil
+  and writer.list_temporaries==nil,'writer exposed temporary registry authority')
+
+local function generate(target,options)
+  return writer.generate(1,completion,pattern,target or 1,options or {output_policy='play_once'})
+end
+
+local first_token={current=true}
+function first_token:is_current() return self.current==true end
+local before=#insertions
+assert(generate(1,{output_policy='play_once',token=first_token}))
+local first_busy,first_busy_token=writer.state()
+assert(first_busy=='busy' and rawequal(first_busy_token,first_token),
+  'writer.state did not return the exact operation token')
+assert(boundary:request_generation('manual')==false
+  and captured_requests==0 and sink_requests==0,
+  'runtime admitted capture or sink while the real writer was occupied')
+idle:fire()
+assert(status and status.status=='committed',tostring(status and status.message))
+local created=insertions[before+1]
+assert(created and rawequal(instrument.phrases[1],created))
+local completed_status,completed_token=writer.state()
+assert(completed_status=='idle' and completed_token==nil,'committed write stayed occupied')
+assert(writer.is_temporary(song,instrument,created)==false,
+  'committed create destination remained temporary')
+assert(boundary:request_generation('manual')==true
+  and captured_requests==1 and sink_requests==1,
+  'runtime did not admit the test sink after real writer retirement')
+
+local second_token={current=true}
+function second_token:is_current() return self.current==true end
+pause_render=true
+before=#insertions
+assert(generate(2,{output_policy='play_once',token=second_token}))
+local busy_status,busy_token=writer.state()
+assert(busy_status=='busy' and rawequal(busy_token,second_token),
+  'writer.state did not return the exact operation token')
+local staging=insertions[before+1]
+assert(staging and rawequal(instrument.phrases[#instrument.phrases],staging))
+assert(writer.is_temporary(song,instrument,staging)==true)
+assert(writer.is_temporary(song,instrument,created)==false,
+  'existing destination was reported as temporary')
+assert(writer.is_temporary(song,instrument,{})==false,
+  'unrecorded object was reported as temporary')
+local other_instrument={phrases={staging}}
+local other_song={instruments={other_instrument}}
+assert(writer.is_temporary(song,other_instrument,staging)==false
+  and writer.is_temporary(other_song,instrument,staging)==false,
+  'temporary lookup accepted a cross-instrument or cross-song pairing')
+local content_equal={name=staging.name,cells=staging.cells}
+local content_equality={__eq=function() return true end}
+setmetatable(content_equal,content_equality)
+setmetatable(staging,content_equality)
+assert(content_equal==staging and not rawequal(content_equal,staging),
+  'phrase identity fixture must compare equal by content but not by identity')
+assert(writer.is_temporary(song,instrument,staging)==true
+  and writer.is_temporary(song,instrument,content_equal)==false,
+  'temporary lookup used content equality instead of raw identity')
+assert(#instrument.phrases==2 and staging.name==writer.PHRASE_NAME,
+  'read-only inspection changed the staging phrase')
+idle:fire()
+assert(last_render,'paused render did not start')
+last_render('inspection cleanup',0,0)
+completed_status,completed_token=writer.state()
+assert(completed_status=='idle' and completed_token==nil)
+assert(#instrument.phrases==1 and writer.is_temporary(song,instrument,staging)==false,
+  'failed render cleanup left a temporary phrase recorded')
+
+pause_render=true
+before=#insertions
+assert(generate(2,{output_policy='play_once'}))
+busy_status,busy_token=writer.state()
+assert(busy_status=='busy' and busy_token==nil,
+  'writer.state invented a token when none was supplied')
+assert(boundary:request_generation('live_edit')==false
+  and captured_requests==1 and sink_requests==1,
+  'runtime treated legacy tokenless occupancy as permission to dispatch')
+staging=insertions[before+1]
+assert(writer.is_temporary(song,instrument,staging)==true)
+idle:fire()
+local staging_index
+for index,item in ipairs(instrument.phrases) do
+  if rawequal(item,staging) then staging_index=index end
+end
+assert(staging_index,'staging phrase missing before external removal')
+instrument:delete_phrase_at(staging_index)
+assert(writer.is_temporary(song,instrument,staging)==false,
+  'temporary lookup ignored current raw membership')
+last_render('external removal',0,0)
+assert(writer.state()=='idle' and #instrument.phrases==1)
+
+local shared_eq={__eq=function() return true end}
+local function adversarial_token()
+  local value={current=true}
+  function value:is_current() return self.current==true end
+  return setmetatable(value,shared_eq)
+end
+local exact_token,impostor_token=adversarial_token(),adversarial_token()
+assert(exact_token==impostor_token and not rawequal(exact_token,impostor_token),
+  'adversarial tokens do not exercise equality without raw identity')
+pause_render=true
+before=#insertions
+assert(generate(2,{output_policy='play_once',token=exact_token}))
+local eq_busy,eq_token=writer.state()
+assert(eq_busy=='busy' and rawequal(eq_token,exact_token))
+staging=insertions[before+1]
+assert(writer.cancel(impostor_token)==false and writer.state()=='busy',
+  'cancel accepted a non-identical token through __eq')
+local still_busy,still_token=writer.state()
+assert(still_busy=='busy' and rawequal(still_token,exact_token)
+  and #instrument.phrases==2 and writer.is_temporary(song,instrument,staging)==true,
+  'impostor cancel changed occupancy or temporary bookkeeping')
+assert(writer.cancel(exact_token)==true)
+assert(writer.state()=='idle' and #instrument.phrases==1
+  and writer.is_temporary(song,instrument,staging)==false)
+
+local release_token={current=true}
+function release_token:is_current() return true end
+before=#insertions
+assert(generate(2,{output_policy='play_once',token=release_token}))
+local released_stage=insertions[before+1]
+idle:fire()
+writer.release()
+local released_status,released_identity=writer.state()
+assert(released_status=='busy' and rawequal(released_identity,release_token),
+  'release lost the exact operation token')
+writer.release()
+local repeated_status,repeated_identity=writer.state()
+assert(repeated_status=='busy' and rawequal(repeated_identity,release_token),
+  'repeated release overwrote the exact operation token')
+assert(writer.is_temporary(song,instrument,released_stage)==true,
+  'release discarded temporary bookkeeping')
+local cancel_accepted,cancel_status=writer.cancel(release_token)
+assert(cancel_accepted==false and type(cancel_status)=='table'
+  and cancel_status.code=='transaction.cancel_pending',
+  'after-release matching cancel did not retain pending render occupancy')
+local still_released,still_released_token=writer.state()
+assert(still_released=='busy' and rawequal(still_released_token,release_token)
+  and writer.is_temporary(song,instrument,released_stage)==true,
+  'after-release cancel retired the pending native render')
+last_render('released terminal',0,0)
+assert(writer.state()=='idle' and select('#',writer.state())==2)
+assert(writer.is_temporary(song,instrument,released_stage)==true,
+  'late terminal discarded retained temporary bookkeeping')
+local released_index
+for index,item in ipairs(instrument.phrases) do
+  if rawequal(item,released_stage) then released_index=index end
+end
+assert(released_index,'released staging phrase missing')
+instrument:delete_phrase_at(released_index)
+assert(writer.is_temporary(song,instrument,released_stage)==false
+  and #instrument.phrases==1)
+
+fail_delete=true
+before=#insertions
+assert(generate(2,{output_policy='play_once'}))
+local recovery_stage=insertions[before+1]
+idle:fire()
+last_render('render failed',0,0)
+assert(writer.state()=='idle' and #instrument.phrases==2)
+assert(recovery_stage.name=='ACID RECOVERY STAGING')
+assert(writer.is_temporary(song,instrument,recovery_stage)==true,
+  'retained recovery phrase was not reported as temporary')
+fail_delete=false
+local recovery_index
+for index,item in ipairs(instrument.phrases) do
+  if rawequal(item,recovery_stage) then recovery_index=index end
+end
+assert(recovery_index,'retained recovery phrase missing')
+instrument:delete_phrase_at(recovery_index)
+assert(writer.is_temporary(song,instrument,recovery_stage)==false
+  and #instrument.phrases==1)
+
+pause_render=false
+local observed={}
+copy_observer=function(phrase)
+  observed[phrase]=writer.is_temporary(song,instrument,phrase)
+end
+before=#insertions
+assert(generate(1,{output_policy='play_once',token=first_token}))
+idle:fire()
+copy_observer=nil
+assert(status and status.status=='committed',tostring(status and status.message))
+local regenerated_staging,regenerated_backup=insertions[before+1],insertions[before+2]
+assert(regenerated_staging and regenerated_backup,'regeneration did not insert stage and backup')
+assert(observed[regenerated_backup]==true,
+  'regeneration backup was not reported as temporary during copy')
+assert(writer.is_temporary(song,instrument,regenerated_staging)==false
+  and writer.is_temporary(song,instrument,regenerated_backup)==false,
+  'committed regeneration left temporary bookkeeping')
+assert(#instrument.phrases==1 and writer.state()=='idle')
+
+-- Adapter-shaped integration: status notifications must not settle the runtime
+-- delivery record; only the writer's terminal complete result may call done,
+-- and done must be the adapter's final action because legacy complete() has
+-- already cleared writer occupancy before that callback.
+local real_delivered,real_accepted
+local real_boundary=context.new{
+  writer=writer,
+  capture=function(_,request_token) return {token=request_token} end,
+  sink=function(request,done)
+    real_accepted=writer.generate(1,function(result)
+      if type(result)=='table' and result.kind=='complete' then
+        real_delivered=result
+        done(result)
+      end
+    end,pattern,1,{output_policy='play_once',token=request.token})
+    if real_accepted then return true end
+    return false,'real writer rejected the request'
+  end,
+}
+assert(real_boundary:request_generation('manual')==true and real_accepted==true)
+assert(real_boundary:state().status=='pending' and writer.state()=='busy',
+  'legacy writer status notification settled the runtime delivery record')
+idle:fire()
+assert(real_delivered and real_delivered.status=='committed',
+  tostring(real_delivered and real_delivered.message))
+assert(real_boundary:state().status=='idle' and writer.state()=='idle')
+assert(#instrument.phrases==1)
+
+-- A stale temporary record for the same object in another song must not hide
+-- a later valid record for the queried song.
+local original_song_lookup=renoise.song
+local shadow_phrase=instrument:insert_phrase_at(#instrument.phrases+1)
+local shadow_song={instruments={instrument},transport={timing_model=2}}
+local shadow_token_a,shadow_token_b={current=true},{current=true}
+function shadow_token_a:is_current() return true end
+function shadow_token_b:is_current() return true end
+forced_insert=shadow_phrase
+fail_delete=true
+assert(generate(#instrument.phrases+1,{output_policy='play_once',token=shadow_token_a}))
+assert(writer.cancel(shadow_token_a)==true)
+renoise.song=function() return shadow_song end
+assert(generate(#instrument.phrases+1,{output_policy='play_once',token=shadow_token_b}))
+assert(writer.cancel(shadow_token_b)==true)
+assert(writer.is_temporary(shadow_song,instrument,shadow_phrase)==true,
+  'earlier mismatched temporary record shadowed a later valid record')
+fail_delete=false
+forced_insert=nil
+local shadow_index
+for index,item in ipairs(instrument.phrases) do
+  if rawequal(item,shadow_phrase) then shadow_index=index end
+end
+assert(shadow_index,'shadow test phrase missing')
+instrument:delete_phrase_at(shadow_index)
+assert(writer.is_temporary(shadow_song,instrument,shadow_phrase)==false
+  and writer.is_temporary(song,instrument,shadow_phrase)==false)
+renoise.song=original_song_lookup
+assert(#instrument.phrases==1)
+print('ACID writer inspection state and temporary-object checks passed (mocked Renoise)')

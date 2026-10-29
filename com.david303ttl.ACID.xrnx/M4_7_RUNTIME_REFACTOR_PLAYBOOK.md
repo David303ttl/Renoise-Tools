@@ -621,11 +621,44 @@ Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
-**Status:** implementation pending. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
+**Status:** 2.1 complete; 2.2–2.9 remain pending. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
 
 **Execution order:** complete 2.1–2.9 strictly in order. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
 
 ### 2.1 — Freeze ownership, interfaces, and the cutover boundary
+
+**Status:** complete (2026-10-29). Interface conformance, production read-only
+writer inspection, mocked boundary integration and independent second-pass
+correction verification pass. This is not Gate 2 or native writer acceptance.
+
+**Baseline (2026-10-29):** `55f3414`, clean working tree; a fresh
+`pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` run passed all 45 specs.
+Implementation is limited to the interface boundary below; real context lifetime,
+authorization capture, GUI cutover and native writer reservation remain later gates.
+
+**Boundary audit:** existing manual and Live Edit token construction and the
+index-based New/append fallback remain the 2.8 cutover, not alternate interfaces
+to preserve. The legacy writer may complete synchronously before returning a
+failure value, clears its slot before terminal delivery finishes, and has
+boolean-returning cancellation without a consistent terminal channel. The strict
+sink must not call that API directly; 2.8 must normalize it through the specified adapter, with its installed delivery
+record preventing synchronous reentrant dispatch. Step 3 still owns slot acquisition
+before insertion, cleanup/terminal ordering and cancellation retirement.
+
+**Adapter and lifetime obligations:** a strict sink calls `done` only after its
+terminal cleanup/evidence work and as its final host/GUI-observable side effect;
+the acceptance return may follow synchronous `done`. It cannot continue mutating
+the destination or source after retirement. The legacy
+writer's idle status inside notification delivery is not sufficient admission
+evidence. The 2.8 adapter must guard the entire legacy delivery callback and
+normalize cancellation to one terminal result only when settlement and cleanup
+are verified; a boolean acknowledgement alone cannot retire the request. If it
+cannot establish that proof, retain nonterminal pending/tombstoned bookkeeping
+rather than fabricate success or retirement. Only the matching terminal path
+retires occupancy; an integrity-blocked terminal is allowed only after rendering
+has finished or never started, as required by Step 3. Step 2.2 must scrub pending runtime records reachable through tokens;
+Step 3 must also scrub/tombstone writer temporary-registry references on document
+release. Read-only temporary lookup does not establish reference-release safety.
 
 Keep one small private `runtime.context` module outside the dialog lifetime. It owns song epoch, dialog session, target objects/classification, edit/target/operation revisions, arming intent and song blocker state. GUI widgets, mutable editor source/history and presentation remain in `gui.lua`; they dispatch transitions and read a projection, never maintain another authoritative target/revision/token. Reuse `sequencer.copy_source`, Step 1 validators and `runtime.draft_cache`; do not duplicate their rules.
 
@@ -643,6 +676,36 @@ Keep one small private `runtime.context` module outside the dialog lifetime. It 
 Make Independent has a separate explicit action entry point and eligibility result; it never enters the musical sink. Its metadata transaction remains Step 4. Recovery chooser and Revalidate UI remain Step 5. Step 2 implements their required state/predicate seams, not placeholder actions that mutate data.
 
 **Complete when:** dependency tests cover the chosen imports; interface-conformance tests prove rejection, synchronous completion, duplicate completion and thrown/uncertain start handling. A sink that completes then returns rejection is a protocol violation: deliver at most once, diagnose and block further dispatch until read-only state inspection establishes safety; do not settle twice. Interface signatures/results are documented beside the implementation. No writer/store/model imports runtime or GUI.
+
+**Implemented interfaces:** `runtime.context.new{writer, capture, sink, issue_token?}`
+returns only `request_generation(trigger)`, `revoke(token, reason)` and `state()`.
+Mutable delivery state and fixed dependencies are closure-private. `capture(trigger,
+token)` must return a request carrying that exact token; context never writes the
+request. Optional `issue_token()` is a conformance seam and receives no record.
+`writer.state()` returns exactly `"idle", nil` or `"busy", token`; legacy tokenless
+busy jobs remain occupied. `writer.is_temporary(song, instrument, phrase)` returns
+only a boolean, backed by private insertion records and current raw membership.
+No create/regenerate facade, GUI adapter, metadata action or new scheduler was added.
+
+| Completion evidence | Focused verification | Result |
+| --- | --- | --- |
+| Rejection without completion; synchronous/asynchronous completion; duplicate, stale and rejected callbacks; completion followed by rejection; reentrant capture/delivery | `tests/acid/acid_runtime_context_spec.lua` | Pass |
+| Thrown/nonboolean starts retain matching accepted occupancy while revoking commit authorization; writer idle cannot retire a pending record; malformed/unreadable inspection blocks | `acid_runtime_context_spec.lua` | Pass; only a matching completion retires bookkeeping |
+| Private authority, detached projections, raw-token revocation, immutable/proxy capture, hostile diagnostic errors and request-reference release on retirement | `acid_runtime_context_spec.lua` | Pass; pending document-release scrubbing remains 2.2 |
+| Exact idle/busy token tuple, tokenless occupancy, repeated release, post-release cancellation and shared-`__eq` impostor rejection | `tests/acid/acid_writer_inspection_spec.lua` | Pass; legacy cancellation booleans do not retire native occupancy |
+| Stage/backup/recovery records, create promotion, external removal, cross-song/instrument lookup, raw phrase identity and stale-record shadowing | `acid_writer_inspection_spec.lua` | Pass; shared equality handler proves content equality differs from raw identity |
+| Real writer queries consumed by context; occupied/tokenless jobs deny capture and sink; status notifications do not settle; mocked terminal result retires matching context record | `acid_writer_inspection_spec.lua` | Pass; test-only sink/adapter, not production GUI or native reservation |
+| Dependency direction, no cycles, no model/store/writer import of runtime or GUI | `tests/acid/acid_dependency_graph_spec.lua` | Pass |
+| Regression and packaging | PowerShell 7 runners; Lua 5.1.5; archive inspection and source-byte comparison | ACID: 47 specs; repository: 50 specs; package: 28 entries; roots/private modules/development exclusions pass |
+| Independent second-pass closure | Runtime/writer adversarial review and separate documentation review, followed by correction verification | Within-scope findings fixed and covered; later adapter/lifetime obligations recorded above |
+
+Stored identifiers, seal/source formats, manifest/API versions and musical
+planning remain unchanged. The context is not wired into the GUI yet: 2.2–2.8
+must replace its real lifetime, capture and state authorities in order. Temporary
+registry release scrubbing, legacy delivery/cancel normalization and native slot
+reservation remain the owning later gates, not passes inferred from these mocks.
+No new native Renoise playback, undo or lifecycle acceptance was performed;
+M4 remains open and Step 8 remains required.
 
 ### 2.2 — Implement context lifetime and revocable delivery records
 

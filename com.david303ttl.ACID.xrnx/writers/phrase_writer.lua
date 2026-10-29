@@ -16,6 +16,10 @@ local M = {}
 M.PHRASE_NAME = "ACID 0.1 TEST"
 local busy = false
 local current = nil
+local released_token = nil
+local temporaries = {}
+local STATUS_IDLE = "idle"
+local STATUS_BUSY = "busy"
 local MAX_PHRASE_LINES = 512
 local policies = require("model.policies")
 
@@ -64,6 +68,31 @@ local function mutate_phrases(job,action)
   return action()
 end
 
+local function remember_temporary(job, phrase, role)
+  if phrase == nil then return end
+  temporaries[#temporaries+1]={
+    phrase=phrase,role=role,song=job.song,instrument=job.instrument,token=job.token
+  }
+end
+
+local function forget_temporary(phrase)
+  for index=#temporaries,1,-1 do
+    if rawequal(temporaries[index].phrase,phrase) then
+      table.remove(temporaries,index)
+    end
+  end
+end
+
+local function membership(list,value)
+  local ok,found=pcall(function()
+    for _,item in ipairs(list) do
+      if rawequal(item,value) then return true end
+    end
+    return false
+  end)
+  return ok,ok and found==true
+end
+
 local function remove_phrase(job, phrase)
   local ok,removed=pcall(function()
     local instrument=job.instrument
@@ -72,7 +101,49 @@ local function remove_phrase(job, phrase)
     mutate_phrases(job,function() instrument:delete_phrase_at(index) end)
     return phrase_index(instrument,phrase)==nil
   end)
+  if ok and removed then forget_temporary(phrase) end
   return ok and removed
+end
+
+-- Read-only inspection: detached status ("idle" or "busy") and the exact
+-- opaque operation token passed to generate, when one was supplied. An idle
+-- observed inside terminal delivery is not reentrant admission permission.
+function M.state()
+  local job=current
+  if not job then return STATUS_IDLE,nil end
+  if job.released then return STATUS_BUSY,released_token end
+  return STATUS_BUSY,job.token
+end
+
+-- Read-only query for objects this writer inserted and still owns as temporary.
+-- Records are matched by raw identity and verified against current membership.
+function M.is_temporary(song,instrument,phrase)
+  if song==nil or instrument==nil or phrase==nil then return false end
+  local index=1
+  while index<=#temporaries do
+    local record=temporaries[index]
+    if rawequal(record.phrase,phrase) and
+        rawequal(record.song,song) and rawequal(record.instrument,instrument) then
+      local phrase_ok,phrase_present=membership(instrument.phrases,phrase)
+      if not phrase_ok then
+        index=index+1
+      elseif not phrase_present then
+        table.remove(temporaries,index)
+      else
+        local instrument_ok,instrument_present=membership(song.instruments,instrument)
+        if not instrument_ok then
+          index=index+1
+        elseif not instrument_present then
+          table.remove(temporaries,index)
+        else
+          return true
+        end
+      end
+    else
+      index=index+1
+    end
+  end
+  return false
 end
 
 local function phrase_id_count(song,id)
@@ -264,6 +335,7 @@ local function finalize(job, event_count, skipped)
     local backup
     if job.replace then
       backup=mutate_phrases(job,function() return job.instrument:insert_phrase_at(#job.instrument.phrases+1) end)
+      remember_temporary(job,backup,"backup")
       job.backup=backup
       local backup_ok,backup_error=pcall(function()backup:copy_from(job.target_phrase)end)
       if not backup_ok then
@@ -384,6 +456,7 @@ local function finalize(job, event_count, skipped)
       end
     else
       job.temporary=false
+      forget_temporary(job.phrase)
     end
   end)
   if not safe then
@@ -416,9 +489,15 @@ local function begin_wait(job)
   job.idle_observer:add_notifier(job.on_idle)
 end
 
+-- Matching uses raw token identity. After release the original opaque token is
+-- retained for matching, but a matching cancel only marks cancellation and
+-- still returns false while a native render is pending; retirement remains the
+-- late terminal callback's responsibility.
 function M.cancel(token)
-  if not current or (token and current.token~=token) then return false end
+  if not current then return false end
   local job=current
+  local job_token=job.released and released_token or job.token
+  if token~=nil and not rawequal(job_token,token) then return false end
   job.cancelled=true
   if job.render_started then
     local result={kind="status",status="rendering",code="transaction.cancel_pending",
@@ -460,12 +539,15 @@ end
 function M.release()
   local job=current
   if not job then return end
+  if job.released then return end
   if not job.render_started then M.cancel();return end
+  local token=job.token
   unlink(job)
   for key in pairs(job) do job[key]=nil end
   job.released=true
   job.render_started=true
   job.cancelled=true
+  released_token=token
 end
 
 local function generate_impl(instrument_index, callback, custom_pattern, target_index, options)
@@ -585,6 +667,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
   local ok, error_message = pcall(function()
     -- Render into an append-only temporary phrase, never a user phrase.
     job.phrase = mutate_phrases(job,function() return instrument:insert_phrase_at(#instrument.phrases+1) end)
+    remember_temporary(job,job.phrase,"staging")
     job.phrase.name = M.PHRASE_NAME
     job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
     local script = job.phrase.script
@@ -602,7 +685,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       end,
       done=function(render_error,rendered_events,skipped_events)
         if current~=job then return end
-        if job.released then current=nil;busy=false;return end
+        if job.released then current=nil;busy=false;released_token=nil;return end
         job.render_started=false
         local safe,callback_error=pcall(function()
           if job.cancelled or not token_current(job) then
@@ -619,6 +702,7 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
     })
     current=job
     busy=true
+    released_token=nil
     begin_wait(job)
     if not token_current(job) then error("generation was invalidated before commit") end
     notify(job,{kind="status",status="rendering",message="Committing phrase...",
@@ -633,6 +717,9 @@ local function generate_impl(instrument_index, callback, custom_pattern, target_
       pcall(function()
         if job.phrase and rawequal(instrument.phrases[#instrument.phrases],job.phrase) then
           mutate_phrases(job,function() instrument:delete_phrase_at(#instrument.phrases) end)
+          if phrase_index(instrument,job.phrase)==nil then
+            forget_temporary(job.phrase)
+          end
         end
       end)
     end

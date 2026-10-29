@@ -123,6 +123,10 @@ rejects({["model.a"]="local function lazy() return require('writers.b') end", ["
 rejects({["model.a"]="require('renoise.b')", ["renoise.b"]=""}, "forbidden module")
 rejects({["renoise.a"]="require('writers.b')", ["writers.b"]=""}, "forbidden module")
 rejects({["writers.a"]="require('runtime.b')", ["runtime.b"]=""}, "forbidden module")
+rejects({["renoise.store"]="require('runtime.context')", ["runtime.context"]=""}, "forbidden module")
+rejects({["model.a"]="require('runtime.context')", ["runtime.context"]=""}, "forbidden module")
+rejects({["writers.a"]="require('gui')", ["gui"]=""}, "forbidden module")
+rejects({["runtime.context"]="require('gui')", ["gui"]=""}, "forbidden module")
 rejects({["model.a"]="require('model.b')", ["model.b"]="local function lazy() return require('model.a') end"}, "require cycle")
 rejects({["writers.a"]="require('writers.a')"}, "require cycle")
 rejects({["model.a"]="require('model.missing')"}, "missing module")
@@ -149,6 +153,7 @@ for path in files:lines() do
 end
 assert(files:close())
 assert(sources.main and sources["model.articulation"] and sources["writers.gate_writer"], "runtime inventory is incomplete")
+assert(sources["runtime.context"], "runtime context interface is missing")
 validate(sources)
 dofile('tests/bootstrap.lua')('acid')
 local articulation = require("model.articulation")
