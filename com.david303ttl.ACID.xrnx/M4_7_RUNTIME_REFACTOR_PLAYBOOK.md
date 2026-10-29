@@ -710,7 +710,7 @@ M4 remains open and Step 8 remains required.
 
 ### Step T0 — Establish automated real-Renoise verification before 2.2
 
-**Status:** planned; mandatory foundation gate after completed 2.1 and before 2.2. This is testing infrastructure, not a musical/runtime refactor or a substitute for Step 8 native acceptance. Preserve the Step 2.2–2.9 order and all existing Step 3–8 acceptance obligations. Do not claim real-host validation from mocked Lua specs.
+**Status:** T0.1 API notes and safety preflight are implemented; isolated-host prompt, document-lifecycle, and window checks remain unverified. T0.2–T0.8 and Gate T0 remain pending. This is testing infrastructure, not a musical/runtime refactor or a substitute for Step 8 native acceptance. Preserve the Step 2.2–2.9 order and all existing Step 3–8 acceptance obligations. Do not claim real-host validation from mocked Lua specs.
 
 **Purpose:** make native Renoise scripting-API integration and keyboard-based end-to-end checks reproducible from PowerShell 7, in a dedicated disposable Windows GUI session. Prioritize actual host behavior, song-state readback and independent assertions. Use the native API for bulk setup/inspection; use keyboard input only for observable user interaction and focus routing. A passing harness smoke test is not evidence that the legacy writer is safe.
 
