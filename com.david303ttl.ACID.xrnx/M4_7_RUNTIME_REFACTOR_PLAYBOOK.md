@@ -2,11 +2,11 @@
 
 **Branch:** `feature/hardening4`
 
-**Execution:** Steps 0–9 are dependency-ordered. Finish each gate before starting the next; failed evidence sends work back to the responsible contract, then through affected gates again. Tests are added with the behavior they verify, not deferred to Step 7. Step 0 includes a small native feasibility gate before runtime changes; Step 8 remains full native acceptance.
+**Execution:** Steps 0, 1, 1A, then 2–9 are dependency-ordered. Finish each gate before starting the next; failed evidence sends work back to the responsible contract, then through affected gates again. Tests are added with the behavior they verify, not deferred to Step 7. Step 0 includes a small native feasibility gate before runtime changes; Step 8 remains full native acceptance.
 
 **Final status:** M4 stays OPEN until native Renoise acceptance passes.
 
-**Scope:** Runtime binding, writer safety, native synchronization, Live Edit, explicit copied-ID resolution, and source/draft recovery. Preserve sequencer/compiler semantics, timing, articulation, current persistence formats, manifest versions, and M5 layout.
+**Scope:** Post-Gate-1 dependency/policy/duplication cleanup plus runtime binding, writer safety, native synchronization, Live Edit, explicit copied-ID resolution, and source/draft recovery. Preserve sequencer/compiler semantics, timing, articulation, current persistence formats, manifest versions, and M5 layout.
 
 ## Fixed decisions and responsibility boundaries
 
@@ -490,7 +490,93 @@ passes, the 1.1 native evidence passes, and the diff preserves the clean-cutover
 constraints. Only then mark Gate 1 complete and start Step 2. Mocked verification
 is not native playback, lifecycle or undo acceptance; those remain later gates.
 
+
+## Step 1A — Post-Gate-1 architecture and technical-debt cutover
+
+**Status:** pending. **Execution:** immediately after completed Gate 1 and **before Step 2**. Gate 1 stays recorded as complete; this is a new blocking Gate 1A, not a retroactive change to its evidence. Work 1A.1–1A.9 strictly in order. Each substep includes its own focused tests and a passing ACID suite before the next substep. Do not begin runtime integration until Gate 1A is complete.
+
+**Goal:** eliminate inverted dependencies, the lazy module cycle, divergent musical policies, duplicated core operations and confirmed obsolete code while retaining exact musical output, accepted Step 1 data protections, current wire formats, and existing Renoise API 6.2 behavior. Refactor existing owners rather than introduce a service layer, migration, alternate serializer, new scheduler or another writer. No M5 GUI/layout work and no additional audio-capture matrix.
+
+**Target dependency rule:** `model` (pure musical data/policies) is independent of `renoise`, `writers`, `runtime` and `gui`. `renoise` supplies host inspection/identity/storage adapters and may depend on `model`. `writers` depends on `model` and `renoise` but never on `runtime` or `gui`. `runtime` coordinates writers, drafts and host lifecycle; `gui` consumes runtime/model state. There must be **no require cycles**, including function-local/lazy requires. A pure function inside a host adapter does not justify duplicating the adapter in the model.
+
+### 1A.1 — Freeze the post-Gate-1 baseline and dependency graph
+
+1. Recheck `git status --short --branch` and current head; preserve unrelated work. Run `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` and record the actual outcome, not the historic 41-spec Gate 1 result as a new run.
+2. Enumerate all static and function-local `require` edges across the 24 runtime modules, GUI and relevant test mocks. Record actual runtime callers and test-only callers for ``articulation.apply`, `gate_writer.apply`, `pattrns_writer.generate`, `memory_status`, `sequencer.describe`, `draft_cache.close`, `draft_cache.capture/is_current/compare_and_clear`, `draft_cache.list/discard/copy_to_new/restore`, and `live_regen.armed`. Mark **remove now / needed by Steps 2–6 / keep because it enforces a boundary**.
+3. Establish byte/field-equivalence fixtures using existing `acid_output_planner_spec.lua`, `acid_pattrns_spec.lua`, `acid_legato_spec.lua`, `acid_pitch_bend_spec.lua`, `acid_phrase_persistence_spec.lua` and `acid_store_candidate_spec.lua`. Cover default/accent/unity velocity, Off and all supported PB ranges, straight/triplet and repeat/play-once, source/draft wire bytes, strict invalid input and unchanged output snapshots. Reuse the existing fixtures rather than create a second conformance matrix.
+
+**Check:** call-site inventory has no inferred "unused" API, and baseline behavior is executable. Failed baseline tests are resolved or explicitly isolated before changing dependencies.
+
+### 1A.2 — Restore dependency direction without compatibility shims
+
+1. Perform one mechanical owner relocation: `writers/phrase_ownership.lua` → `renoise/phrase_ownership.lua` (host identity, snapshots and seal); `model/pattern_store.lua` → `renoise/pattern_store.lua` (song `tool_data`); `model/target_capabilities.lua` → `renoise/target_capabilities.lua` (instrument introspection); `model/draft_cache.lua` → `runtime/draft_cache.lua` (session orchestration and recovery). Preserve the actual public functions and implementation behavior while moving them; do not split snapshot, store or draft ownership among multiple new helpers.
+2. Update **all** production imports, tests, mocks and packaging inputs in the same change. `renoise/pattern_store` imports `renoise/phrase_ownership`; `writers/phrase_validator` imports the store/ownership adapters; `runtime/draft_cache` may consume the validator, store and writer policy. No adapter imports its writer/controller consumer. Do not leave forwarding modules under old internal names; fail loudly on stale imports.
+3. Keep `model/output_planner`, `sequencer`, `cycle_interpreter`, `articulation` and `legato` Renoise-free. Verify current source/seal format, read-only inspection, object identity and host snapshot semantics did not change. Keep the verified candidate/commit/restore and captured draft guards; moving files does not confer write authorization.
+
+**Check:** every old import has a single new owner; modules load in Lua 5.1 tests without a runtime cycle; Step 1 identity/store/draft/compatibility cases pass. Include the moved files in an XRNX packaging check. Only move other modules if the graph shows a concrete forbidden dependency; avoid a cosmetic directory reorganization.
+
+### 1A.3 — Remove the articulation ↔ writer cycle and obsolete mutation entry points
+
+1. Remove test-only `model.articulation.apply` after moving its behavioral assertions to `articulation.plan` + the canonical writer application path. Remove `writers.gate_writer.apply` if its only callers are legacy tests, retaining `apply_plan` only where production rendering uses it. Remove unused `gate_writer.plan`/`location` re-export aliases **only if** no real consumer remains. `output_planner` owns gate planning; `gate_writer` applies planned operations, never the reverse.
+2. Keep `articulation.plan`, `control_signals.compile` and `output_planner.plan_gates` pure. No model `require("writers.*")`, including lazy requires; no test should need an obsolete writer API to validate musical semantics.
+3. Rewrite affected tests to exercise planner output and actual emitted/applied operations, including gate/slide collisions, rather than deleting their negative cases.
+
+**Check:** static dependency test detects forbidden edges and cycles (including lazy requires), all existing gate/articulation and planner expectations pass, and no second writer path remains.
+
+### 1A.4 — Centralize musical policies and validation rules
+
+1. Introduce **one small pure** `model/policies.lua` for the actual shared policy: supported PB choices `0, 2, 12, 24, 48`, PB validation/default, volume input validation, the precise default/accent/unity velocity policy and quantization, and default output policy. Replace policy tables/literals in `output_planner`, `phrase_writer`, `pattern_store`, `draft_cache`, `editor_state`, `gui`, `pattrns_writer` and `legato` with that policy. Preserve default 0.7, the existing `floor(v * 128)`/unity-255 behavior, and `%.6f` pattrns emission; verify that emission, planning and note-column verification agree on quantized results, especially 0.7 → 89 and 1 → 255.
+2. Use `sequencer.PAGE_SIZE` everywhere for page math; derive maximum pages from `sequencer.MAX_STEPS`. Make `sequencer` the owner of default source construction and of the Step-1-TIE rule. Setters, interpreter and validation may **check** the invariant at different boundaries, but reuse the same predicate/normalization policy rather than reimplement its meaning.
+3. Share only truly identical numeric predicates (integer/range/volume); retain different rejection wording and validation at each trust boundary. Replace copied PB/velocity/page literals, not every integer in the program. Keep the persisted ownership hash algorithm, `v3:` identifiers, current source grammar and all current default values unchanged.
+
+**Check:** policy tests exercise every PB value and rejection, fractional/NaN/edge velocity, both volume output paths and all gate/legato expectations. Formatting/normalization remains byte-compatible; Step-1-TIE and page navigation behave identically.
+
+### 1A.5 — Make planner and capability contracts explicit
+
+1. Replace the hidden object-identity assumption between `output_planner.plan` → `control_signals.compile` and `legato.plan` with one explicit semantic successor/steady-plan input or a single validated plan bundle. Its producer and consumers must check shape/association; never infer "same plan" from a coincidentally reused Lua table. Retain exact seam/legato/gate results.
+2. Make `target_capabilities` the sole producer of the capability comparison contract; `phrase_writer.context_valid` calls that comparison or compares a canonical immutable snapshot. Do not manually concatenate or parse `|` signatures in consumers. Keep previously accepted capability-change invalidation and avoid a new persistent format.
+3. Name and reuse rate/interval conversion and glide byte bounds where the same semantics appear in `articulation` and `output_planner`. Give loop-safety sentinels descriptive local constants, preserving termination behavior. Name the existing ownership-hash constants without changing the seal output. Do not alter Renoise-visible effect bytes.
+
+**Check:** tests mutate successor identity/semantics and one capability field at a time, rejecting stale/mismatched requests; same-source output remains identical for loop seams, legato, bend endpoints and effect clamping. A regression must fail if either contract silently decouples.
+
+### 1A.6 — Remove duplicate model-to-GUI transformations
+
+1. Replace `gui.lua`'s hand-copied pattern freeze with `sequencer.copy_source`, preserving complete canonical source and rejecting invalid partial drafts at the **same** request boundary as before; never silently normalize a dirty entry into a different source.
+2. Route every default/new/reset/source fallback through one `sequencer`-owned default-pattern factory and a single initialized settings policy. Remove four copied GUI `new_pattern(16)`/fill/reset implementations. Replace GUI page arithmetic with `PAGE_SIZE`, without changing two-page/32-step behavior.
+3. Project/compile once per actual editor-state revision and reuse that validated projection within the refresh and input handler. Do not cache across a real edit, instrument/phrase binding change, timing/PB/output-policy change, or host invalidation. Keep refresh and navigation read-only, and preserve existing error presentation.
+
+**Check:** editor/GUI timing-race, views, recovery and repeat tests demonstrate identical projection/serialization, no stale preview after edits or rebinding, and zero Generate/Live Edit writes on navigation/reset/arming. This does not yet unify runtime callbacks; that belongs to Step 5.
+
+### 1A.7 — Deduplicate the store codec without changing its contract
+
+1. In `renoise/pattern_store` extract one shared header/entry parser and one shared source token encoder/decoder for snapshot and DRAFT forms. Keep existing strict grammar, token ordering, field validation, maximum steps, `v3:`/magic markers and visible error categories. Do not invent a new blob protocol or silently accept malformed prior data.
+2. Remove repeated pitch/TIME serialization and redundant recompilation **inside parsing** only when the resulting validation path is identical. Preserve candidate staging, captured/proposed source checks, verified write/readback, guarded restore, and atomic exact-draft removal. Raw-string equality alone is **not** transaction or destination authorization.
+3. Compare pre/post refactor encoded bytes using saved fixtures, parse valid legacy/current records, reject malformed records, and replay uncertain/partial `tool_data` writes and late-draft scenarios with existing tests.
+
+**Check:** all persistence, ownership, source-value, candidate and draft-recovery tests pass with byte-identical encoding and the same mutation/no-mutation outcomes. A simpler codec may not loosen any collision, binding or rollback safeguard.
+
+### 1A.8 — Prune confirmed dead APIs, not future safety functionality
+
+1. Delete `pattrns_writer.generate` if the 1A.1 caller audit confirms no production use; retain `emit`. Remove `memory_status`, `sequencer.describe`, `draft_cache.close` and unused exports only where test assertions can be redirected to the canonical state/behavior. Do not delete legitimate regression coverage merely to remove a module.
+2. **Do not remove** `draft_cache.capture/is_current/compare_and_clear`: Step 1 hardened exact-revision clearing, and Step 5 must use or deliberately subsume it in the one completion path. **Do not remove** `list/discard/copy_to_new/restore` before Step 5 wires Recover Draft and proves occupied-scratch and persistence guards. The absence of a current GUI caller is not proof these contracts are obsolete.
+3. Defer `live_regen.armed` to Step 5's single-flight controller cutover. Keep one public arming state or remove redundant fields **then**, with appropriate tests. Inventory remaining test-only helpers and delete only proven dead paths; no compatibility stubs for internal APIs.
+
+**Check:** source searches find no orphan imports, function references or fake obsolete test paths. Replaced tests still prove the original safety and musical behavior.
+
+### 1A.9 — Gate 1A: complete the cutover before runtime integration
+
+1. Run each affected direct spec after its substep, then `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` and `pwsh -NoProfile -File ./scripts/run_tests.ps1`. Use a small `tests/acid/acid_dependency_graph_spec.lua` (or an equivalent existing test) to fail on inverted `model` dependencies, cycles, stale module names and unexpected duplicate policy definitions. No CI service or new testing framework.
+2. Run `pwsh -NoProfile -File ./scripts/package.ps1 -Tool ACID` and inspect archive roots/private runtime modules and absence of deprecated names, SDK and tests. Check `git diff --check` and changed paths. Preserve unrelated changes and do not change manifest versions.
+3. Record one compact Gate 1A matrix: substep, changed owners, tests executed/results, and any blocker. Do **not** mark the gate complete by copying Step 1 results, and do not claim native behavior from mocks. If a pure refactor changes output, store bytes, ownership/source authorization, or draft survival, revert that change or repair it and rerun affected cases before advancing.
+
+**Gate 1A:** dependency graph acyclic and downward-only; no competing/legacy writer entry points; PB/volume/default/TIE/capability/planner rules have single authorities; GUI source projection and store codec are nonduplicated; confirmed dead code is removed without deleting recovery protections; all targeted, ACID, full-suite and packaging checks pass. **Then** start Step 2. Native lifecycle/undo/musical smoke remains Step 8.
+
+**Carry forward without premature rewriting:** Step 2 owns the operation token and runtime blocker state; Step 3 must decompose `phrase_writer.finalize` into explicit prepare/stage/render/precommit/commit/rollback/cleanup/terminal helpers around **one** job, replace `500` idle diagnostics, `+8` event slack and `126/512` fallback literals with named API-derived or justified bounds, and use passed capacities in validator/snapshot loops without weakening preflight. Step 5 must replace the duplicated GUI late-create draft-movement blocks with one successful-commit handler, consume exact-revision capture guards, remove redundant arming state, and route both manual and Live Edit through one scheduler. Step 6 owns watcher/lifecycle deduplication. Step 7 removes leftovers and enforces the final graph; do not migrate these flows into parallel Step 1A implementations.
+
+
 ## Step 2 — Centralize runtime state, transitions, and operation guards
+
+**Prerequisite:** Gate 1A passes. Consume the new `renoise`/`runtime` ownership boundaries and shared policy contracts; do not restore old `model → writers` imports or duplicate state in the GUI.
 
 1. Consolidate one runtime context with song object/epoch, dialog session, explicit instrument/destination objects, target revision, edit revision, and operation revision. Keep only counters used to invalidate work. Store New Phrase as a synthetic option, never `#phrases + 1`.
 2. A target is New, Owned, Foreign, or Unavailable using Step 1 validators. Removed/same-index replacement objects remain detached; never adopt the replacement. Changing instrument rebuilds choices from that exact instrument.
@@ -505,6 +591,8 @@ Keep this context outside the dialog's lifetime. Exact recovery-object records l
 **Gate 2:** State/guard tests use a stub request sink/authorization predicate; the writer facade is integrated in Step 3. Prove navigation and arming make zero generation requests, blocked targets cannot authorize a request, and stale targets/sessions/edits fail guards. Include two distinct phrase mocks sharing a content-based `__eq`: identical lines must not merge targets, draft keys, or temporary-object membership. Prove an ordinary colliding phrase cannot be omitted from ownership checks through a caller-provided exclusion. The state contracts needed by the writer are implemented, not deferred to GUI integration.
 
 ## Step 3 — Harden the existing asynchronous musical writer
+
+**Architectural dependency:** reuse Gate 1A policy/identity/planner owners. Refactor the existing `phrase_writer.finalize` into named prepare, stage, render, precommit, commit, rollback, cleanup and terminal phases around **one** job and one callback. Make job state explicit, eliminate duplicate phrase-layout assignment and unnecessary repeated validation **only where the same precommit/postcommit invariants remain proved**. Replace undocumented literals (`500` diagnostics, `+8` slack, `126/512` capacity fallbacks and `512/12/8` field loops) with named, API-derived or validated bounds while preserving fail-closed behavior; the pending-render diagnostic cannot become a timeout that releases occupancy. Test each extracted phase's abort/rollback conditions using the Gate 3 cases. No new writer or transaction authority.
 
 Expose explicit `create(request, done)` and `regenerate(request, done)` facades around the existing writer job. Both share preparation/render/commit/cleanup helpers. Request fields are those from Step 2; regenerate additionally requires exact phrase object, ID, source baseline, and content baseline. Missing arguments reject; no default indices or mode inference. Return `false, rejection` only before accepting a job, with no mutation, occupied slot, or completion callback. Once accepted, return `true`; all later failures, including synchronous insertion/render-start failures, use `done(result)` after rollback/cleanup or recorded recovery. Completion may occur before the start call returns, so install the scheduler job first. It is **not** a synchronous rendered result.
 
@@ -554,6 +642,8 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 
 ## Step 5 — Integrate drafts and the single generation request pipeline
 
+**Architectural dependency:** collapse both GUI late-create draft-transfer blocks into one controller post-commit handler and use `runtime/draft_cache`'s exact capture/revision compare-and-clear protection, or replace it only with a proven equivalent single owner. Wire the already tested recovery APIs before considering any dead-code deletion. Reconcile `live_regen.armed` with the one real arming state; do not maintain two ignored flags. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation or completion path.
+
 1. Implement Step 1 draft precedence in existing `draft_cache`. Key session drafts by song/instrument/phrase objects; New Phrase has a per-instrument scratch entry. Do not use phrase position as identity.
 2. On navigation, preserve outgoing edits before binding, then validate incoming ownership/source and restore its matching dirty draft before committed source. Programmatic widget updates are guarded and never counted as edits. Foreign/unavailable selection retains the outgoing buffer as a detached recovery entry; it does not reset it to defaults or associate it with foreign content.
 3. Before every durable draft get/put/clear for an existing phrase, require exactly one live holder of its ID across the song. For collisions, use object-keyed session drafts only: never read one old-ID durable draft into multiple holders, overwrite/reassign it, or clear it. Preserve safe New Phrase persistence where existing name/index checks are unambiguous; otherwise retain a session draft and show the existing persistence/loss warning. Revalidate rather than adopting a reused instrument slot. No schema migration or new identity format.
@@ -580,6 +670,8 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 **Gate 6:** Meaningful notifier mocks cover internal insert/copy/name/cleanup notifications without self-cancellation, external changes during async waits, native selection changes, New preservation on refresh, blocked duplicates, undo/redo invalidation, repeated opens/song changes, and zero old-song callbacks/leaked registrations.
 
 ## Step 7 — Remove competing paths and run local/package checks
+
+**Architecture closeout:** rerun Gate 1A's dependency/policy/codec equivalence checks against the integrated runtime. Delete internal compatibility shims, remaining duplicate callback/draft-movement logic and dead exports only after Steps 2–6 have replacement coverage. Keep one write authority and one terminal path; do not introduce a new architectural cleanup milestone.
 
 1. Remove/redirect old musical writer callers, implicit append fallback, stale index caches, selection assignments, duplicate notifications, and abandoned delayed handlers. Internal stage/backup insertion remains legal only inside the guarded writer.
 2. Keep one runtime target, one musical request entry point, explicit create/regenerate sharing one job implementation, one identity-only action, one ownership implementation, and existing draft/store owners. Avoid new abstractions without a concrete duplicate responsibility.
@@ -655,6 +747,6 @@ Across A–D, repeat the Step 0 sentinel-field round trip against the final writ
 
 ## Stop conditions
 
-At every step, stop and correct the responsible contract before advancing if: a writer can choose an implicit destination; an index becomes identity; regeneration falls back to create; a notifier renders/re-keys; a copy is adopted heuristically; an unchecked hidden/inactive field can be erased; a stale job can commit; a rollback overwrites newer data or deletes an unidentified object; a read-only/native selection property is assigned; an API member or timing guarantee is guessed; dirty drafts are silently discarded/rebound; or work expands into sequencer semantics/M5 redesign.
+At every step, stop and correct the responsible contract before advancing if: the dependency graph regains a require cycle or model-to-writer edge; a PB, velocity, planner or capability contract diverges across emitters and validators; a codec refactor changes persisted bytes or weakens guards; a writer can choose an implicit destination; an index becomes identity; regeneration falls back to create; a notifier renders/re-keys; a copy is adopted heuristically; an unchecked hidden/inactive field can be erased; a stale job can commit; a rollback overwrites newer data or deletes an unidentified object; a read-only/native selection property is assigned; an API member or timing guarantee is guessed; dirty drafts are silently discarded/rebound; or work expands into sequencer semantics/M5 redesign.
 
 Use the pinned SDK references above as authoritative. Official fallback: [API-6.2 source tree](https://github.com/renoise/xrnx/tree/API-6.2). Do not ship or require SDK files from the tool.
