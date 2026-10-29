@@ -46,6 +46,10 @@ assert(missing.kind=='unknown' and missing.plugin==nil and missing.sample==nil a
 local failed=setmetatable({}, {__index=function() error('receiver read failed') end})
 local unreadable=assert(capabilities.inspect(failed))
 assert(unreadable.kind=='unknown' and unreadable.midi==nil and unreadable.read_error:find('receiver read failed',1,true))
+local unreadable_again=assert(capabilities.inspect(failed))
+assert(unreadable.read_error==unreadable_again.read_error)
+assert(not capabilities.same(unreadable,unreadable_again),
+  'identical failed inspections must not establish an unchanged target')
 local malformed=target(false,false,'')
 malformed.plugin_properties.alias_fx_track_index='missing'
 assert(assert(capabilities.inspect(malformed)).kind=='unknown')
@@ -117,6 +121,7 @@ assert(capabilities.same(baseline,assert(capabilities.inspect(stable))),
 assert(not capabilities.same({},{}),'uninspected capabilities must reject comparison')
 assert(not capabilities.same(baseline,nil))
 assert(not capabilities.same(baseline,missing))
-assert(capabilities.same(missing,assert(capabilities.inspect({}))))
+assert(not capabilities.same(missing,assert(capabilities.inspect({}))),
+  'two unknown profiles must not establish an unchanged target')
 
 print('ACID target capability classification and change detection passed')

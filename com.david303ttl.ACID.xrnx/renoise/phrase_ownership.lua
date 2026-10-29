@@ -51,11 +51,18 @@ local function hash(phrase)
   return string.format("%08X",acc)
 end
 
-function M.id(phrase)
-  local id=(phrase.name or ""):match("^ACID 0%.1 #(%d+) %[v3:(%x%x%x%x%x%x%x%x)%]$")
+local function parse_name(name)
+  if type(name)~="string" then return nil end
+  local id,seal=name:match("^ACID 0%.1 #(%d+) %[v3:(%x%x%x%x%x%x%x%x)%]$")
   if not id then return nil end
   local numeric=tonumber(id)
-  return numeric and numeric>=1 and numeric<=MAX_PHRASE_ID and numeric or nil
+  if not numeric or numeric<1 or numeric>MAX_PHRASE_ID then return nil end
+  return numeric,seal
+end
+
+function M.id(phrase)
+  local id=parse_name(phrase.name or "")
+  return id
 end
 
 function M.make_name(phrase,id)
@@ -68,11 +75,8 @@ function M.make_name(phrase,id)
 end
 
 function M.status(phrase)
-  local name=phrase.name or ""
-  local seal=name:match("^ACID 0%.1 #%d+ %[v3:(%x%x%x%x%x%x%x%x)%]$")
-  if not seal or not name:match("^ACID 0%.1 #(%d+) ") then return "foreign" end
-  local id=tonumber(name:match("^ACID 0%.1 #(%d+) "))
-  if not id or id<1 or id>MAX_PHRASE_ID then return "foreign" end
+  local id,seal=parse_name(phrase.name or "")
+  if not id then return "foreign" end
   local actual,err=hash(phrase)
   if not actual then return "modified",err end
   if seal~=actual then return "modified","ACID phrase was edited after generation" end

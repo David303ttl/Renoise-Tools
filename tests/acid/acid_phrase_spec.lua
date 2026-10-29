@@ -178,6 +178,24 @@ assert(#instrument.phrases==1 and instrument.phrases[1]==first)
 assert(message_text(messages[#messages]):find("generated",1,true),message_text(messages[#messages]))
 assert(first.cells[1].note_value==38)
 assert(require("renoise.pattern_store").load(song,instrument,first).pitch_events[1].note==38)
+-- A failed second capability inspection at renderer start cannot publish output.
+local unreadable_status
+local previous_phrase_name,previous_source=first.name,song.tool_data
+assert(generate(function(value)unreadable_status=value end,edited,1))
+instrument.samples=nil
+setmetatable(instrument,{__index=function(_,key)
+  if key=="samples" then error("sample inventory read failed") end
+end})
+idle:fire()
+setmetatable(instrument,nil)
+instrument.samples={{sample_buffer={has_sample_data=true}}}
+assert(type(unreadable_status)=="table" and unreadable_status.status=="suspended"
+  and unreadable_status.code=="safety.target_changed",
+  "an unreadable capability profile during generation must suspend the writer")
+assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],first)
+  and first.name==previous_phrase_name and song.tool_data==previous_source
+  and first.cells[1].note_value==38,
+  "an unreadable capability profile authorized destination or source publication")
 -- A missing render callback retains staging and blocks overlapping writes.
 local base_render=script.render_to_pattern
 local render_calls,pending_render=0,nil

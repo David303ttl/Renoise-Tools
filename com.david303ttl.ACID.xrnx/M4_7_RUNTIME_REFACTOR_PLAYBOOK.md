@@ -493,7 +493,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ## Step 1A — Post-Gate-1 architecture and technical-debt cutover
 
-**Status:** pending. **Execution:** immediately after completed Gate 1 and **before Step 2**. Gate 1 stays recorded as complete; this is a new blocking Gate 1A, not a retroactive change to its evidence. Work 1A.1–1A.9 strictly in order. Each substep includes its own focused tests and a passing ACID suite before the next substep. Do not begin runtime integration until Gate 1A is complete.
+**Status:** complete. Gate 1A passed before Step 2; native lifecycle, undo and musical acceptance remain Step 8.
 
 **Goal:** eliminate inverted dependencies, the lazy module cycle, divergent musical policies, duplicated core operations and confirmed obsolete code while retaining exact musical output, accepted Step 1 data protections, current wire formats, and existing Renoise API 6.2 behavior. Refactor existing owners rather than introduce a service layer, migration, alternate serializer, new scheduler or another writer. No M5 GUI/layout work and no additional audio-capture matrix.
 
@@ -507,7 +507,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 **Check:** call-site inventory has no inferred "unused" API, and baseline behavior is executable. Failed baseline tests are resolved or explicitly isolated before changing dependencies.
 
-**1A.1 record:** baseline at `5c12c85`; initial worktree clean; baseline ACID run passed 41 specs. After adding the byte fixtures, both focused specs and the full ACID suite passed again (41 specs). Fixed byte assertions cover the complete committed source record in `tests/acid/acid_phrase_persistence_spec.lua` and the complete source-plus-draft store payload in `tests/acid/acid_store_candidate_spec.lua`. Gate 1A remains pending.
+**1A.1 record:** baseline at `5c12c85`; initial worktree clean; baseline ACID run passed 41 specs. After adding the byte fixtures, both focused specs and the full ACID suite passed again (41 specs). Fixed byte assertions cover the complete committed source record in `tests/acid/acid_phrase_persistence_spec.lua` and the complete source-plus-draft store payload in `tests/acid/acid_store_candidate_spec.lua`.
 
 | Module group | `require` edges |
 | --- | --- |
@@ -550,7 +550,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.4 — Centralize musical policies and validation rules
 
-**Status:** implemented. Shared policy owner: `model/policies.lua`; canonical source/defaults and leading-TIE rule: `model/sequencer.lua`. Focused policy, paging, source, persistence, draft, GUI and musical regression checks pass; ACID suite: 43 specs; full repository suite: 46 specs. Package root/private-module/exclusion checks and independent second-pass review pass. Native Renoise checks remain Step 8; Gate 1A remains pending.
+**Status:** implemented. Shared policy owner: `model/policies.lua`; canonical source/defaults and leading-TIE rule: `model/sequencer.lua`. Focused policy, paging, source, persistence, draft, GUI and musical regression checks pass; ACID suite: 43 specs; full repository suite: 46 specs. Package root/private-module/exclusion checks and independent second-pass review pass. Native Renoise checks remain Step 8.
 
 1. Introduce **one small pure** `model/policies.lua` for the actual shared policy: supported PB choices `0, 2, 12, 24, 48`, PB validation/default, volume input validation, the precise default/accent/unity velocity policy and quantization, and default output policy. Replace policy tables/literals in `output_planner`, `phrase_writer`, `pattern_store`, `draft_cache`, `editor_state`, `gui`, `pattrns_writer` and `legato` with that policy. Preserve default 0.7, the existing `floor(v * 128)`/unity-255 behavior, and `%.6f` pattrns emission; verify that emission, planning and note-column verification agree on quantized results, especially 0.7 → 89 and 1 → 255.
 2. Use `sequencer.PAGE_SIZE` everywhere for page math; derive maximum pages from `sequencer.MAX_STEPS`. Make `sequencer` the owner of default source construction and of the Step-1-TIE rule. Setters, interpreter and validation may **check** the invariant at different boundaries, but reuse the same predicate/normalization policy rather than reimplement its meaning.
@@ -560,7 +560,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.5 — Make planner and capability contracts explicit
 
-**Status:** implemented. `control_signals` validates semantic/successor association and captures detached semantic, successor and event values; `legato` checks the contract before overlap or PB planning. `target_capabilities.same` owns captured capability comparison. `articulation` owns shared glide conversion/bounds; cycle and seal constants preserve existing limits and bytes. Association, per-field capability invalidation, glide, cycle-boundary and exact-seal regressions pass. ACID suite: 44 specs; full repository suite: 47 specs. Second-pass review, 480-case baseline output equivalence and package checks pass. Native Renoise acceptance remains Step 8; Gate 1A remains pending.
+**Status:** implemented. `control_signals` validates semantic/successor association and captures detached semantic, successor and event values; `legato` checks the contract before overlap or PB planning. `target_capabilities.same` owns captured capability comparison. `articulation` owns shared glide conversion/bounds; cycle and seal constants preserve existing limits and bytes. Association, per-field capability invalidation, glide, cycle-boundary and exact-seal regressions pass. ACID suite: 44 specs; full repository suite: 47 specs. Second-pass review, 480-case baseline output equivalence and package checks pass. Native Renoise acceptance remains Step 8.
 
 1. Replace the hidden object-identity assumption between `output_planner.plan` → `control_signals.compile` and `legato.plan` with one explicit semantic successor/steady-plan input or a single validated plan bundle. Its producer and consumers must check shape/association; never infer "same plan" from a coincidentally reused Lua table. Retain exact seam/legato/gate results.
 2. Make `target_capabilities` the sole producer of the capability comparison contract; `phrase_writer.context_valid` calls that comparison or compares a canonical immutable snapshot. Do not manually concatenate or parse `|` signatures in consumers. Keep previously accepted capability-change invalidation and avoid a new persistent format.
@@ -570,7 +570,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.6 — Remove duplicate model-to-GUI transformations
 
-**Status:** implemented. Canonical request snapshots use `sequencer.copy_source`; GUI initialization, New, reset and unavailable-source defaults share `reset_source` and `sequencer.new_pattern`. Editor projections expose their compiled plan and are reused by revision and raw target identity, with host invalidation. Navigation, arming and reset do not request rendering; reset invalidates queued work. Focused editor, defaults, GUI views/recovery/timing and repeat checks pass; ACID suite: 44 specs; full repository suite: 47 specs. Second-pass review and package root/private-module/exclusion checks pass. Native Renoise checks remain Step 8; Gate 1A remains pending.
+**Status:** implemented. Canonical request snapshots use `sequencer.copy_source`; GUI initialization, New, reset and unavailable-source defaults share `reset_source` and `sequencer.new_pattern`. Editor projections expose their compiled plan and are reused by revision and raw target identity, with host invalidation. Navigation, arming and reset do not request rendering; reset invalidates queued work. Focused editor, defaults, GUI views/recovery/timing and repeat checks pass; ACID suite: 44 specs; full repository suite: 47 specs. Second-pass review and package root/private-module/exclusion checks pass. Native Renoise checks remain Step 8.
 
 1. Replace `gui.lua`'s hand-copied pattern freeze with `sequencer.copy_source`, preserving complete canonical source and rejecting invalid partial drafts at the **same** request boundary as before; never silently normalize a dirty entry into a different source.
 2. Route every default/new/reset/source fallback through one `sequencer`-owned default-pattern factory and a single initialized settings policy. Remove four copied GUI `new_pattern(16)`/fill/reset implementations. Replace GUI page arithmetic with `PAGE_SIZE`, without changing two-page/32-step behavior.
@@ -580,7 +580,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.7 — Deduplicate the store codec without changing its contract
 
-**Status:** implemented. `renoise/pattern_store` shares entry/header parsing and source token encoding/decoding for snapshots and drafts. Strict grammar, error categories, stored bytes and transaction guards are preserved. Codec fixtures, malformed-record checks, persistence, ownership, source-value, candidate and draft-recovery tests pass; ACID suite: 45 specs; full repository suite: 48 specs. Second-pass differential verification matches decoded values, exact errors and encoded bytes across 21,591 records; package root/private-module/exclusion checks pass. Native Renoise checks remain Step 8; Gate 1A remains pending.
+**Status:** implemented. `renoise/pattern_store` shares entry/header parsing and source token encoding/decoding for snapshots and drafts. Strict grammar, error categories, stored bytes and transaction guards are preserved. Codec fixtures, malformed-record checks, persistence, ownership, source-value, candidate and draft-recovery tests pass; ACID suite: 45 specs; full repository suite: 48 specs. Second-pass differential verification matches decoded values, exact errors and encoded bytes across 21,591 records; package root/private-module/exclusion checks pass. Native Renoise checks remain Step 8.
 
 1. In `renoise/pattern_store` extract one shared header/entry parser and one shared source token encoder/decoder for snapshot and DRAFT forms. Keep existing strict grammar, token ordering, field validation, maximum steps, `v3:`/magic markers and visible error categories. Do not invent a new blob protocol or silently accept malformed prior data.
 2. Remove repeated pitch/TIME serialization and redundant recompilation **inside parsing** only when the resulting validation path is identical. Preserve candidate staging, captured/proposed source checks, verified write/readback, guarded restore, and atomic exact-draft removal. Raw-string equality alone is **not** transaction or destination authorization.
@@ -590,7 +590,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.8 — Prune confirmed dead APIs, not future safety functionality
 
-**Status:** implemented. Removed `pattrns_writer.generate/expected_volumes`, `memory_status`, `sequencer.describe`, `draft_cache.close` and `phrase_writer.plan_output`; planner cell constructors and command encoding are private. Tests exercise canonical planning/emission and ownership state. Protected draft APIs and `live_regen.armed` remain. Direct affected specs, 45 ACID specs and all 48 repository specs pass; second-pass caller/diff review and package root/module/exclusion checks pass. Native Renoise checks remain unverified; Gate 1A remains pending.
+**Status:** implemented. Removed `pattrns_writer.generate/expected_volumes`, `memory_status`, `sequencer.describe`, `draft_cache.close` and `phrase_writer.plan_output`; planner cell constructors and command encoding are private. Tests exercise canonical planning/emission and ownership state. Protected draft APIs and `live_regen.armed` remain. Direct affected specs, 45 ACID specs and all 48 repository specs pass; second-pass caller/diff review and package root/module/exclusion checks pass. Native Renoise checks remain unverified.
 
 1. Delete `pattrns_writer.generate` if the 1A.1 caller audit confirms no production use; retain `emit`. Remove `memory_status`, `sequencer.describe`, `draft_cache.close` and unused exports only where test assertions can be redirected to the canonical state/behavior. Do not delete legitimate regression coverage merely to remove a module.
 2. **Do not remove** `draft_cache.capture/is_current/compare_and_clear`: Step 1 hardened exact-revision clearing, and Step 5 must use or deliberately subsume it in the one completion path. **Do not remove** `list/discard/copy_to_new/restore` before Step 5 wires Recover Draft and proves occupied-scratch and persistence guards. The absence of a current GUI caller is not proof these contracts are obsolete.
@@ -600,11 +600,21 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 ### 1A.9 — Gate 1A: complete the cutover before runtime integration
 
-1. Run each affected direct spec after its substep, then `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` and `pwsh -NoProfile -File ./scripts/run_tests.ps1`. Use a small `tests/acid/acid_dependency_graph_spec.lua` (or an equivalent existing test) to fail on inverted `model` dependencies, cycles, stale module names and unexpected duplicate policy definitions. No CI service or new testing framework.
-2. Run `pwsh -NoProfile -File ./scripts/package.ps1 -Tool ACID` and inspect archive roots/private runtime modules and absence of deprecated names, SDK and tests. Check `git diff --check` and changed paths. Preserve unrelated changes and do not change manifest versions.
-3. Record one compact Gate 1A matrix: substep, changed owners, tests executed/results, and any blocker. Do **not** mark the gate complete by copying Step 1 results, and do not claim native behavior from mocks. If a pure refactor changes output, store bytes, ownership/source authorization, or draft survival, revert that change or repair it and rerun affected cases before advancing.
+| Substep | Changed owners | Verification |
+| --- | --- | --- |
+| 1A.1 | Persistence byte fixtures | Covered by the passing ACID and repository suites |
+| 1A.2 | `renoise` and `runtime` module owners | ACID suite; package module layout and exclusions — pass |
+| 1A.3 | `model.articulation`, `writers.gate_writer` | Dependency graph and ACID suite — pass |
+| 1A.4 | `model.policies`, `model.sequencer`, consumers | ACID and repository suites — pass |
+| 1A.5 | `renoise.target_capabilities`, planner contracts, `writers.phrase_writer` | `acid_target_capabilities_spec`, `acid_phrase_spec`, `acid_gate_transaction_spec`; ACID and repository suites — pass |
+| 1A.6 | `model.editor_state`, GUI projection | ACID and repository suites — pass |
+| 1A.7 | `renoise.pattern_store` codec | ACID and repository suites — pass |
+| 1A.8 | `renoise.phrase_ownership`, confirmed dead APIs | `acid_phrase_persistence_spec`; ACID and repository suites — pass |
+| 1A.9 | Dependency graph and final verification | `acid_dependency_graph_spec`; ACID: 45 specs; repository: 48 specs; ACID package: 27 runtime files; archive inspection; `git diff --check` — pass |
 
-**Gate 1A:** dependency graph acyclic and downward-only; no competing/legacy writer entry points; PB/volume/default/TIE/capability/planner rules have single authorities; GUI source projection and store codec are nonduplicated; confirmed dead code is removed without deleting recovery protections; all targeted, ACID, full-suite and packaging checks pass. **Then** start Step 2. Native lifecycle/undo/musical smoke remains Step 8.
+Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
+
+**Gate 1A: complete.** The dependency graph and shared policy checks pass; obsolete imports and APIs are absent; GUI source projection and store codec have single owners; recovery protections remain. Focused, ACID, repository and packaging checks pass. Step 2 may begin. Native lifecycle, undo and musical acceptance remain Step 8.
 
 **Carry forward without premature rewriting:** Step 2 owns the operation token and runtime blocker state; Step 3 must decompose `phrase_writer.finalize` into explicit prepare/stage/render/precommit/commit/rollback/cleanup/terminal helpers around **one** job, replace `500` idle diagnostics, `+8` event slack and `126/512` fallback literals with named API-derived or justified bounds, and use passed capacities in validator/snapshot loops without weakening preflight. Step 5 must replace the duplicated GUI late-create draft-movement blocks with one successful-commit handler, consume exact-revision capture guards, remove redundant arming state, and route both manual and Live Edit through one scheduler. Step 6 owns watcher/lifecycle deduplication. Step 7 removes leftovers and enforces the final graph; do not migrate these flows into parallel Step 1A implementations.
 

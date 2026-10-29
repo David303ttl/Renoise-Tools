@@ -653,13 +653,13 @@ Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_R
 
 - [x] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility; findings incorporated into the playbook contracts.
 - [x] Shared validation/store contracts and complete field-preservation policy; [Gate 1 verification](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#18--close-gate-1-and-hand-contracts-to-runtime-integration).
-- [ ] **Step 1A (next, blocks Step 2):** dependency direction/cycle removal, single musical policies and planner contracts, canonical GUI source/projection, lossless store codec cleanup, confirmed dead-code removal; [linear substeps and Gate 1A](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-1a--post-gate-1-architecture-and-technical-debt-cutover).
+- [x] **Step 1A complete:** dependency direction/cycle removal, single musical policies and planner contracts, canonical GUI source/projection, lossless store codec cleanup, confirmed dead-code removal; [Gate 1A verification](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-1a--post-gate-1-architecture-and-technical-debt-cutover).
 - [ ] Runtime context, raw object identity, guards, and blocker state.
 - [ ] Explicit create/regenerate writer and one cancellation/completion handshake; decompose existing finalize into guarded phases and replace unjustified writer/capacity literals without changing failure safety.
 - [ ] Explicit Make Independent for matching valid collision groups; no automatic re-keying or source-less adoption.
 - [ ] Draft precedence, recovery chooser, read-only revalidation, and one manual/Live Edit request pipeline; unify late-create draft movement, exact-revision clearing and armed state.
 - [ ] Native observers, internal mutation reconciliation, and release/late-callback handling.
-- [ ] Remove competing paths and recheck Gate 1A architecture/policy/codec invariants; pass all 35 focused regressions, existing suites, and required package checks.
+- [ ] Remove competing paths and recheck Gate 1A architecture/policy/codec invariants after runtime integration; pass the then-current focused suites, repository suites, and package checks.
 - [ ] Pass native acceptance A–E, including field preservation, drafts, cancellation, copies, and undo.
 - [ ] Final documentation/review and focused commit; keep M4 open until acceptance passes.
 
@@ -668,7 +668,7 @@ succeeded, definitions and offline docs were inspected, runtime/storage call
 sites were inventoried, and all 34 ACID specs passed. The
 [prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record)
 contains the inventory, native observations and tested unsupported-script
-rejection predicate. **Steps 0–1 are complete; Step 1A is next and pending**; the playbook's Gate 1 table
+rejection predicate. **Steps 0–1A are complete**; the playbook's Gate 1 table
 maps the shared contracts to passing tests and native helper checks. Runtime
 integration and native acceptance remain open.
 Native follow-up in Renoise 3.5.4 / API 6.2 found that undo can restore old

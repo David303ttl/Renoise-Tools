@@ -123,7 +123,7 @@ end
 function M.same(left, right)
   local a,b=comparisons[left],comparisons[right]
   if not a or not b then return false end
-  if a.read_error or b.read_error then return a.read_error==b.read_error end
+  if a.read_error or b.read_error then return false end
   for index=1,COMPARISON_FIELDS do
     if a[index]~=b[index] then return false end
   end

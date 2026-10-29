@@ -52,14 +52,43 @@ end
 
 local function validate(sources)
   local graph = {}
+  local allowed = {
+    model = {model=true},
+    renoise = {model=true, renoise=true},
+    writers = {model=true, renoise=true, writers=true},
+    runtime = {model=true, renoise=true, writers=true, runtime=true},
+  }
+  local obsolete = {
+    ["writers.phrase_ownership"] = true,
+    ["model.pattern_store"] = true,
+    ["model.target_capabilities"] = true,
+    ["model.draft_cache"] = true,
+  }
+  for name in pairs(obsolete) do
+    assert(not sources[name], "obsolete module remains: " .. name)
+  end
+  local pb_choice_table_count = 0
   for name, source in pairs(sources) do
     graph[name] = dependencies(source)
+    local owner = name:match("^([^.]+)%.")
     for dependency in pairs(graph[name]) do
       assert(sources[dependency], name .. " imports missing module " .. dependency)
-      if name:match("^model%.") then
-        assert(dependency:match("^model%."), name .. " imports forbidden module " .. dependency)
+      assert(not obsolete[dependency], name .. " imports obsolete module " .. dependency)
+      local dependency_owner = dependency:match("^([^.]+)%.")
+      if allowed[owner] then
+        assert(dependency_owner and allowed[owner][dependency_owner],
+          name .. " imports forbidden module " .. dependency)
       end
     end
+    local _, pb_choice_tables = source:gsub("%{%s*0%s*,%s*2%s*,%s*12%s*,%s*24%s*,%s*48%s*%}", "")
+    if pb_choice_tables > 0 then
+      assert(name == "model.policies" and pb_choice_tables == 1,
+        name .. " duplicates the PB choices policy")
+      pb_choice_table_count = pb_choice_table_count + pb_choice_tables
+    end
+  end
+  if sources.main then
+    assert(pb_choice_table_count == 1, "PB choices policy must have one canonical table")
   end
   local visiting, visited, path = {}, {}, {}
   local function visit(name)
@@ -91,12 +120,20 @@ local count = 0
 for _ in pairs(imports) do count = count + 1 end
 assert(count == 3)
 rejects({["model.a"]="local function lazy() return require('writers.b') end", ["writers.b"]=""}, "forbidden module")
+rejects({["model.a"]="require('renoise.b')", ["renoise.b"]=""}, "forbidden module")
+rejects({["renoise.a"]="require('writers.b')", ["writers.b"]=""}, "forbidden module")
+rejects({["writers.a"]="require('runtime.b')", ["runtime.b"]=""}, "forbidden module")
 rejects({["model.a"]="require('model.b')", ["model.b"]="local function lazy() return require('model.a') end"}, "require cycle")
 rejects({["writers.a"]="require('writers.a')"}, "require cycle")
 rejects({["model.a"]="require('model.missing')"}, "missing module")
 rejects({["model.a"]="require(module_name)"}, "literal module name")
 rejects({["model.a"]="require('model.' .. module_name)"}, "literal module name")
+rejects({["model.a"]="require('gui')", ["gui"]=""}, "forbidden module")
 validate({["model.a"]="", ["writers.b"]="local function lazy() return require('model.a') end"})
+validate({["model.a"]="", ["renoise.a"]="require('model.a')", ["writers.a"]="require('renoise.a')", ["runtime.a"]="require('writers.a')"})
+rejects({["model.policies"]="", ["model.a"]="", ["writers.a"]="local choices = {0, 2, 12, 24, 48}"}, "duplicates the PB choices policy")
+rejects({["writers.phrase_ownership"]="", ["writers.a"]="require('writers.phrase_ownership')"}, "obsolete module")
+rejects({["model.pattern_store"]=""}, "obsolete module remains")
 
 local root = "com.david303ttl.ACID.xrnx"
 local command = 'pwsh -NoProfile -Command "Get-ChildItem -LiteralPath ' .. root

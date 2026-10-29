@@ -165,6 +165,18 @@ old.name="ACID 0.1 #3 [v1:DEADBEEF]"
 assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
 old.name="ACID 0.1 #3 [v2:DEADBEEF]"
 assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
+old.name="ACID 0.1 #3 [v3:deadbeef]"
+assert(ownership.id(old)==3 and ownership.status(old)=="modified")
+old.name="ACID 0.1 #0 [v3:DEADBEEF]"
+assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
+old.name="ACID 0.1 #2147483648 [v3:DEADBEEF]"
+assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
+old.name="ACID 0.1 #2147483647 [v3:DEADBEEF]"
+assert(ownership.id(old)==2147483647 and ownership.status(old)=="modified")
+old.name="ACID 0.1 #3 [v3:DEADBEE]"
+assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
+old.name="ACID 0.1 #3 [v3:DEADBEEF] trailing"
+assert(ownership.id(old)==nil and ownership.status(old)=="foreign")
 s.tool_data=nil
 local invalid_range,range_error=store.prepare(s,4,p,"repeat",4,function()return true end)
 assert(not invalid_range and range_error=="invalid PB range")
