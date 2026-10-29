@@ -35,6 +35,7 @@ $toolRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $toolDirectoryNam
 $packageScript = Join-Path $PSScriptRoot 'package.ps1'
 $driverDirectory = Join-Path $repoRoot 'tests/renoise/driver'
 $driverSource = Join-Path $driverDirectory 'remote_driver.lua'
+$codecSource = Join-Path $driverDirectory 'json.lua'
 $repoTempRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'tmp'))
 $relativeOutputPath = $OutputDirectory.Replace('\', '/')
 $outputSegments = $relativeOutputPath.Split('/')
@@ -283,11 +284,15 @@ if (-not (Test-Path -LiteralPath $toolRoot -PathType Container)) { throw "ACID s
 if (-not (Test-Path -LiteralPath $packageScript -PathType Leaf)) { throw "Release packager '$packageScript' was not found." }
 if (-not (Test-Path -LiteralPath $driverDirectory -PathType Container)) { throw "Development driver directory '$driverDirectory' was not found." }
 $driverFiles = @(Get-ChildItem -LiteralPath $driverDirectory -Force -Recurse)
-if ($driverFiles.Count -ne 1 -or $driverFiles[0].Name -cne 'remote_driver.lua' -or $driverFiles[0].PSIsContainer) {
-  throw "Development driver directory must contain exactly one file named 'remote_driver.lua'."
+if ($driverFiles.Count -ne 2 -or
+    @($driverFiles | Where-Object { $_.PSIsContainer }).Count -ne 0 -or
+    -not ($driverFiles.Name -ccontains 'remote_driver.lua') -or
+    -not ($driverFiles.Name -ccontains 'json.lua')) {
+  throw "Development driver directory must contain only 'remote_driver.lua' and 'json.lua'."
 }
 Assert-NoReparsePoint -Path $driverDirectory
 Assert-NoReparsePoint -Path $driverSource
+Assert-NoReparsePoint -Path $codecSource
 
 if (-not $outputFullPath.StartsWith($repoTempPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
   throw "OutputDirectory '$OutputDirectory' resolves outside repository tmp/."
@@ -336,6 +341,7 @@ try {
   $driverDirectoryInTool = Join-Path $stagedToolPath '__dev'
   New-Item -ItemType Directory -Path $driverDirectoryInTool | Out-Null
   Copy-Item -LiteralPath $driverSource -Destination (Join-Path $driverDirectoryInTool 'remote_driver.lua')
+  Copy-Item -LiteralPath $codecSource -Destination (Join-Path $driverDirectoryInTool 'json.lua')
 
   $sessionPath = Join-Path $outputFullPath 'acid-test-session.conf'
   $port = Get-FreeLoopbackPort
@@ -373,6 +379,7 @@ try {
   $expectedDevFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   foreach ($relative in $sourcePayload.Keys) { [void]$expectedDevFiles.Add($relative) }
   [void]$expectedDevFiles.Add('__dev/remote_driver.lua')
+  [void]$expectedDevFiles.Add('__dev/json.lua')
   $actualDevFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $stagePrefix = [System.IO.Path]::GetFullPath($stagedToolPath).TrimEnd([char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)) + [System.IO.Path]::DirectorySeparatorChar
   foreach ($file in @(Get-ChildItem -LiteralPath $stagedToolPath -File -Recurse)) {
@@ -393,10 +400,13 @@ try {
       }
     }
     else {
-      $expectedHash = if ($relative -eq '__dev/remote_driver.lua') {
-        (Get-FileHash -LiteralPath $driverSource -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($relative -eq '__dev/remote_driver.lua') {
+        $expectedHash = (Get-FileHash -LiteralPath $driverSource -Algorithm SHA256).Hash.ToLowerInvariant()
       }
-      else { $sourcePayload[$relative] }
+      elseif ($relative -eq '__dev/json.lua') {
+        $expectedHash = (Get-FileHash -LiteralPath $codecSource -Algorithm SHA256).Hash.ToLowerInvariant()
+      }
+      else { $expectedHash = $sourcePayload[$relative] }
       $actualHash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()
       if ($actualHash -cne $expectedHash) { throw "Staged file '$relative' differs from its expected source hash." }
     }

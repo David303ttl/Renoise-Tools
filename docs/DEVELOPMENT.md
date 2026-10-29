@@ -95,8 +95,9 @@ lua tests/renoise/spike_tool_spec.lua
 
 These are synthetic checks, not native E2E. For the current real-host manual
 probe and live preflight invocation, see [Renoise test host](../tests/renoise/README.md).
-Automated Native/Keyboard smoke remains pending T0.2–T0.8; never count the
-manual behavior spike as an automated scenario pass.
+T0.3 adds a mocked transport test; the PowerShell runner and automated
+Native/Keyboard smoke remain pending T0.4–T0.8. Never count the manual behavior
+spike or mocked transport as an automated Renoise scenario pass.
 
 Plain-Lua tests verify model logic and mocked API interactions. Actual playback,
 native phrase rendering, GUI behavior, undo and save/reload require Renoise.

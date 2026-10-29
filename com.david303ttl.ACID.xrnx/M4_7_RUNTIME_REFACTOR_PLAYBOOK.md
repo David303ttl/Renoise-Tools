@@ -710,7 +710,7 @@ M4 remains open and Step 8 remains required.
 
 ### Step T0 — Establish automated real-Renoise verification before 2.2
 
-**Status:** T0.1 and T0.2 are complete; T0.3–T0.8 and Gate T0 remain pending. T0.2 package and driver-admission checks are automated, but are not an in-host Renoise E2E pass. Keep Steps 2.2–2.9 in order and all Step 3–8 acceptance obligations.
+**Status:** T0.1–T0.3 are complete; T0.4–T0.8 and Gate T0 remain pending. T0.1–T0.3 checks are automated, but the transport checks use mocked Renoise APIs and are not an in-host E2E pass. Keep Steps 2.2–2.9 in order and all Step 3–8 acceptance obligations.
 
 **Purpose:** make native Renoise API and keyboard E2E checks repeatable from PowerShell 7 on a developer's current Windows desktop. An existing Renoise process may be explicitly selected or a new process launched; a separate account or VM is optional, never required. Use disposable songs, native API readback, and independent assertions. Use keyboard input only where user interaction and focus matter; a harness smoke pass is not evidence that the legacy writer is safe.
 
@@ -764,11 +764,12 @@ validates the secrets and loopback binding before opening a listener.
 manifest/payload comparison, repeat-build, ACL, port-availability and
 non-ASCII repository-path checks,
 plus missing/duplicate driver, stale-output, traversal, duplicate-entry and
-unexpected-ID cases. **lua tests/renoise/remote_driver_spec.lua** passed
-admission, simulated bind-collision refusal and unload checks.
+unexpected-ID cases. At that checkpoint **lua tests/renoise/remote_driver_spec.lua**
+covered admission, simulated bind-collision refusal and unload cleanup; the
+transport implementation and its expanded coverage are recorded below.
 A direct ACID development build under repository `tmp/` also passed. No tracked
-source file, Renoise installation or song was changed; the listener closes
-clients until T0.3 implements the transport.
+source file, Renoise installation or song was changed; the T0.2 listener closed
+clients until the T0.3 implementation.
 
 #### T0.3 — Implement a constrained asynchronous in-Renoise transport
 
@@ -779,6 +780,30 @@ clients until T0.3 implements the transport.
 5. Detach idle/document/unload notifiers and close connections on unload or shutdown. Bound all work per idle tick, response sizes and diagnostics. On driver exception, report a structured error and retire its command without changing ACID ownership or render state.
 
 **Complete when:** ping/capabilities, partial/coalesced framing, wrong-token refusal, duplicate-ID refusal, queue limits, nonblocking dispatch, disconnect/reconnect policy, idle cleanup, malformed-command handling and timeout behavior pass independent tests. The remote protocol cannot invoke arbitrary ACID internals or access non-test files.
+
+**T0.3 result (2026-10-29):** `tests/renoise/driver/remote_driver.lua` now
+authenticates a single loopback client, reassembles bounded newline JSON frames,
+rejects malformed/duplicate/unsupported requests, and dispatches the fixed
+command set from a non-reentrant idle callback with bounded command/response
+counts. Fixture loading accepts only a basename under the staged bundle's
+sibling `fixtures/` or `temp/` directory. Pending IDs and document transitions
+are tracked separately; document commands settle only after the new-document
+observable, while stale epochs are canceled and timed-out transitions block
+later document transitions until a late native transition is observed. The private
+Lua 5.1 codec rejects duplicate JSON keys, malformed UTF-8, invalid numbers,
+excessive nesting and cyclic output. Commands, frames, snapshots, responses and
+session IDs have fixed bounds. Timeout durations round up to whole seconds and
+expire only after that second-resolution deadline boundary, so they cannot fire
+early; idle load can delay reporting.
+
+`lua tests/renoise/remote_driver_spec.lua` and
+`pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1` passed. The mocked
+transport spec covers fragmented/coalesced frames, wrong tokens, duplicate IDs,
+unsupported operations, path traversal, queue/snapshot limits, nonblocking
+dispatch, selection/inventory waits, document lifecycle, timeout/cancellation,
+late events, host API failures, canonical fixture paths, deleted-object release,
+reconnect and cleanup. No real Renoise connection or document load was run;
+native E2E and the PowerShell runner remain pending T0.4–T0.8.
 
 #### T0.4 — Build the developer-controlled PowerShell runner
 

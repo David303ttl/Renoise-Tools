@@ -107,6 +107,7 @@ function New-FixtureRepository {
   Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/package.ps1') -Destination (Join-Path $Root 'scripts/package.ps1')
   Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/package_dev.ps1') -Destination (Join-Path $Root 'scripts/package_dev.ps1')
   Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/remote_driver.lua') -Destination (Join-Path $Root 'tests/renoise/driver/remote_driver.lua')
+  Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/json.lua') -Destination (Join-Path $Root 'tests/renoise/driver/json.lua')
 
   $toolRoot = Join-Path $Root $sourceToolName
   $manifest = @'
@@ -228,6 +229,7 @@ function Test-RealDevelopmentBundle {
     })
     $expectedPaths = @($sourceFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
     $expectedPaths += '__dev/remote_driver.lua'
+    $expectedPaths += '__dev/json.lua'
     $actualPaths = @(Get-ChildItem -LiteralPath $devTool -File -Recurse | ForEach-Object {
       Get-RelativePath -Root $devTool -Path $_.FullName
     } | Sort-Object)
@@ -298,6 +300,7 @@ try {
   })
   $expectedDevPaths = @($sourcePayloadFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
   $expectedDevPaths += '__dev/remote_driver.lua'
+  $expectedDevPaths += '__dev/json.lua'
   $actualDevPaths = @(Get-ChildItem -LiteralPath $devToolOne -File -Recurse | ForEach-Object { Get-RelativePath -Root $devToolOne -Path $_.FullName } | Sort-Object)
   $expectedDevPaths = @($expectedDevPaths | Sort-Object)
   Assert-True (($actualDevPaths -join '|') -ceq ($expectedDevPaths -join '|')) 'Development bundle contains an unexpected or missing file.'
@@ -337,6 +340,8 @@ try {
   }
   $driverDevPath = Join-Path $devToolOne '__dev/remote_driver.lua'
   Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/remote_driver.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $driverDevPath -Algorithm SHA256).Hash) 'Development driver differs from its source.'
+  $codecDevPath = Join-Path $devToolOne '__dev/json.lua'
+  Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/json.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $codecDevPath -Algorithm SHA256).Hash) 'Development JSON codec differs from its source.'
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $devToolOne 'acid-test-session.conf'))) 'Session test secrets were copied into the tool bundle.'
 
   $sessionTextOne = [System.IO.File]::ReadAllText($sessionPathOne)

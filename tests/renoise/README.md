@@ -17,19 +17,33 @@ adds only ASCII relative path components.
 
 The output contains an extracted **com.david303ttl.ACID.xrnx** development tool
 and **acid-test-session.conf**. The tool is derived from the normal release
-archive, with a test-only driver and a bootstrap appended to its staged
-**main.lua**; production source files and the manifest stay unchanged. The
-bootstrap resolves the sidecar next to the bundle at runtime and contains no
-absolute desktop path. The session file contains only the loopback address,
+archive, with a test-only transport/JSON codec and a bootstrap appended to its
+staged **main.lua**; production source files and the manifest stay unchanged.
+The bootstrap resolves the sidecar next to the bundle at runtime and contains
+no absolute desktop path. The session file contains only the loopback address,
 port and random per-run test secrets; it stores no username or operating
 system session identifier. Its ACL is limited to the current Windows user.
 Keep the output directory at its generated path while using the bundle because
 the staged bootstrap locates that sidecar relative to the bundle. This command
 does not install the tool or modify Renoise.
 
-The driver currently validates the session and binds only to **127.0.0.1**;
-it closes client connections until the constrained protocol is implemented.
-Run the deterministic packaging and admission checks with:
+The driver binds only to **127.0.0.1**, authenticates one client with the
+per-run token, and processes bounded commands from `app_idle_observable`.
+Requests and responses are newline-delimited JSON. It accepts only the fixed
+command allowlist in the playbook; fixture loading accepts a filename directly
+under the bundle's sibling `fixtures/` or `temp/` directory. It has no Lua
+execution, generic module dispatch or arbitrary path command. Request IDs are
+unique for one connection, and document commands complete only after a new
+document notification. Idle processing uses bounded work counts. Timeout values
+round up to whole seconds because the driver uses `os.time()`; expiration is
+checked after the deadline boundary so it cannot fire early, and host load can
+delay reporting. A song snapshot is capped at 512 phrases and the response size
+is bounded.
+
+The focused tests use mocked SocketServer and document observables. They verify
+transport behavior, not a real Renoise connection or host-side document load.
+The PowerShell runner and automated native smoke are still pending. Run the
+deterministic packaging and transport checks with:
 
 ~~~powershell
 pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
