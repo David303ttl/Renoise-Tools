@@ -40,11 +40,9 @@ checked after the deadline boundary so it cannot fire early, and host load can
 delay reporting. A song snapshot is capped at 512 phrases and the response size
 is bounded.
 
-The focused tests use mocked SocketServer and document observables. They verify
-transport behavior, not a real Renoise connection or host-side document load.
-The PowerShell runner is implemented, but no real Renoise connection or automated
-native smoke has been recorded. Run the deterministic packaging and transport
-checks with:
+Offline transport tests use mocked SocketServer and document observables.
+Native results are listed in [host_verification.md](host_verification.md).
+Run the deterministic packaging and transport checks with:
 
 ~~~powershell
 pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
@@ -57,52 +55,52 @@ name with `-LuaCommand lua5.1`.
 
 ## Interactive runner
 
-Run the developer-controlled PowerShell 7 runner from the repository root:
+Use PowerShell 7 and Lua 5.1. Run the available Native test against a fresh Renoise
+process, or select an existing instance with a disposable song:
 
 ```powershell
-pwsh -NoProfile -File ./scripts/run_interactive_tests.ps1
-pwsh -NoProfile -File ./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Scenario transport `
-  -RenoiseExe '<Renoise.exe path>' -ApproveDisposableSong -Install
-pwsh -NoProfile -File ./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native `
-  -RenoiseProcessId <pid> -ApproveDisposableSong -Install
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong
+./scripts/run_interactive_tests.ps1 -RenoiseProcessId <pid> -Install -ApproveDisposableSong
 ```
 
-The default suite is `Native`; `Keyboard` and `All` are accepted, and an
-optional local JSON `TestEnvironment` can provide `RenoiseExe` and keyboard
-mapping data. The runner discovers a registered Renoise installation when no
-executable is provided and validates the current user, interactive session,
-version-matched Tools directory, and selected process. It builds a fresh
-development bundle and refuses to install it unless `-Install` is present.
-`-ApproveDisposableSong` records the operator's confirmation that the open
-document is disposable. The current `transport` scenario authenticates, checks
-capabilities and runtime/API versions, then requests `document.new`. It waits
-for the driver's terminal response after the native new-document barrier and
-requires an advanced document epoch, an inventory whose instrument count matches
-readback, no phrases, stable read-only snapshots, and zero pending or queued
-commands. If a dirty-song
-prompt appears, handle it in Renoise yourself; the runner never chooses Save or
-Discard. An unresolved prompt times out, leaves an uncertain host state, and
-prevents automatic restoration while the driver may still be loaded.
+Other instances and virtual desktops can stay in use. No dedicated account,
+active-desktop check, profile registry match, screenshots or trace evidence is
+required. Install release XRNX tools normally in Renoise; they have no test-harness dependencies.
 
-With no PID, the runner starts Renoise and requests a normal window close. If it
-does not exit within the bounded close period, the runner rechecks the exact
-launch identity and terminates only that runner-launched process. The selected
-disposable song approval applies to this cleanup. For an explicitly selected
-process, the runner never closes or terminates it. After the smoke, disable or
-reload the temporary ACID development tool when prompted. The runner verifies
-that the loopback listener has stopped before restoring the prior installation.
-If it cannot verify the process, driver shutdown, or unchanged installed files,
-it retains the restoration backup and returns nonzero. Run reports, development
-bundles, and any restoration backup remain under ignored `tmp/`; same-volume
-recovery folders remain beside the Renoise Tools target only if restoration
-cannot safely finish. Reports do not contain session tokens.
+The runner discovers Renoise, or accepts `-RenoiseExe '<path>'`. The default tool
+location is the current user's version-specific Renoise Tools folder; override it
+with `-ToolsDirectory '<path>'` for a custom installation. Missing folders are
+created during installation. Linked parent folders are supported. Replacement
+requires a verifiable backup; links inside the tool being backed up are rejected
+because the backup does not copy their external contents.
 
-`Keyboard` currently reports a skipped-with-reason result without installing or
-launching Renoise until the keyboard journeys are added. In `All`, its required
-skip keeps the overall result nonzero after the Native scenario runs. Setup
-failures, timeouts, host errors, changed snapshots, and incomplete cleanup also
-return nonzero. The runner does not equate a connected listener or an
-acknowledged queued command with a completed native operation.
+`-Install` allows temporary replacement of ACID and `-ApproveDisposableSong`
+allows resetting the test song. The selected PID and listener owner are checked
+before commands. Only the `transport` scenario is currently implemented. It checks
+ping, capabilities, new-document completion and stable native inventory readback.
+Snapshots compare values and selection positions, not Lua wrapper identities.
+Keyboard tests are not implemented; use the default `Native` suite. Requesting
+`Keyboard` or `All` reports the missing coverage with a nonzero result, without
+blocking Native runs or ordinary tool use.
+
+The `shutdown` response confirms acceptance. The driver then stops its listener,
+detaches callbacks and writes a per-run completion file beside the session config.
+The runner verifies and removes that file before restoring unchanged installation files. An existing
+Renoise instance stays open; reload ACID to load the restored release code. A
+runner-launched instance is closed after testing. If a song prompt appears,
+resolve it in Renoise. Timeouts and failed assertions return nonzero. On connection
+loss, backups are retained if driver shutdown cannot be confirmed. Changed files
+are preserved for manual recovery. Reports and backups are under ignored `tmp/`;
+reports omit session tokens.
+
+Run offline harness checks without Renoise:
+
+```powershell
+./scripts/test_host_preflight.ps1
+./tests/renoise/runner_spec.ps1
+./tests/renoise/test_package_dev.ps1
+lua tests/renoise/remote_driver_spec.lua
+```
 
 ## Pinned API 6.2 contract
 
@@ -129,129 +127,17 @@ prompt handling, asynchronous reload behavior, or reliable window activation.
 Unknown modal dialogs must fail closed; do not patch `renoise.app()` or infer success from a
 request return or fixed delay.
 
-## Host preflight and behavior spike
+## Optional host diagnostics
 
-Development tests use the current Windows desktop and an explicitly selected Renoise
-process, or a process started by the T0.4 runner. No dedicated account, VM, profile
-marker, fixed installation path or administrator provisioning is required. Start
-with a disposable song, not an unsaved working project. Local evidence records
-host observations; it is not a permission to modify tools or songs.
+The standalone `spike_tool/`, `Capture-Foreground.ps1` and
+`build_spike_evidence.ps1` are diagnostic aids for investigating Renoise lifecycle
+and keyboard behavior. Their historical observations are in
+[host_verification.md](host_verification.md). They are not setup requirements or
+permission gates for running tests, developing tools, or installing releases.
+Native API tests do not require foreground focus; future keyboard tests must
+focus their selected Renoise window while sending input.
 
-`host_preflight.psm1` exports `Test-RenoiseHostPreflight`. It reads the current
-Windows identity, session, desktop, APPDATA, executable metadata, and Renoise
-process itself. Callers select the Renoise PID explicitly; preflight verifies its
-executable, owner, session, start time, and profile paths. It never launches,
-attaches to, or terminates Renoise. Execution mode requires a local evidence JSON
-whose raw trace and source hashes match the current environment and selected PID.
-The evidence stores observations and context, not caller-supplied verification
-booleans. `Safety` performs non-destructive checks; `Execution` validates local
-host evidence. Neither mode implicitly authorizes installing/replacing ACID,
-changing a developer's working song, or terminating an existing Renoise process.
-
-The standalone probe in `spike_tool/` has no ACID runtime dependency and is a
-manual diagnostic, not an automated E2E suite. Copy its
-contents into a separate tool directory named
-`com.david303ttl.RenoiseTestHostSpike.xrnx` beneath the current profile's
-`Scripts\Tools`. Invoke **Tools → Renoise Test Host Spike → Initialize log and
-create fresh test song** once. This replaces the old raw trace, requests a new
-song, saves that disposable song to a unique fixture, then asynchronously creates
-another new song and loads the fixture. It logs Renoise lifecycle callbacks at
-each step. After this automatic sequence, reload the test tool from Renoise's
-Scripting Editor once to record `tool_will_unload` and `tool_finished_loading`.
-On Renoise 3.5.4, the API save wrote the fixture without delivering the saved
-notification to the requesting probe. Use **File → Save** if it remains waiting
-after the fixture is saved; the observed notification resumes the sequence.
-If the initial new-song request presents Renoise's save prompt, choose
-the intended Save, Discard, or Cancel action in Renoise; the probe will not choose
-for you.
-
-For dirty-document observations, use **Mark current fixture dirty (tempo +1 BPM)**
-and invoke the dirty
-new-song or fixture-load menu action. Resolve the prompt in Renoise, then choose
-the matching **Record dirty prompt** item. Repeat as needed for Cancel, Save, and
-Discard for both new-song and fixture-load operations. The menu record is an
-operator observation, so retain a screenshot of each prompt and resulting
-document state with the raw trace.
-
-For window activation, start the foreground observer for the Renoise PID selected
-by preflight, alt-tab to another window and back, then retain its output:
-
-```powershell
-pwsh -NoProfile -File ./tests/renoise/Capture-Foreground.ps1 `
-  -RenoiseProcessId <renoise-pid> `
-  -OutputPath <evidence-directory>\foreground.jsonl `
-  -DurationSeconds 120
-```
-
-The observer checks that the process belongs to the current user and session. It
-records foreground transitions and executable identity, and does not activate or
-control Renoise.
-
-Build the local evidence JSON from the selected PID, raw traces, and probe sources
-after the host checks are complete:
-
-First copy `main.lua`, `manifest.xml`, and `spike-observations.jsonl` from the
-installed probe into an evidence directory. Use that snapshot as `ApiTracePath`;
-the running probe continues appending activation events to its original trace.
-Keep screenshots beside the snapshot. These artifacts belong under ignored
-`tmp/`, not in the repository history.
-
-```powershell
-pwsh -NoProfile -File ./tests/renoise/build_spike_evidence.ps1 `
-  -RenoiseProcessId <renoise-pid> `
-  -ApiTracePath '<spike tool folder>\spike-observations.jsonl' `
-  -ForegroundTracePath '<evidence directory>\foreground.jsonl' `
-  -OutputPath '<evidence directory>\behavior-evidence.json'
-```
-
-Safety preflight can run before collecting behavior. Execution preflight reads
-the evidence JSON and validates its environment, process, hashes, and raw flow
-events:
-
-```powershell
-Import-Module ./tests/renoise/host_preflight.psm1 -Force
-Test-RenoiseHostPreflight -Mode Safety -Configuration ([pscustomobject]@{
-  RenoiseExe = '<Renoise.exe path>'
-  RenoiseProcessId = <renoise-pid>
-  TemporaryDirectory = $env:TEMP
-})
-Test-RenoiseHostPreflight -Configuration ([pscustomobject]@{
-  RenoiseExe = '<Renoise.exe path>'
-  RenoiseProcessId = <renoise-pid>
-  TemporaryDirectory = $env:TEMP
-  BehaviorEvidencePath = '<evidence directory>\behavior-evidence.json'
-})
-```
-
-The tool logs `requested` actions separately from observed callbacks. A request
-return does not establish completion. Missing events, unexpected document
-transitions, or unknown modal dialogs fail closed. API 6.2 documents callback
-lifecycle but does not establish prompt or foreground behavior; those require
-observations from the running Renoise UI.
-
-Run synthetic fail-closed checks (no Renoise host required):
-
-```powershell
-pwsh -NoProfile -File ./scripts/test_host_preflight.ps1
-```
-
-These checks use synthetic contexts and temporary junctions; they do not establish
-native Renoise behavior or constitute a native smoke test. A real-host spike is
-established only when the raw observations and current environment evidence have
-been collected from Renoise.
-
-Run the separate Windows integration checks against the selected process:
-
-```powershell
-./scripts/test_host_preflight_live.ps1 -RenoiseExe '<Renoise.exe path>' `
-  -RenoiseProcessId <renoise-pid> -RequireSafetyPass `
-  -BehaviorEvidencePath '<evidence directory>\behavior-evidence.json'
-lua tests/renoise/spike_tool_spec.lua
-```
-
-`InstallReplacementAuthorized` is a preflight compatibility result, not consent
-to install. A runner must obtain explicit developer approval before changing an
-existing ACID installation and preserve any existing files for restoration.
-An existing ACID installation that differs from the repository bundle cannot
-be replaced by the current preflight. A selected existing Renoise process must
-never be killed by the runner. The standalone spike does not modify ACID.
+`./scripts/test_host_preflight_live.ps1 -RenoiseExe '<path>'` checks executable
+and temporary-directory readiness; add `-RenoiseProcessId <pid>` to check a target.
+No host acceptance is inferred from offline mocks. Record actual native results
+when those tests run, and keep unexecuted checks visibly pending.

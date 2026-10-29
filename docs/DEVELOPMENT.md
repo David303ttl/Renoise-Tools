@@ -80,25 +80,21 @@ or local workspace locations.
 
 ## Real Renoise testing
 
-Use the current Windows desktop and Renoise installation. No dedicated test
-account, VM or special profile is required. Check the detected Renoise executable,
-version, current session and selected PID before host tests. Use a fresh disposable
-song; save or close working projects first. Never silently replace an existing
-ACID installation, rewrite the user's keymap or terminate an existing Renoise
-process. The T0.4 interactive runner supports both an explicitly selected PID
-and a process it launches itself.
+Use your normal Renoise installation. Other Renoise instances and virtual desktops
+may remain in use; no separate account, VM, profile attestation or trace evidence
+is required. The Windows Native runner starts a fresh instance by default:
 
 ```powershell
-pwsh -NoProfile -File ./scripts/test_host_preflight.ps1
-lua tests/renoise/spike_tool_spec.lua
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong
 ```
 
-These are synthetic checks, not native E2E. For the current real-host manual
-probe, live preflight invocation and T0.4 PowerShell runner, see [Renoise test
-host](../tests/renoise/README.md). The runner is implemented, but no automated
-Native smoke has been run against Renoise; Keyboard coverage remains pending
-T0.6. Never count the manual behavior spike or mocked transport as an automated
-Renoise scenario pass.
+Use `-RenoiseProcessId <pid>` to select an existing instance with a disposable
+song. Override discovery with `-RenoiseExe '<path>'` or `-ToolsDirectory '<path>'`.
+The runner verifies its target, backs up the installation, stops its test driver,
+and restores unchanged files. Existing Renoise instances remain open. See
+[Renoise testing](../tests/renoise/README.md) for offline harness checks and details.
+Keyboard tests are not implemented; they do not block Native runs or development.
+Release XRNX tools have no dependency on the harness or its developer setup.
 
 Plain-Lua tests verify model logic and mocked API interactions. Actual playback,
 native phrase rendering, GUI behavior, undo and save/reload require Renoise.

@@ -7,6 +7,7 @@ param(
     [string]$RenoiseExe,
     [int]$RenoiseProcessId = 0,
     [string]$TestEnvironment,
+    [string]$ToolsDirectory,
     [ValidateRange(5,600)][int]$StartupTimeoutSeconds = 90,
     [ValidateRange(1,300)][int]$CommandTimeoutSeconds = 30,
     [switch]$ApproveDisposableSong,
@@ -44,6 +45,7 @@ $deploymentStarted = $false
 $safeToRestore = $false
 $driverMayBeLoaded = $false
 $startedProcessForceStopped = $false
+$startedProcessClosed = $false
 $toolDeployed = $false
 $sessionDeployed = $false
 $exeVersionTriplet = $null
@@ -96,15 +98,6 @@ function Set-UserOnlyFileAcl {
     Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
-function Get-DirectoryHash {
-    param([Parameter(Mandatory)][string]$Path)
-    $root = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-    $records = @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | Sort-Object { $_.FullName.Substring($root.Length) } | ForEach-Object {
-        [pscustomobject]@{ Path = $_.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/'); Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
-    })
-    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($records | ConvertTo-Json -Compress)))).ToLowerInvariant()
-}
-
 function Get-VersionTriplet {
     param([Parameter(Mandatory)][string]$Value)
     $match = [regex]::Match($Value, '(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)')
@@ -129,35 +122,18 @@ function Get-Preflight {
     return $result
 }
 
-function Test-DriverListenerClosed {
-    param([Parameter(Mandatory)][int]$Port)
-    $probe = [Net.Sockets.TcpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
-    try {
-        $connect = $probe.ConnectAsync([Net.IPAddress]::Loopback, $Port)
-        if (-not $connect.Wait(1000)) { return 'Unknown' }
-        $connect.GetAwaiter().GetResult()
-        return 'Open'
-    }
-    catch {
-        $socketError = $_.Exception
-        while ($socketError -and $socketError -isnot [Net.Sockets.SocketException]) { $socketError = $socketError.InnerException }
-        if ($socketError -is [Net.Sockets.SocketException] -and $socketError.SocketErrorCode -eq [Net.Sockets.SocketError]::ConnectionRefused) { return 'Closed' }
-        return 'Unknown'
-    }
-    finally { $probe.Dispose() }
-}
 
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Suite -eq 'Keyboard') {
         $keyboardOnlySkipped = $true
         $report.status = 'FAIL'
-        $report.error = 'The required Keyboard suite is not implemented yet.'
+        $report.error = 'Keyboard tests are not implemented. Use -Suite Native for the available tests.'
         $report.scenarios = @([pscustomobject]@{
             name = if ($Scenario) { $Scenario } else { 'keyboard' }
             suite = 'Keyboard'
             status = 'SKIP'
-            reason = 'Keyboard input adapter and journeys are implemented in T0.6.'
+            reason = 'Keyboard tests are not implemented.'
             expected = 'Verified shortcut, dialog focus, and native selection journey'
             actual = $null
             diff = @{ required_suite_skipped = $true }
@@ -165,11 +141,11 @@ try {
         Add-Trace -Operation 'suite.keyboard' -Status 'SKIP' -Details @{ reason = 'Keyboard input adapter and journeys are not implemented.' }
         throw 'Required Keyboard suite skipped.'
     }
-    if ($env:OS -ne 'Windows_NT' -or -not [Environment]::UserInteractive) { throw 'Interactive Renoise runs require the current Windows desktop session.' }
+    if ($env:OS -ne 'Windows_NT') { throw 'This runner currently supports Windows. Release tools run in Renoise independently of this script.' }
     $lastExpected = 'RenoiseProcessId is zero or identifies the exact developer-owned process'
     if ($RenoiseProcessId -lt 0) { throw 'RenoiseProcessId must be a positive process ID.' }
     $lastExpected = 'Requested scenario is registered for the selected suite'
-    if ($Scenario -and $Scenario -cne 'transport') { throw "Scenario '$Scenario' is not registered. Available in T0.4: transport." }
+    if ($Scenario -and $Scenario -cne 'transport') { throw "Scenario '$Scenario' is not registered. Available: transport." }
     $lastExpected = 'Developer approves replacing the open document with a disposable new song'
     if (-not $ApproveDisposableSong) { throw 'Pass -ApproveDisposableSong only after confirming the open Renoise document can be replaced by a new empty document for this run.' }
 
@@ -187,8 +163,10 @@ try {
         $configuredExe = $selectedIdentity.Path
     }
     $script:resolvedExe = Get-RenoiseExecutable -ConfiguredPath $configuredExe
+    if ($RenoiseProcessId -gt 0 -and -not $selectedIdentity) { $selectedIdentity = Get-RenoiseProcessIdentity -Id $RenoiseProcessId }
     $preflight = Get-Preflight -SelectedId $RenoiseProcessId
-    Add-Trace -Operation 'host.preflight' -Status 'PASS' -Details @{ selected_process_id = $RenoiseProcessId; current_user_desktop = $true }
+    if ($selectedIdentity) { Assert-RenoiseProcessIdentity -Identity $selectedIdentity }
+    Add-Trace -Operation 'host.preflight' -Status 'PASS' -Details @{ selected_process_id = $RenoiseProcessId; target_verified = $true }
 
     $sourceCommit = & git -C $repoRoot rev-parse HEAD 2>$null
     if ($LASTEXITCODE -eq 0) { $report.source_commit = [string]$sourceCommit }
@@ -210,7 +188,7 @@ try {
     $appData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
     $exeVersionTriplet = Get-VersionTriplet -Value ([string]$exeInfo.ProductVersion)
     $renoiseVersion = $exeVersionTriplet.ToString(3)
-    $toolsPath = Join-Path $appData "Renoise/V$renoiseVersion/Scripts/Tools"
+    $toolsPath = if ($ToolsDirectory) { [IO.Path]::GetFullPath($ToolsDirectory) } else { Join-Path $appData "Renoise/V$renoiseVersion/Scripts/Tools" }
     $installedToolPath = Join-Path $toolsPath $devToolName
     $sessionTargetPath = Join-Path $toolsPath $sessionName
     $lastExpected = 'Explicit install consent and a verified restoration path are present'
@@ -221,50 +199,13 @@ try {
             if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing ACID installation contains a reparse point; refusing replacement.' }
         }
         if ((Get-Item -LiteralPath $installedToolPath -Force).PSIsContainer -ne $true) { throw 'Existing ACID installation is not a directory.' }
-        $productionToolPath = Join-Path $repoRoot $devToolName
-        if ((Get-DirectoryHash -Path $installedToolPath) -cne (Get-DirectoryHash -Path $productionToolPath)) { throw 'Existing ACID installation changed after host preflight; refusing replacement.' }
     }
     if (Test-Path -LiteralPath $sessionTargetPath) {
         $sessionPrecheck = Get-Item -LiteralPath $sessionTargetPath -Force
         if ($sessionPrecheck.PSIsContainer -or ($sessionPrecheck.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing session sidecar path is not a plain file; refusing replacement.' }
     }
-    $deploymentStarted = $true
-    $deploymentStageRoot = Join-Path $toolsPath ('.acid-stage-' + $artifactId)
-    $deploymentStageToolPath = Join-Path $deploymentStageRoot $devToolName
-    $deploymentStageSessionPath = Join-Path $deploymentStageRoot $sessionName
-    foreach ($path in @($deploymentStageRoot, (Join-Path $toolsPath ('.acid-restore-' + $artifactId)), (Join-Path $toolsPath ('.acid-session-restore-' + $artifactId + '.conf')))) {
-        if (Test-Path -LiteralPath $path) { throw 'A unique temporary deployment path already exists; refusing to reuse it.' }
-    }
-    New-Item -ItemType Directory -Path $deploymentStageRoot | Out-Null
-    Copy-Item -LiteralPath $devToolPath -Destination $deploymentStageToolPath -Recurse
-    Copy-Item -LiteralPath $sessionSourcePath -Destination $deploymentStageSessionPath
-    Set-UserOnlyFileAcl -Path $deploymentStageSessionPath
-    $deploymentStageToolHash = Get-DirectoryHash -Path $deploymentStageToolPath
-    $deploymentStageSessionHash = (Get-FileHash -LiteralPath $deploymentStageSessionPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if (Test-Path -LiteralPath $installedToolPath) {
-        $item = Get-Item -LiteralPath $installedToolPath -Force
-        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $item.PSIsContainer) { throw 'Existing ACID installation is not a plain directory; refusing replacement.' }
-        $backupToolPath = Join-Path $artifactRoot 'previous-ACID.xrnx'
-        Copy-Item -LiteralPath $installedToolPath -Destination $backupToolPath -Recurse
-        if ((Get-DirectoryHash -Path $installedToolPath) -cne (Get-DirectoryHash -Path $backupToolPath)) { throw 'ACID backup copy did not verify; refusing replacement.' }
-        $localBackupToolPath = Join-Path $toolsPath ('.acid-restore-' + $artifactId)
-        Move-Item -LiteralPath $installedToolPath -Destination $localBackupToolPath
-        Add-Trace -Operation 'install.backup' -Status 'PASS' -Details @{ backup = 'run artifact directory' }
-    }
-    if (Test-Path -LiteralPath $sessionTargetPath) {
-        $sessionBackupPath = Join-Path $artifactRoot 'previous-session.conf'
-        Copy-Item -LiteralPath $sessionTargetPath -Destination $sessionBackupPath
-        if ((Get-FileHash -LiteralPath $sessionTargetPath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $sessionBackupPath -Algorithm SHA256).Hash) { throw 'Session sidecar backup did not verify; refusing replacement.' }
-        $localBackupSessionPath = Join-Path $toolsPath ('.acid-session-restore-' + $artifactId + '.conf')
-        Move-Item -LiteralPath $sessionTargetPath -Destination $localBackupSessionPath
-    }
-    $installedDirectoryHash = $deploymentStageToolHash
-    $installedSessionHash = $deploymentStageSessionHash
-    Move-Item -LiteralPath $deploymentStageToolPath -Destination $installedToolPath
-    $toolDeployed = $true
-    Move-Item -LiteralPath $deploymentStageSessionPath -Destination $sessionTargetPath
-    $sessionDeployed = $true
-    Add-Trace -Operation 'install.dev_bundle' -Status 'PASS' -Details @{ target = 'version-matched user Renoise Tools' }
+    New-Item -ItemType Directory -Path $toolsPath -Force | Out-Null
+    . ([scriptblock]::Create((Get-RenoiseDeploymentOperation)))
 
     if ($RenoiseProcessId -gt 0) {
         $selectedIdentity = if ($selectedIdentity) { $selectedIdentity } else { Get-RenoiseProcessIdentity -Id $RenoiseProcessId }
@@ -274,7 +215,7 @@ try {
         $processIdentity = $selectedIdentity
     }
     else {
-        $startedProcess = Start-Process -FilePath $script:resolvedExe -PassThru
+        $startedProcess = Start-Process -FilePath $script:resolvedExe -WindowStyle Normal -PassThru
         $capturedStartedIdentity = Get-RenoiseProcessIdentity -Id $startedProcess.Id
         if (-not [string]::Equals($capturedStartedIdentity.Path, $script:resolvedExe, [StringComparison]::OrdinalIgnoreCase)) { throw 'Started Renoise process does not match the verified executable.' }
         $startedIdentity = $capturedStartedIdentity
@@ -289,6 +230,7 @@ try {
     $processCheck = { Assert-RenoiseProcessIdentity -Identity $processIdentity }
     $client = Connect-RenoiseDriver -Session $session -TimeoutSeconds $StartupTimeoutSeconds -ProcessCheck $processCheck
     try {
+        Assert-RenoiseListenerOwner -Client $client -Identity $processIdentity
         $ping = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'ping' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         $lastExpected = 'Authenticated ping uses protocol version 1 and the current run nonce'
         $lastActual = @{ protocol_version = $ping.protocol_version; nonce_matches = ($ping.session -ceq $session.Nonce) }
@@ -306,6 +248,8 @@ try {
         Add-Trace -Operation 'driver.capabilities' -Status 'PASS' -Details @{ operation_count = @($capabilities.operations).Count }
 
         $before = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'diagnostics' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+        $lastActual = $before
+        $lastExpected = 'Ready document and no other pending commands before reset'
         if (-not $before.document_ready -or $before.pending_commands -ne 0 -or $before.queued_commands -ne 0 -or $before.document_transition_uncertain) {
             throw 'Renoise host is not in a settled, ready document state; no document reset was attempted.'
         }
@@ -315,6 +259,7 @@ try {
         $lastActual = @{ starting_epoch = $before.document_epoch; terminal_response = $false }
         $lastDiff = @{ terminal_response_received = $false; expected_epoch_greater_than = $before.document_epoch }
         $resetResponseTimeout = [Math]::Min(123, [Math]::Ceiling($resetTimeoutMs / 1000) + 3)
+        Assert-RenoiseListenerOwner -Client $client -Identity $processIdentity
         $reset = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.new' -Arguments @{ timeout_ms = $resetTimeoutMs } -TimeoutSeconds $resetResponseTimeout -ProcessCheck $processCheck
         $lastActual = @{ starting_epoch = $before.document_epoch; observed_epoch = $reset.document_epoch; terminal_response = $true; operation = $reset.operation }
         $lastDiff = @{ terminal_response_received = $true; operation_matches = ($reset.operation -ceq 'document.new'); epoch_advanced = ($reset.document_epoch -gt $before.document_epoch) }
@@ -328,19 +273,23 @@ try {
         $actualInstrumentCount = @($snapshotBefore.instruments).Count
         $actualPhraseCount = 0
         foreach ($instrument in @($snapshotBefore.instruments)) { $actualPhraseCount += @($instrument.phrases).Count }
+        $selectionMatchesInventory = $snapshotBefore.selected_instrument_index -ge 1 -and $snapshotBefore.selected_instrument_index -le $actualInstrumentCount -and $snapshotBefore.selected_phrase_index -eq 0
         $inventoryDiff = @{
             instrument_count_matches_inventory = ($reportedInstrumentCount -eq $actualInstrumentCount)
             phrase_count_matches_inventory = ($reportedPhraseCount -eq $actualPhraseCount)
             unexpected_phrases = ($actualPhraseCount -ne 0)
+            selection_matches_inventory = $selectionMatchesInventory
         }
         $lastDiff = $inventoryDiff
-        if ($reportedInstrumentCount -ne $actualInstrumentCount -or $reportedPhraseCount -ne $actualPhraseCount -or $actualPhraseCount -ne 0) {
+        if ($reportedInstrumentCount -ne $actualInstrumentCount -or $reportedPhraseCount -ne $actualPhraseCount -or $actualPhraseCount -ne 0 -or -not $selectionMatchesInventory) {
             throw 'New document inventory did not match its native instrument/phrase inventory or contains unexpected phrases.'
         }
         $snapshotBeforeJson = $snapshotBefore | ConvertTo-Json -Depth 20 -Compress
+        $snapshotBeforeJson | Set-Content -LiteralPath (Join-Path $artifactRoot 'snapshot-before.json') -Encoding utf8NoBOM
         $snapshotBeforeHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($snapshotBeforeJson))).ToLowerInvariant()
         $snapshotAfter = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         $snapshotAfterJson = $snapshotAfter | ConvertTo-Json -Depth 20 -Compress
+        $snapshotAfterJson | Set-Content -LiteralPath (Join-Path $artifactRoot 'snapshot-after.json') -Encoding utf8NoBOM
         $snapshotAfterHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($snapshotAfterJson))).ToLowerInvariant()
         $after = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'diagnostics' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         $lastExpected = 'Read-only snapshots match and document epoch and queues remain settled'
@@ -354,6 +303,7 @@ try {
             instrument_count_matches_inventory = $inventoryDiff.instrument_count_matches_inventory
             phrase_count_matches_inventory = $inventoryDiff.phrase_count_matches_inventory
             unexpected_phrases = $inventoryDiff.unexpected_phrases
+            selection_matches_inventory = $inventoryDiff.selection_matches_inventory
         }
         $lastExpected = 'New document release/new epoch observed; consistent instrument inventory, zero phrases, stable snapshots, and zero pending commands'
         if ($snapshotBeforeHash -cne $snapshotAfterHash -or $after.document_epoch -ne $reset.document_epoch -or
@@ -367,16 +317,23 @@ try {
             $scenarioResults.Add([pscustomobject]@{ name = 'transport'; suite = 'Native'; status = 'PASS'; expected = $lastExpected; actual = "protocol=$($ping.protocol_version); instruments=$($snapshotAfter.instrument_count); phrases=$($snapshotAfter.phrase_count); epoch=$($after.document_epoch)"; diff = $lastDiff })
         }
         if ($Suite -in @('Keyboard','All')) {
-            $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'SKIP'; reason = 'Keyboard input adapter and journeys are implemented in T0.6.'; expected = 'Keyboard E2E'; actual = $null; diff = $null })
+            $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'SKIP'; reason = 'Keyboard tests are not implemented.'; expected = 'Keyboard E2E'; actual = $null; diff = $null })
         }
         $report.scenarios = @($scenarioResults)
         if (@($scenarioResults | Where-Object { $_.status -ne 'PASS' }).Count -eq 0) { $report.status = 'PASS' }
         else { $report.status = 'FAIL' }
-        $disconnect = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'disconnect' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
-        if ($disconnect.disconnected -ne $true) { throw 'Renoise driver did not confirm disconnect.' }
-        Add-Trace -Operation 'driver.disconnect' -Status 'PASS' -Details @{ acknowledged = ($disconnect.disconnected -eq $true) }
+        $safeToRestore = Stop-RenoiseDriver -Client $client -Session $session -SessionPath $sessionTargetPath -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+        Add-Trace -Operation 'driver.shutdown' -Status 'PASS' -Details @{ renoise_left_open = [bool]$selectedIdentity }
     }
     finally {
+        if ($client -and -not $safeToRestore) {
+            try {
+                Assert-RenoiseListenerOwner -Client $client -Identity $processIdentity
+                $safeToRestore = Stop-RenoiseDriver -Client $client -Session $session -SessionPath $sessionTargetPath -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+                Add-Trace -Operation 'driver.shutdown' -Status 'PASS' -Details @{ after_error = $true }
+            }
+            catch { Add-Trace -Operation 'driver.shutdown' -Status 'ERROR' -Details @{ message = $_.Exception.Message } }
+        }
         if ($client) { $client.Dispose() }
     }
 
@@ -394,21 +351,10 @@ try {
             }
         }
         $safeToRestore = $true
+        $startedProcessClosed = $true
         Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{ launched_process_closed_cleanly = (-not $startedProcessForceStopped); force_stopped = $startedProcessForceStopped }
     }
-    else {
-        Write-Information 'The selected Renoise process remains open. Disable or reload the temporary ACID development tool now; the runner will restore files only after the listener is observed closed.' -InformationAction Continue
-        $unloadDeadline = [DateTimeOffset]::UtcNow.AddSeconds($StartupTimeoutSeconds)
-        $listenerState = 'Unknown'
-        while ([DateTimeOffset]::UtcNow -lt $unloadDeadline -and $listenerState -ne 'Closed') {
-            $listenerState = Test-DriverListenerClosed -Port $session.Port
-            if ($listenerState -eq 'Closed') { break }
-            Start-Sleep -Milliseconds 200
-        }
-        if ($listenerState -ne 'Closed') { throw "ACID test driver unload was not verified (listener state: $listenerState). The existing Renoise process was left open and its installation backup was retained." }
-        $safeToRestore = $true
-        Add-Trace -Operation 'driver.unload' -Status 'PASS' -Details @{ selected_process_left_open = $true }
-    }
+
 }
 catch {
     if (-not $keyboardOnlySkipped) {
@@ -454,7 +400,7 @@ finally {
             }
         }
     }
-    if ($startedIdentity -and -not $safeToRestore) {
+    if ($startedIdentity -and -not $startedProcessClosed) {
         try {
             $startedProcess.Refresh()
             if ($startedProcess.HasExited) {
@@ -482,36 +428,7 @@ finally {
     }
     if ($deploymentStarted -and $safeToRestore) {
       try {
-        if ($toolDeployed -and $installedToolPath -and (Test-Path -LiteralPath $installedToolPath)) {
-            if (-not $installedDirectoryHash -or (Get-DirectoryHash -Path $installedToolPath) -cne $installedDirectoryHash) {
-                throw 'Installed ACID files changed during the run; keeping the current directory and restoration backup untouched.'
-            }
-            Remove-Item -LiteralPath $installedToolPath -Recurse -Force
-        }
-        if ($localBackupToolPath -and (Test-Path -LiteralPath $localBackupToolPath)) {
-            if (Test-Path -LiteralPath $installedToolPath) { throw 'ACID target is occupied; keeping the same-volume original and verified run backup untouched.' }
-            Move-Item -LiteralPath $localBackupToolPath -Destination $installedToolPath
-        }
-        if ($sessionDeployed -and $sessionTargetPath -and (Test-Path -LiteralPath $sessionTargetPath)) {
-            if (-not $installedSessionHash -or (Get-FileHash -LiteralPath $sessionTargetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $installedSessionHash) {
-                throw 'Development session sidecar changed during the run; keeping it and the restoration backup untouched.'
-            }
-            Remove-Item -LiteralPath $sessionTargetPath -Force
-        }
-        if ($localBackupSessionPath -and (Test-Path -LiteralPath $localBackupSessionPath)) {
-            if (Test-Path -LiteralPath $sessionTargetPath) { throw 'Session sidecar target is occupied; keeping the same-volume original and verified run backup untouched.' }
-            Move-Item -LiteralPath $localBackupSessionPath -Destination $sessionTargetPath
-        }
-        if ($deploymentStageRoot -and (Test-Path -LiteralPath $deploymentStageRoot)) {
-            $stageToolExists = Test-Path -LiteralPath $deploymentStageToolPath -PathType Container
-            $stageSessionExists = Test-Path -LiteralPath $deploymentStageSessionPath -PathType Leaf
-            if (($stageToolExists -and (Get-DirectoryHash -Path $deploymentStageToolPath) -cne $deploymentStageToolHash) -or
-                ($stageSessionExists -and (Get-FileHash -LiteralPath $deploymentStageSessionPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $deploymentStageSessionHash)) {
-                throw 'Staged ACID files changed; preserving the staging directory for recovery.'
-            }
-            Remove-Item -LiteralPath $deploymentStageRoot -Recurse -Force
-        }
-        if ($installedToolPath) { Add-Trace -Operation 'install.restore' -Status 'PASS' -Details @{ original_installation_restored = $true } }
+        . ([scriptblock]::Create((Get-RenoiseRestorationOperation)))
     }
       catch {
         if ($report.status -eq 'PASS') { $report.status = 'ERROR' }

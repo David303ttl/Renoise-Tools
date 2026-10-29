@@ -97,6 +97,8 @@ local function make_song(file_name)
   local song = {
     file_name = file_name or "",
     instruments = {instrument},
+    selected_instrument_index = 1,
+    selected_phrase_index = 1,
     selected_instrument = instrument,
     selected_phrase = phrase,
     tool_data = "fixture-source"
@@ -139,6 +141,7 @@ local function install_host_stub(options)
   end
 
   local server = {}
+  state.server = server
   function server:run(callbacks)
     state.callbacks = callbacks
   end
@@ -186,6 +189,7 @@ end
 local function start_driver_attempt(options)
   local config_path = write_configuration(valid_configuration())
   local host = install_host_stub(options)
+  host.config_path = config_path
   local driver, original_dofile = load_driver_for_start()
   local ok, err = pcall(function() driver.start(config_path) end)
   _G.dofile = original_dofile
@@ -418,13 +422,13 @@ local function test_snapshot_waits_and_document_transitions()
   assert_equal(snapshot.instrument_count, 1)
   assert_equal(snapshot.phrase_count, 1)
   assert_equal(snapshot.instruments[1].phrases[1].number_of_lines, 16)
-  local original_instrument_handle = snapshot.instruments[1].handle
-  local original_phrase_handle = snapshot.instruments[1].phrases[1].handle
+  assert_equal(snapshot.selected_instrument_index, 1)
+  assert_equal(snapshot.selected_phrase_index, 1)
 
   send_request(host, client, "wait-selection", "wait.condition", {
     condition = "selection_equals_expected",
-    instrument_handle = original_instrument_handle,
-    phrase_handle = original_phrase_handle,
+    instrument_index = 1,
+    phrase_index = 1,
     timeout_ms = 1000
   })
   fire_idle(host)
@@ -517,8 +521,7 @@ local function test_snapshot_waits_and_document_transitions()
   send_request(host, client, "snapshot-2", "song.snapshot")
   fire_idle(host)
   local second_snapshot = find_response(take_responses(client), "snapshot-2").result
-  assert(second_snapshot.instruments[1].handle ~= original_instrument_handle, "host handle crossed document epochs")
-  assert(second_snapshot.instruments[1].phrases[1].handle ~= original_phrase_handle, "phrase handle crossed document epochs")
+  assert_equal(second_snapshot.document_epoch, 3)
 
   local weak_phrase
   do
@@ -533,13 +536,16 @@ local function test_snapshot_waits_and_document_transitions()
   local replacement_phrase = {name = "Replacement", number_of_lines = 1}
   host.song.instruments[1].phrases = {replacement_phrase}
   host.song.selected_phrase = replacement_phrase
+  send_request(host, client, "prune-deleted", "song.snapshot")
+  fire_idle(host)
+  take_responses(client)
   collectgarbage("collect")
-  assert(weak_phrase[1] == nil, "object handle registry retained a deleted host phrase")
+  assert(weak_phrase[1] == nil, "snapshot retained a deleted host phrase")
 
   send_request(host, client, "cancel-on-release", "wait.condition", {
     condition = "selection_equals_expected",
-    instrument_handle = "missing-instrument",
-    phrase_handle = "missing-phrase",
+    instrument_index = 999,
+    phrase_index = 999,
     timeout_ms = 5000
   })
   fire_idle(host)
@@ -739,6 +745,100 @@ local function test_unload_cleans_pending_document_work()
   assert_equal(host.unload:count(), 0)
 end
 
+local function test_diagnostics_counts_other_commands()
+  local host, driver = start_driver()
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "idle-diagnostics", "diagnostics")
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "idle-diagnostics").result.pending_commands, 0)
+  send_request(host, client, "pending-wait", "wait.condition", {
+    condition = "document_epoch_changed", after_epoch = 99
+  })
+  send_request(host, client, "busy-diagnostics", "diagnostics")
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "busy-diagnostics").result.pending_commands, 1)
+  driver.stop()
+end
+
+local function test_shutdown_records_completion_after_server_stop()
+  local host = start_driver()
+  local client = new_client()
+  accept(host, client)
+  -- Renoise stop invalidates accepted sockets, so acknowledge before stopping.
+  local original_stop = host.server.stop
+  function host.server:stop()
+    client.is_open = false
+    return original_stop(self)
+  end
+  local original_send = client.send
+  function client:send(frame)
+    assert(self.is_open, "sent after server stop invalidated the socket")
+    return original_send(self, frame)
+  end
+  send_request(host, client, "stop-driver", "shutdown")
+  fire_idle(host)
+  local response = find_response(take_responses(client), "stop-driver")
+  assert(response and response.ok and response.result.shutdown_requested)
+  assert_equal(host.idle:count(), 0)
+  assert_equal(host.release:count(), 0)
+  assert_equal(host.new_document:count(), 0)
+  assert_equal(host.unload:count(), 0)
+  assert(host.stopped > 0)
+  assert(client.closed)
+  assert_equal(host.new_song_calls, 0)
+  local marker_path = host.config_path .. "." .. nonce .. ".stopped"
+  local marker = assert(io.open(marker_path, "rb"))
+  assert_equal(marker:read("*a"), nonce)
+  marker:close()
+  os.remove(marker_path)
+end
+
+local function test_snapshot_uses_values_with_fresh_host_wrappers()
+  local host, driver = start_driver()
+  local name = "Original"
+  host.song = setmetatable({}, {__index = function(_, key)
+    if key == "instruments" then return {{name = name, phrases = {}}} end
+    if key == "selected_instrument_index" then return 1 end
+    if key == "selected_phrase_index" then return 0 end
+  end})
+  host.release:fire()
+  host.new_document:fire()
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "first-values", "song.snapshot")
+  fire_idle(host)
+  local first = find_response(take_responses(client), "first-values").result
+  collectgarbage("collect")
+  send_request(host, client, "same-values", "song.snapshot")
+  fire_idle(host)
+  local second = find_response(take_responses(client), "same-values").result
+  assert_equal(codec.encode(first), codec.encode(second), "host wrappers changed snapshot values")
+  assert_equal(second.selected_instrument_index, 1)
+  assert_equal(second.selected_phrase_index, 0)
+  name = "Changed"
+  send_request(host, client, "changed-values", "song.snapshot")
+  fire_idle(host)
+  local changed = find_response(take_responses(client), "changed-values").result
+  assert(codec.encode(changed) ~= codec.encode(first), "native value change was hidden")
+  driver.stop()
+end
+local function test_new_document_requires_preceding_release()
+  local host, driver = start_driver()
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "unreleased-document", "document.new")
+  fire_idle(host)
+  host.song = make_song("")
+  host.new_document:fire()
+  fire_idle(host)
+  assert_equal(#take_responses(client), 0, "new song without release completed transition")
+  driver.stop()
+end
+test_new_document_requires_preceding_release()
+test_snapshot_uses_values_with_fresh_host_wrappers()
+test_diagnostics_counts_other_commands()
+test_shutdown_records_completion_after_server_stop()
 test_json_codec()
 test_configuration_and_admission()
 test_validation_framing_and_queue_limits()

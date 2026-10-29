@@ -17,8 +17,10 @@ function Get-RenoiseExecutable {
     $candidates = [System.Collections.Generic.List[string]]::new()
     foreach ($keyPath in $registryPaths) {
         foreach ($entry in @(Get-ItemProperty -Path $keyPath -ErrorAction SilentlyContinue)) {
-            if ([string]$entry.DisplayName -match '^Renoise(?:\s|$)') {
-                foreach ($raw in @([string]$entry.InstallLocation, [string]$entry.DisplayIcon, [string]$entry.UninstallString)) {
+            if ($entry.PSObject.Properties['DisplayName'] -and [string]$entry.DisplayName -match '^Renoise(?:\s|$)') {
+                foreach ($property in @('InstallLocation', 'DisplayIcon', 'UninstallString')) {
+                    if (-not $entry.PSObject.Properties[$property]) { continue }
+                    $raw = [string]$entry.$property
                     if (-not $raw) { continue }
                     $pathMatch = [regex]::Match($raw, '(?i)([A-Z]:\\[^\"]*?Renoise\.exe)')
                     if ($pathMatch.Success) { [void]$candidates.Add($pathMatch.Groups[1].Value); continue }
@@ -68,7 +70,7 @@ function Connect-RenoiseDriver {
                 $client.Dispose()
                 continue
             }
-            $connect.GetAwaiter().GetResult()
+            [void]$connect.GetAwaiter().GetResult()
             $client.NoDelay = $true
             return $client
         }
@@ -99,6 +101,7 @@ function Invoke-RenoiseDriverRequest {
     $responseBytes = [Collections.Generic.List[byte]]::new()
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         & $ProcessCheck
+        if ($Client.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead) -and $Client.Client.Available -eq 0) { throw 'Renoise closed the transport before returning a terminal response.' }
         if (-not $stream.DataAvailable) { Start-Sleep -Milliseconds 50; continue }
         $buffer = [byte[]]::new(4096)
         $read = $stream.Read($buffer, 0, $buffer.Length)
@@ -150,3 +153,125 @@ function Import-RenoiseTestEnvironment {
 }
 
 Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment
+
+function Get-DirectoryHash {
+    param([Parameter(Mandatory)][string]$Path)
+    $root = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $records = @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | Sort-Object { $_.FullName.Substring($root.Length) } | ForEach-Object {
+        [pscustomobject]@{ Path = $_.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/'); Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    })
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($records | ConvertTo-Json -Compress)))).ToLowerInvariant()
+}
+
+
+function Assert-RenoiseListenerOwner {
+    param([Net.Sockets.TcpClient]$Client, [pscustomobject]$Identity,
+          [scriptblock]$GetListeners = { param($Port) Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop },
+          [scriptblock]$CheckIdentity = { param($Value) Assert-RenoiseProcessIdentity -Identity $Value })
+    & $CheckIdentity $Identity
+    $endpoint = $Client.Client.RemoteEndPoint
+    $listeners = @(& $GetListeners $endpoint.Port | Where-Object { $_.LocalAddress -in @('127.0.0.1', '0.0.0.0') })
+    if ($listeners.Count -ne 1 -or $listeners[0].OwningProcess -ne $Identity.Id) {
+        throw 'Loopback listener ownership does not match the selected Renoise process.'
+    }
+    & $CheckIdentity $Identity
+}
+
+# Dot-source these operations in the caller so partial failures preserve recovery state.
+function Get-RenoiseDeploymentOperation {
+    return {
+    $deploymentStarted = $true
+    $deploymentStageRoot = Join-Path $toolsPath ('.acid-stage-' + $artifactId)
+    $deploymentStageToolPath = Join-Path $deploymentStageRoot $devToolName
+    $deploymentStageSessionPath = Join-Path $deploymentStageRoot $sessionName
+    foreach ($path in @($deploymentStageRoot, (Join-Path $toolsPath ('.acid-restore-' + $artifactId)), (Join-Path $toolsPath ('.acid-session-restore-' + $artifactId + '.conf')))) {
+        if (Test-Path -LiteralPath $path) { throw 'A unique temporary deployment path already exists; refusing to reuse it.' }
+    }
+    New-Item -ItemType Directory -Path $deploymentStageRoot | Out-Null
+    Copy-Item -LiteralPath $devToolPath -Destination $deploymentStageToolPath -Recurse
+    Copy-Item -LiteralPath $sessionSourcePath -Destination $deploymentStageSessionPath
+    Set-UserOnlyFileAcl -Path $deploymentStageSessionPath
+    $deploymentStageToolHash = Get-DirectoryHash -Path $deploymentStageToolPath
+    $deploymentStageSessionHash = (Get-FileHash -LiteralPath $deploymentStageSessionPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if (Test-Path -LiteralPath $installedToolPath) {
+        $item = Get-Item -LiteralPath $installedToolPath -Force
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or -not $item.PSIsContainer) { throw 'Existing ACID installation is not a plain directory; refusing replacement.' }
+        $backupToolPath = Join-Path $artifactRoot 'previous-ACID.xrnx'
+        Copy-Item -LiteralPath $installedToolPath -Destination $backupToolPath -Recurse
+        if ((Get-DirectoryHash -Path $installedToolPath) -cne (Get-DirectoryHash -Path $backupToolPath)) { throw 'ACID backup copy did not verify; refusing replacement.' }
+        $localBackupToolPath = Join-Path $toolsPath ('.acid-restore-' + $artifactId)
+        Move-Item -LiteralPath $installedToolPath -Destination $localBackupToolPath
+        Add-Trace -Operation 'install.backup' -Status 'PASS' -Details @{ backup = 'run artifact directory' }
+    }
+    if (Test-Path -LiteralPath $sessionTargetPath) {
+        $sessionBackupPath = Join-Path $artifactRoot 'previous-session.conf'
+        Copy-Item -LiteralPath $sessionTargetPath -Destination $sessionBackupPath
+        if ((Get-FileHash -LiteralPath $sessionTargetPath -Algorithm SHA256).Hash -cne (Get-FileHash -LiteralPath $sessionBackupPath -Algorithm SHA256).Hash) { throw 'Session sidecar backup did not verify; refusing replacement.' }
+        $localBackupSessionPath = Join-Path $toolsPath ('.acid-session-restore-' + $artifactId + '.conf')
+        Move-Item -LiteralPath $sessionTargetPath -Destination $localBackupSessionPath
+    }
+    $installedDirectoryHash = $deploymentStageToolHash
+    $installedSessionHash = $deploymentStageSessionHash
+    Move-Item -LiteralPath $deploymentStageToolPath -Destination $installedToolPath
+    $toolDeployed = $true
+    Move-Item -LiteralPath $deploymentStageSessionPath -Destination $sessionTargetPath
+    $sessionDeployed = $true
+    Add-Trace -Operation 'install.dev_bundle' -Status 'PASS' -Details @{ target = 'version-matched user Renoise Tools' }
+    }
+}
+function Get-RenoiseRestorationOperation {
+    return {
+        if ($toolDeployed -and $installedToolPath -and (Test-Path -LiteralPath $installedToolPath)) {
+            if (-not $installedDirectoryHash -or (Get-DirectoryHash -Path $installedToolPath) -cne $installedDirectoryHash) {
+                throw 'Installed ACID files changed during the run; keeping the current directory and restoration backup untouched.'
+            }
+            Remove-Item -LiteralPath $installedToolPath -Recurse -Force
+        }
+        if ($localBackupToolPath -and (Test-Path -LiteralPath $localBackupToolPath)) {
+            if (Test-Path -LiteralPath $installedToolPath) { throw 'ACID target is occupied; keeping the same-volume original and verified run backup untouched.' }
+            Move-Item -LiteralPath $localBackupToolPath -Destination $installedToolPath
+        }
+        if ($sessionDeployed -and $sessionTargetPath -and (Test-Path -LiteralPath $sessionTargetPath)) {
+            if (-not $installedSessionHash -or (Get-FileHash -LiteralPath $sessionTargetPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $installedSessionHash) {
+                throw 'Development session sidecar changed during the run; keeping it and the restoration backup untouched.'
+            }
+            Remove-Item -LiteralPath $sessionTargetPath -Force
+        }
+        if ($localBackupSessionPath -and (Test-Path -LiteralPath $localBackupSessionPath)) {
+            if (Test-Path -LiteralPath $sessionTargetPath) { throw 'Session sidecar target is occupied; keeping the same-volume original and verified run backup untouched.' }
+            Move-Item -LiteralPath $localBackupSessionPath -Destination $sessionTargetPath
+        }
+        if ($deploymentStageRoot -and (Test-Path -LiteralPath $deploymentStageRoot)) {
+            $stageToolExists = Test-Path -LiteralPath $deploymentStageToolPath -PathType Container
+            $stageSessionExists = Test-Path -LiteralPath $deploymentStageSessionPath -PathType Leaf
+            if (($stageToolExists -and (Get-DirectoryHash -Path $deploymentStageToolPath) -cne $deploymentStageToolHash) -or
+                ($stageSessionExists -and (Get-FileHash -LiteralPath $deploymentStageSessionPath -Algorithm SHA256).Hash.ToLowerInvariant() -cne $deploymentStageSessionHash)) {
+                throw 'Staged ACID files changed; preserving the staging directory for recovery.'
+            }
+            Remove-Item -LiteralPath $deploymentStageRoot -Recurse -Force
+        }
+        if ($installedToolPath) { Add-Trace -Operation 'install.restore' -Status 'PASS' -Details @{ original_installation_restored = $true } }
+    }
+}
+Export-ModuleMember -Function Get-DirectoryHash, Assert-RenoiseListenerOwner, Get-RenoiseDeploymentOperation, Get-RenoiseRestorationOperation
+
+function Stop-RenoiseDriver {
+    param([Net.Sockets.TcpClient]$Client, [pscustomobject]$Session, [string]$SessionPath,
+          [int]$TimeoutSeconds, [scriptblock]$ProcessCheck)
+    $response = Invoke-RenoiseDriverRequest -Client $Client -Session $Session -Operation shutdown -Arguments @{} -TimeoutSeconds $TimeoutSeconds -ProcessCheck $ProcessCheck
+    if ($response.shutdown_requested -ne $true) { throw 'Renoise test driver did not accept shutdown.' }
+    $marker = $SessionPath + '.' + $Session.Nonce + '.stopped'
+    $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        if (Test-Path -LiteralPath $marker -PathType Leaf) {
+            if ([IO.File]::ReadAllText($marker) -ceq $Session.Nonce) {
+                Remove-Item -LiteralPath $marker
+                return $true
+            }
+        }
+        & $ProcessCheck
+        Start-Sleep -Milliseconds 50
+    }
+    throw 'Timed out waiting for the Renoise test driver to finish shutdown.'
+}
+Export-ModuleMember -Function Stop-RenoiseDriver

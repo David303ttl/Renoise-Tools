@@ -25,7 +25,8 @@ local allowed_operations = {
   ["song.snapshot"] = true,
   ["wait.condition"] = true,
   diagnostics = true,
-  disconnect = true
+  disconnect = true,
+  shutdown = true
 }
 
 local allowed_conditions = {
@@ -36,6 +37,7 @@ local allowed_conditions = {
 }
 
 local state = nil
+local cleanup
 local started = false
 
 local function is_integer(value)
@@ -150,10 +152,6 @@ local function error_value(code, message)
   return {code = code, message = message}
 end
 
-local function new_object_handles()
-  return setmetatable({}, {__mode = "k"})
-end
-
 local function remember_completion(current, record, ok, err)
   local id = record.id
   current.completed[id] = {
@@ -223,6 +221,7 @@ local function queue_response(current, client, id, ok, result, err, options)
     id = id,
     frame = encoded .. "\n",
     close_after = options.close_after == true,
+    shutdown_after = options.shutdown_after == true,
     record = options.record
   })
   return true
@@ -239,6 +238,7 @@ local function finish_record(current, record, ok, result, err, options)
   record.wait_spec = nil
   queue_response(current, client, record.id, ok, result, err, {
     close_after = options and options.close_after,
+    shutdown_after = options and options.shutdown_after,
     record = record
   })
 end
@@ -307,12 +307,12 @@ local function validate_wait_args(args)
     required[#required + 1] = "after_epoch"
     if not is_integer(args.after_epoch) or args.after_epoch < 0 then return nil end
   elseif name == "selection_equals_expected" then
-    allowed.instrument_handle = true
-    allowed.phrase_handle = true
-    required[#required + 1] = "instrument_handle"
-    required[#required + 1] = "phrase_handle"
-    if not (type(args.instrument_handle) == "string" or args.instrument_handle == state.json.null) then return nil end
-    if not (type(args.phrase_handle) == "string" or args.phrase_handle == state.json.null) then return nil end
+    allowed.instrument_index = true
+    allowed.phrase_index = true
+    required[#required + 1] = "instrument_index"
+    required[#required + 1] = "phrase_index"
+    if not is_integer(args.instrument_index) or args.instrument_index < 1 then return nil end
+    if not is_integer(args.phrase_index) or args.phrase_index < 0 then return nil end
   elseif name == "native_inventory_matches" then
     allowed.instrument_count = true
     allowed.phrase_count = true
@@ -348,7 +348,7 @@ local function valid_args_for_operation(current, request)
   local args = request.args
   local operation = request.op
   if operation == "ping" or operation == "capabilities" or operation == "song.snapshot" or
-      operation == "diagnostics" or operation == "disconnect" then
+      operation == "diagnostics" or operation == "disconnect" or operation == "shutdown" then
     return object_has_only_keys(args, {}, {})
   elseif operation == "document.new" then
     if not object_has_only_keys(args, {timeout_ms = true}, {}) then return false end
@@ -374,16 +374,6 @@ local function count_inventory(song)
     phrase_count = phrase_count + #song.instruments[instrument_index].phrases
   end
   return instrument_count, phrase_count
-end
-
-local function object_handle(current, object, kind)
-  if object == nil then return current.json.null end
-  local handle = current.object_handles[object]
-  if handle then return handle end
-  current.next_object_handle = current.next_object_handle + 1
-  handle = "e" .. tostring(current.document_epoch) .. "-" .. kind .. "-" .. tostring(current.next_object_handle)
-  current.object_handles[object] = handle
-  return handle
 end
 
 local function truncate_text(value, max_bytes)
@@ -432,28 +422,24 @@ local function build_snapshot(current)
     local phrases = current.json.array()
     for phrase_index, phrase in ipairs(instrument.phrases) do
       phrases[#phrases + 1] = {
-        handle = object_handle(current, phrase, "phrase"),
         index = phrase_index,
         name = truncate_text(phrase.name, 128),
         number_of_lines = phrase.number_of_lines
       }
     end
     instruments[#instruments + 1] = {
-      handle = object_handle(current, instrument, "instrument"),
       index = instrument_index,
       name = truncate_text(instrument.name, 128),
       phrases = phrases
     }
   end
 
-  local selected_instrument = song.selected_instrument
-  local selected_phrase = song.selected_phrase
   return {
     document_epoch = current.document_epoch,
     instrument_count = instrument_count,
     phrase_count = phrase_count,
-    selected_instrument_handle = object_handle(current, selected_instrument, "instrument"),
-    selected_phrase_handle = object_handle(current, selected_phrase, "phrase"),
+    selected_instrument_index = song.selected_instrument_index,
+    selected_phrase_index = song.selected_phrase_index,
     instruments = instruments
   }
 end
@@ -515,11 +501,10 @@ local function fixture_is_accessible(path)
   return true
 end
 
-local function selection_handles(current)
+local function selection_indices(current)
   local song = current.current_song
   if not current.document_ready or not song then return current.json.null, current.json.null end
-  return object_handle(current, song.selected_instrument, "instrument"),
-    object_handle(current, song.selected_phrase, "phrase")
+  return song.selected_instrument_index, song.selected_phrase_index
 end
 
 local function evaluate_condition(current, record)
@@ -529,12 +514,12 @@ local function evaluate_condition(current, record)
     local matched = current.document_ready and current.document_epoch > args.after_epoch
     return matched, {condition = spec.condition, document_epoch = current.document_epoch, document_ready = current.document_ready}
   elseif spec.condition == "selection_equals_expected" then
-    local instrument_handle, phrase_handle = selection_handles(current)
-    local matched = instrument_handle == args.instrument_handle and phrase_handle == args.phrase_handle
+    local instrument_index, phrase_index = selection_indices(current)
+    local matched = instrument_index == args.instrument_index and phrase_index == args.phrase_index
     return matched, {
       condition = spec.condition,
-      instrument_handle = instrument_handle,
-      phrase_handle = phrase_handle
+      instrument_index = instrument_index,
+      phrase_index = phrase_index
     }
   elseif spec.condition == "native_inventory_matches" then
     if not current.document_ready or not current.current_song then return false, {condition = spec.condition, document_ready = false} end
@@ -614,8 +599,6 @@ local function on_document_release(current)
   current.document_epoch = old_epoch + 1
   current.document_ready = false
   current.current_song = nil
-  current.object_handles = new_object_handles()
-  current.next_object_handle = 0
   if current.transition and current.transition.expected_epoch == old_epoch then
     current.transition.release_seen = true
   end
@@ -632,8 +615,6 @@ local function on_new_document(current)
   local was_ready = current.document_ready
   if was_ready and not rawequal(current.current_song, song) then
     current.document_epoch = current.document_epoch + 1
-    current.object_handles = new_object_handles()
-    current.next_object_handle = 0
     cancel_document_scoped_commands(current, current.document_epoch - 1)
   end
   current.current_song = song
@@ -646,9 +627,9 @@ local function on_new_document(current)
   end
 end
 
-local function make_diagnostics(current)
+local function make_diagnostics(current, request)
   local pending_count = 0
-  for _ in pairs(current.pending) do pending_count = pending_count + 1 end
+  for _, pending in pairs(current.pending) do if not rawequal(pending, request) then pending_count = pending_count + 1 end end
   return {
     document_epoch = current.document_epoch,
     document_ready = current.document_ready,
@@ -754,7 +735,9 @@ local function process_record(current, record)
     record.wait_spec = spec
     record.state = "waiting_condition"
   elseif record.operation == "diagnostics" then
-    finish_record(current, record, true, make_diagnostics(current))
+    finish_record(current, record, true, make_diagnostics(current, record))
+  elseif record.operation == "shutdown" then
+    finish_record(current, record, true, {shutdown_requested = true}, nil, {shutdown_after = true})
   elseif record.operation == "disconnect" then
     finish_record(current, record, true, {disconnected = true}, nil, {close_after = true})
   else
@@ -853,7 +836,7 @@ local function enqueue_request(current, client, request)
   current.commands[request.id] = record
   current.pending[request.id] = record
   queue_push(current.command_queue, record)
-  if request.op == "disconnect" then current.close_requested = true end
+  if request.op == "disconnect" or request.op == "shutdown" then current.close_requested = true end
   return true
 end
 
@@ -931,6 +914,18 @@ local function flush_responses(current)
     if not send_ok or result ~= true then
       set_error(current, "socket response could not be sent")
       retire_client(current, item.client)
+      return
+    end
+    if item.shutdown_after then
+      -- Stopping the server closes accepted sockets; completion uses a sidecar.
+      local marker_path = current.shutdown_marker_path
+      local nonce = current.configuration.nonce
+      cleanup(current)
+      local marker, marker_error = io.open(marker_path, "wb")
+      if not marker then error(marker_error) end
+      local written, write_error = marker:write(nonce)
+      local closed, close_error = marker:close()
+      if not written or not closed then error(write_error or close_error) end
       return
     end
     if item.record and current.commands[item.id] == item.record then
@@ -1065,7 +1060,7 @@ local function detach_observable(observable, notifier)
   end
 end
 
-local function cleanup(current)
+cleanup = function(current)
   if not current or current.stopped then return end
   current.stopped = true
   detach_observable(current.idle_observable, current.idle_notifier)
@@ -1080,7 +1075,6 @@ local function cleanup(current)
   current.candidate = nil
   current.active_client = nil
   current.current_song = nil
-  current.object_handles = {}
   current.idle_observable = nil
   current.release_observable = nil
   current.new_document_observable = nil
@@ -1150,6 +1144,7 @@ function driver.start(configuration_path)
 
   local current = {
     configuration = configuration,
+    shutdown_marker_path = configuration_path .. "." .. configuration.nonce .. ".stopped",
     json = codec,
     server = server,
     tool = host_tool,
@@ -1161,8 +1156,6 @@ function driver.start(configuration_path)
     document_ready = false,
     document_transition_uncertain = false,
     current_song = nil,
-    object_handles = new_object_handles(),
-    next_object_handle = 0,
     candidate = nil,
     active_client = nil,
     buffers = {},

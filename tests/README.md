@@ -27,20 +27,18 @@ as separate processes when using the suite runner.
 
 ## Real Renoise and manual checks
 
-The pure Lua tests do not replace real-host verification. The ACID host-preflight
-and manual behavior spike are described in [Renoise host testing](renoise/README.md):
+Run the available Native smoke in a fresh Renoise instance with a disposable song:
 
 ```powershell
-pwsh -NoProfile -File ./scripts/test_host_preflight.ps1
-lua tests/renoise/spike_tool_spec.lua
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong
 ```
 
-The live Windows preflight/spike requires an explicitly selected Renoise PID
-and a disposable song. It may run on the current desktop; a separate Windows
-account or VM is not required. Automated Native/Keyboard E2E remains pending
-host acceptance. The T0.4 runner is implemented; its read-only smoke has not yet
-been run against an approved disposable Renoise session, and Keyboard coverage
-remains pending T0.6. Manual observations are not automated passes.
+Add `-RenoiseProcessId <pid>` to use an existing instance. Other instances and
+virtual desktops can remain in use. No desktop/profile attestation or recorded
+spike evidence is required. Keyboard coverage is not implemented. Offline mocks
+and manual diagnostics do not count as native test passes. See
+[Renoise testing](renoise/README.md) for executable/tool path overrides and checks.
+Normal release tools are independent of this development harness.
 
 For other manual checks, use a disposable song and follow the relevant guides:
 
