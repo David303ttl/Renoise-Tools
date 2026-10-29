@@ -15,7 +15,8 @@ The packaging test exercises a non-ASCII repository path. Renoise's Lua file
 APIs use UTF-8 paths; the bootstrap passes `bundle_path` through unchanged and
 adds only ASCII relative path components.
 
-The output contains an extracted **com.david303ttl.ACID.xrnx** development tool
+The output contains an extracted **com.david303ttl.ACID.xrnx** development tool,
+a sibling **fixtures/** directory staged from `tests/renoise/acid/fixtures/`,
 and **acid-test-session.conf**. The tool is derived from the normal release
 archive, with a test-only transport/JSON codec and a bootstrap appended to its
 staged **main.lua**; production source files and the manifest stay unchanged.
@@ -76,12 +77,99 @@ because the backup does not copy their external contents.
 
 `-Install` allows temporary replacement of ACID and `-ApproveDisposableSong`
 allows resetting the test song. The selected PID and listener owner are checked
-before commands. Only the `transport` scenario is currently implemented. It checks
-ping, capabilities, new-document completion and stable native inventory readback.
-Snapshots compare values and selection positions, not Lua wrapper identities.
+before commands. The transport scenario always runs first and checks ping,
+capabilities, new-document completion and stable native inventory readback.
 Keyboard tests are not implemented; use the default `Native` suite. Requesting
 `Keyboard` or `All` reports the missing coverage with a nonzero result, without
 blocking Native runs or ordinary tool use.
+
+The checked-in native fixture is built independently of the production writer:
+
+```powershell
+./tests/renoise/acid/build_fixture.ps1 -ApproveInstall -Force
+lua tests/renoise/acid/probe_spec.lua
+```
+
+The builder launches its own disposable Renoise instance and temporarily installs
+its fixture probe under ACID's tool ID so the saved `tool_data` belongs to ACID.
+It verifies the existing installation backup and restores it after closing that
+instance. Close Renoise before rebuilding the fixture; ordinary Native runner
+runs support concurrent instances. Fixture construction uses explicit native
+field values, and scenario expectations come from independent golden values.
+
+### Native scenario catalog
+
+Native fixture scenarios are JSON files in `tests/renoise/acid/scenarios/`.
+The catalog is required for an interactive run; a missing directory fails
+before any document is changed. Each file is one scenario:
+
+~~~json
+{
+  "name": "independent-phrase",
+  "fixture": "independent-phrase.xrns",
+  "description": "Optional operator-facing summary",
+  "preconditions": {"instrument_count": 1, "phrase_count": 1},
+  "actions": ["document.new", "fixture.load", "song.snapshot", "song.snapshot"],
+  "waits": ["document.changed", "inventory.settled", "snapshot.stable"],
+  "unchanged": ["instruments", "tool_data_hex", "selected_instrument_index"],
+  "expects": "pass",
+  "assertions": [
+    {"path": "instrument_count", "expected": 1},
+    {"path": "instruments.0.phrases.0.name", "expected": "Phrase"}
+  ]
+}
+~~~
+
+`name` matches `^[a-z][a-z0-9-]{0,63}$` and must be unique. `fixture` must be a
+flat `*.xrns` file name staged in the development bundle's `fixtures/`
+directory. Optional `description` is a string. Required `preconditions` is an
+object containing only `instrument_count` and `phrase_count`, each a
+non-negative integer when present; when a count is omitted, the runner reads it
+from the loaded fixture before waiting for the matching native inventory.
+Optional `expects` is `pass` (the default) or `fail`. When
+`expects` is `fail`, a non-empty `expected_diffs` array is required and
+forbidden otherwise; each item has exactly `path`, `expected` and `actual`.
+`assertions` is a non-empty array of `{path, expected}` objects. Required
+`actions` and `waits` declare the fixed read-only workflow shown above; the
+runner rejects other sequences. Required `unchanged` lists snapshot paths that
+must exist and retain exactly the same values across both readbacks. The whole
+snapshot is also compared, so unspecified fields cannot silently change. The
+expected musical, selection, identity and source changes for this workflow are
+none; reset/load are the only authorized document changes.
+
+`path` walks the song snapshot with zero-based indices for arrays, for example
+`instruments.0.phrases.1.lines.0.note_columns.0.note_value`. Unknown top-level
+keys, malformed preconditions and malformed diffs are rejected. The catalog
+sets `source_path` on each loaded scenario.
+
+Run just the transport checks with `-Scenario transport`, transport plus one
+catalog scenario with `-Scenario <name>`, or leave `-Scenario` empty to run
+transport plus every catalog scenario in sorted name order. Unknown names fail
+with the available scenario names. The default suite is `Native`.
+
+The staged fixtures directory is deployed beside the tool as
+`<Tools>/fixtures`. If that path already exists, it is first copied to a
+hash-verified run artifact and moved to a same-volume restore location, using
+the same verified backup/restore flow as the tool directory. Restoration removes
+the deployed fixtures only when their directory hash still matches the staged
+hash, then restores any moved-aside original. Each scenario resets the document,
+loads its fixture, and resumes only after the native inventory settles. Its two
+canonical snapshot JSON files are written under
+`tmp/interactive-<run-id>/scenario-<name>/`; the run report records epochs,
+snapshot SHA-256 values and any diff.
+
+A scenario passes only when the document was settled before and after the run,
+two consecutive snapshots are identical, and the freshly loaded fixture plus
+read-only inspection created no undo/redo history, did not change the selection,
+and left pending and queued command counts at zero. Snapshot comparisons are
+canonical value comparisons with stable key ordering and explicit `null`
+handling. They make no persistent host-object-identity claims; identity-sensitive
+writer checks belong to later playbook steps. This fixture contains deliberately
+foreign phrases and a separate canonical source/draft store; it verifies exact
+ID/source/settings bytes without claiming that either phrase is owned or safe
+to regenerate. After all scenarios the runner
+performs a final document reset and diagnostics settle check so the host is left
+on a clean document.
 
 The `shutdown` response confirms acceptance. The driver then stops its listener,
 detaches callbacks and writes a per-run completion file beside the session config.

@@ -96,6 +96,7 @@ function New-FixtureRepository {
     'scripts'
     'tests/renoise/driver'
     'tests/renoise/fixtures'
+    'tests/renoise/acid/fixtures'
     'tests/renoise/acid/scenarios'
     'tests/renoise/keyboard'
     'sdk/example'
@@ -125,6 +126,7 @@ function New-FixtureRepository {
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'model/compiler.lua'), 'return {compile = function() return true end}', [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'data/settings.json'), '{"schema":1,"enabled":true}', [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $toolRoot 'README.md'), 'excluded documentation', [System.Text.UTF8Encoding]::new($false))
+  [System.IO.File]::WriteAllBytes((Join-Path $Root 'tests/renoise/acid/fixtures/smoke.xrns'), [byte[]](0x50, 0x4B, 0x03, 0x04, 0x41, 0x43, 0x49, 0x44))
   [System.IO.File]::WriteAllText((Join-Path $Root 'tests/renoise/fixtures/smoke.json'), '{"outside":"tool"}', [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $Root 'tests/renoise/acid/scenarios/smoke.lua'), 'return true', [System.Text.UTF8Encoding]::new($false))
   [System.IO.File]::WriteAllText((Join-Path $Root 'tests/renoise/keyboard/input.ahk'), 'Send "F5"', [System.Text.UTF8Encoding]::new($false))
@@ -220,8 +222,19 @@ function Test-RealDevelopmentBundle {
 
     $devTool = Join-Path $outputPath $sourceToolName
     $sessionPath = Join-Path $outputPath 'acid-test-session.conf'
+    $fixtureDirectory = Join-Path $outputPath 'fixtures'
     Assert-True (Test-Path -LiteralPath $devTool -PathType Container) 'Real ACID development tool folder is missing.'
     Assert-True (Test-Path -LiteralPath $sessionPath -PathType Leaf) 'Real ACID development session file is missing.'
+    Assert-True (Test-Path -LiteralPath $fixtureDirectory -PathType Container) 'Real native fixture sibling directory is missing.'
+
+    $sourceFixtureDirectory = Join-Path $repoRoot 'tests/renoise/acid/fixtures'
+    $sourceFixtures = @(Get-ChildItem -LiteralPath $sourceFixtureDirectory -File | Sort-Object Name)
+    $deployedFixtures = @(Get-ChildItem -LiteralPath $fixtureDirectory -File | Sort-Object Name)
+    Assert-True ($sourceFixtures.Count -gt 0 -and $deployedFixtures.Count -eq $sourceFixtures.Count) 'Real development build did not deploy the complete fixture set.'
+    for ($fixtureIndex = 0; $fixtureIndex -lt $sourceFixtures.Count; $fixtureIndex++) {
+      Assert-True ($deployedFixtures[$fixtureIndex].Name -ceq $sourceFixtures[$fixtureIndex].Name) 'Real development fixture names differ from source.'
+      Assert-True ((Get-FileHash -LiteralPath $deployedFixtures[$fixtureIndex].FullName -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $sourceFixtures[$fixtureIndex].FullName -Algorithm SHA256).Hash) "Real development fixture '$($sourceFixtures[$fixtureIndex].Name)' differs from source."
+    }
 
     $toolRoot = Join-Path $repoRoot $sourceToolName
     $sourceFiles = @(Get-ChildItem -LiteralPath $toolRoot -File -Recurse | Where-Object {
@@ -292,8 +305,17 @@ try {
   Assert-True (-not $resultOne.Output.Contains($repoRoot)) 'Development package output disclosed the absolute repository path.'
   $devToolOne = Join-Path $devOutputOne $sourceToolName
   $sessionPathOne = Join-Path $devOutputOne 'acid-test-session.conf'
+  $fixtureOutputOne = Join-Path $devOutputOne 'fixtures'
   Assert-True (Test-Path -LiteralPath $devToolOne -PathType Container) 'Development tool folder is missing.'
   Assert-True (Test-Path -LiteralPath $sessionPathOne -PathType Leaf) 'Protected development session file is missing.'
+  Assert-True (Test-Path -LiteralPath $fixtureOutputOne -PathType Container) 'Development fixture sibling directory is missing.'
+  $sourceFixturesOne = @(Get-ChildItem -LiteralPath (Join-Path $fixture 'tests/renoise/acid/fixtures') -File | Sort-Object Name)
+  $deployedFixturesOne = @(Get-ChildItem -LiteralPath $fixtureOutputOne -File | Sort-Object Name)
+  Assert-True ($deployedFixturesOne.Count -eq $sourceFixturesOne.Count) 'Development fixture set is incomplete or has extra files.'
+  for ($fixtureIndex = 0; $fixtureIndex -lt $sourceFixturesOne.Count; $fixtureIndex++) {
+    Assert-True ($deployedFixturesOne[$fixtureIndex].Name -ceq $sourceFixturesOne[$fixtureIndex].Name) 'Development fixture names differ from source.'
+    Assert-True ((Get-FileHash -LiteralPath $deployedFixturesOne[$fixtureIndex].FullName -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $sourceFixturesOne[$fixtureIndex].FullName -Algorithm SHA256).Hash) "Development fixture '$($sourceFixturesOne[$fixtureIndex].Name)' differs from source."
+  }
 
   $sourcePayloadFiles = @(Get-ChildItem -LiteralPath $toolRoot -File -Recurse | Where-Object {
     $_.Extension.ToLowerInvariant() -in $runtimeExtensions -or $_.Name -eq 'LICENSE'
@@ -404,6 +426,19 @@ try {
   Assert-ChildFailure -Result $missingResult -Context 'Missing driver case'
   Assert-True (-not (Test-Path -LiteralPath $missingOutput)) 'Missing driver case left a development output behind.'
 
+  foreach ($fixtureCase in @('empty', 'nested', 'unsupported')) {
+    $invalidFixtureRepo = New-FixtureRepository -Root (Join-Path $testRoot ('fixture-' + $fixtureCase))
+    $assetRoot = Join-Path $invalidFixtureRepo 'tests/renoise/acid/fixtures'
+    switch ($fixtureCase) {
+      'empty' { Remove-Item -LiteralPath (Join-Path $assetRoot 'smoke.xrns') }
+      'nested' { New-Item -ItemType Directory -Path (Join-Path $assetRoot 'nested') | Out-Null }
+      'unsupported' { [IO.File]::WriteAllText((Join-Path $assetRoot 'notes.txt'), 'not a fixture') }
+    }
+    $invalidOutput = 'tmp/rejected-fixtures'
+    $invalidResult = Invoke-PackageDev -FixtureRoot $invalidFixtureRepo -OutputPath $invalidOutput
+    Assert-ChildFailure -Result $invalidResult -Context ("Invalid fixture inventory: " + $fixtureCase)
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $invalidFixtureRepo $invalidOutput))) 'Invalid fixture inventory left a development output behind.'
+  }
   $duplicateDriverRepo = New-FixtureRepository -Root (Join-Path $testRoot 'duplicate-driver-repo')
   $duplicateDirectory = Join-Path $duplicateDriverRepo 'tests/renoise/driver/duplicate'
   New-Item -ItemType Directory -Path $duplicateDirectory | Out-Null
@@ -451,7 +486,7 @@ try {
 
   Test-RealDevelopmentBundle
 
-  Write-Output 'Development package checks passed: release exclusion, dev payload hashes, session ACL, Lua 5.1 entrypoint syntax, real ACID integration build, bootstrap, Unicode paths, port availability, output path rejection, repeat builds and archive rejection cases.'
+  Write-Output 'Development package checks passed: release exclusion, dev payload and fixture hashes, session ACL, Lua 5.1 entrypoint syntax, real ACID integration build, bootstrap, Unicode paths, port availability, output path rejection, repeat builds and archive rejection cases.'
 }
 finally {
   Remove-TestRoot

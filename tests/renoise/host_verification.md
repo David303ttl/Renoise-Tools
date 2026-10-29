@@ -73,3 +73,63 @@ interruption checks must use controlled disposable instances.
 Manual host checks cover clean new/save/load, dirty-song Cancel/Save/Discard,
 tool reload and foreground activation. `save_song_as` can write a fixture without
 delivering a saved-document notification; verify completion from native readback.
+
+## Native fixture and isolation verification (2026-10-30)
+
+T0.5 passes on Renoise 3.5.4 / API 6.2. The independently constructed fixture
+contains two foreign phrases, visible/hidden/tail note and effect sentinels,
+12 named note columns with a hidden muted column, mappings, and exact ACID
+source/settings/draft bytes. Those 797 store bytes are shared with
+`tests/acid/fixtures/pattern_store.txt` and its offline codec assertions.
+No production writer supplies expected output, and no owned association or
+persistent host identity is claimed by these read-only cases.
+
+The final fixture builder completed `-ApproveInstall -Force`, including verified
+installation restoration and atomic replacement of the existing fixture. Its
+transport tempo is explicitly 120; generation does not inherit that preference.
+The checked-in 4088-byte XRNS has SHA-256
+`647262514c0ceff0435997aa8a4fd160a22fe1e904decf32580f46a77aff3b33`.
+
+Successful full-catalog runs bracketed a separate unexpected
+assertion failure; the final run also verifies explicit expected/observed diff lists:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -StartupTimeoutSeconds 45
+```
+
+| Execution | Report under ignored `tmp/` | Result |
+| --- | --- | --- |
+| Full catalog | `interactive-0d26b899097646178ff057dd93683a5e/report.json` | PASS: transport, phrase inventory, exact expected-diff case |
+| Temporary unexpected assertion failure | `interactive-b50bf059ac874b489151ce580044a8c9/report.json` | FAIL as intended, exit 1: `instrument_count` expected 3, actual 2 |
+| Final full catalog after second-pass corrections | `interactive-43091f996b1044bbad9781e8d46cfb3b/report.json` | PASS: transport and both native fixture scenarios |
+
+The temporary failure scenario was removed afterward. Each catalog case resets
+and loads the fixture independently; the negative case requires exactly the
+note-value diff expected 49 / actual 48. Final readbacks are stable, no undo/redo
+history is available, selection stays 1/1, and pending/queued commands are zero.
+The final run resets to a clean document at epoch 6. Snapshot values from both
+scenarios and both successful runs match exactly after excluding only the
+lifecycle epoch, establishing order/repeat independence. Snapshot SHA-256 values
+for the final run are `872950796fb3028bfbd0abdc22089d3c2855c5cf2c2bf09bcdd38411c304c317`
+(inventory, epoch 3) and
+`cdd1a68bf904ffd9cdd84f96e652be29b5e59e0b596533666178e1c02ee4d1c7`
+(expected diff, epoch 5), each repeated identically within its case.
+
+Driver shutdown and original installation restoration passed in all three runs.
+Only runner-launched disposable processes were closed; graceful closure timed
+out and the existing identity-checked forced cleanup was used. Reports describe
+the working tree based on `f1d33be41c75ed237e3adee9b0f8493274195744`, including
+uncommitted harness changes, rather than a new commit.
+
+Second-pass review corrected exact-name capture, hidden column metadata,
+culture/null-safe canonical values, catalog array handling, StrictMode report
+projection, missing unchanged paths, fallback count validation, monotonic epochs,
+probe backup discovery and safe fixture publication. Offline checks pass:
+all 50 repository Lua specs, driver/probe specs, runner specs, host preflight,
+development package checks, release packaging (28 runtime files), and diff checks.
+The release archive retains root `main.lua`/`manifest.xml`, private modules, and
+no fixtures, driver, SDK or documentation.
+
+This closes native fixture/isolation coverage only. Keyboard routing, writer
+identity/transactions, actual undo/redo consistency and musical playback remain
+with their later owning steps; full M4 acceptance remains open.

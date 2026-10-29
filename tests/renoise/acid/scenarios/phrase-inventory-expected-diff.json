@@ -1,0 +1,60 @@
+{
+  "name": "phrase-inventory-expected-diff",
+  "fixture": "phrase-inventory.xrns",
+  "description": "Exercises expected-failure classification with one deliberate wrong golden value; the fixture has no phrase/source association.",
+  "preconditions": {
+    "instrument_count": 2,
+    "phrase_count": 2
+  },
+  "expects": "fail",
+  "assertions": [
+    {
+      "path": "instruments.0.phrases.0.lines.0.note_columns.0.note_value",
+      "expected": 49
+    }
+  ],
+  "expected_diffs": [
+    {
+      "path": "instruments.0.phrases.0.lines.0.note_columns.0.note_value",
+      "expected": 49,
+      "actual": 48
+    }
+  ],
+  "actions": [
+    "document.new",
+    "fixture.load",
+    "song.snapshot",
+    "song.snapshot"
+  ],
+  "waits": [
+    "document.changed",
+    "inventory.settled",
+    "snapshot.stable"
+  ],
+  "unchanged": [
+    "selected_instrument_index",
+    "selected_phrase_index",
+    "can_undo",
+    "can_redo",
+    "tool_data_present",
+    "tool_data_length",
+    "tool_data_hex",
+    "instruments.0.name",
+    "instruments.1.name",
+    "instruments.0.phrases.0.name",
+    "instruments.0.phrases.0.number_of_lines",
+    "instruments.0.phrases.0.properties",
+    "instruments.0.phrases.0.mapping",
+    "instruments.0.phrase_mappings.0",
+    "instruments.0.phrases.0.lines.0",
+    "instruments.0.phrases.0.lines.1",
+    "instruments.0.phrases.0.lines.2",
+    "instruments.0.phrases.1.name",
+    "instruments.0.phrases.1.number_of_lines",
+    "instruments.0.phrases.1.properties",
+    "instruments.0.phrases.1.lines.0",
+    "instruments.0.phrases.1.lines.1",
+    "instruments.0.phrases.1.lines.2",
+    "instruments.1.phrase_mappings"
+  ]
+}

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.2</ApiVersion>
+  <Id>com.david303ttl.ACID</Id>
+  <Version>1.0</Version>
+  <Author>Renoise Tools test suite</Author>
+  <Name>ACID Native Fixture Probe</Name>
+  <Category>Development</Category>
+  <Description>Development-only probe that builds and saves a deterministic ACID fixture song.</Description>
+  <Platform>Windows</Platform>
+</RenoiseScriptingTool>

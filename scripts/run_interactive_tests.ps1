@@ -39,8 +39,16 @@ $deploymentStageToolPath = $null
 $deploymentStageSessionPath = $null
 $deploymentStageToolHash = $null
 $deploymentStageSessionHash = $null
+$fixturesSourcePath = $null
+$installedFixturesPath = $null
+$fixturesBackupPath = $null
+$localBackupFixturesPath = $null
+$deploymentStageFixturesPath = $null
+$deploymentStageFixturesHash = $null
+$installedFixturesHash = $null
 $installedDirectoryHash = $null
 $installedSessionHash = $null
+$fixturesDeployed = $false
 $deploymentStarted = $false
 $safeToRestore = $false
 $driverMayBeLoaded = $false
@@ -60,7 +68,7 @@ $report = [ordered]@{
     run_id = $artifactId
     tool = $Tool
     suite = $Suite
-    scenario = if ($Scenario) { $Scenario } else { 'transport' }
+    scenario = if ($Scenario) { $Scenario } else { 'all' }
     status = 'ERROR'
     source_commit = $null
     host = $null
@@ -144,13 +152,33 @@ try {
     if ($env:OS -ne 'Windows_NT') { throw 'This runner currently supports Windows. Release tools run in Renoise independently of this script.' }
     $lastExpected = 'RenoiseProcessId is zero or identifies the exact developer-owned process'
     if ($RenoiseProcessId -lt 0) { throw 'RenoiseProcessId must be a positive process ID.' }
-    $lastExpected = 'Requested scenario is registered for the selected suite'
-    if ($Scenario -and $Scenario -cne 'transport') { throw "Scenario '$Scenario' is not registered. Available: transport." }
     $lastExpected = 'Developer approves replacing the open document with a disposable new song'
     if (-not $ApproveDisposableSong) { throw 'Pass -ApproveDisposableSong only after confirming the open Renoise document can be replaced by a new empty document for this run.' }
 
     Import-Module (Join-Path $repoRoot 'tests/renoise/runner.psm1') -Force
     Import-Module (Join-Path $repoRoot 'tests/renoise/host_preflight.psm1') -Force
+    $scenarioDirectory = Join-Path $repoRoot 'tests/renoise/acid/scenarios'
+    if (-not (Test-Path -LiteralPath $scenarioDirectory -PathType Container)) {
+        throw "Native scenario catalog 'tests/renoise/acid/scenarios' is missing; the fixture set is required for the interactive suite."
+    }
+    $scenarioCatalog = Get-AcidScenarioCatalog -Directory $scenarioDirectory
+    if ($scenarioCatalog.Count -eq 0 -and $Scenario -cne 'transport') {
+        throw 'Native scenario catalog is empty; a Native run cannot pass without a registered scenario.'
+    }
+    $catalogNames = @($scenarioCatalog | ForEach-Object { [string]$_.name })
+    $selectedCatalogScenarios = @()
+    if ($Scenario) {
+        if ($Scenario -cne 'transport') {
+            $selectedCatalogScenarios = @($scenarioCatalog | Where-Object { $_.name -ceq $Scenario })
+            if ($selectedCatalogScenarios.Count -eq 0) {
+                throw "Scenario '$Scenario' is not registered. Available: $((@('transport') + $catalogNames) -join ', ')"
+            }
+        }
+    }
+    else {
+        $selectedCatalogScenarios = @($scenarioCatalog | Sort-Object { $_.name })
+    }
+    $lastExpected = 'Requested scenario is registered for the selected suite'
     $environment = Import-RenoiseTestEnvironment -Path $TestEnvironment
     $environmentExe = if ($environment.PSObject.Properties['RenoiseExe']) { [string]$environment.RenoiseExe } else { '' }
     if ($RenoiseExe -and $environmentExe -and
@@ -183,6 +211,12 @@ try {
     Add-Trace -Operation 'bundle.build' -Status 'PASS' -Details @{ output = $devOutputName }
     $devToolPath = Join-Path $devOutput $devToolName
     $sessionSourcePath = Join-Path $devOutput $sessionName
+    $fixturesSourcePath = Join-Path $devOutput 'fixtures'
+    if (-not (Test-Path -LiteralPath $fixturesSourcePath -PathType Container)) {
+        throw 'Development bundle did not stage the native fixtures directory.'
+    }
+    $stagedFixtureCount = Assert-AcidScenarioFixtures -Directory $fixturesSourcePath -Scenarios $selectedCatalogScenarios
+    Add-Trace -Operation 'fixture.preflight' -Status 'PASS' -Details @{ selected_scenarios = @($selectedCatalogScenarios | ForEach-Object { $_.name }); staged_fixture_count = $stagedFixtureCount }
     $session = Get-RenoiseSessionConfig -Path $sessionSourcePath
 
     $appData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
@@ -191,6 +225,7 @@ try {
     $toolsPath = if ($ToolsDirectory) { [IO.Path]::GetFullPath($ToolsDirectory) } else { Join-Path $appData "Renoise/V$renoiseVersion/Scripts/Tools" }
     $installedToolPath = Join-Path $toolsPath $devToolName
     $sessionTargetPath = Join-Path $toolsPath $sessionName
+    $installedFixturesPath = Join-Path $toolsPath 'fixtures'
     $lastExpected = 'Explicit install consent and a verified restoration path are present'
     if (-not $Install) { throw "ACID installation is required to load this development bundle. Re-run with -Install to authorize a restorable temporary installation under '$toolsPath'." }
     if (Test-Path -LiteralPath $installedToolPath) {
@@ -203,6 +238,10 @@ try {
     if (Test-Path -LiteralPath $sessionTargetPath) {
         $sessionPrecheck = Get-Item -LiteralPath $sessionTargetPath -Force
         if ($sessionPrecheck.PSIsContainer -or ($sessionPrecheck.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing session sidecar path is not a plain file; refusing replacement.' }
+    }
+    if (Test-Path -LiteralPath $installedFixturesPath) {
+        $fixturesPrecheck = Get-Item -LiteralPath $installedFixturesPath -Force
+        if (-not $fixturesPrecheck.PSIsContainer -or ($fixturesPrecheck.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing ACID fixtures path is not a plain directory; refusing replacement.' }
     }
     New-Item -ItemType Directory -Path $toolsPath -Force | Out-Null
     . ([scriptblock]::Create((Get-RenoiseDeploymentOperation)))
@@ -321,12 +360,71 @@ try {
         if ($Suite -in @('Native','All')) {
             $scenarioResults.Add([pscustomobject]@{ name = 'transport'; suite = 'Native'; status = 'PASS'; expected = $lastExpected; actual = "protocol=$($ping.protocol_version); instruments=$($snapshotAfter.instrument_count); phrases=$($snapshotAfter.phrase_count); epoch=$($after.document_epoch)"; diff = $lastDiff })
         }
+        $sendScenarioRequest = {
+            param([string]$Operation, [hashtable]$Arguments)
+            $timeoutSeconds = $CommandTimeoutSeconds
+            if ($Operation -ceq 'document.new' -or $Operation -ceq 'document.load_fixture') {
+                $timeoutMs = if ($Arguments.ContainsKey('timeout_ms')) { [int]$Arguments.timeout_ms } else { [Math]::Min(120000, $CommandTimeoutSeconds * 1000) }
+                $timeoutSeconds = [Math]::Min(123, [Math]::Ceiling($timeoutMs / 1000) + 3)
+            }
+            Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation $Operation -Arguments $Arguments -TimeoutSeconds $timeoutSeconds -ProcessCheck $processCheck
+        }
+        $resetTimeoutSeconds = [Math]::Min(120, $CommandTimeoutSeconds)
+        foreach ($catalogScenario in @($selectedCatalogScenarios)) {
+            $scenarioArtifactDirectory = Join-Path $artifactRoot ('scenario-' + $catalogScenario.name)
+            New-Item -ItemType Directory -Path $scenarioArtifactDirectory -Force | Out-Null
+            $lastExpected = "scenario $($catalogScenario.name) golden assertions hold; expects=$($catalogScenario.expects); $(@($catalogScenario.assertions).Count) assertions"
+            $lastActual = $null
+            $lastDiff = $null
+            $result = Invoke-AcidNativeScenario -Scenario $catalogScenario -SendRequest $sendScenarioRequest -ArtifactDirectory $scenarioArtifactDirectory -ResetTimeoutSeconds $resetTimeoutSeconds -CommandTimeoutSeconds $CommandTimeoutSeconds
+            $epochText = "$($result.observation.document_epoch_reset)->$($result.observation.document_epoch_loaded)"
+            $shaText = (@($result.observation.snapshot_sha256) -join ',')
+            $lastActual = @{ status = $result.status; epochs = $epochText; snapshot_sha256 = @($result.observation.snapshot_sha256); failure_reason = $result.observation.failure_reason }
+            $scenarioDiff = Get-AcidScenarioReportDiff -Result $result
+            $lastDiff = $scenarioDiff
+            $actualSummary = "epochs=$epochText; snapshot_sha256=$shaText"
+            if ($result.status -ne 'PASS' -and $result.observation.failure_reason) { $actualSummary += "; reason=$($result.observation.failure_reason)" }
+            $scenarioExpected = "scenario $($catalogScenario.name) golden assertions hold; expects=$($result.expects); $(@($catalogScenario.assertions).Count) assertions"
+            $scenarioResults.Add([pscustomobject]@{
+                name = $catalogScenario.name
+                suite = 'Native'
+                status = $result.status
+                expected = $scenarioExpected
+                actual = $actualSummary
+                diff = $scenarioDiff
+            })
+            Add-Trace -Operation "scenario.$($catalogScenario.name)" -Status $result.status -Details @{ epochs = $epochText; snapshot_sha256 = @($result.observation.snapshot_sha256); failure_reason = $result.observation.failure_reason }
+        }
+        $lastExpected = 'Scenario run leaves a settled new document with drained queues'
+        $lastActual = @{ terminal_response = $false }
+        $lastDiff = $null
+        $cleanupReset = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.new' -Arguments @{ timeout_ms = $resetTimeoutMs } -TimeoutSeconds $resetResponseTimeout -ProcessCheck $processCheck
+        if ($cleanupReset.operation -cne 'document.new') { throw 'Scenario cleanup reset did not complete a new document.' }
+        $cleanupDiagnostics = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'diagnostics' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+        $lastActual = @{ document_epoch = $cleanupDiagnostics.document_epoch; pending = $cleanupDiagnostics.pending_commands; queued = $cleanupDiagnostics.queued_commands; transition_uncertain = $cleanupDiagnostics.document_transition_uncertain; terminal_response = $true }
+        $lastDiff = @{
+            terminal_response_received = $true
+            document_ready = $cleanupDiagnostics.document_ready
+            pending = $cleanupDiagnostics.pending_commands
+            queued = $cleanupDiagnostics.queued_commands
+            transition_uncertain = $cleanupDiagnostics.document_transition_uncertain
+        }
+        if (-not $cleanupDiagnostics.document_ready -or $cleanupDiagnostics.pending_commands -ne 0 -or
+            $cleanupDiagnostics.queued_commands -ne 0 -or $cleanupDiagnostics.document_transition_uncertain) {
+            throw 'Scenario cleanup did not leave a settled, ready document.'
+        }
+        $report.document_epoch = $cleanupDiagnostics.document_epoch
+        Add-Trace -Operation 'scenario.cleanup' -Status 'PASS' -Details @{ document_epoch = $cleanupDiagnostics.document_epoch }
         if ($Suite -in @('Keyboard','All')) {
             $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'SKIP'; reason = 'Keyboard tests are not implemented.'; expected = 'Keyboard E2E'; actual = $null; diff = $null })
         }
         $report.scenarios = @($scenarioResults)
-        if (@($scenarioResults | Where-Object { $_.status -ne 'PASS' }).Count -eq 0) { $report.status = 'PASS' }
-        else { $report.status = 'FAIL' }
+        $failedScenarios = @($scenarioResults | Where-Object { $_.status -ne 'PASS' })
+        if ($failedScenarios.Count -eq 0) { $report.status = 'PASS' }
+        else {
+            $report.status = 'FAIL'
+            $report.error = 'Scenario failures: ' + (@($failedScenarios | ForEach-Object { "$($_.name): $($_.actual)" }) -join '; ')
+        }
         $safeToRestore = Stop-RenoiseDriver -Client $client -Session $session -SessionPath $sessionTargetPath -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         Add-Trace -Operation 'driver.shutdown' -Status 'PASS' -Details @{ renoise_left_open = [bool]$selectedIdentity }
     }
@@ -367,7 +465,7 @@ catch {
         $report.status = 'ERROR'
         $report.error = $failureMessage
         $failureScenario = [pscustomobject]@{
-            name = if ($Scenario) { $Scenario } else { 'transport' }
+            name = if ($Scenario) { $Scenario } else { 'all' }
             suite = if ($Suite -eq 'All') { 'Native' } else { $Suite }
             status = 'ERROR'
             expected = $lastExpected
@@ -452,6 +550,8 @@ finally {
             same_volume_restore_path = if ($localBackupToolPath -and (Test-Path -LiteralPath $localBackupToolPath)) { $localBackupToolPath } else { $null }
             session_backup = if ($sessionBackupPath -and (Test-Path -LiteralPath $sessionBackupPath)) { $sessionBackupPath } else { $null }
             same_volume_session_restore_path = if ($localBackupSessionPath -and (Test-Path -LiteralPath $localBackupSessionPath)) { $localBackupSessionPath } else { $null }
+            fixtures_backup = if ($fixturesBackupPath -and (Test-Path -LiteralPath $fixturesBackupPath)) { $fixturesBackupPath } else { $null }
+            same_volume_fixtures_restore_path = if ($localBackupFixturesPath -and (Test-Path -LiteralPath $localBackupFixturesPath)) { $localBackupFixturesPath } else { $null }
         }
       }
     }

@@ -376,32 +376,129 @@ local function count_inventory(song)
   return instrument_count, phrase_count
 end
 
-local function truncate_text(value, max_bytes)
-  value = tostring(value or "")
+local function copy_integer_range(current, values)
+  local result = current.json.array()
+  for index, value in ipairs(values) do result[index] = value end
+  return result
+end
+
+local function nullable_value(current, value)
+  if value == nil then return current.json.null end
+  return value
+end
+
+local function read_boolean_method(current, song, method_name)
+  local method = song[method_name]
+  if type(method) ~= "function" then return current.json.null end
+  local value = method(song)
+  return nullable_value(current, value)
+end
+
+local function snapshot_phrase_mapping(current, mapping)
+  if not mapping then return current.json.null end
+  return {
+    key_tracking = mapping.key_tracking,
+    base_note = mapping.base_note,
+    note_range = copy_integer_range(current, mapping.note_range),
+    looping = mapping.looping,
+    loop_start = mapping.loop_start,
+    loop_end = mapping.loop_end
+  }
+end
+
+local function snapshot_phrase_columns(current, phrase, max_columns)
+  local result = current.json.array()
+  for column_index = 1, max_columns do
+    result[column_index] = {
+      index = column_index,
+      name = nullable_value(current, phrase:column_name(column_index)),
+      muted = nullable_value(current, phrase:column_is_muted(column_index))
+    }
+  end
+  return result
+end
+
+local function snapshot_note_column(current, column, index)
+  local note_value = column.note_value
+  local instrument_value = column.instrument_value
+  local volume_value = column.volume_value
+  local panning_value = column.panning_value
+  local delay_value = column.delay_value
+  local effect_number_value = column.effect_number_value
+  local effect_amount_value = column.effect_amount_value
+  if note_value == 121 and instrument_value == 255 and volume_value == 255 and
+      panning_value == 255 and delay_value == 0 and effect_number_value == 0 and
+      effect_amount_value == 0 then
+    return nil
+  end
+  return {
+    index = index,
+    note_value = note_value,
+    instrument_value = instrument_value,
+    volume_value = volume_value,
+    panning_value = panning_value,
+    delay_value = delay_value,
+    effect_number_value = effect_number_value,
+    effect_amount_value = effect_amount_value
+  }
+end
+
+local function snapshot_effect_column(current, column, index)
+  local number_value = column.number_value
+  local amount_value = column.amount_value
+  if number_value == 0 and amount_value == 0 then return nil end
+  return {index = index, number_value = number_value, amount_value = amount_value}
+end
+
+local function ordered_entries(values)
+  local result = {}
+  for index, value in pairs(values) do
+    result[#result + 1] = {index = index, value = value}
+  end
+  table.sort(result, function(left, right) return left.index < right.index end)
+  return result
+end
+
+local function snapshot_phrase_lines(current, phrase, max_lines)
+  local result = current.json.array()
+  for line_index = 1, max_lines do
+    local line = phrase:line(line_index)
+    local note_columns = current.json.array()
+    local effect_columns = current.json.array()
+    local note_column_count = 0
+    local effect_column_count = 0
+    local native_note_columns = ordered_entries(line.note_columns)
+    for _, entry in ipairs(native_note_columns) do
+      local column_index, column = entry.index, entry.value
+      note_column_count = column_index
+      local snapshot = snapshot_note_column(current, column, column_index)
+      if snapshot then note_columns[#note_columns + 1] = snapshot end
+    end
+    local native_effect_columns = ordered_entries(line.effect_columns)
+    for _, entry in ipairs(native_effect_columns) do
+      local column_index, column = entry.index, entry.value
+      effect_column_count = column_index
+      local snapshot = snapshot_effect_column(current, column, column_index)
+      if snapshot then effect_columns[#effect_columns + 1] = snapshot end
+    end
+    if #note_columns > 0 or #effect_columns > 0 then
+      result[#result + 1] = {
+        index = line_index,
+        note_column_count = note_column_count,
+        effect_column_count = effect_column_count,
+        note_columns = note_columns,
+        effect_columns = effect_columns
+      }
+    end
+  end
+  return result
+end
+
+local function hex_bytes(value)
+  if value == nil then return nil end
   local parts = {}
-  local index = 1
-  local size = 0
-  while index <= #value and size < max_bytes do
-    local first = value:byte(index)
-    local count = 1
-    if first >= 0xc2 and first <= 0xdf then count = 2
-    elseif first >= 0xe0 and first <= 0xef then count = 3
-    elseif first >= 0xf0 and first <= 0xf4 then count = 4 end
-    if index + count - 1 > #value or size + count > max_bytes then break end
-    local valid = true
-    for offset = 1, count - 1 do
-      local byte = value:byte(index + offset)
-      if not byte or byte < 0x80 or byte > 0xbf then valid = false; break end
-    end
-    if not valid then
-      parts[#parts + 1] = "?"
-      index = index + 1
-      size = size + 1
-    else
-      parts[#parts + 1] = value:sub(index, index + count - 1)
-      index = index + count
-      size = size + count
-    end
+  for index = 1, #value do
+    parts[index] = string.format("%02x", value:byte(index))
   end
   return table.concat(parts)
 end
@@ -417,31 +514,97 @@ local function build_snapshot(current)
     return nil, error_value("snapshot_limit", "song inventory exceeds the snapshot bound")
   end
 
+  local max_lines = (renoise.InstrumentPhrase and renoise.InstrumentPhrase.MAX_NUMBER_OF_LINES) or 512
+  local max_note_columns = (renoise.InstrumentPhrase and renoise.InstrumentPhrase.MAX_NUMBER_OF_NOTE_COLUMNS) or 12
+  local tool_data = song.tool_data
+  if tool_data ~= nil and type(tool_data) ~= "string" then
+    return nil, error_value("snapshot_unavailable", "song tool data is not a byte string")
+  end
+  if tool_data and #tool_data > LIMITS.max_response_bytes / 2 then
+    return nil, error_value("snapshot_limit", "song tool data exceeds the snapshot bound")
+  end
+
   local instruments = current.json.array()
   for instrument_index, instrument in ipairs(song.instruments) do
     local phrases = current.json.array()
     for phrase_index, phrase in ipairs(instrument.phrases) do
+      local properties = {
+        playback_mode = nullable_value(current, phrase.playback_mode),
+        visible_note_columns = nullable_value(current, phrase.visible_note_columns),
+        visible_effect_columns = nullable_value(current, phrase.visible_effect_columns),
+        key_tracking = nullable_value(current, phrase.key_tracking),
+        base_note = nullable_value(current, phrase.base_note),
+        looping = nullable_value(current, phrase.looping),
+        loop_start = nullable_value(current, phrase.loop_start),
+        loop_end = nullable_value(current, phrase.loop_end),
+        autoseek = nullable_value(current, phrase.autoseek),
+        lpb = nullable_value(current, phrase.lpb),
+        shuffle = nullable_value(current, phrase.shuffle),
+        instrument_column_visible = nullable_value(current, phrase.instrument_column_visible),
+        volume_column_visible = nullable_value(current, phrase.volume_column_visible),
+        panning_column_visible = nullable_value(current, phrase.panning_column_visible),
+        delay_column_visible = nullable_value(current, phrase.delay_column_visible),
+        sample_effects_column_visible = nullable_value(current, phrase.sample_effects_column_visible)
+      }
+      local lines_ok, lines = pcall(snapshot_phrase_lines, current, phrase, max_lines)
+      if not lines_ok then
+        return nil, error_value("snapshot_unavailable", "phrase line data could not be read")
+      end
+      local columns_ok, columns = pcall(snapshot_phrase_columns, current, phrase, max_note_columns)
+      if not columns_ok then
+        return nil, error_value("snapshot_unavailable", "phrase column metadata could not be read")
+      end
       phrases[#phrases + 1] = {
         index = phrase_index,
-        name = truncate_text(phrase.name, 128),
-        number_of_lines = phrase.number_of_lines
+        name = phrase.name,
+        number_of_lines = phrase.number_of_lines,
+        properties = properties,
+        note_columns = columns,
+        mapping = snapshot_phrase_mapping(current, phrase.mapping),
+        captured_line_count = max_lines,
+        lines = lines
+      }
+    end
+
+    local mappings = current.json.array()
+    for mapping_index, mapping in ipairs(instrument.phrase_mappings or {}) do
+      mappings[#mappings + 1] = {
+        index = mapping_index,
+        key_tracking = mapping.key_tracking,
+        base_note = mapping.base_note,
+        note_range = copy_integer_range(current, mapping.note_range),
+        looping = mapping.looping,
+        loop_start = mapping.loop_start,
+        loop_end = mapping.loop_end
       }
     end
     instruments[#instruments + 1] = {
       index = instrument_index,
-      name = truncate_text(instrument.name, 128),
-      phrases = phrases
+      name = instrument.name,
+      phrases = phrases,
+      phrase_mappings = mappings
     }
   end
 
-  return {
+  local snapshot = {
     document_epoch = current.document_epoch,
     instrument_count = instrument_count,
     phrase_count = phrase_count,
     selected_instrument_index = song.selected_instrument_index,
     selected_phrase_index = song.selected_phrase_index,
+    can_undo = read_boolean_method(current, song, "can_undo"),
+    can_redo = read_boolean_method(current, song, "can_redo"),
+    is_undo_redoing = read_boolean_method(current, song, "is_undo_redoing"),
+    tool_data_present = tool_data ~= nil,
+    tool_data_length = tool_data and #tool_data or 0,
+    tool_data_hex = nullable_value(current, hex_bytes(tool_data)),
     instruments = instruments
   }
+  local encode_ok, encoded = pcall(current.json.encode, snapshot)
+  if not encode_ok or #encoded > LIMITS.max_response_bytes - 2048 then
+    return nil, error_value("snapshot_limit", "song snapshot exceeds the response bound")
+  end
+  return snapshot
 end
 
 local function canonical_path(path)

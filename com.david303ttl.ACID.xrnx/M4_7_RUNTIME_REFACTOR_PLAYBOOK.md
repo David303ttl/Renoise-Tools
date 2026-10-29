@@ -718,7 +718,8 @@ through ordinary Renoise installation without it or its dependencies.
 **Current implementation:** development packaging, authenticated loopback driver,
 PowerShell runner, native document-reset and inventory smoke, and offline runner
 regressions. T0.4 runner acceptance passes for fresh launches, loaded selected
-instances, concurrent instances and timeout/disconnection recovery. T0.5–T0.8
+instances, concurrent instances and timeout/disconnection recovery. T0.5 native
+fixture/isolation acceptance passes; T0.6–T0.8
 remain pending. Keyboard coverage is not implemented.
 Missing keyboard coverage does not block Native
 runs, runtime implementation or normal tool use.
@@ -795,22 +796,31 @@ and keyboard coverage remain pending below.
 #### T0.5 — Independent native fixtures and scenario isolation
 
 - [x] Read native inventory and selection positions; compare stable value snapshots.
-- [ ] Add a small scenario definition under `tests/renoise/acid/scenarios/` with
+- [x] Add a small scenario definition under `tests/renoise/acid/scenarios/` with
   fixture/preconditions, actions, observed waits, expected changes and unchanged data.
-- [ ] Extend read-only snapshots for relevant phrase properties, used/hidden/tail
+- [x] Extend read-only snapshots for relevant phrase properties, used/hidden/tail
   note/effect fields, mappings and `tool_data` bytes/digests. Keep diagnostics
   separate from independent host assertions.
-- [ ] Use canonical values with stable ordering and explicit empty/nil handling;
+- [x] Use canonical values with stable ordering and explicit empty/nil handling;
   assert foreign content, counts, IDs, source, settings and unaffected columns.
   For identity-sensitive cases, establish a native-proven identity check; neither
   Lua wrapper identity nor an unchanged index proves persistent host identity.
-- [ ] Share deterministic inputs and independent golden expectations with existing
+- [x] Share deterministic inputs and independent golden expectations with existing
   Lua tests; never derive expected output from the production writer under test.
-- [ ] Verify fixture load/reset, notifier cleanup and test-order independence;
+- [x] Verify fixture load/reset, notifier cleanup and test-order independence;
   preserve deliberate cross-document interruption cases.
-- [ ] Run two successive scenarios and a deliberate assertion failure. Verify
+- [x] Run two successive scenarios and a deliberate assertion failure. Verify
   exact diffs, no read-only undo/selection/musical changes and no state leakage.
 
+Native acceptance on 2026-10-30 passed the full catalog, a separate unexpected
+assertion failure with exact diff and exit 1, and a clean catalog rerun afterward.
+The independent fixture covers foreign phrase content, hidden/tail note/effect
+fields, column metadata, mappings and exact source/settings/draft bytes. It
+makes no owned-association or persistent host-identity claim; identity-sensitive
+writer cases remain with their owning steps. Fixture construction and snapshots
+do not use the production writer to derive expected output. Second-pass review
+and corrected boundary regressions passed; see the
+[fixture verification record](../tests/renoise/host_verification.md#native-fixture-and-isolation-verification-2026-10-30).
 #### T0.6 — Targeted keyboard E2E
 
 - [ ] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`; verify target

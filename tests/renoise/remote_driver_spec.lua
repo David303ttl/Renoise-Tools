@@ -91,8 +91,51 @@ local function new_observable()
   return observable
 end
 
+local function make_note_column()
+  return {
+    note_value = 121,
+    instrument_value = 255,
+    volume_value = 255,
+    panning_value = 255,
+    delay_value = 0,
+    effect_number_value = 0,
+    effect_amount_value = 0
+  }
+end
+
+local function make_effect_column()
+  return {number_value = 0, amount_value = 0}
+end
+
+local function make_line()
+  return {
+    note_columns = {make_note_column()},
+    effect_columns = {make_effect_column()}
+  }
+end
+
+local function make_phrase(name, number_of_lines)
+  local lines = {}
+  local phrase = {name = name, number_of_lines = number_of_lines}
+  function phrase:line(index)
+    local line = lines[index]
+    if not line then
+      line = make_line()
+      lines[index] = line
+    end
+    return line
+  end
+  function phrase:column_name(index)
+    return "Column " .. tostring(index)
+  end
+  function phrase:column_is_muted(index)
+    return index == 3
+  end
+  return phrase
+end
+
 local function make_song(file_name)
-  local phrase = {name = "Phrase A", number_of_lines = 16}
+  local phrase = make_phrase("Phrase A", 16)
   local instrument = {name = "Instrument A", phrases = {phrase}}
   local song = {
     file_name = file_name or "",
@@ -525,7 +568,7 @@ local function test_snapshot_waits_and_document_transitions()
 
   local weak_phrase
   do
-    local transient_phrase = {name = "Transient", number_of_lines = 1}
+    local transient_phrase = make_phrase("Transient", 1)
     weak_phrase = setmetatable({transient_phrase}, {__mode = "v"})
     host.song.instruments[1].phrases = {transient_phrase}
     host.song.selected_phrase = transient_phrase
@@ -533,7 +576,7 @@ local function test_snapshot_waits_and_document_transitions()
     fire_idle(host)
     assert(find_response(take_responses(client), "transient-snapshot").ok)
   end
-  local replacement_phrase = {name = "Replacement", number_of_lines = 1}
+  local replacement_phrase = make_phrase("Replacement", 1)
   host.song.instruments[1].phrases = {replacement_phrase}
   host.song.selected_phrase = replacement_phrase
   send_request(host, client, "prune-deleted", "song.snapshot")
@@ -796,7 +839,7 @@ end
 
 local function test_snapshot_uses_values_with_fresh_host_wrappers()
   local host, driver = start_driver()
-  local name = "Original"
+  local name = string.rep("Original", 18)
   host.song = setmetatable({}, {__index = function(_, key)
     if key == "instruments" then return {{name = name, phrases = {}}} end
     if key == "selected_instrument_index" then return 1 end
@@ -814,6 +857,7 @@ local function test_snapshot_uses_values_with_fresh_host_wrappers()
   fire_idle(host)
   local second = find_response(take_responses(client), "same-values").result
   assert_equal(codec.encode(first), codec.encode(second), "host wrappers changed snapshot values")
+  assert_equal(second.instruments[1].name, name, "instrument name was truncated")
   assert_equal(second.selected_instrument_index, 1)
   assert_equal(second.selected_phrase_index, 0)
   name = "Changed"
@@ -823,6 +867,195 @@ local function test_snapshot_uses_values_with_fresh_host_wrappers()
   assert(codec.encode(changed) ~= codec.encode(first), "native value change was hidden")
   driver.stop()
 end
+
+local function test_snapshot_captures_read_only_phrase_state_and_raw_song_bytes()
+  local host, driver = start_driver()
+  local empty_note = {
+    note_value = 121,
+    instrument_value = 255,
+    volume_value = 255,
+    panning_value = 255,
+    delay_value = 0,
+    effect_number_value = 0,
+    effect_amount_value = 0
+  }
+  local empty_effect = {number_value = 0, amount_value = 0}
+  local lines_read = 0
+  local mapping = {
+    key_tracking = 2,
+    base_note = 48,
+    note_range = {36, 60},
+    looping = false,
+    loop_start = 1,
+    loop_end = 8
+  }
+  local lines = {}
+  for line_index = 1, 512 do
+    local note_columns = {
+      empty_note,
+      empty_note
+    }
+    local effect_columns = {empty_effect}
+    if line_index == 512 then
+      note_columns[2] = {
+        note_value = 60,
+        instrument_value = 7,
+        volume_value = 96,
+        panning_value = 255,
+        delay_value = 12,
+        effect_number_value = 0,
+        effect_amount_value = 0
+      }
+      effect_columns[1] = {number_value = 0x0c, amount_value = 0x40}
+    end
+    lines[line_index] = {note_columns = note_columns, effect_columns = effect_columns}
+  end
+  local phrase = {
+    name = string.rep("Mapped phrase", 12),
+    number_of_lines = 16,
+    playback_mode = 1,
+    visible_note_columns = 1,
+    visible_effect_columns = 0,
+    key_tracking = 2,
+    base_note = 48,
+    looping = false,
+    loop_start = 1,
+    loop_end = 16,
+    autoseek = false,
+    lpb = 4,
+    shuffle = 0,
+    instrument_column_visible = false,
+    volume_column_visible = true,
+    panning_column_visible = false,
+    delay_column_visible = false,
+    sample_effects_column_visible = false,
+    mapping = mapping
+  }
+  function phrase:line(index)
+    lines_read = lines_read + 1
+    return lines[index]
+  end
+  function phrase:column_name(index)
+    return index == 1 and "Lead" or "Column " .. tostring(index)
+  end
+  function phrase:column_is_muted(index)
+    return index == 2
+  end
+  local instrument = {
+    name = "Instrument A",
+    phrases = {phrase},
+    phrase_mappings = {mapping}
+  }
+  local undo_reads, redo_reads, undoing_reads = 0, 0, 0
+  host.song = {
+    instruments = {instrument},
+    selected_instrument_index = 1,
+    selected_phrase_index = 1,
+    tool_data = string.char(0, 10, 255, 65),
+    can_undo = function()
+      undo_reads = undo_reads + 1
+      return true
+    end,
+    can_redo = function()
+      redo_reads = redo_reads + 1
+      return false
+    end,
+    is_undo_redoing = function()
+      undoing_reads = undoing_reads + 1
+      return false
+    end
+  }
+  host.release:fire()
+  host.new_document:fire()
+
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "rich-snapshot", "song.snapshot")
+  fire_idle(host)
+  local response = find_response(take_responses(client), "rich-snapshot")
+  assert(response and response.ok, response and response.error and response.error.message)
+  local snapshot = response.result
+  local snapshot_phrase = snapshot.instruments[1].phrases[1]
+  local tail_line = snapshot_phrase.lines[1]
+  assert_equal(snapshot_phrase.captured_line_count, 512)
+  assert_equal(snapshot_phrase.name, phrase.name, "phrase name was truncated")
+  assert_equal(snapshot_phrase.number_of_lines, 16)
+  assert_equal(#snapshot_phrase.lines, 1)
+  assert_equal(tail_line.index, 512, "tail line was omitted")
+  assert_equal(tail_line.note_column_count, 2, "hidden note column was omitted")
+  assert_equal(tail_line.effect_column_count, 1, "hidden effect column was omitted")
+  assert_equal(tail_line.note_columns[1].index, 2)
+  assert_equal(tail_line.note_columns[1].note_value, 60)
+  assert_equal(tail_line.note_columns[1].delay_value, 12)
+  assert_equal(tail_line.effect_columns[1].number_value, 0x0c)
+  assert_equal(tail_line.effect_columns[1].amount_value, 0x40)
+  assert_equal(snapshot_phrase.properties.instrument_column_visible, false)
+  assert_equal(snapshot_phrase.properties.autoseek, false)
+  assert_equal(#snapshot_phrase.note_columns, 12, "hidden note-column metadata was omitted")
+  assert_equal(snapshot_phrase.note_columns[1].name, "Lead")
+  assert_equal(snapshot_phrase.note_columns[1].muted, false)
+  assert_equal(snapshot_phrase.note_columns[2].muted, true)
+  assert_equal(snapshot_phrase.note_columns[12].index, 12, "tail note-column metadata was omitted")
+  assert_equal(snapshot_phrase.mapping.note_range[1], 36)
+  assert_equal(snapshot_phrase.mapping.looping, false)
+  assert_equal(snapshot.instruments[1].phrase_mappings[1].base_note, 48)
+  assert_equal(snapshot.tool_data_present, true)
+  assert_equal(snapshot.tool_data_length, 4)
+  assert_equal(snapshot.tool_data_hex, "000aff41", "binary song data was not preserved byte-for-byte")
+  assert_equal(snapshot.can_undo, true)
+  assert_equal(snapshot.can_redo, false, "false undo state was collapsed into null")
+  assert_equal(snapshot.is_undo_redoing, false)
+  assert_equal(lines_read, 512, "not every native tail line was inspected")
+  assert_equal(undo_reads, 1)
+  assert_equal(redo_reads, 1)
+  assert_equal(undoing_reads, 1)
+  assert_equal(host.song.selected_instrument_index, 1, "snapshot changed selected instrument")
+  assert_equal(host.song.selected_phrase_index, 1, "snapshot changed selected phrase")
+  assert_equal(host.song.tool_data, string.char(0, 10, 255, 65), "snapshot changed tool data")
+  driver.stop()
+end
+
+local function test_snapshot_encodes_optional_native_data_as_explicit_null()
+  local host, driver = start_driver()
+  local song = make_song("")
+  song.tool_data = nil
+  host.song = song
+  host.release:fire()
+  host.new_document:fire()
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "optional-state", "song.snapshot")
+  fire_idle(host)
+  local response = find_response(take_responses(client), "optional-state")
+  assert(response and response.ok)
+  local snapshot = response.result
+  assert_equal(snapshot.tool_data_present, false)
+  assert_equal(snapshot.tool_data_length, 0)
+  assert_equal(snapshot.tool_data_hex, codec.null, "missing bytes were not represented by JSON null")
+  assert_equal(snapshot.instruments[1].phrases[1].mapping, codec.null, "missing phrase mapping was not represented by JSON null")
+  assert_equal(snapshot.can_undo, codec.null, "unavailable undo state was not represented by JSON null")
+  assert_equal(snapshot.can_redo, codec.null, "unavailable redo state was not represented by JSON null")
+  assert_equal(snapshot.is_undo_redoing, codec.null, "unavailable undo state was not represented by JSON null")
+
+  song.tool_data = string.rep("x", 131073)
+  send_request(host, client, "oversized-tool-data", "song.snapshot")
+  fire_idle(host)
+  local oversized = find_response(take_responses(client), "oversized-tool-data")
+  assert(oversized and not oversized.ok)
+  assert_equal(oversized.error.code, "snapshot_limit")
+
+  song.tool_data = nil
+  local phrases = {}
+  for index = 1, 513 do phrases[index] = make_phrase("Phrase " .. tostring(index), 1) end
+  song.instruments[1].phrases = phrases
+  send_request(host, client, "oversized-inventory", "song.snapshot")
+  fire_idle(host)
+  local oversized_inventory = find_response(take_responses(client), "oversized-inventory")
+  assert(oversized_inventory and not oversized_inventory.ok)
+  assert_equal(oversized_inventory.error.code, "snapshot_limit")
+  driver.stop()
+end
+
 local function test_new_document_requires_preceding_release()
   local host, driver = start_driver()
   local client = new_client()
@@ -836,6 +1069,8 @@ local function test_new_document_requires_preceding_release()
   driver.stop()
 end
 test_new_document_requires_preceding_release()
+test_snapshot_encodes_optional_native_data_as_explicit_null()
+test_snapshot_captures_read_only_phrase_state_and_raw_song_bytes()
 test_snapshot_uses_values_with_fresh_host_wrappers()
 test_diagnostics_counts_other_commands()
 test_shutdown_records_completion_after_server_stop()
