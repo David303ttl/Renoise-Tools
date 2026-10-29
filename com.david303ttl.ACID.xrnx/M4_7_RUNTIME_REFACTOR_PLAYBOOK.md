@@ -621,9 +621,9 @@ Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
-**Status:** 2.1 complete; 2.2–2.9 remain pending. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
+**Status:** 2.1 complete; Step T0 automated-test foundation and 2.2–2.9 remain pending. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
 
-**Execution order:** complete 2.1–2.9 strictly in order. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
+**Execution order:** 2.1 (complete) -> T0.1–T0.8 and Gate T0 -> 2.2–2.9 strictly in order. Gate T0 is a prerequisite for 2.2, not a replacement for any runtime/host acceptance gate. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
 
 ### 2.1 — Freeze ownership, interfaces, and the cutover boundary
 
@@ -706,6 +706,114 @@ registry release scrubbing, legacy delivery/cancel normalization and native slot
 reservation remain the owning later gates, not passes inferred from these mocks.
 No new native Renoise playback, undo or lifecycle acceptance was performed;
 M4 remains open and Step 8 remains required.
+
+
+### Step T0 — Establish automated real-Renoise verification before 2.2
+
+**Status:** planned; mandatory foundation gate after completed 2.1 and before 2.2. This is testing infrastructure, not a musical/runtime refactor or a substitute for Step 8 native acceptance. Preserve the Step 2.2–2.9 order and all existing Step 3–8 acceptance obligations. Do not claim real-host validation from mocked Lua specs.
+
+**Purpose:** make native Renoise scripting-API integration and keyboard-based end-to-end checks reproducible from PowerShell 7, in a dedicated disposable Windows GUI session. Prioritize actual host behavior, song-state readback and independent assertions. Use the native API for bulk setup/inspection; use keyboard input only for observable user interaction and focus routing. A passing harness smoke test is not evidence that the legacy writer is safe.
+
+**Authority and isolation:** ACID production remains the sole owner of destinations, phrase writes, drafts, cancellation and lifecycle. The test adapter can initialize fixtures, invoke existing user-facing actions where appropriate, and inspect state; it must never provide a competing writer, force ownership, bypass a failed guard, reach into a private token to mutate it, or spoof a native completion. Keep pure Lua specs and their per-process mock isolation unchanged. The infrastructure must be reusable by ARP through a separate per-tool adapter; leave frozen DigitaktSampleChain untouched.
+
+**Proposed layout** (create only files with demonstrated responsibilities; no implementation-history names):
+
+```text
+scripts/
+  package_dev.ps1                 # temporary dev bundle assembled from release archive
+  run_interactive_tests.ps1       # owned-process orchestration and exit status
+tests/renoise/
+  runner.psm1                     # reusable PowerShell transport/process/fixture helpers
+  driver/remote_driver.lua        # dev-only in-Renoise TCP/idle adapter
+  driver/json.lua                 # dev-only Lua 5.1 JSON codec if needed
+  keyboard/input.ahk              # AutoHotkey v2, owned-window keyboard input
+  acid/scenarios/                # ACID scenario definitions, not tool runtime
+  fixtures/                      # shared host-neutral expected data when appropriate
+```
+
+The source driver is under `tests/renoise/`, **not** `com.david303ttl.ACID.xrnx/`: the current `scripts/package.ps1` recursively packages runtime-extension files and would otherwise include a test-only Lua module in a release. The dev bundler extracts a normal release archive into disposable staging, copies only the required driver/codec, writes ephemeral configuration and injects a clearly bounded dev bootstrap into the *staged* `main.lua`. Preserve `manifest.xml` (ID/version/API) and production modules byte-for-byte; do not modify tracked production `main.lua` to require tests. Do not install this dev artifact in a normal user profile.
+
+#### T0.1 — Lock the native API contract and test-host safety preflight
+
+1. Install/check the pinned API 6.2 SDK with `pwsh -NoProfile -File ./scripts/setup_sdk.ps1`. Inspect definitions and accompanying book for `renoise.Socket.create_server`, `SocketServer:run/stop`, `socket_message`, `renoise.tool().app_idle_observable`, `app_new_document_observable`, `app_release_document_observable`, `tool_will_unload_observable`, `renoise.app():new_song_no_template()`, `load_song`, `save_song_as`, `renoise.song():undo()/redo()`, and `renoise.tool():add_keybinding()`. Record only signatures, lifecycle restrictions and proven workarounds in a concise `tests/renoise/README.md`; do not treat newer online APIs as 6.2.
+2. Require an explicitly configured dedicated test Windows user/session or disposable VM with an interactive desktop, Renoise 3.5+ installed and an isolated `%APPDATA%\Renoise\V3.x.x\Scripts\Tools` directory. Validate the test-user identity/profile marker, expected Renoise executable, target tool installation path and writable temporary directory before installing anything. Do not infer an isolated preference directory from an undocumented command-line switch. Do not select the current working Renoise process as a test target.
+3. Prohibit writes to an ordinary user's Tools directory, normal preferences/keymap or song files. Refuse to run if isolation, GUI desktop, tool path or process ownership cannot be proved. The runner may terminate only the Renoise PID it started and positively identified; if Renoise redirects launch into another instance, abort without attaching to or killing it.
+4. Confirm how Renoise handles dirty-document prompts, asynchronous load/reload and window activation in the isolated host. Do not monkey-patch `renoise.app()`; do not assume `new_song_no_template()` is immediate or bypasses prompts. Detect known prompts through supported keyboard/UI automation only; fail closed on an unknown modal dialog.
+
+**Complete when:** the preflight rejects the normal user profile, unknown executable, absent GUI session, unsafe Tools path, unexpected existing Renoise process and unresolved dirty-document flow without modifying them. The pinned 6.2 signatures and any still-unverified host behavior are recorded. No real-host capability is claimed before a successful spike.
+
+#### T0.2 — Produce and inspect a strictly development-only ACID package
+
+1. Add `scripts/package_dev.ps1 -Tool ACID -OutputDirectory <temporary-path>`: build a clean release archive with the existing `scripts/package.ps1`, extract it safely into a temporary `com.david303ttl.ACID.xrnx` folder, add the minimal driver/config and a one-shot staged-entrypoint bootstrap. Reject archive traversal, duplicate paths and unexpected IDs. Do not copy SDK, scenarios, fixtures, docs or AutoHotkey into the tool.
+2. Keep dev bootstrap configuration ephemeral: bind only to `127.0.0.1`, choose a reserved test-run port with collision detection, use an unpredictable per-run token/nonce, and identify the runner's session. Do not persist the token in song data or a tracked file. Use tight temporary-file permissions. Refuse to start an unauthenticated or non-loopback driver.
+3. Verify release and dev contents independently: release has only approved runtime assets and LICENSE, no test modules/config/bootstrap; dev has the expected driver and otherwise identical production payload/manifest. Verify source-file hashes for all unaffected production files and assert only the staged `main.lua` differs. Leave ordinary `scripts/package.ps1 -Tool ACID` semantics unchanged.
+4. Add a deterministic package test covering exclusion, exact manifests, bootstrap presence only in dev, missing/duplicate driver rejection and a stale dev-file negative case.
+
+**Complete when:** repeated dev builds are disposable, normal release output has no dev driver/credentials, package/spec checks pass, and no source tree or regular Renoise installation is modified by building.
+
+#### T0.3 — Implement a constrained asynchronous in-Renoise transport
+
+1. Start one TCP `renoise.Socket.SocketServer` via `create_server("127.0.0.1", port, renoise.Socket.PROTOCOL_TCP)`; use `:run` callbacks for acceptance, messages and errors. Never call blocking `:wait` on the GUI path. Socket callbacks only authenticate, frame, validate and enqueue bounded commands; process queued host operations on a short, non-reentrant `app_idle_observable` budget.
+2. Use newline-delimited JSON frames with `{id,op,args,token}` requests and `{id,ok,result,error}` responses; allow only one authenticated client for a run. Reassemble fragmented TCP frames, permit multiple frames per receive, reject overlong frames, duplicate live IDs, malformed JSON, unsupported operations, wrong session tokens and unauthenticated requests. The codec must be Lua 5.1-compatible and test-only. Do not expose `eval`, `loadstring`, arbitrary Lua predicates, file paths outside fixture/temp roots or generic module invocation.
+3. Implement the smallest fixed command set: `ping`, `capabilities`, `document.new`, `document.load_fixture`, `song.snapshot`, `wait.condition`, `diagnostics`, `disconnect`. Add narrow production-action dispatch only when its owning M4.7 step provides a stable interface; no synthetic writer API in this foundation. A command acknowledged as queued is **not** reported as completed until the native effect is observed.
+4. Use keyed pending-command records and deadline-driven state machines. `wait.condition` accepts a named, allowlisted condition and scalar arguments (document epoch changed, selection equals expected, native inventory matches, observed operation settled); no arbitrary executable predicate. Return explicit timeout/canceled/host-error results. Preserve the old song epoch across release; never let a late callback satisfy a newer command or refer to an old song.
+5. Detach idle/document/unload notifiers and close connections on unload or shutdown. Bound all work per idle tick, response sizes and diagnostics. On driver exception, report a structured error and retire its command without changing ACID ownership or render state.
+
+**Complete when:** ping/capabilities, partial/coalesced framing, wrong-token refusal, duplicate-ID refusal, queue limits, nonblocking dispatch, disconnect/reconnect policy, idle cleanup, malformed-command handling and timeout behavior pass independent tests. The remote protocol cannot invoke arbitrary ACID internals or access non-test files.
+
+#### T0.4 — Build the process-owning PowerShell runner
+
+1. Add `scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native|Keyboard|All [-Scenario <name>] [-RenoiseExe <path>] [-TestEnvironment <path>]`. Defaults: ACID, Native; `All` runs the required Native and Keyboard scenarios. Test-environment configuration describes the dedicated profile/session and optional keyboard executable/map; it cannot silently fall back to the user's ordinary environment.
+2. Preflight isolation and required dependencies; create a unique temporary run root, build/install only the dev bundle in its isolated Tools directory, start Renoise using `Start-Process -PassThru`, retain PID/start timestamp/run nonce, and wait for an authenticated handshake. If launch fails, attaches to another instance, or times out, return nonzero; do not kill unrelated processes.
+3. Maintain one Renoise session across safe scenarios for speed. Reset via documented document APIs and `app_release_document_observable`/`app_new_document_observable` barriers; after reset, verify new song identity/epoch, ACID reinitialization, empty expected inventory and absence of pending driver commands before loading a fixture. A dirty-song save dialog must be explicitly resolved or the process restarted from the isolated fixture; **never** infer successful reset from sending the API call or from elapsed time.
+4. Always await observed predicates and terminal events rather than fixed sleeps. Use bounded process startup, connection, command, scene-reset and per-scenario watchdogs. A native render that has no completion remains pending and fails the test; diagnostic timeouts do not retire writer occupancy or authorize a subsequent operation. On protocol loss or uncertain host integrity, stop the suite, retain evidence and dispose only the owned test process.
+5. Emit per-scenario PASS/FAIL/ERROR/SKIP-with-reason, expected/actual diffs, host and tool versions, source commit, elapsed time, document epoch and operation trace. Keep artifacts in a run-specific temporary location (and on failure where configured). Exit 0 only if every required scenario passes; assertion failures, missing mandatory prerequisites, unexpected skips, crashes and timeouts return nonzero. Never convert an infrastructure error to a green suite.
+
+**Complete when:** normal, bad executable, missing isolated profile, startup timeout, crashed Renoise, hung command, failed scenario and disconnected socket all have deterministic cleanup/status, and a preexisting normal Renoise session is left untouched.
+
+#### T0.5 — Establish independent native fixtures, assertions and scenario isolation
+
+1. Keep scenario definitions under `tests/renoise/acid/scenarios/`. Each declares preconditions/fixture, ordered actions, observable waits, expected state and prohibited side effects. Separate the runner's orchestration from the minimal in-DAW API adapter. Add one small executable smoke scenario; do **not** bulk-copy all manual guides into a second test framework at this gate.
+2. Implement a **read-only** snapshot contract with instrument and phrase inventory (current indices plus per-document opaque object handles, never index as identity), native selection, relevant phrase properties, line counts, complete used/hidden note/effect fields, phrase mapping where relevant, and saved `tool_data` byte/digest evidence. Include request/dialog/occupancy diagnostics from *public read-only inspections* when available, but do not use those diagnostics as the independent oracle for host mutation.
+3. Canonically serialize host values with explicit nil/empty distinctions, complete field coverage and stable ordering. Exclude only documented ephemeral UI fields from cross-reload comparison. Capture before and after snapshots; assert expected changes **and** unchanged foreign instruments/phrases, phrase counts, IDs, source, settings and unaffected columns. For identity-sensitive operations, maintain a run-local registry based on exact host object equality, invalidated at document release.
+4. Reuse deterministic source inputs and golden musical outputs with existing `tests/acid/` specs where compatible. Move shared expectations into neutral fixture data as needed, with headless and native readers consuming the *same* oracle. Never generate expected results using the production compiler/writer under test. Do not broaden into audio measurement or a large plugin matrix.
+5. Scenario isolation must include clean document epochs, fixture cleanup, leaked notifier detection, and test-order independence. Preserve special interruption scenarios intentionally crossing document epochs; the harness must not pre-cancel the stale callback that the test needs to observe.
+
+**Complete when:** two successive smoke scenarios and a deliberate failure produce exact readback/diff evidence; read-only snapshots cause no undo entry, phrase creation or selection mutation; reset does not leak associations into the next scenario; altered expected fields cause a failing assertion.
+
+#### T0.6 — Add targeted keyboard E2E without replacing native coverage
+
+1. Use a persistent AutoHotkey v2 helper under `tests/renoise/keyboard/` for verified focus/keyboard events to **only the runner-owned Renoise window**. Check target PID, active window and focus before every sequence; abort if another window steals focus. Never type blindly into the desktop or use screen coordinates as the primary oracle.
+2. Define a dedicated test-profile shortcut mapping and check it in preflight. The API can register named tool actions, but cannot assign default key combinations. If needed, register one user-facing `Global:ACID:Show` shortcut to the existing `show_tool` handler (same handler as menu; no test-specific production action). The initial smoke must verify actual dialog opening through that configured key; no direct Lua `gui.show()` call counts as keyboard E2E.
+3. Exercise shortcut dispatch, dialog visibility/focus and one real native instrument selection/navigation path. Synchronize each step with API-visible selection or dialog state; do not use fixed keystroke delays as assertions. Use minimal keyboard input for the behavior under test, then API readback for deep structural verification. Test an unexpected foreground window and an absent shortcut as mandatory failures.
+4. Reserve later ACID editing/regeneration keyboard journeys for the owning M4.7/M5 interface work. Do not inject test-only shortcuts for Generate or bypass GUI handlers; register genuine user-facing bindings only when that product action has a stable contract.
+
+**Complete when:** one clean-launch keyboard smoke proves the real mapped shortcut enters ACID and observable focus/selection follows the user action; missing mapping, wrong PID, stolen focus and GUI timeout all fail with diagnostics and do not send keys elsewhere. Native and Keyboard suites remain independently selectable.
+
+#### T0.7 — Wire verification and failure classification
+
+1. Add fast pure-Lua protocol/fixture/driver-adapter specs under `tests/acid/` or appropriately isolated `tests/renoise/` paths and PowerShell tests for package, launcher and process safety; they run without Renoise. Integrate only relevant new `*_spec.lua` into existing `run_tests.ps1` discovery rather than creating a second mock runner.
+2. Establish a small mandatory real-host smoke gate: authenticated ping; API/version capabilities; clean document creation with a confirmed new-document event; read-only inventory/snapshot; known fixture load; second clean document reset; keyboard shortcut/focus smoke. Run the sequence at least three times from independent clean launches, plus one intentional failure/timeout, before marking the infrastructure reliable. Keep detailed timing as diagnostics, not numerical performance targets.
+3. Document a reproducible one-time isolated Windows user/keymap setup and exact `pwsh` invocations in `tests/renoise/README.md`; update `tests/README.md` and `docs/DEVELOPMENT.md` to distinguish pure Lua, real native, keyboard, still-manual and licensed/audio-only checks. Do not claim that Renoise is headless or supports an unverified `-eval` CLI.
+4. Document fixed classifications: PASS (all required postconditions), FAIL (asserted contract violation), ERROR (runner/host/transport failure), SKIP (explicit optional dependency; never satisfies a mandatory gate), MANUAL (unautomated requirement and therefore not verified). A green suite cannot include a mandatory skip, unsupported action or missing assertion.
+
+**Complete when:** `./scripts/run_tests.ps1 -Tool ACID`, `./scripts/run_tests.ps1`, normal `./scripts/package.ps1 -Tool ACID`, package-exclusion tests, runner negative-path tests and the three real-host smoke runs pass; all other Native/Keyboard cases remain clearly unimplemented/unverified. Report environment and executed commands, not invented native results.
+
+#### T0.8 — Close Gate T0 and hand off behavior coverage
+
+1. Review the new dependency graph and runtime source: the test infrastructure must not be imported by ACID model/runtime/writers or release `main.lua`. Remove temporary spike code, unused transport hooks, generic execution endpoints, redundant fixtures and machine-specific paths. Do not change manifest/API/tool versions or Step 2.1 production contracts.
+2. Add a compact traceability table mapping each real-DAW case to (a) the existing M4.7 Step 8 A–E acceptance contract, (b) its owning Steps 2–6, (c) Native/Keyboard/Manual status, and (d) its independent assertion. Begin with instrument selection and phrase inventory; fill in writer/Live Edit/copy/persistence cases only when their implementation owners are ready. Tests are about user-visible behaviors and host API boundaries, not 100% execution of internal lines.
+3. Apply the following acceptance handoff:
+   - **Step 2.2–2.9:** document/session epochs, instrument/phrase inventory, raw object identity, no navigation writes, native selection changes and release/reload; every newly exposed host behavior gets a targeted Native regression.
+   - **Step 3:** real writer create/regenerate/rollback, busy status and terminal callback; no fake render callback counts as native success.
+   - **Step 4:** explicit Make Independent and 2-/3-holder collisions, copied notes/effects preserved.
+   - **Step 5:** dirty drafts, manual/Live Edit shared pipeline, exact-revision persistence and recoverable failure.
+   - **Step 6:** actual host notifications, reentrancy, document change and late callback isolation.
+   - **Step 8:** execute all relevant automated cases plus targeted keyboard journeys, native undo/redo, save/reload and still-manual audible/visual checks. Maintain explicit status for unautomatable items; no green mock result satisfies Step 8.
+4. Gate T0 requires actual observed Renoise smoke results, not merely compile-time checks or this written plan. If no isolated Renoise instance is available, stop before Step 2.2 and report T0 blocked rather than asserting acceptance. Record only concise gate results. Leave Steps 2.2–2.9, Gate 2 and native writer acceptance open.
+
+**Gate T0 pass:** safe isolated installation/launch, dev-only package exclusion, authenticated nonblocking driver, asynchronous document barriers, read-only independent assertions, repeatable Native+Keyboard smoke, bounded failure paths, full local/package checks and a living coverage map. No production musical refactor, release file change, speculative audio claim or user-profile mutation.
+
 
 ### 2.2 — Implement context lifetime and revocable delivery records
 
@@ -929,6 +1037,8 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 **Gate 7:** All 35 focused regressions and existing local suites pass; package checks pass when required. R29 uses lifecycle mocks here; actual native undo behavior and the other native checks remain explicitly pending Step 8. Map every case to its test file/case and result in the existing checklist; a case label alone is not evidence.
 
 ## Step 8 — Native Renoise acceptance
+
+Use the Step T0 harness to execute each applicable behavior as a real Native scenario and a targeted Keyboard journey where UI routing matters. The test adapter must assert Renoise state independently of ACID's internal success result. A missing harness or an incomplete/green-with-skips scenario does not close native acceptance; track true visual/audio-only checks explicitly as manual. Test with the release-equivalent dev bundle in an isolated GUI instance, including a separate clean-release packaging check.
 
 Use one disposable multi-instrument XRNS with owned and foreign phrases, from the installed tool bundle. Record case/pass/fail and reproducible defects. Do not start another capture/measurement project.
 
