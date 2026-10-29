@@ -508,6 +508,13 @@ local function expected_fixture_path(current, root, name)
   return canonical_path(join_path(bundle_path, root_name .. "\\" .. name))
 end
 
+local function fixture_is_accessible(path)
+  local open_ok, file = pcall(io.open, path, "rb")
+  if not open_ok or not file then return false end
+  pcall(function() file:close() end)
+  return true
+end
+
 local function selection_handles(current)
   local song = current.current_song
   if not current.document_ready or not song then return current.json.null, current.json.null end
@@ -563,6 +570,7 @@ local function settle_transition(current)
     clear_transition(current)
     return
   end
+  if transition.observed_at and transition.observed_at > transition.deadline then return end
 
   local song = current.current_song
   local matches = false
@@ -630,8 +638,10 @@ local function on_new_document(current)
   current.current_song = song
   current.document_ready = true
   local transition = current.transition
-  if transition and transition.expected_epoch < current.document_epoch then
+  if transition and transition.expected_epoch < current.document_epoch and
+      transition.observed_epoch ~= current.document_epoch then
     transition.observed_epoch = current.document_epoch
+    transition.observed_at = now()
   end
 end
 
@@ -693,6 +703,13 @@ local function process_record(current, record)
     end
 
     local kind = record.operation == "document.new" and "new" or "load"
+    if kind == "load" then
+      record.expected_file = expected_fixture_path(current, record.args.root, record.args.name)
+      if not fixture_is_accessible(record.expected_file) then
+        finish_error(current, record, "fixture_unavailable", "fixture file is unavailable")
+        return
+      end
+    end
     current.transition = {
       kind = kind,
       record = record,
@@ -707,7 +724,6 @@ local function process_record(current, record)
       if kind == "new" then
         app:new_song_no_template()
       else
-        record.expected_file = expected_fixture_path(current, record.args.root, record.args.name)
         app:load_song(record.expected_file)
       end
     end)
@@ -958,6 +974,7 @@ end
 
 local function evaluate_pending(current)
   local current_time = now()
+  settle_transition(current)
   local pending = {}
   for _, record in pairs(current.pending) do pending[#pending + 1] = record end
   for _, record in ipairs(pending) do

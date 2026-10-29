@@ -234,6 +234,21 @@ local function fire_idle(host, count)
   for _ = 1, count or 1 do host.idle:fire() end
 end
 
+local function with_fixture_file(path, available, callback)
+  local original_open = io.open
+  io.open = function(candidate, mode)
+    if candidate == path then
+      if available then return {close = function() return true end} end
+      return nil, "fixture is unavailable"
+    end
+    return original_open(candidate, mode)
+  end
+  local ok, result = pcall(callback)
+  io.open = original_open
+  if not ok then error(result, 0) end
+  return result
+end
+
 local function take_responses(client)
   local result = {}
   for _, frame in ipairs(client.sent) do
@@ -473,10 +488,21 @@ local function test_snapshot_waits_and_document_transitions()
   assert(reused and not reused.ok)
   assert_equal(reused.error.code, "duplicate_id")
 
-  send_request(host, client, "load-fixture", "document.load_fixture", {root = "fixtures", name = "smoke.xrns"})
-  fire_idle(host)
-  assert_equal(#host.load_song_calls, 1)
   local expected_path = "C:\\Dev Workspace\\acid-test\\fixtures\\smoke.xrns"
+  send_request(host, client, "missing-fixture", "document.load_fixture", {root = "fixtures", name = "missing.xrns"})
+  with_fixture_file("C:\\Dev Workspace\\acid-test\\fixtures\\missing.xrns", false, function()
+    fire_idle(host)
+  end)
+  local missing_fixture = find_response(take_responses(client), "missing-fixture")
+  assert(missing_fixture and not missing_fixture.ok)
+  assert_equal(missing_fixture.error.code, "fixture_unavailable")
+  assert_equal(#host.load_song_calls, 0, "missing fixture reached the native loader")
+
+  send_request(host, client, "load-fixture", "document.load_fixture", {root = "fixtures", name = "smoke.xrns"})
+  with_fixture_file(expected_path, true, function()
+    fire_idle(host)
+  end)
+  assert_equal(#host.load_song_calls, 1)
   assert_equal(host.load_song_calls[1], expected_path)
   assert_equal(#client.sent, 0, "fixture load completed before a new-document observation")
   local loaded_song = make_song("c:/Dev Workspace/acid-test/fixtures/smoke.xrns")
@@ -541,7 +567,13 @@ local function test_host_document_errors()
     local original_song = host.song
 
     send_request(host, client, "host-failure", case.operation, case.args)
-    fire_idle(host)
+    if case.operation == "document.load_fixture" then
+      with_fixture_file("C:\\Dev Workspace\\acid-test\\fixtures\\smoke.xrns", true, function()
+        fire_idle(host)
+      end)
+    else
+      fire_idle(host)
+    end
     local failed = find_response(take_responses(client), "host-failure")
     assert(failed and not failed.ok)
     assert_equal(failed.error.code, "host_error")
@@ -560,6 +592,45 @@ local function test_host_document_errors()
 end
 
 local function test_deadlines_and_late_document_events()
+  fake_time = 1800
+  local observed_host, observed_driver = start_driver()
+  local observed_client = new_client()
+  accept(observed_host, observed_client)
+  send_request(observed_host, observed_client, "observed-before-deadline", "document.new", {timeout_ms = 1000})
+  fire_idle(observed_host)
+  assert_equal(observed_host.new_song_calls, 1)
+  fake_time = 1801
+  observed_host.release:fire()
+  observed_host.song = make_song("")
+  observed_host.new_document:fire()
+  fake_time = 1803
+  fire_idle(observed_host)
+  local observed_result = find_response(take_responses(observed_client), "observed-before-deadline")
+  assert(observed_result and observed_result.ok, "observed document transition expired before idle settlement")
+  assert_equal(observed_result.result.document_epoch, 2)
+  observed_driver.stop()
+
+  fake_time = 1900
+  local late_observed_host, late_observed_driver = start_driver()
+  local late_observed_client = new_client()
+  accept(late_observed_host, late_observed_client)
+  send_request(late_observed_host, late_observed_client, "observed-after-deadline", "document.new", {timeout_ms = 1000})
+  fire_idle(late_observed_host)
+  fake_time = 1902
+  late_observed_host.release:fire()
+  late_observed_host.song = make_song("")
+  late_observed_host.new_document:fire()
+  fire_idle(late_observed_host)
+  local late_observed_result = find_response(take_responses(late_observed_client), "observed-after-deadline")
+  assert(late_observed_result and not late_observed_result.ok)
+  assert_equal(late_observed_result.error.code, "timeout")
+  send_request(late_observed_host, late_observed_client, "late-transition-diagnostics", "diagnostics")
+  fire_idle(late_observed_host)
+  local late_diagnostics = find_response(take_responses(late_observed_client), "late-transition-diagnostics")
+  assert(late_diagnostics and late_diagnostics.ok)
+  assert_equal(late_diagnostics.result.document_transition_uncertain, false)
+  late_observed_driver.stop()
+
   fake_time = 2000.9
   local host, driver = start_driver()
   local client = new_client()
