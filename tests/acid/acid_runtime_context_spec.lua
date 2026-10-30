@@ -68,7 +68,9 @@ end
 -- closures and cannot be replaced or cleared from outside.
 do
   local ctx = new_context{}
-  local allowed = {request_generation = true, revoke = true, state = true}
+  local allowed = {request_generation = true, revoke = true, state = true,
+    attach_document = true, open_dialog = true, close_dialog = true,
+    release_document = true, lifetime_state = true}
   for key, value in pairs(ctx) do
     assert(allowed[key], "context exposes private field " .. tostring(key))
     assert(type(value) == "function")

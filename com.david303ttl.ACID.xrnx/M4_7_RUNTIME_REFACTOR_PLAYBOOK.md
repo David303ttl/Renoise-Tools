@@ -624,9 +624,9 @@ Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
-**Status:** 2.1 complete; 2.2–2.9 remain pending. Native tests develop alongside runtime changes. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
+**Status:** 2.1–2.2 complete; 2.3–2.9 remain pending. Native tests develop alongside runtime changes. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
 
-**Execution order:** 2.1 (complete) -> 2.2–2.9 in order. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
+**Execution order:** 2.1–2.2 (complete) -> 2.3–2.9 in order. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
 
 ### 2.1 — Freeze ownership, interfaces, and the cutover boundary
 
@@ -704,7 +704,7 @@ No create/regenerate facade, GUI adapter, metadata action or new scheduler was a
 
 Stored identifiers, seal/source formats, manifest/API versions and musical
 planning remain unchanged. The context is not wired into the GUI yet: 2.2–2.8
-must replace its real lifetime, capture and state authorities in order. Temporary
+supply its document/session lifetime seam, then replace capture and state authorities in order. Temporary
 registry release scrubbing, legacy delivery/cancel normalization and native slot
 reservation remain the owning later gates, not passes inferred from these mocks.
 No new native Renoise playback, undo or lifecycle acceptance was performed;
@@ -941,12 +941,52 @@ coverage must pass before that coverage is reported complete.
 
 ### 2.2 — Implement context lifetime and revocable delivery records
 
+**Status:** complete (2026-10-30), at the runtime lifetime boundary. The
+production GUI cutover remains 2.8; Gate 2 and native acceptance remain open.
+Baseline `c6f4104` had a clean tree and passed 50 Lua specs in the ACID selection
+on Lua 5.4. Pinned SDK setup and tool lifecycle definitions/offline docs were
+checked before implementation.
+
 1. Attach a fresh epoch to each current document, even when a song is reloaded. Opening/reopening creates a fresh dialog session; closing invalidates that session and its requests, preserving object-local drafts and a live song's blockers. Repeated close/release calls are idempotent.
 2. Keep request data behind a mutable delivery/job record. Guard and completion closures capture that record/token, not song, instrument, phrase, widgets or a GUI closure directly. `record.gui_delivery` is the sole GUI callback slot and is nilled on close/release; writer callbacks likewise capture only their scrub-able job record. Freeze copied request values separately from revocation bookkeeping; never overwrite an expected baseline with current host values.
 3. On release, invalidate first; request writer cancellation and safe same-song cleanup while the old song is current, without releasing occupancy except through its matching terminal transition; detach existing listeners and GUI delivery; release drafts with the existing volatile-loss warning; scrub host refs, frozen request payloads, candidate refs and nested closures from runtime records. Step 3 must do the same for its job/callback closure. Retain only an opaque token, epoch, terminal flags and captured diagnostic strings for an unresolved global render. Late callbacks cannot inspect old host objects, deliver GUI results or start a request.
 4. A new song does not clear writer occupancy. An old callback may retire only its own slot/tombstone. Reload reconstructs safety from current ownership/source/output validation, not a previous blocker, baseline or recovery phrase name. A reopened saved XRNS receives new runtime epochs, sessions and host objects; its persisted ownership/source records remain readable without any old runtime values. Neutral recovery phrases are Foreign; never delete/adopt them by name. Restart/reload persistence of session blockers is not promised by the unchanged format.
 
 **Complete when:** close/reopen, repeated release, new epoch, occupied song switch and late/duplicate callback tests prove session isolation. Simulate reopening a saved document with new host-object wrappers and no retained runtime tokens; records must remain available for Step 2.3's fresh classification without adopting an old session. After release, inspect retained records/closures in the mocks for old host/UI references; checking only that callbacks return early is insufficient. Step 3 still owns native in-flight stage disposal/retention; the end-to-end save/restart/regenerate assertion belongs to Step 8.
+
+**Implemented lifetime seam:** `attach_document(song)` assigns a fresh epoch;
+`open_dialog(delivery?)` assigns a fresh session. `close_dialog()` revokes the
+session and clears every retained GUI delivery slot without releasing drafts.
+`release_document()` returns `changed, warning`, invalidates first, requests
+same-song cancellation through `options.cancel(token, reason)`, calls
+`options.detach(song)` and `options.drafts.release(song)` (the existing draft
+cache by default), then scrubs request payloads and nested delivery closures.
+`lifetime_state()` returns only epoch/session/open/song-attached scalars.
+Lifecycle calls are explicit seams for the later GUI/observer cutover; creating
+an isolated context without attaching retains the interface-conformance mode.
+
+Delivery callbacks and default tokens retain only their revocable record. A
+weak-key registry tracks retained records without accumulating completed jobs.
+Release strips each record to host-free terminal bookkeeping; a late matching
+callback settles only that record, never delivers to a reopened GUI or drains a
+request. Cancellation acknowledgements and idle inspection never retire native
+occupancy. Close preserves the current dispatch block; release drops old-song
+block state so fresh classification must establish safety. Full integrity
+evidence and Revalidate remain 2.5 and Step 5.
+
+| Completion evidence | Focused verification | Result |
+| --- | --- | --- |
+| Fresh epochs/sessions, repeated close/release, occupied song switch, stale/duplicate delivery and capture interrupted by lifecycle changes | `tests/acid/acid_runtime_lifetime_spec.lua` | Pass, local mocks |
+| Recursive inspection of retained token/callback tables and Lua upvalues after release; old host/UI objects, frozen source and nested capture closures unreachable | `acid_runtime_lifetime_spec.lua` | Pass, local mocks |
+| Fresh wrappers retain saved source/output bytes with no prior token, automatic ownership restoration, render or store write | `acid_runtime_lifetime_spec.lua` | Pass for lifetime/data continuity only; classification remains 2.3 |
+| Existing delivery handshake and private context interface | `tests/acid/acid_runtime_context_spec.lua` | Pass |
+| Repository regression and compatibility | PowerShell 7 runner; Lua 5.1 | All 54 specs pass; final expanded lifetime/context checks also pass on Lua 5.4 |
+| Release packaging and diff hygiene | ACID package inspection and `git diff --check` | Pass; 28 entries, root manifests/entry point, private context source matches checkout; SDK/tests/docs excluded |
+
+No native Renoise checks were executed for this change. Production writer
+callback/temporary-registry scrubbing remains Step 3; observer detachment and
+GUI wiring remain 2.8/Step 6. Actual saved-song cold restart/regeneration and
+native in-flight rendering remain Step 8 acceptance.
 
 ### 2.3 — Implement object inventory, classification, and baseline projection
 

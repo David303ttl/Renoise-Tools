@@ -70,7 +70,7 @@
 --   settlement by the adapter. Diagnostics, blocks, revoke, and idle readings
 --   never create a terminal result; an unresolved render remains pending or
 --   tombstoned until its own terminal state retires it. Pending-token scrubbing
---   and writer registry tombstoning remain release/cleanup work.
+--   and native writer registry tombstoning remain writer cleanup work.
 --
 -- context:revoke(token, reason) -> true | false
 --   Raw-identity revocation of the active request. A matching call makes the
@@ -83,10 +83,25 @@
 --   {status="idle"|"pending"|"blocked", token, authorization, blocked,
 --    blocked_reason, diagnostic_count, last_diagnostic={code,message} | nil}
 --
--- The returned context exposes only request_generation, revoke, and state.
+-- Lifetime seam (optional until the GUI cutover):
+--   attach_document(song) -> fresh epoch; replaces/releases an attached song.
+--   open_dialog(gui_delivery) -> fresh session; delivery(result) is optional.
+--   close_dialog() -> changed; revokes delivery and requests cancellation.
+--   release_document() -> changed, volatile draft warning; invalidates before
+--     cancel(token, reason), detach(song), and drafts.release(song), then
+--     scrubs every retained delivery record. These optional dependency seams
+--     never authorize occupancy retirement. Repeated close/release is inert.
+--   lifetime_state() -> detached epoch/session/open/song_attached scalars.
+-- Before first attach_document, the original delivery-only seam is supported.
+-- After attachment, generation requires an attached song and open dialog.
+-- Unresolved released records retain only token/scalars/diagnostic strings;
+-- late completion can mark only its own terminal flags.
+--
+-- The returned context exposes generation, revocation, and lifetime methods.
 -- Writer, capture, sink, delivery record, block, diagnostics, and dispatch
 -- state remain closure-private.
 local M = {}
+local epoch_serial = 0
 
 local function reason_text(value, fallback)
   if type(value) == "string" then return value end
@@ -113,6 +128,17 @@ local function new_token(record)
     return ok and current == true
   end
   return token
+end
+
+-- This callback retains only the scrub-able delivery record.
+local function completion(record)
+  return function(result)
+    if record.finish then return record.finish(result) end
+    if record.settled or record.rejected then return false end
+    record.settled = true
+    record.current = false
+    return true
+  end
 end
 
 local function inspect_writer(writer)
@@ -142,6 +168,17 @@ function M.new(options)
   local capture = options.capture
   local sink = options.sink
   local issue_token = options.issue_token
+  local current_song = nil
+  local epoch = 0
+  local session = 0
+  local opened = false
+  local lifecycle = false
+  local gui_delivery = nil
+  local cancel = options.cancel
+  local detach = options.detach
+  local drafts = options.drafts or require("runtime.draft_cache")
+  local releasing = false
+  local records = setmetatable({}, {__mode = "k"})
   local active = nil
   local dispatching = false
   local blocked = false
@@ -171,6 +208,7 @@ function M.new(options)
     record.revoked = true
     record.current = false
     record.request = nil
+    record.gui_delivery = nil
     if rawequal(active, record) then active = nil end
   end
 
@@ -268,6 +306,9 @@ function M.new(options)
   local context = {}
 
   function context:request_generation(trigger)
+    if releasing or (lifecycle and (current_song == nil or not opened)) then
+      return false, "No current document dialog is open"
+    end
     if dispatching then
       return false, "A generation request is already dispatching"
     end
@@ -306,7 +347,11 @@ function M.new(options)
       rejected = false,
       revoked = false,
       diagnosed = {},
+      epoch = epoch,
+      session = session,
+      gui_delivery = gui_delivery,
     }
+    records[record] = true
     local issue_ok, issued_token
     if issue_token then
       issue_ok, issued_token = pcall(issue_token)
@@ -355,10 +400,16 @@ function M.new(options)
       return false, "Generation capture returned a foreign token"
     end
 
+    if record.released or (lifecycle and
+        (current_song == nil or not opened or epoch ~= record.epoch or session ~= record.session)) then
+      dispatching = false
+      retire(record)
+      return false, "Generation context changed during capture"
+    end
     record.current = true
     record.request = request
     active = record
-    local done = function(_)
+    record.finish = function(result)
       if record.rejected then
         block(record, "delivery.completion_after_rejection",
           "Sink completed a rejected request; dispatch is blocked until writer state is safe")
@@ -383,8 +434,15 @@ function M.new(options)
       record.current = false
       record.request = nil
       if rawequal(active, record) then active = nil end
+      local delivery = record.gui_delivery
+      record.gui_delivery = nil
+      if delivery then
+        local delivered, failure = pcall(delivery, result)
+        if not delivered then diagnose(record, "delivery.gui_failed", failure) end
+      end
       return true
     end
+    local done = completion(record)
 
     local called, accepted, rejection = pcall(sink, request, done)
     dispatching = false
@@ -447,6 +505,94 @@ function M.new(options)
     record.current = false
     record.revoke_reason = reason_text(reason, "Generation request revoked")
     return true
+  end
+
+  local function invalidate(reason, cleanup)
+    local record = active
+    if not record then return end
+    record.gui_delivery = nil
+    if record.settled or record.rejected then return end
+    local was_current = record.current
+    record.current = false
+    record.revoked = true
+    record.revoke_reason = reason
+    if (was_current or cleanup) and cancel then
+      local ok, failure = pcall(cancel, record.token, reason)
+      if not ok then
+        diagnose(record, "lifetime.cancel_failed", reason_text(failure, "Writer cancellation failed"))
+      end
+    end
+  end
+
+  function context:close_dialog()
+    if not opened then return false end
+    opened = false
+    gui_delivery = nil
+    for record in pairs(records) do record.gui_delivery = nil end
+    invalidate("Dialog closed")
+    return true
+  end
+
+  function context:release_document()
+    if current_song == nil or releasing then return false end
+    releasing = true
+    local song = current_song
+    opened = false
+    gui_delivery = nil
+    invalidate("Document released", true)
+    if detach then
+      local ok, failure = pcall(detach, song)
+      if not ok then diagnose(nil, "lifetime.detach_failed", failure) end
+    end
+    local warning
+    if drafts and type(drafts.release) == "function" then
+      local ok, _, message = pcall(drafts.release, song)
+      if ok then warning = message
+      else
+        warning = "Session-only ACID draft release failed"
+        diagnose(nil, "lifetime.drafts_failed", warning)
+      end
+    end
+    current_song = nil
+    for record in pairs(records) do
+      record.request = nil
+      record.gui_delivery = nil
+      record.finish = nil
+      record.released = true
+    end
+    records = setmetatable({}, {__mode = "k"})
+    blocked = false
+    blocked_reason = nil
+    releasing = false
+    return true, warning
+  end
+
+  function context:attach_document(song)
+    assert(song ~= nil, "A current document is required")
+    assert(not releasing, "Document release is in progress")
+    if current_song ~= nil then self:release_document() end
+    lifecycle = true
+    epoch_serial = epoch_serial + 1
+    epoch = epoch_serial
+    current_song = song
+    opened = false
+    gui_delivery = nil
+    return epoch
+  end
+
+  function context:open_dialog(delivery)
+    assert(current_song ~= nil and not releasing, "A current document is required")
+    assert(delivery == nil or type(delivery) == "function", "GUI delivery must be a function")
+    if opened then self:close_dialog() end
+    session = session + 1
+    opened = true
+    gui_delivery = delivery
+    return session
+  end
+
+  function context:lifetime_state()
+    return {epoch = epoch, session = session, open = opened,
+      song_attached = current_song ~= nil}
   end
 
   function context:state()
