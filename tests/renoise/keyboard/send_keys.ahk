@@ -23,9 +23,27 @@ Main() {
             return RunGuardSelfTest(A_Args[2])
         }
         if (A_Args.Length = 4 && A_Args[3] = '--pid'
-            && RegExMatch(A_Args[4], '^[1-9][0-9]*
+            && RegExMatch(A_Args[4], '^[1-9][0-9]*$')) {
+            try {
+                selfTestPid := Integer(A_Args[4])
+            } catch Error as err {
+                return ReportFailure(2, 'Self-test PID is outside the supported integer range.')
+            }
+            if (selfTestPid > 4294967295) {
+                return ReportFailure(2, 'Self-test PID is outside the supported integer range.')
+            }
+            return RunGuardSelfTest(A_Args[2], selfTestPid)
+        }
         return ReportFailure(2, 'Invalid arguments.`n' . usage)
     }
+
+    if ((A_Args.Length != 6 && A_Args.Length != 7)
+        || A_Args[1] != '--pid' || A_Args[3] != '--keys'
+        || A_Args[5] != '--focus-timeout'
+        || (A_Args.Length = 7 && A_Args[7] != '--allow-activation')) {
+        return ReportFailure(2, 'Invalid arguments.`n' . usage)
+    }
+    allowActivation := A_Args.Length = 7
 
     pidText := A_Args[2]
     if !RegExMatch(pidText, '^[1-9][0-9]*$') {
@@ -111,7 +129,7 @@ RunGuardSelfTest(testName, targetPid := 0) {
     }
 
     expectedCode := testName = 'wrong-pid' ? 3 : 4
-    helperPid := DllCall('Kernel32\\GetCurrentProcessId', 'UInt')
+    helperPid := DllCall('Kernel32\GetCurrentProcessId', 'UInt')
     if (testName = 'wrong-pid') {
         ; The real dispatcher must reject a non-Renoise PID before sending.
         result := AttemptForegroundSend(helperPid, '{Esc}')

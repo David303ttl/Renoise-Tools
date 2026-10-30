@@ -283,16 +283,26 @@ local function make_strict_environment()
 end
 
 local function load_probe_in(environment)
-  local chunk, load_error = loadfile(probe_path)
+  local chunk, load_error
+  if setfenv then
+    chunk, load_error = loadfile(probe_path)
+    if chunk then setfenv(chunk, environment) end
+  else
+    chunk, load_error = loadfile(probe_path, "t", environment)
+  end
   assert(chunk, load_error)
-  setfenv(chunk, environment)
   local ok, result = pcall(chunk)
   assert(ok, result)
 end
 
 local function assert_undeclared_rejected(environment, source, name)
-  local chunk = assert(loadstring(source))
-  setfenv(chunk, environment)
+  local chunk
+  if setfenv then
+    chunk = assert(loadstring(source))
+    setfenv(chunk, environment)
+  else
+    chunk = assert(load(source, "strict environment check", "t", environment))
+  end
   local ok, result = pcall(chunk)
   assert(not ok, "strict environment accepted: " .. source)
   local expected = "variable '" .. name .. "' is not declared"

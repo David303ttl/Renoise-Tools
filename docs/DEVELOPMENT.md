@@ -15,25 +15,22 @@ winget install --id Microsoft.PowerShell --source winget
 Open a new terminal and check `$PSVersionTable.PSVersion` reports version 7 or
 later. Microsoft also documents [other PowerShell installation methods](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows).
 
-The standalone Lua specs use a Lua 5.1-compatible interpreter. The development
-package suite, `tests/renoise/test_package_dev.ps1`, requires Lua 5.1 to check the
-generated entrypoint with the target language version. Download the latest
-Lua 5.1.x Windows x64 executable package from
-[LuaBinaries](https://luabinaries.sourceforge.net/download.html) and extract it
-to a user-local directory such as `$env:LOCALAPPDATA\Programs\Lua51`. Keep the
-executable and accompanying runtime DLLs together. Lua's
-[download page](https://www.lua.org/download.html) links to LuaBinaries for
-precompiled binaries. LuaBinaries is a third-party distribution; verify the
-package checksum when one is provided.
-
-Pass the executable path to the test scripts without changing `PATH`:
+Local tests and development-package checks accept Lua 5.1 or newer, including
+LuaJIT 2.x (which reports Lua 5.1 through `_VERSION`). Scripts use `lua` from
+`PATH` by default and report the executable and language version used. Override
+it with `-LuaCommand` when needed:
 
 ```powershell
-$lua51 = Join-Path $env:LOCALAPPDATA 'Programs/Lua51/lua5.1.exe'
-& $lua51 -v
-./scripts/run_tests.ps1 -LuaCommand $lua51
-./tests/renoise/test_package_dev.ps1 -LuaCommand $lua51
+./scripts/run_tests.ps1
+./tests/renoise/test_package_dev.ps1 -LuaCommand lua5.4
 ```
+
+Lua 5.0 and older are rejected. Future versions are accepted when compatible
+with the test harness. Production ARP and ACID code must retain Lua 5.1
+compatibility for Renoise's LuaJIT runtime. Run the baseline specs explicitly
+with `./scripts/run_tests.ps1 -LuaCommand lua5.1`;
+passing locally with a newer interpreter does not establish baseline
+compatibility. Keep `.luarc.json` set to Lua 5.1.
 
 The development package suite uses Windows ACLs and therefore runs on Windows.
 Native integration checks require a Windows installation of Renoise. ARP and
@@ -106,7 +103,7 @@ or local workspace locations.
 
 1. Check the relevant API definitions and documentation.
 2. Edit one tool inside its `.xrnx` directory, preserving self-contained imports.
-3. Run the pure-Lua specs with a separately installed Lua 5.1-compatible interpreter:
+3. Run the pure-Lua specs with a separately installed Lua 5.1 or newer interpreter:
 
    ```powershell
    pwsh -NoProfile -File ./scripts/run_tests.ps1

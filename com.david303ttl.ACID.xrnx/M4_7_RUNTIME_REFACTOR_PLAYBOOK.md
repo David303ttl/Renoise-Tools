@@ -720,9 +720,11 @@ PowerShell runner, native document-reset and inventory smoke, and offline runner
 regressions. T0.4 runner acceptance passes for fresh launches, loaded selected
 instances, concurrent instances and timeout/disconnection recovery. T0.5 native
 fixture/isolation acceptance passes. T0.6 keyboard automation and offline guard
-coverage are implemented and Renoise-host acceptance passes. T0.7–T0.8 remain
-pending. Keyboard acceptance does not block Native runs, runtime implementation
-or normal tool use.
+coverage are implemented and Renoise-host acceptance passes. T0.7 harness
+integration and failure classification pass; T0.8 coverage handoff remains
+pending. See the [T0.7 verification record](../tests/renoise/host_verification.md#t07-harness-integration-and-native-e2e-2026-10-30).
+Keyboard acceptance does not block Native runs, runtime implementation or normal
+tool use.
 
 #### Developer workflow
 
@@ -863,19 +865,19 @@ keyboard mapping or AutoHotkey.
 - [x] Pass offline preflight, transport, runner, Lua and package-exclusion checks.
 - [x] Document portable commands and separate offline, Native, Keyboard and manual
   checks in the existing test/development guides.
-- [ ] Put relevant Lua harness specs in the existing test discovery and runner
+- [x] Put relevant Lua harness specs in the existing test discovery and runner
   safety/package specs in the existing PowerShell checks. Keep offline checks
   runnable without Renoise; do not add a second mock framework or make keyboard
   tooling a prerequisite for Native tests.
-- [ ] Run the Native host smoke through authenticated ping/capabilities, observed
+- [x] Run the Native host smoke through authenticated ping/capabilities, observed
   new-document completion, read-only inventory snapshot, fixture load and reset.
   Repeat a scenario and run a deliberate assertion failure or timeout to verify
   isolation and nonzero failure reporting. Run keyboard shortcut/focus checks
   when the Keyboard suite is selected; preserve independent suite selection.
-- [ ] Record exact commands, host/API and tool versions, scenario results and
+- [x] Record exact commands, host/API and tool versions, scenario results and
   relevant report paths in the existing Renoise test guides. Keep environment
   details portable and distinguish automated results from manual observations.
-- [ ] Apply these result classes consistently: PASS means every requested
+- [x] Apply these result classes consistently: PASS means every requested
   postcondition was independently asserted; FAIL means an assertion found a
   contract violation; ERROR means runner, host or transport failure; SKIP means
   optional coverage was unavailable; MANUAL means the check was not automated.

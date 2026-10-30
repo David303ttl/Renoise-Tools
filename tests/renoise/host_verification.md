@@ -183,3 +183,49 @@ The first fresh-process attempt (`b4a57973e3b4438493e8051dcf4b0914`) crashed
 before scenario execution; the runner stopped only its launched process and
 restored the original installation. The clean retry above completed the full
 acceptance. Both reports remain under ignored `tmp/` artifacts.
+
+## T0.7 harness integration and Native E2E (2026-10-30)
+
+Environment: PowerShell 7, Lua 5.1.5, Renoise 3.5.4, ACID manifest API 6.2 / tool 0.1.
+The report source commit is `45f91dece2e784ce4a4c77a7566c29f0839bbeff`; each
+report below describes that source tree with the uncommitted T0.7 changes.
+
+The offline discovery command passed all 53 Lua specs, including the three
+offline Renoise harness specs. The preflight, runner, development-package and
+release-license checks also passed:
+
+```powershell
+$lua51 = Join-Path $env:LOCALAPPDATA 'Programs/Lua-5.1.5/lua51.exe'
+./scripts/run_offline_tests.ps1 -LuaCommand $lua51
+```
+
+The native full-catalog run passed authenticated protocol ping and capabilities,
+observed new-document completion at epoch 1, stable read-only inventory, both
+fixture scenarios and final reset. Transport inventory readback was 10
+instruments and zero phrases. The repeated `phrase-inventory` scenario passed
+before and after the negative probe.
+
+```powershell
+$renoise = Join-Path $env:ProgramFiles 'Renoise 3.5.4/Renoise.exe'
+./scripts/run_interactive_tests.ps1 -RenoiseExe $renoise -Install -ApproveDisposableSong -StartupTimeoutSeconds 45
+./scripts/run_interactive_tests.ps1 -RenoiseExe $renoise -Install -ApproveDisposableSong -Scenario phrase-inventory -StartupTimeoutSeconds 45
+./scripts/run_interactive_tests.ps1 -RenoiseExe $renoise -Install -ApproveDisposableSong -Scenario t07-deliberate-assertion -StartupTimeoutSeconds 90
+```
+
+| Report under ignored `tmp/` | Result |
+| --- | --- |
+| `interactive-a6ea38cfaeb04744ad22c2a118b99b01/report.json` | PASS: transport ping/capabilities, reset, inventory and both catalog scenarios |
+| `interactive-0a2e06fe303d4e7187699f8ca35015b7/report.json` | PASS: repeated `phrase-inventory` |
+| `interactive-378bfdcef0634221967508b9f19cb403/report.json` | ERROR: Renoise closed transport before a terminal response; no scenario ran; the launched process was stopped and installation restored |
+| `interactive-356d4e5c71af48409ab3825e16243ba3/report.json` | PASS: clean `phrase-inventory` retry after the transport error |
+| `interactive-64584bf6788b489b9c4fe3ca5a55083c/report.json` | FAIL as intended, exit 1: temporary assertion expected note value 49 and independently read 48; document cleanup, driver shutdown and installation restoration passed |
+| `interactive-5eef7d26e38e4d7299cf3502dc625bfb/report.json` | PASS: `phrase-inventory` after the deliberate assertion failure |
+
+The deliberate assertion scenario was added temporarily to the scenario catalog,
+run with `-Scenario t07-deliberate-assertion`, and removed after the run. The
+first attempt returned ERROR on transport closure; the retry returned the
+expected FAIL classification and nonzero exit. The next Native run passed.
+The Keyboard suite was not selected in this T0.7 execution; the prior Keyboard
+acceptance is recorded above. The Native suite ran without a keyboard mapping or
+AutoHotkey. Playback, undo/redo and other visual or audible checks remain
+MANUAL under their ACID guides and are not claimed by this harness run.

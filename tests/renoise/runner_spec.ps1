@@ -264,6 +264,11 @@ $failureResult = Invoke-ScenarioCase -Scenario $passScenario -Driver $failureDri
 Assert ($failureResult.status -eq 'FAIL') 'assertion mismatch did not fail the scenario'
 Assert (@($failureResult.diff).Count -eq 1) 'assertion mismatch did not produce exactly one diff'
 Assert ($failureResult.diff[0].path -ceq 'instrument_count' -and $failureResult.diff[0].expected -eq 1 -and $failureResult.diff[0].actual -eq 2) 'assertion diff lost expected or actual values'
+$transportErrorDriver = [pscustomobject]@{
+    Send = { param($Operation, $Arguments) throw 'driver transport failed' }.GetNewClosure()
+}
+$transportErrorResult = Invoke-ScenarioCase -Scenario $passScenario -Driver $transportErrorDriver -AllowMissingArtifacts
+Assert ($transportErrorResult.status -eq 'ERROR' -and $transportErrorResult.observation.failure_reason -ceq 'scenario error: driver transport failed') 'runner transport exception was classified as an assertion failure'
 $expectedFailScenario = @{
     name = 'beta'
     fixture = 'beta.xrns'

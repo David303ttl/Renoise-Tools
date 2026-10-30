@@ -9,8 +9,9 @@ Starts every spec in a separate Lua process from the repository root. This
 keeps module caches and mocked Renoise APIs isolated between specs.
 
 .PARAMETER Tool
-Select ARP, ACID, or All (the default). DigitaktSampleChain currently has no
-automated Lua specs; selecting it reports that clearly.
+Select ARP, ACID, Renoise, or All (the default). ACID also includes the offline
+Renoise harness specs. DigitaktSampleChain currently has no automated Lua
+specs; selecting it reports that clearly.
 
 .PARAMETER LuaCommand
 Executable command used to run specs. Defaults to lua.
@@ -22,31 +23,38 @@ Executable command used to run specs. Defaults to lua.
 ./scripts/run_tests.ps1 -Tool ACID -LuaCommand lua5.1
 #>
 param(
-    [ValidateSet("All", "ARP", "ACID", "DigitaktSampleChain")]
+    [ValidateSet("All", "ARP", "ACID", "Renoise", "DigitaktSampleChain")]
     [string]$Tool = "All",
     [string]$LuaCommand = "lua"
 )
 
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$lua = Get-Command $LuaCommand -ErrorAction SilentlyContinue
-if (-not $lua) {
-    throw "Lua command '$LuaCommand' was not found. Install Lua or pass -LuaCommand with its executable name."
-}
+. (Join-Path $PSScriptRoot 'lua_interpreter.ps1')
+$lua = Resolve-LuaInterpreter -LuaCommand $LuaCommand
 
 if ($Tool -eq "DigitaktSampleChain") {
-    throw "DigitaktSampleChain has no automated Lua specs. Select ARP, ACID, or All."
+    throw "DigitaktSampleChain has no automated Lua specs. Select ARP, ACID, Renoise, or All."
 }
 
-$toolNames = if ($Tool -eq "All") { @("arp", "acid") } else { @($Tool.ToLowerInvariant()) }
-$specs = @(
-    foreach ($toolName in $toolNames) {
-        Get-ChildItem (Join-Path $repoRoot "tests/$toolName") -Filter "*_spec.lua" -File
+$specRoots = switch ($Tool) {
+    "All" { @("tests/arp", "tests/acid", "tests/renoise") }
+    "ARP" { @("tests/arp") }
+    "ACID" { @("tests/acid", "tests/renoise") }
+    "Renoise" { @("tests/renoise") }
+}
+$specs = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
+foreach ($specRoot in $specRoots) {
+    $rootPath = Join-Path $repoRoot $specRoot
+    $recurse = $specRoot -eq "tests/renoise"
+    foreach ($spec in Get-ChildItem -LiteralPath $rootPath -Filter "*_spec.lua" -File -Recurse:$recurse) {
+        $specs.Add($spec)
     }
-) | Sort-Object FullName
+}
+$specs = @($specs | Sort-Object FullName)
 
 if ($specs.Count -eq 0) {
-    throw "No Lua specs found for '$Tool' under tests/arp or tests/acid."
+    throw "No Lua specs found for '$Tool' under the selected test roots."
 }
 
 $previousLocation = Get-Location

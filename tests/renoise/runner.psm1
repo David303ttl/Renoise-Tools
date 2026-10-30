@@ -738,6 +738,11 @@ function Invoke-AcidNativeScenario {
         $observation.failure_reason = $Reason
         [pscustomobject]@{ name = $name; status = 'FAIL'; expects = $expects; diff = @($diffs); observation = $observation }
     }
+    function New-Error {
+        param([string]$Reason)
+        $observation.failure_reason = $Reason
+        [pscustomobject]@{ name = $name; status = 'ERROR'; expects = $expects; diff = @($diffs); observation = $observation }
+    }
     try {
         New-Item -ItemType Directory -Path $ArtifactDirectory -Force | Out-Null
         $requiredWaits = if ($null -ne $preconditions) { "document.changed`ninventory.settled`nsnapshot.stable" } else { "document.changed`nsnapshot.stable" }
@@ -919,7 +924,7 @@ function Invoke-AcidNativeScenario {
         return New-Failure 'expected diffs did not match observed diffs'
     }
     catch {
-        return New-Failure ("scenario exception: " + $_.Exception.Message)
+        return New-Error ("scenario error: " + $_.Exception.Message)
     }
 }
 

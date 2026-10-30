@@ -50,13 +50,17 @@ pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
 lua ./tests/renoise/remote_driver_spec.lua
 ~~~
 
-The packaging test compiles each generated `main.lua` with Lua 5.1 without
-executing the Renoise bootstrap. If `lua` is not Lua 5.1, pass the interpreter
-name with `-LuaCommand lua5.1`.
+The packaging test compiles each generated `main.lua` with the selected
+interpreter without executing the Renoise bootstrap. Lua 5.1 or newer and
+LuaJIT 2.x are accepted through `_VERSION`. It defaults to `lua` from `PATH`;
+use `-LuaCommand lua5.4` (or an executable path) to override it. Syntax checks
+with newer Lua versions do not establish Lua 5.1 runtime compatibility.
+Run `./scripts/run_tests.ps1 -LuaCommand lua5.1`
+to check the production language baseline.
 
 ## Interactive runner
 
-Use PowerShell 7 and Lua 5.1. Run the available Native test against a fresh Renoise
+Use PowerShell 7 and Lua 5.1 or newer. Run the available Native test against a fresh Renoise
 process, or select an existing instance with a disposable song:
 
 ```powershell
@@ -74,6 +78,14 @@ with `-ToolsDirectory '<path>'` for a custom installation. Missing folders are
 created during installation. Linked parent folders are supported. Replacement
 requires a verifiable backup; links inside the tool being backed up are rejected
 because the backup does not copy their external contents.
+
+Result classes are consistent across scenario and run reports: `PASS` means
+every requested postcondition was independently observed; `FAIL` means an
+assertion found a contract violation; `ERROR` means a runner, host or transport
+operation failed; `SKIP` is reserved for unavailable optional coverage; and
+`MANUAL` marks a check without an automated assertion. A selected suite cannot
+pass when a required case is skipped or lacks an assertion. Manual observations
+are recorded separately and do not count as automated passes.
 
 `-Install` allows temporary replacement of ACID and `-ApproveDisposableSong`
 allows resetting the test song. The selected PID and listener owner are checked

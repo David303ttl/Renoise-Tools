@@ -647,15 +647,20 @@ try {
             $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'PASS'; expected = 'Configured ACID shortcut opens the dialog; native instrument navigation changes the selected index in song readback'; actual = "shortcut=$($journey.shortcut); navigation=$($journey.navigation); selected=$($journey.selected_instrument_before)->$($journey.selected_instrument_after)"; diff = $null })
         }
         $report.scenarios = @($scenarioResults)
-        $failedScenarios = @($scenarioResults | Where-Object { $_.status -ne 'PASS' })
+        $failedScenarios = @($scenarioResults | Where-Object { $_.status -in @('FAIL', 'ERROR', 'SKIP') })
+        $scenarioErrors = @($scenarioResults | Where-Object { $_.status -eq 'ERROR' })
+        $scenarioSkips = @($scenarioResults | Where-Object { $_.status -eq 'SKIP' })
         $orderAcceptanceFailed = $false
         if ($VerifyScenarioOrder) { $orderAcceptanceFailed = $report.scenario_order_acceptance.status -cne 'PASS' }
         if ($failedScenarios.Count -eq 0 -and -not $orderAcceptanceFailed) { $report.status = 'PASS' }
         else {
-            $report.status = 'FAIL'
+            $assertionFailures = @($scenarioResults | Where-Object { $_.status -eq 'FAIL' })
+            $report.status = if ($scenarioErrors.Count -gt 0) { 'ERROR' }
+                elseif ($scenarioSkips.Count -gt 0 -and $assertionFailures.Count -eq 0) { 'SKIP' }
+                else { 'FAIL' }
             $failureDetails = @($failedScenarios | ForEach-Object { "$($_.name): $($_.actual)" })
             if ($orderAcceptanceFailed) { $failureDetails += "scenario-order acceptance: $($report.scenario_order_acceptance.status)" }
-            $report.error = 'Scenario failures: ' + ($failureDetails -join '; ')
+            $report.error = "Scenario $($report.status.ToLowerInvariant()): " + ($failureDetails -join '; ')
         }
         $safeToRestore = Stop-RenoiseDriver -Client $client -Session $session -SessionPath $sessionTargetPath -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         Add-Trace -Operation 'driver.shutdown' -Status 'PASS' -Details @{ renoise_left_open = [bool]$selectedIdentity }
@@ -797,13 +802,13 @@ finally {
         $report.scenarios = @($report.scenarios) + @([pscustomobject]@{
             name = 'runner-cleanup'
             suite = $Suite
-            status = 'SKIP'
+            status = 'ERROR'
             reason = 'Host or process shutdown was not verified; restoration was withheld to avoid replacing a live or changed installation.'
             expected = 'Temporary installation is restored only after verified shutdown'
             actual = @{ install_retained = $true; process_id = $report.host.process_id }
             diff = @{ restoration_withheld = $true }
         })
-        Add-Trace -Operation 'install.restore' -Status 'SKIP' -Details @{
+        Add-Trace -Operation 'install.restore' -Status 'ERROR' -Details @{
             reason = 'shutdown not verified'
             install_target = $installedToolPath
             artifact_backup = $backupToolPath
