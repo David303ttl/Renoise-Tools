@@ -110,6 +110,38 @@ do
  assert(options.validate(next_song,next_inst,next_phrase))
 end
 
+-- Display projections and clean idle reconciliation reuse metadata; mutation
+-- invalidation and explicit eligibility checks perform fresh classification.
+do
+ local song,inst,a=fixture()
+ local ctx=runtime(song)
+ local validator=require('writers.phrase_validator')
+ local classify=validator.classify
+ local calls=0
+ validator.classify=function(...)
+  calls=calls+1
+  return classify(...)
+ end
+ local target=ctx:bind_phrase(inst,a)
+ assert(target.kind=='owned')
+ local after_bind=calls
+ for _=1,25 do
+  local projection=ctx:target_projection()
+  assert(projection.kind=='owned' and projection.baseline==nil)
+  assert(ctx:reconcile().kind=='owned')
+ end
+ assert(calls==after_bind,'clean projections or idle reconciliation repeated phrase classification')
+ ctx:mark_dirty('fixture mutation')
+ assert(ctx:reconcile().kind=='owned')
+ assert(calls==after_bind+1,'dirty reconciliation did not refresh the eligibility baseline')
+ local after_refresh=calls
+ assert(ctx:target_projection().kind=='owned' and calls==after_refresh)
+ assert(ctx:target_state().kind=='owned' and calls==after_refresh+1,
+  'explicit target checks must remain fresh')
+ validator.classify=classify
+ ctx:release_document()
+end
+
 -- Hiding a temporary from UI choices never hides its copied ID from ownership inventory.
 do
  local song,inst,a,_,source=fixture()
@@ -121,15 +153,16 @@ do
  assert(#assert(ctx:phrase_choices(other))==1)
  assert(not ctx:draft_options().validate(song,inst,a))
 end
--- An explicit target choice supersedes native selection already observed at
--- that instant; a later raw native pair still follows normally.
+-- Display projection does not consume a pending native selection change;
+-- explicit idle reconciliation still rebinds the selected phrase.
 do
  local song,inst,a,b=fixture()
  song.selected_instrument,song.selected_phrase=inst,a
  local ctx=runtime(song)
- song.selected_phrase=b
  ctx:bind_new(inst)
- assert(ctx:reconcile().kind=='new')
+ song.selected_phrase=b
+ assert(ctx:target_projection().kind=='new')
+ assert(rawequal(ctx:reconcile().phrase,b))
  song.selected_phrase=a
  assert(rawequal(ctx:reconcile().phrase,a))
 end

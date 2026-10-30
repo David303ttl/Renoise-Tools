@@ -87,6 +87,101 @@ end
   }
 }
 
+function Assert-BootstrapLifecycle {
+  param([string] $BootstrapText)
+  $lifecycleRoot = Join-Path $repoTempRoot ('package-dev-lifecycle-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $lifecycleRoot | Out-Null
+  $bootstrapPath = Join-Path $lifecycleRoot 'bootstrap.lua'
+  $harnessPath = Join-Path $lifecycleRoot 'test.lua'
+  [System.IO.File]::WriteAllText($bootstrapPath, $BootstrapText, [System.Text.UTF8Encoding]::new($false))
+  $harness = @'
+local bootstrap_path = assert(arg[1])
+local real_dofile = dofile
+local starts = 0
+local driver = {start = function() starts = starts + 1 end}
+local acceptance = {run = function() end}
+local function observable()
+  return {notifiers = {}}
+end
+local observable_methods = {}
+function observable_methods:add_notifier(notifier)
+  self.notifiers[#self.notifiers + 1] = notifier
+end
+function observable_methods:has_notifier(notifier)
+  for _, value in ipairs(self.notifiers) do
+    if rawequal(value, notifier) then return true end
+  end
+  return false
+end
+function observable_methods:remove_notifier(notifier)
+  for index, value in ipairs(self.notifiers) do
+    if rawequal(value, notifier) then table.remove(self.notifiers, index); return end
+  end
+end
+local function new_observable()
+  local value = observable()
+  setmetatable(value, {__index = observable_methods})
+  function value:fire()
+    local pending = {}
+    for index, notifier in ipairs(self.notifiers) do pending[index] = notifier end
+    for _, notifier in ipairs(pending) do
+      if self:has_notifier(notifier) then notifier() end
+    end
+  end
+  return value
+end
+local tool = {
+  bundle_path = "C:\\ACID.xrnx",
+  app_idle_observable = new_observable(),
+  tool_will_unload_observable = new_observable()
+}
+function tool:has_keybinding() return true end
+renoise = {tool = function() return tool end}
+gui = {show = function() end, get_ui_state = function() return {} end}
+dofile = function(path)
+  if path:match("remote_driver%.lua$") then return driver end
+  if path:match("acceptance_cases%.lua$") then return acceptance end
+  return real_dofile(path)
+end
+
+assert(loadfile(bootstrap_path))()
+assert(starts == 0, "driver started during tool load")
+assert(#tool.app_idle_observable.notifiers == 1, "startup idle notifier was not registered")
+assert(#tool.tool_will_unload_observable.notifiers == 1, "unload notifier was not registered")
+tool.tool_will_unload_observable:fire()
+tool.app_idle_observable:fire()
+assert(starts == 0, "driver started after unload canceled startup")
+assert(#tool.app_idle_observable.notifiers == 0, "unload left startup idle notifier attached")
+assert(#tool.tool_will_unload_observable.notifiers == 0, "unload notifier was not detached")
+
+tool = {
+  bundle_path = "C:\\ACID.xrnx",
+  app_idle_observable = new_observable(),
+  tool_will_unload_observable = new_observable()
+}
+function tool:has_keybinding() return true end
+assert(loadfile(bootstrap_path))()
+assert(starts == 0, "driver started before the first app idle")
+tool.app_idle_observable:fire()
+assert(starts == 1, "driver did not start at first app idle")
+assert(#tool.app_idle_observable.notifiers == 0, "startup idle notifier was not detached")
+assert(#tool.tool_will_unload_observable.notifiers == 0, "unload notifier remained after startup")
+tool.app_idle_observable:fire()
+tool.tool_will_unload_observable:fire()
+assert(starts == 1, "one-shot startup ran more than once")
+'@
+  [System.IO.File]::WriteAllText($harnessPath, $harness, [System.Text.UTF8Encoding]::new($false))
+  try {
+    $output = @(& $luaCommandInfo.Source $harnessPath $bootstrapPath 2>&1)
+    if ($LASTEXITCODE -ne 0) {
+      throw "Development bootstrap lifecycle check failed:$([string][char]10)$($output | Out-String)"
+    }
+  }
+  finally {
+    Remove-Item -LiteralPath $lifecycleRoot -Recurse -Force
+  }
+}
+
 function New-FixtureRepository {
   param([string] $Root)
   $sourceToolName = 'com.david303ttl.ACID.xrnx'
@@ -358,17 +453,40 @@ try {
     '    show_invocations = show_invocations + 1'
     '    return original_gui_show(...)'
     '  end'
-    '  driver.start(renoise.tool().bundle_path .. "\\..\\acid-test-session.conf", function()'
-    '    local state = gui.get_ui_state()'
-    '    state.show_invocations = show_invocations'
-    '    state.show_keybinding_registered = renoise.tool():has_keybinding("Global:ACID:Show")'
-    '    return state'
-    '  end, acceptance.run)'
+    '  local tool = renoise.tool()'
+    '  local startup_pending = true'
+    '  local start_driver, on_tool_unload'
+    '  local function remove_startup_notifiers()'
+    '    if tool.app_idle_observable:has_notifier(start_driver) then'
+    '      tool.app_idle_observable:remove_notifier(start_driver)'
+    '    end'
+    '    if tool.tool_will_unload_observable:has_notifier(on_tool_unload) then'
+    '      tool.tool_will_unload_observable:remove_notifier(on_tool_unload)'
+    '    end'
+    '  end'
+    '  on_tool_unload = function()'
+    '    startup_pending = false'
+    '    remove_startup_notifiers()'
+    '  end'
+    '  start_driver = function()'
+    '    if not startup_pending then return end'
+    '    startup_pending = false'
+    '    remove_startup_notifiers()'
+    '    driver.start(tool.bundle_path .. "\\..\\acid-test-session.conf", function()'
+    '      local state = gui.get_ui_state()'
+    '      state.show_invocations = show_invocations'
+    '      state.show_keybinding_registered = tool:has_keybinding("Global:ACID:Show")'
+    '      return state'
+    '    end, acceptance.run)'
+    '  end'
+    '  tool.tool_will_unload_observable:add_notifier(on_tool_unload)'
+    '  tool.app_idle_observable:add_notifier(start_driver)'
     'end'
     ''
   ))
   Assert-True ($bootstrapText -ceq $expectedBootstrap) 'Development bootstrap contains unexpected or machine-specific data.'
   Assert-True (-not $bootstrapText.Contains($devOutputOne)) 'Development bootstrap contains its temporary output path.'
+  Assert-BootstrapLifecycle -BootstrapText $bootstrapText
   Assert-LuaSyntax -MainPath $mainDevPath -Context 'Synthetic development entrypoint'
 
   foreach ($file in $sourcePayloadFiles) {

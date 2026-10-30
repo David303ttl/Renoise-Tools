@@ -10,6 +10,7 @@ local PHRASE_PROPERTIES={
   "delay_column_visible","sample_effects_column_visible",
 }
 local MAPPING_PROPERTIES={"key_tracking","base_note","note_range","looping","loop_start","loop_end"}
+local NOTE_COLUMN_COUNT=12
 
 local function read(object,key)
   local ok,value=pcall(function() return object[key] end)
@@ -83,6 +84,15 @@ function M.new()
     add(records,read(phrase,"name_observable"),"rename",phrase,false,current_generation)
     for _,property in ipairs(PHRASE_PROPERTIES) do
       add(records,read(phrase,property.."_observable"),"content",phrase,false,current_generation,instrument)
+    end
+    for _,property in ipairs({"column_name_observable","column_is_muted_observable"}) do
+      local observable_for_column=read(phrase,property)
+      if type(observable_for_column)=="function" then
+        for column=1,NOTE_COLUMN_COUNT do
+          local ok,source=pcall(observable_for_column,phrase,column)
+          if ok then add(records,source,"content",phrase,false,current_generation,instrument) end
+        end
+      end
     end
     local add_line_notifier=read(phrase,"add_line_notifier")
     local remove_line_notifier=read(phrase,"remove_line_notifier")

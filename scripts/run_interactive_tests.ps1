@@ -160,7 +160,7 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','editor-responsiveness')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }
@@ -669,7 +669,8 @@ try {
                 if ($roundTripItem.PSIsContainer -or ($roundTripItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
                     throw 'Make Independent round-trip output is not a plain fixture file.'
                 }
-                $expectedFixtureNames = @((Get-ChildItem -LiteralPath $fixturesSourcePath -File | ForEach-Object Name) + 'acceptance-independent.xrns' | Sort-Object -Unique)
+                $sourceFixtureNames = @(Get-ChildItem -LiteralPath $fixturesSourcePath -File | ForEach-Object { $_.Name })
+                $expectedFixtureNames = @(@($sourceFixtureNames + @('acceptance-independent.xrns')) | Sort-Object -Unique)
                 $installedFixtureNames = @(Get-ChildItem -LiteralPath $installedFixturesPath -File | ForEach-Object Name | Sort-Object -Unique)
                 if (($installedFixtureNames -join '|') -cne ($expectedFixtureNames -join '|')) {
                     throw 'Make Independent changed unexpected files in the temporary fixture directory.'

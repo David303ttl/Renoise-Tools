@@ -173,7 +173,7 @@ function M.show()
   local native_projection_dirty=false
   local instrument_choice
   local live_checkbox
-  local function destination() return runtime:target_state() end
+  local function destination() return runtime:target_projection() end
   local function bound_instrument() return destination().instrument end
   local function bound_phrase() return destination().phrase end
   local function revision() return runtime:revision_state().edit_revision end
@@ -943,7 +943,7 @@ function M.show()
     copy_recovery.active=entry~=nil and current_session() and bound_instrument()~=nil
     discard_recovery.active=entry~=nil and current_session()
     recovery_detail.text=entry and ("Session only: "..tostring(entry.reason or "Detached draft")) or ""
-    local eligible,reason=runtime:independence_eligibility()
+    local eligible,reason=runtime:independence_projection()
     independent.active=eligible~=nil and current_session()
     independence_detail.text=eligible and "Resolve this copied-ID collision without changing the music."
       or tostring(reason or "Select a colliding phrase to make it independent.")

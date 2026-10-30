@@ -44,6 +44,23 @@ do
  assert(not ctx:integrity_state().blocked and log.sinks==1,'revalidation retried old intent')
 end
 
+-- Writer recovery evidence keeps the exact pre-operation phrase order until
+-- native edits restore it, so baseline equality alone cannot clear the block.
+do
+ local ctx,log,_,_,instrument,phrase,baseline=fixture()
+ local before={instrument.phrases[1],instrument.phrases[2]}
+ local report=evidence(instrument,phrase,baseline)
+ report.destination_phrases=before
+ assert(ctx:record_blocker(log.token,report))
+ log.done({kind='failed'})
+ instrument.phrases[1],instrument.phrases[2]=before[2],before[1]
+ assert(not ctx:revalidation_status().verified,'reordered destination inventory was accepted')
+ instrument.phrases[1],instrument.phrases[2]=before[1],before[2]
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and proof,'restored destination inventory did not permit revalidation')
+ assert(ctx:revalidate(proof))
+end
+
 -- Recovery identity is checked globally; labels are captured and removal must be native.
 do
  local ctx,log,_,song,instrument,phrase,baseline=fixture()

@@ -249,6 +249,23 @@ function M.preflight(snapshot,output)
   return protected(preflight,snapshot,output)
 end
 
+local function same_note_output(actual,expected)
+  return actual.note_value==expected.note_value and
+    actual.instrument_value==expected.instrument_value and
+    actual.volume_value==expected.volume_value and
+    actual.panning_value==expected.panning_value and
+    actual.delay_value==expected.delay_value and
+    actual.effect_number_value==expected.effect_number_value and
+    actual.effect_amount_value==expected.effect_amount_value and
+    actual.is_empty==expected.is_empty
+end
+
+local function same_effect_output(actual,expected)
+  return actual.number_value==expected.number_value and
+    actual.amount_value==expected.amount_value and
+    actual.is_empty==expected.is_empty
+end
+
 local function expected_output(snapshot,output)
   local generated={}
   for key in pairs(output.expected.properties) do generated[key]=snapshot.properties[key] end
@@ -259,13 +276,19 @@ local function expected_output(snapshot,output)
     local expected=output.expected.lines[line_index]
     for column=1,#actual.notes do
       local wanted=expected and expected.note_columns[column] or output.expected.empty_note
-      local same,reason=ownership.compare(actual.notes[column],wanted)
-      if not same then return nil,"Committed note output differs at line "..line_index.." column "..column..": "..reason end
+      local cell=actual.notes[column]
+      if not same_note_output(cell,wanted) then
+        local _,reason=ownership.compare(cell,wanted)
+        return nil,"Committed note output differs at line "..line_index.." column "..column..": "..reason
+      end
     end
     for column=1,#actual.effects do
       local wanted=expected and expected.effect_columns[column] or output.expected.empty_effect
-      local same,reason=ownership.compare(actual.effects[column],wanted)
-      if not same then return nil,"Committed effect output differs at line "..line_index.." column "..column..": "..reason end
+      local cell=actual.effects[column]
+      if not same_effect_output(cell,wanted) then
+        local _,reason=ownership.compare(cell,wanted)
+        return nil,"Committed effect output differs at line "..line_index.." column "..column..": "..reason
+      end
     end
   end
   return true

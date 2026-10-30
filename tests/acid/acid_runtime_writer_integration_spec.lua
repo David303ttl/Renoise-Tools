@@ -166,10 +166,23 @@ local ownership=require("renoise.phrase_ownership")
 local sequencer=require("model.sequencer")
 
 local sink_calls=0
+local fail_next_adoption=false
 local sink=function(request,done)
   sink_calls=sink_calls+1
-  if request.kind=="create" then return writer.create(request,done) end
-  if request.kind=="regenerate" then return writer.regenerate(request,done) end
+  local function complete(result)
+    if fail_next_adoption and result.kind=="success" then
+      fail_next_adoption=false
+      local membership=ownership.membership
+      ownership.membership=function() return nil,"Injected adoption failure" end
+      local ok,err=pcall(done,result)
+      ownership.membership=membership
+      if not ok then error(err) end
+      return
+    end
+    return done(result)
+  end
+  if request.kind=="create" then return writer.create(request,complete) end
+  if request.kind=="regenerate" then return writer.regenerate(request,complete) end
   error("unexpected runtime request kind "..tostring(request.kind))
 end
 local function new_context()
@@ -434,6 +447,47 @@ local revalidation,proof=cold_ctx:revalidation_status()
 assert(revalidation.verified,revalidation.reason)
 assert(cold_ctx:revalidate(proof),"verified committed recovery could not be revalidated")
 assert(not cold_ctx:integrity_state().blocked)
+
+-- A verified musical commit whose runtime baseline adoption fails must block
+-- later generation until the committed destination passes explicit revalidation.
+cold_ctx:bind_new(instrument)
+edit(cold_ctx,source(50))
+fail_next_adoption=true
+dispatch(cold_ctx)
+drain(cold,6,"post-commit adoption failure")
+local adoption_phrase=instrument.phrases[#instrument.phrases]
+assert(cold[6].status=="integrity_blocked" and cold[6].committed==true,
+  "post-commit adoption failure was not reported as blocked")
+assert(adoption_phrase.cells[1].note_value==50,"writer commit did not complete before adoption failed")
+assert(cold_ctx:integrity_state().blocked,"adoption failure did not persist an integrity blocker")
+local sink_before_blocked_request=sink_calls
+local accepted= cold_ctx:request_generation("manual")
+assert(not accepted and sink_calls==sink_before_blocked_request,
+  "generation was dispatched while committed state awaited revalidation")
+cold_ctx:bind_new(instrument)
+assert(cold_ctx:integrity_state().blocked and not cold_ctx:request_generation("manual"),
+  "changing the selected destination cleared the adoption blocker")
+cold_ctx:close_dialog()
+cold_ctx:open_dialog(cold_delivery)
+assert(cold_ctx:integrity_state().blocked and not cold_ctx:request_generation("manual"),
+  "reopening the dialog cleared the adoption blocker")
+local committed_note=adoption_phrase.cells[1].note_value
+adoption_phrase.cells[1].note_value=committed_note-1
+local adoption_status,adoption_proof=cold_ctx:revalidation_status()
+assert(not adoption_status.verified and not adoption_proof,
+  "inconsistent committed output passed explicit revalidation")
+adoption_phrase.cells[1].note_value=committed_note
+adoption_status,adoption_proof=cold_ctx:revalidation_status()
+assert(adoption_status.verified,adoption_status.reason)
+assert(cold_ctx:revalidate(adoption_proof),"consistent committed destination could not be revalidated")
+assert(not cold_ctx:integrity_state().blocked)
+assert(sink_calls==sink_before_blocked_request,"revalidation retried a prior generation request")
+cold_ctx:bind_new(instrument)
+edit(cold_ctx,source(51))
+dispatch(cold_ctx)
+drain(cold,7,"generation after explicit adoption revalidation")
+assert(cold[7].kind=="success" and sink_calls==sink_before_blocked_request+1,
+  "fresh generation did not dispatch after explicit revalidation")
 
 -- The module-level runtime is reused across documents. Its released delivery
 -- cannot remain active after the real writer detaches its completion callback.

@@ -195,8 +195,9 @@ CheckForegroundPid(targetPid, simulatedForegroundPid := -1) {
 }
 
 SendKeyboardSequence(keys) {
-    ; One short input batch, after the exact foreground guard.
-    SendInput(keys)
+    ; Renoise must observe modifier and key transitions on separate input ticks.
+    SetKeyDelay(20, 20)
+    SendEvent(keys)
 }
 
 GetForegroundProcessId() {

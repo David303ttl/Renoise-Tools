@@ -62,6 +62,14 @@ function M.new(song,drafts,idle)
         for i,phrase in ipairs(evidence.destination_phrases) do record.destination_phrases[i]=phrase end
       end
       if type(evidence.reason)=="string" then record.reason=evidence.reason end
+      if type(evidence.destination_phrases)=="table" and
+          (not record.committed or record.operation=="regenerate") and
+          record.destination_phrases==nil then
+        record.destination_phrases={}
+        for i,phrase in ipairs(evidence.destination_phrases) do
+          record.destination_phrases[i]=phrase
+        end
+      end
       record.instrument=evidence.instrument
       record.phrase=evidence.phrase
       record.baseline=ownership.copy_snapshot(evidence.baseline)
@@ -133,6 +141,18 @@ function M.new(song,drafts,idle)
           end
         end
       else
+        if type(entry.destination_phrases)=="table" and
+            (not entry.committed or entry.operation=="regenerate") then
+          if not ownership.membership(song,entry.instrument) or
+            #entry.instrument.phrases~=#entry.destination_phrases then
+            return nil,"Destination phrase inventory has not been restored"
+          end
+          for i,phrase in ipairs(entry.destination_phrases) do
+            if not rawequal(entry.instrument.phrases[i],phrase) then
+              return nil,"Destination phrase inventory order has not been restored"
+            end
+          end
+        end
         for _,item in ipairs(entry.recovery) do
           if item.phrase==nil then return nil,"Recovery object evidence is incomplete" end
           for _,instrument in ipairs(song.instruments) do

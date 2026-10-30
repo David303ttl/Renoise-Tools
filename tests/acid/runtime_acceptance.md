@@ -1,11 +1,16 @@
 # Runtime integration acceptance map
 
 This map links the Step 7 regressions R01–R36 to local assertions. Focused specs
-have been run during implementation; current full reruns pass 63 ACID-selected
-specs and 66 repository specs with no timeout. Native checks completed in Renoise 3.5.4 cover draft
+have been run during implementation; the full repository rerun passes 67 specs
+with no timeout. Native checks completed in Renoise 3.5.4 cover draft
 recovery and Make Independent. Undo/redo and cold-process save/reopen remain
 pending. Mocked host tests do not establish playback, real observer timing,
 undo grouping, or cold-process behavior.
+
+Editor responsiveness is measured by native `editor-responsiveness` acceptance:
+unchanged display/idle reads perform no phrase snapshots; source edits average
+72.18 ms on a 32-step/128-line phrase. Hidden/inactive cell preservation and
+external-change rejection remain verified.
 
 | Case | Local evidence | Acceptance limit |
 | --- | --- | --- |
@@ -23,7 +28,7 @@ undo grouping, or cold-process behavior.
 | R12 | `acid_phrase_validator_spec.lua`, `acid_writer_inspection_spec.lua`, `acid_writer_safety_spec.lua`: hidden/content/output changes and temporary-object identity are revalidated before mutation. | Actual host field behavior remains Step 8. |
 | R13 | `acid_writer_safety_spec.lua`, `acid_gate_transaction_spec.lua`: invalid requests and insufficient capacity reject before insertion or source mutation. | Mocked host. |
 | R14 | `acid_writer_safety_spec.lua`, `acid_phrase_spec.lua`: render callback failures clean staging and retain the prior destination/source. | Renoise render failures are not induced locally. |
-| R15 | `acid_writer_safety_spec.lua`, `acid_runtime_writer_integration_spec.lua`, `acid_runtime_integrity_spec.lua`: failures restore exact state or record recovery/blocking evidence; committed cleanup failure blocks later requests and survives dialog reopen; explicit revalidation requires removal of recovery material and the exact committed baseline. | Fault injection only. |
+| R15 | `acid_writer_safety_spec.lua`, `acid_runtime_writer_integration_spec.lua`, `acid_runtime_integrity_spec.lua`: failures restore exact state or record recovery/blocking evidence; committed cleanup failure blocks later requests and survives dialog reopen; post-commit adoption failure blocks generation across navigation/reopen; uncertain backup insertion verifies exact inventory or retains recovery evidence; explicit revalidation requires removal of recovery material and the exact committed baseline. | Fault injection only. |
 | R16 | `acid_draft_recovery_spec.lua`, `acid_store_candidate_spec.lua`, `acid_gui_timing_race_spec.lua`: A→B→A drafts, collision isolation, exact revision clearing, occupied scratch, and guarded store writes are covered. | Persistence reload remains partly native. |
 | R17 | `acid_runtime_lifetime_spec.lua`, `acid_runtime_context_spec.lua`, `acid_runtime_observers_spec.lua`: repeated session/document lifetimes detach mocked observers and invalidate stale jobs. | Native notifier lifetime remains Step 8. |
 | R18 | `acid_compiler_spec.lua`, `acid_output_planner_spec.lua`, `acid_sequencer_spec.lua`, articulation, timing, pitch-bend, and repeat specs: existing musical output contracts remain covered. | Audible smoke remains Step 8. |
@@ -34,7 +39,7 @@ undo grouping, or cold-process behavior.
 | R23 | `acid_runtime_independence_spec.lua`: two- and three-holder resolution and a re-sealed holder with changed hidden content are rejected. | Native collision revalidation beyond the completed Make Independent check remains pending. |
 | R24 | `acid_runtime_inventory_spec.lua`, `acid_output_compatibility_spec.lua`, `acid_runtime_independence_spec.lua`: missing/corrupt sources do not authorize adoption or resolution. | Cross-song/imported copy transaction cases need focused coverage; native source-less copy remains Step 8. |
 | R25 | `acid_writer_safety_spec.lua`: create requires one free phrase slot; regenerate requires two and rejects before insertion when short. | Capacity boundary is mocked. |
-| R26 | `acid_runtime_mutation_spec.lua`, `acid_runtime_observers_spec.lua`, `acid_writer_inspection_spec.lua`: scoped mutations, temporary neutrality, and observer re-entry are exercised. | Renoise notifier ordering remains Step 8. |
+| R26 | `acid_runtime_mutation_spec.lua`, `acid_runtime_observers_spec.lua`, `acid_writer_inspection_spec.lua`: scoped mutations, temporary neutrality, observer re-entry, and column-name/mute notifications during editing and generation are exercised. | Renoise notifier ordering remains Step 8. |
 | R27 | `acid_runtime_context_spec.lua`, `acid_runtime_writer_integration_spec.lua`, `acid_gui_timing_race_spec.lua`: newest intent supersedes safely and no second writer starts before terminal retirement. | Async callback ordering is mocked. |
 | R28 | `acid_runtime_independence_spec.lua`: store setter write-then-throw, phrase-name setter failure, post-rename clone-verification failure, and rollback failure are injected; tests assert restoration or retain a blocker when rollback cannot complete. | Selected dirty-draft rollback assertion and native undo/redo remain pending. |
 | R29 | `acid_runtime_integrity_spec.lua`, `acid_runtime_lifetime_spec.lua`, `acid_output_compatibility_spec.lua`: undo/redo invalidation, blocker persistence, and read-only revalidation are mocked. | Actual undo states/grouping remain Step 8. |

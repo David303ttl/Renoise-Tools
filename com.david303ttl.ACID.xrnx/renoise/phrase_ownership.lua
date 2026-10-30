@@ -196,6 +196,30 @@ local function fields(object,names,kind)
   return result
 end
 
+local function empty_column_defaults()
+  local ok, defaults=pcall(function()
+    local api=rawget(_G,"renoise")
+    local line=api and api.PatternLine
+    if not line then return nil end
+    return {
+      note={note_value=line.EMPTY_NOTE,instrument_value=line.EMPTY_INSTRUMENT,
+        volume_value=line.EMPTY_VOLUME,panning_value=line.EMPTY_PANNING,
+        delay_value=line.EMPTY_DELAY,effect_number_value=line.EMPTY_EFFECT_NUMBER,
+        effect_amount_value=line.EMPTY_EFFECT_AMOUNT,is_empty=true},
+      effect={number_value=line.EMPTY_EFFECT_NUMBER,amount_value=line.EMPTY_EFFECT_AMOUNT,
+        is_empty=true},
+    }
+  end)
+  if not ok or type(defaults)~="table" then return nil end
+  for _,key in ipairs(note_fields) do
+    if type(defaults.note[key])~="number" then return nil end
+  end
+  for _,key in ipairs(effect_fields) do
+    if type(defaults.effect[key])~="number" then return nil end
+  end
+  return defaults
+end
+
 local function positive_integer(input)
   return type(input)=="number" and input%1==0 and input>0
 end
@@ -255,6 +279,7 @@ end
 
 local function capture(phrase,capacities)
   local result={name=value(phrase,"name","string"),properties={},columns={},lines={}}
+  local empty_defaults=empty_column_defaults()
   for _,key in ipairs(numeric_properties) do result.properties[key]=value(phrase,key,"number") end
   for _,key in ipairs(boolean_properties) do result.properties[key]=value(phrase,key,"boolean") end
   if result.properties.number_of_lines>capacities.max_lines then
@@ -288,15 +313,44 @@ local function capture(phrase,capacities)
   for line_index=1,capacities.max_lines do
     local line=phrase:line(line_index)
     local captured={notes={},effects={}}
-    for column=1,capacities.note_columns do
-      local cell=line:note_column(column)
-      captured.notes[column]=fields(cell,note_fields,"number")
-      captured.notes[column].is_empty=value(cell,"is_empty","boolean")
-    end
-    for column=1,capacities.effect_columns do
-      local cell=line:effect_column(column)
-      captured.effects[column]=fields(cell,effect_fields,"number")
-      captured.effects[column].is_empty=value(cell,"is_empty","boolean")
+    local empty_ok,is_empty=pcall(function()return line.is_empty end)
+    local defaults=empty_defaults
+    if empty_ok and is_empty==true and defaults then
+      for column=1,capacities.note_columns do
+        captured.notes[column]={}
+        for _,key in ipairs(note_fields) do captured.notes[column][key]=defaults.note[key] end
+        captured.notes[column].is_empty=true
+      end
+      for column=1,capacities.effect_columns do
+        captured.effects[column]={}
+        for _,key in ipairs(effect_fields) do captured.effects[column][key]=defaults.effect[key] end
+        captured.effects[column].is_empty=true
+      end
+    else
+      for column=1,capacities.note_columns do
+        local cell=line:note_column(column)
+        local empty_ok,cell_empty=pcall(function()return cell.is_empty end)
+        if empty_ok and cell_empty==true and defaults then
+          captured.notes[column]={}
+          for _,key in ipairs(note_fields) do captured.notes[column][key]=defaults.note[key] end
+          captured.notes[column].is_empty=true
+        else
+          captured.notes[column]=fields(cell,note_fields,"number")
+          captured.notes[column].is_empty=value(cell,"is_empty","boolean")
+        end
+      end
+      for column=1,capacities.effect_columns do
+        local cell=line:effect_column(column)
+        local empty_ok,cell_empty=pcall(function()return cell.is_empty end)
+        if empty_ok and cell_empty==true and defaults then
+          captured.effects[column]={}
+          for _,key in ipairs(effect_fields) do captured.effects[column][key]=defaults.effect[key] end
+          captured.effects[column].is_empty=true
+        else
+          captured.effects[column]=fields(cell,effect_fields,"number")
+          captured.effects[column].is_empty=value(cell,"is_empty","boolean")
+        end
+      end
     end
     result.lines[line_index]=captured
   end
@@ -346,6 +400,133 @@ local function ordered_keys(value)
   return result
 end
 
+local function valid_snapshot_tree(value,active)
+  local kind=type(value)
+  if kind=="nil" or kind=="string" or kind=="boolean" then return true end
+  if kind=="number" then
+    return value==value and value~=math.huge and value~=-math.huge
+  end
+  if kind~="table" or getmetatable(value)~=nil or active[value] then return false end
+  active[value]=true
+  for key,item in pairs(value) do
+    local key_type=type(key)
+    if (key_type~="string" and key_type~="number") or
+        (key_type=="number" and (key~=key or key==math.huge or key==-math.huge)) or
+        not valid_snapshot_tree(item,active) then
+      active[value]=nil
+      return false
+    end
+  end
+  active[value]=nil
+  return true
+end
+
+local note_snapshot_fields={"note_value","instrument_value","volume_value","panning_value",
+  "delay_value","effect_number_value","effect_amount_value","is_empty"}
+local effect_snapshot_fields={"number_value","amount_value","is_empty"}
+
+local function cell_snapshot_kind(value,fields)
+  if getmetatable(value)~=nil then return false end
+  local count=0
+  for key in pairs(value) do
+    count=count+1
+    if count>#fields then return false end
+  end
+  if count~=#fields then return false end
+  for _,field in ipairs(fields) do
+    local item=rawget(value,field)
+    if field=="is_empty" then
+      if type(item)~="boolean" then return false end
+    elseif type(item)=="number" then
+      if item~=item or item==math.huge or item==-math.huge then return nil end
+    else
+      return false
+    end
+  end
+  return true
+end
+
+local function same_cell_snapshot(left,right,fields)
+  local left_kind=cell_snapshot_kind(left,fields)
+  local right_kind=cell_snapshot_kind(right,fields)
+  if left_kind==nil or right_kind==nil then return nil end
+  if left_kind~=true or right_kind~=true then
+    if valid_snapshot_tree(left,{}) and valid_snapshot_tree(right,{}) then return false end
+    return nil
+  end
+  for _,field in ipairs(fields) do
+    if rawget(left,field)~=rawget(right,field) then return false end
+  end
+  return true
+end
+
+local function fast_exact_equal(left,right,active_left,active_right)
+  local left_type,right_type=type(left),type(right)
+  if left_type~=right_type then
+    if valid_snapshot_tree(left,{}) and valid_snapshot_tree(right,{}) then return false end
+    return nil
+  end
+  if left_type=="nil" or left_type=="string" or left_type=="boolean" then
+    return left==right
+  end
+  if left_type=="number" then
+    if left~=left or right~=right or left==math.huge or left==-math.huge or
+        right==math.huge or right==-math.huge then return nil end
+    return left==right
+  end
+  if left_type~="table" or getmetatable(left)~=nil or getmetatable(right)~=nil then
+    return nil
+  end
+  if rawget(left,"note_value")~=nil or rawget(right,"note_value")~=nil then
+    return same_cell_snapshot(left,right,note_snapshot_fields)
+  end
+  if rawget(left,"number_value")~=nil or rawget(right,"number_value")~=nil then
+    return same_cell_snapshot(left,right,effect_snapshot_fields)
+  end
+  if active_left[left] or active_right[right] then return nil end
+  active_left[left],active_right[right]=true,true
+  local equal=true
+  for key,left_value in pairs(left) do
+    local key_type=type(key)
+    if key_type~="string" and key_type~="number" then
+      active_left[left],active_right[right]=nil,nil
+      return nil
+    end
+    if key_type=="number" and
+        (key~=key or key==math.huge or key==-math.huge) then
+      active_left[left],active_right[right]=nil,nil
+      return nil
+    end
+    local right_value=right[key]
+    if right_value==nil then
+      if not valid_snapshot_tree(left_value,{}) then
+        active_left[left],active_right[right]=nil,nil
+        return nil
+      end
+      equal=false
+    else
+      local same=fast_exact_equal(left_value,right_value,active_left,active_right)
+      if same==nil then
+        active_left[left],active_right[right]=nil,nil
+        return nil
+      elseif same==false then
+        equal=false
+      end
+    end
+  end
+  for key in pairs(right) do
+    if left[key]==nil then
+      if not valid_snapshot_tree(right[key],{}) then
+        active_left[left],active_right[right]=nil,nil
+        return nil
+      end
+      equal=false
+    end
+  end
+  active_left[left],active_right[right]=nil,nil
+  return equal
+end
+
 local function difference(left,right,path,allowed)
   if allowed(path) then return nil end
   if type(left)~=type(right) then return path end
@@ -375,6 +556,11 @@ function M.compare(left,right,policy)
   policy=policy or "exact"
   if policy~="exact" and policy~="name" and policy~="generated" then return false,"Unknown phrase comparison policy" end
   if type(left)~="table" or type(right)~="table" then return false,"Missing phrase snapshot" end
+  if policy=="exact" then
+    local equal=fast_exact_equal(left,right,{},{})
+    if equal==true then return true end
+    if equal==nil then return false,"Invalid phrase snapshot value" end
+  end
   local function allowed(path)
     if policy=="exact" then return false end
     if path=="name" then return true end

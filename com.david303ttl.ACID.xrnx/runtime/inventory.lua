@@ -15,9 +15,16 @@ function M.new(song,writer)
   local NEW={}
   local target=nil
   local baselines={}
+  local cached_projection=nil
   local owner={}
 
-  local function classify(instrument,phrase,adopt)
+  local function remember(result)
+    cached_projection={kind=result.kind,reason=result.reason,instrument=result.instrument,
+      phrase=result.phrase,instrument_name=result.instrument_name,phrase_name=result.phrase_name,
+      instrument_index=result.instrument_index,phrase_index=result.phrase_index}
+  end
+
+  local function classify(instrument,phrase,adopt,expose_candidate)
     local ok,candidate,reason,kind=pcall(function()
       local profile,profile_error=capabilities.inspect(instrument)
       if not profile then return nil,profile_error,"unavailable" end
@@ -34,14 +41,20 @@ function M.new(song,writer)
     if not candidate then return nil,reason,kind or "unavailable" end
     local readable,id=pcall(ownership.id,phrase)
     if not readable then return nil,"Cannot inspect phrase identity","unavailable" end
-    local baseline,copy_error=ownership.copy_snapshot({id=id,source=candidate.source,
-      settings=candidate.settings,snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs})
-    if not baseline then return nil,copy_error,"unavailable" end
+    local baseline={id=id,source=candidate.source,settings=candidate.settings,
+      snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
     local bucket=baselines[instrument]
     if not bucket then bucket={};baselines[instrument]=bucket end
     if adopt then
-      bucket[phrase]={baseline=baseline}
-      return candidate,nil,"owned",baseline
+      local adopted,copy_error=ownership.copy_snapshot(baseline)
+      if not adopted then return nil,copy_error,"unavailable" end
+      bucket[phrase]={baseline=adopted}
+      return candidate,nil,"owned",adopted
+    end
+    if expose_candidate then
+      local detached,copy_error=ownership.copy_snapshot(baseline)
+      if not detached then return nil,copy_error,"unavailable" end
+      baseline=detached
     end
     local previous=bucket[phrase]
     if previous then
@@ -51,7 +64,7 @@ function M.new(song,writer)
     else
       previous={baseline=baseline};bucket[phrase]=previous
     end
-    return candidate,nil,"owned",previous.baseline
+    return expose_candidate and candidate or true,nil,"owned",previous.baseline
   end
 
   local function temporary(instrument,phrase)
@@ -62,29 +75,65 @@ function M.new(song,writer)
     return result==true
   end
 
-  function owner:target_state()
-    if not target then return {kind="unavailable",reason="No target is selected"} end
+  local function target_state(detach_baseline)
+    cached_projection=nil
+    if not target then
+      local result={kind="unavailable",reason="No target is selected"}
+      remember(result)
+      return result
+    end
     local instrument,phrase=target.instrument,target.phrase
     local result={instrument=instrument,phrase=not rawequal(phrase,NEW) and phrase or nil,
       instrument_name=label(instrument,"Unavailable instrument"),
       phrase_name=rawequal(phrase,NEW) and "New Phrase" or label(phrase,"Unavailable phrase")}
     local index,position=ownership.membership(song,instrument,not rawequal(phrase,NEW) and phrase or nil)
-    if not index then result.kind="unavailable";result.reason=position;return result end
+    if not index then result.kind="unavailable";result.reason=position;remember(result);return result end
     result.instrument_index=index
-    if rawequal(phrase,NEW) then result.kind="new";return result end
+    if rawequal(phrase,NEW) then result.kind="new";remember(result);return result end
     result.phrase_index=position
     local hidden,hidden_error=temporary(instrument,phrase)
     if hidden==nil or hidden then
-      result.kind="unavailable";result.reason=hidden_error or "Writer temporary phrases cannot be selected";return result
+      result.kind="unavailable";result.reason=hidden_error or "Writer temporary phrases cannot be selected"
+      remember(result);return result
     end
     local candidate,reason,kind,baseline=classify(instrument,phrase)
     result.kind=kind;result.reason=reason
-    if candidate then result.baseline=ownership.copy_snapshot(baseline) end
+    if candidate then
+      if detach_baseline then
+        result.baseline=ownership.copy_snapshot(baseline)
+      else
+        result.baseline=baseline
+      end
+    end
+    remember(result)
     return result
+  end
+
+  function owner:target_state()
+    return target_state(true)
+  end
+
+  -- Internal edit persistence uses this fresh proof synchronously and never exposes it.
+  function owner:edit_target_state()
+    return target_state(false)
+  end
+
+  -- UI projections may be reused until a native change or target transition invalidates them.
+  function owner:target_projection()
+    if not cached_projection then self:target_state() end
+    local projection={}
+    for key,value in pairs(cached_projection or {}) do projection[key]=value end
+    if next(projection)==nil then return {kind="unavailable",reason="No target is selected"} end
+    return projection
+  end
+
+  function owner:invalidate_projection()
+    cached_projection=nil
   end
 
   function owner:bind_new(instrument)
     target={instrument=instrument,phrase=NEW}
+    cached_projection=nil
     return self:target_state()
   end
 
@@ -92,6 +141,7 @@ function M.new(song,writer)
     if phrase==nil then
       target={instrument=instrument,phrase={}}
     else target={instrument=instrument,phrase=phrase} end
+    cached_projection=nil
     return self:target_state()
   end
 
@@ -140,6 +190,9 @@ function M.new(song,writer)
     local bucket=baselines[instrument]
     if not bucket then bucket={};baselines[instrument]=bucket end
     bucket[phrase]={baseline=copied}
+    if target and rawequal(target.instrument,instrument) and rawequal(target.phrase,phrase) then
+      cached_projection=nil
+    end
     return copied
   end
 
@@ -149,13 +202,14 @@ function M.new(song,writer)
     song=nil
     writer=nil
     target=nil
+    cached_projection=nil
     baselines={}
   end
 
   function owner:draft_options()
     return {validate=function(expected_song,instrument,phrase)
       if not rawequal(expected_song,song) then return nil,"Draft song is no longer current" end
-      return classify(instrument,phrase)
+      return classify(instrument,phrase,false,true)
     end}
   end
 

@@ -215,6 +215,13 @@ renoise={
 }
 
 dofile("tests/acid/gui_host_stub.lua")
+local validator=require("writers.phrase_validator")
+local classify=validator.classify
+local classification_calls=0
+validator.classify=function(...)
+  classification_calls=classification_calls+1
+  return classify(...)
+end
 local editor=require("model.editor_state")
 local project=editor.project
 local projection_calls=0
@@ -236,6 +243,7 @@ local function display_snapshot()
 end
 local initial=display_snapshot()
 local initial_projections=projection_calls
+local initial_classifications=classification_calls
 view:fire(2)
 assert(not program.visible and grid.visible)
 assert(display_snapshot()==initial)
@@ -245,6 +253,9 @@ assert(program.visible and not grid.visible)
 assert(display_snapshot()==initial)
 assert(render_calls==0)
 assert(projection_calls==initial_projections,"view navigation reuses the validated projection")
+assert(classification_calls==initial_classifications,"view navigation must not rescan native phrase content")
+for _=1,20 do tool.app_idle_observable:fire() end
+assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
 
 builder.views.acid_program_time_command:fire(3)
 assert(projection_calls==initial_projections+1,"a TIME edit projects once")

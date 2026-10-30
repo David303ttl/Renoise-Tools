@@ -70,7 +70,7 @@ end
 local function values(record)
   return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record)
 end
-local function proof(song,instrument,phrase,options)
+local function proof(song,instrument,phrase,options,previous_baseline)
   local ok,result,err=pcall(function()
     if options and options.validate then return options.validate(song,instrument,phrase) end
     local profile,profile_error=capabilities.inspect(instrument)
@@ -83,11 +83,25 @@ local function proof(song,instrument,phrase,options)
   end)
   if not ok then return nil,"Cannot validate draft baseline" end
   if not result then return nil,err or "Draft target is unavailable" end
+  local id_ok,id=pcall(ownership.id,phrase)
+  if not id_ok or not policies.is_integer(id) or id<1 then
+    return nil,"Cannot inspect draft phrase identity"
+  end
+  local candidate={id=id,source=result.source,settings=result.settings,
+    snapshot=result.baseline,planning_inputs=result.planning_inputs}
+  if previous_baseline then
+    local same=ownership.compare(previous_baseline,candidate)
+    if not same then return nil,"Committed draft baseline changed" end
+    return previous_baseline
+  end
   local readable,baseline,baseline_error=pcall(function()
     local source,source_error=sequencer.copy_source(result.source)
     if not source then return nil,source_error end
-    return copied({id=ownership.id(phrase),source=source,
-      settings=result.settings,snapshot=result.baseline,planning_inputs=result.planning_inputs})
+    local detached,copy_error=copied({id=id,settings=result.settings,
+      snapshot=result.baseline,planning_inputs=result.planning_inputs})
+    if not detached then return nil,copy_error end
+    detached.source=source
+    return detached
   end)
   if not readable then return nil,"Cannot inspect verified draft baseline" end
   if not baseline or not policies.is_integer(baseline.id) or baseline.id<1 or
@@ -111,8 +125,8 @@ local function scratch_baseline(song,instrument)
   end)
   return {index=index,name=name,durable=inspected and matches==1}
 end
-local function baseline(song,instrument,phrase,options)
-  if phrase then return proof(song,instrument,phrase,options) end
+local function baseline(song,instrument,phrase,options,previous_baseline)
+  if phrase then return proof(song,instrument,phrase,options,previous_baseline) end
   return scratch_baseline(song,instrument)
 end
 local function matching(phrase,left,right)
@@ -155,16 +169,22 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   if not policies.valid_pb_range(pb_range) then
     return nil,"invalid PB range"
   end
-  local verified,validation_error=baseline(song,instrument,phrase,options)
   local records=bucket(song,instrument,true)
   local previous=records[phrase or NEW]
   if previous and previous.detached then previous=nil end
-  if previous and not matching(phrase,previous.baseline,verified) then
+  local retained_baseline=previous and previous.baseline
+  local verified,validation_error=baseline(song,instrument,phrase,options,
+    phrase and previous and previous.baseline or nil)
+  local previous_matches=previous~=nil and verified~=nil and
+    (phrase~=nil and rawequal(previous.baseline,verified) or
+      matching(phrase,previous.baseline,verified))
+  if previous and not previous_matches then
     M.detach(song,instrument,phrase,validation_error or "Committed draft baseline changed")
+    previous=nil
     verified=nil
     validation_error=validation_error or "Committed draft baseline changed"
   end
-  if previous and verified and matching(phrase,previous.baseline,verified) and
+  if previous and verified and previous_matches and
       sequencer.same_source(previous.pattern,source) and
       previous.output_policy==output_policy and previous.pb_range==pb_range and
       (phrase~=nil or not scratch_changed(previous.baseline,verified)) then
@@ -176,7 +196,7 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   end
   local revision=next_token()
   local record={pattern=source,output_policy=output_policy,pb_range=pb_range,
-    baseline=phrase==nil and previous and previous.baseline or verified,
+    baseline=phrase==nil and retained_baseline or verified,
     labels=labels(instrument,phrase),token=previous and previous.token or next_token(),
     revision=revision,persistent=false}
   records[phrase or NEW]=record

@@ -41,6 +41,16 @@ local function phrase(name)
       "delay_column_visible","sample_effects_column_visible"}) do
     result[property.."_observable"]=observable()
   end
+  result._column_name_changes={}
+  result._column_mute_changes={}
+  function result:column_name_observable(column)
+    self._column_name_changes[column]=self._column_name_changes[column] or observable()
+    return self._column_name_changes[column]
+  end
+  function result:column_is_muted_observable(column)
+    self._column_mute_changes[column]=self._column_mute_changes[column] or observable()
+    return self._column_mute_changes[column]
+  end
   return result
 end
 
@@ -70,6 +80,11 @@ end)
 
 assert(observer:state().attached and observer:state().listener_count==listener_total())
 assert(listener_total()>20,"expected nested phrase property observers")
+for column=1,12 do
+  assert(p1:column_name_observable(column):count_notifiers()==1 and
+    p1:column_is_muted_observable(column):count_notifiers()==1,
+    "note-column metadata observables must be attached for every column")
+end
 
 depth=1
 p1.lpb_observable:fire()
@@ -79,6 +94,12 @@ p1._line_changes:fire()
 assert(changes[#changes].kind=="content" and changes[#changes].object==p1 and changes[#changes].internal,
   "phrase line edits must be observed inside mutation scopes")
 assert(#dirty==0,"line notifier callbacks should defer runtime work")
+p1:column_name_observable(1):fire()
+assert(changes[#changes].kind=="content" and changes[#changes].object==p1 and changes[#changes].internal,
+  "column renames must participate in native change observation")
+p1:column_is_muted_observable(12):fire()
+assert(changes[#changes].kind=="content" and changes[#changes].object==p1 and changes[#changes].internal,
+  "column mute changes must participate in native change observation")
 observer:refresh()
 assert(#dirty==0,"internal mutations should be reconciled by the owning mutation scope")
 depth=0
@@ -92,17 +113,30 @@ observer:refresh()
 local before_render_events=#changes
 p1.lpb_observable:fire()
 p1._line_changes:fire()
+p1:column_name_observable(1):fire()
+p1:column_is_muted_observable(12):fire()
 assert(#changes==before_render_events,"busy writer staging phrase content must be filtered")
 assert(#dirty==0,"writer-owned async content must not invalidate its operation")
 p2._line_changes:fire()
 assert(#changes==before_render_events+1 and changes[#changes].object==p2,
   "content events from non-temporary phrases must remain observable")
+p2:column_name_observable(2):fire()
+assert(#changes==before_render_events+2 and changes[#changes].object==p2,
+  "column metadata edits on other phrases must remain observable during generation")
+p2:column_is_muted_observable(12):fire()
+assert(#changes==before_render_events+3 and changes[#changes].object==p2 and not changes[#changes].internal,
+  "column mute edits must remain external during generation")
 observer:refresh()
 assert(#dirty==1,"external phrase content must invalidate during a busy render")
 runtime.busy=false
 runtime.temporaries={}
 observer:refresh()
 
+local before_metadata_events=#changes
+p2:column_name_observable(1):fire()
+p2:column_is_muted_observable(12):fire()
+assert(#changes==before_metadata_events+2 and changes[#changes].object==p2 and not changes[#changes].internal,
+  "idle column metadata edits must notify external content changes")
 i1.name_observable:fire()
 assert(changes[#changes].kind=="rename" and changes[#changes].object==i1 and not changes[#changes].internal)
 assert(#dirty==1,"native changes should coalesce until idle")
@@ -131,6 +165,11 @@ song.instruments_observable:fire()
 assert(i2.name_observable:count_notifiers()==0,"list callbacks must defer nested rebind")
 observer:refresh()
 assert(i1.name_observable:count_notifiers()==0 and observer:state().listener_count==listener_total())
+for column=1,12 do
+  assert(p1:column_name_observable(column):count_notifiers()==0 and
+    p1:column_is_muted_observable(column):count_notifiers()==0,
+    "refresh must detach removed phrase metadata observers")
+end
 assert(listener_total()<old_count,"refresh must detach removed nested objects")
 local before=#changes
 i1.name_observable:fire()

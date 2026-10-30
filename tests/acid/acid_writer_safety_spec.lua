@@ -33,6 +33,10 @@ local corrupt_backup=false
 local copy_failure_after=nil
 local copy_calls=0
 local insert_failure=false
+local insert_calls=0
+local backup_insert_behavior=nil
+local inserted_backup_phrase=nil
+local fail_inserted_backup_delete=false
 local delete_failure=nil
 local render_queue={}
 
@@ -155,6 +159,7 @@ end
 
 local function new_host(capacity)
   copy_calls,copy_failure_after=0,nil
+  insert_calls=0
   instrument={name="Writer safety",phrases={},
     samples={{sample_buffer={has_sample_data=true}}},
     plugin_properties={plugin_loaded=false,alias_instrument_index=0,
@@ -162,15 +167,31 @@ local function new_host(capacity)
     midi_output_properties={device_name="",instrument_type=1,channel=1},
     phrase_playback_mode=2,phrase_program=1}
   function instrument:insert_phrase_at(index)
+    insert_calls=insert_calls+1
     if insert_failure then error("injected phrase insertion failure",0) end
     assert(index==#self.phrases+1,"phrase insertion must append")
     local phrase=make_phrase()
     self.phrases[index]=phrase
+    if insert_calls==2 then inserted_backup_phrase=phrase end
+    if insert_calls==2 and backup_insert_behavior=="throw_after_insert" then
+      error("injected backup insertion failure after mutation",0)
+    elseif insert_calls==2 and backup_insert_behavior=="nil_after_insert" then
+      return nil
+    elseif insert_calls==2 and backup_insert_behavior=="ambiguous_extra" then
+      self.phrases[index+1]=make_phrase()
+      return nil
+    elseif insert_calls==2 and backup_insert_behavior=="ambiguous_reorder" then
+      self.phrases={phrase,self.phrases[2],self.phrases[1]}
+      return nil
+    end
     return phrase
   end
   function instrument:delete_phrase_at(index)
     local phrase=self.phrases[index]
     if not phrase then error("missing phrase at index "..tostring(index),0) end
+    if fail_inserted_backup_delete and rawequal(phrase,inserted_backup_phrase) then
+      error("injected uncertain backup cleanup failure",0)
+    end
     if delete_failure and delete_failure(phrase) then
       error("injected phrase deletion failure",0)
     end
@@ -216,6 +237,9 @@ end
 
 render_mode,defer_commit,corrupt_backup="sync",false,false
 insert_failure,delete_failure=false,nil
+backup_insert_behavior=nil
+inserted_backup_phrase=nil
+fail_inserted_backup_delete=false
 
 local function source(note)
   local pattern=sequencer.new_pattern(2)
@@ -337,6 +361,61 @@ do
   drain()
   assert(#two_calls==1 and two_calls[1].kind=="success",two_calls[1] and two_calls[1].message)
   assert(#host_instrument.phrases==2 and rawequal(host_instrument.phrases[1],phrase))
+end
+
+-- Native backup insertion may mutate the phrase list before throwing or
+-- returning nil. Reconcile the exact list and prove rollback removed the
+-- inserted backup and staging phrase without touching the owned destination.
+for _, behavior in ipairs({ "throw_after_insert", "nil_after_insert" }) do
+  local host_instrument,phrase=create_owned(48)
+  local original={host_instrument.phrases[1]}
+  local raw=song.tool_data
+  insert_calls=0
+  backup_insert_behavior=behavior
+  local request=build(source(56),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  backup_insert_behavior=nil
+  assert(#calls==1 and calls[1].kind=="failure",calls[1] and calls[1].message)
+  assert(calls[1].status=="failed" and calls[1].integrity_blocked==false,calls[1].message)
+  assert(#host_instrument.phrases==#original and
+    rawequal(host_instrument.phrases[1],original[1]),
+    "uncertain backup insertion did not restore the exact ordered inventory")
+  assert(rawequal(phrase,original[1]) and song.tool_data==raw)
+end
+
+-- Failed cleanup and ambiguous inventory changes retain every discovered
+-- insertion, register it as temporary recovery material and block integrity.
+for _, scenario in ipairs({
+    { behavior="throw_after_insert", cleanup_failure=true, recovery_count=1 },
+    { behavior="ambiguous_extra", recovery_count=2 },
+    { behavior="ambiguous_reorder", recovery_count=1 },
+  }) do
+  local host_instrument,phrase=create_owned(48)
+  insert_calls=0
+  backup_insert_behavior=scenario.behavior
+  fail_inserted_backup_delete=scenario.cleanup_failure==true
+  local request=build(source(56),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  backup_insert_behavior=nil
+  fail_inserted_backup_delete=false
+  assert(#calls==1 and calls[1].kind=="failure")
+  assert(calls[1].status=="integrity_blocked" and calls[1].integrity_blocked==true,
+    calls[1].message)
+  local destination_present=false
+  for _,item in ipairs(host_instrument.phrases) do
+    if rawequal(item,phrase) then destination_present=true end
+  end
+  assert(destination_present,"uncertain insertion recovery removed the destination")
+  local recovery=calls[1].recovery or {}
+  assert(#recovery==scenario.recovery_count,calls[1].message)
+  for _,item in ipairs(recovery) do
+    assert(writer.is_temporary(song,host_instrument,item.phrase),
+      "uncertain insertion recovery lost temporary registration")
+  end
 end
 
 -- Verified backup covers everything except its neutral name and the mapping

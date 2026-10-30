@@ -1239,12 +1239,12 @@ Spec names below are under `tests/acid/` unless an explicit path is shown.
 | Safe ID allocation, prepared-candidate retirement and unchanged persistence grammar | `acid_id_allocation_spec.lua`, `acid_pattern_store_codec_spec.lua`, existing persistence/store specs | Pass |
 | Minimum-version policy, isolated stdout/stderr/exit status, forwarding wrapper, missing interpreter and runaway process termination | `pwsh -File ./tests/lua_interpreter_spec.ps1` | Pass |
 | Development harness packaging and selected-interpreter entrypoint checks | `pwsh -File ./tests/renoise/test_package_dev.ps1` | Pass; release exclusion, payload/fixture hashes, bootstrap and path/ACL checks |
-| Full ACID selection | `./scripts/run_tests.ps1 -Tool ACID` | 63/63 pass in 72.78s (60 ACID + 3 offline Renoise specs), no timeout; includes preserved concurrent additions and final safety corrections |
-| Full repository | `./scripts/run_tests.ps1` | 66/66 pass in 64.20s, no timeout |
+| Full ACID selection | `./scripts/run_tests.ps1 -Tool ACID` | 63/63 pass in 62.47s (60 ACID + 3 offline Renoise specs), no timeout |
+| Full repository | `./scripts/run_tests.ps1` | 66/66 pass in 62.66s, no timeout |
 | Package roots/private modules/exclusions and source-byte identity | `./scripts/package.ps1 -Tool ACID`; inspect all archive entries and compare SHA-256 with source | Pass: 34 entries (32 runtime Lua files plus manifest/LICENSE); root main.lua; every entry SHA-256 matches current source; no SDK/tests/harness/docs |
 | Dependency/source hygiene and unchanged manifest/seal/store formats | Dependency/codec specs, production searches for removed API/scheduler/adapter/status paths, manifest diff | Pass: no competing path or incidental version change |
-| Patch hygiene | `git diff --check` | Earlier check passed; final check after follow-up edits pending |
-| Final integrated independent review after green suites | Fresh writer/runtime reviews, then a fresh correction review and current full reruns | Pass: committed-cleanup blocking, retained recovery registration and reused-runtime release findings corrected; no remaining critical finding in the reviewed correction paths |
+| Patch hygiene | `git diff --check` | Pass |
+| Final integrated independent review | Runtime/writer recovery and observer diff review; targeted regressions and full suites | Pass: adoption blockers, uncertain insertion inventory/recovery evidence and column metadata observers; native acceptance remains open |
 
 | Open obligation | Owning gate |
 | --- | --- |
@@ -1375,7 +1375,7 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 
 ## Step 6 — Attach native observers and reconcile internal changes
 
-1. Attach stable functions to tool release/new/unload; song instruments/native selected instrument/native selected phrase; live instrument names/phrase lists; phrase names and needed content properties/line notifications. Use the exact pinned API. Reuse existing idle refresh for coalescing and detecting dialog visibility; do not add a second polling system.
+1. Attach stable functions to tool release/new/unload; song instruments/native selected instrument/native selected phrase; live instrument names/phrase lists; phrase names, column-name/mute observables for every note column, and needed content properties/line notifications. Use the exact pinned API. Reuse existing idle refresh for coalescing and detecting dialog visibility; do not add a second polling system.
 2. List callbacks mark inventory dirty and invalidate external structural changes; rename/content callbacks mark the relevant views/target dirty. No observer invokes generation or Make Independent. New objects are classified from live membership and song records, never inferred as copies.
 3. During a synchronous writer mutation scope, callbacks only mark dirty. At scope exit, require temporary identities to be neutral, record the resulting native selection pair as internally observed and schedule one reconciliation through Step 2 functions. Filter writer-private temporary objects from target choices only; ownership inventory always counts every live phrase. If scope completion fails, invalidate before reconciliation and retain recovery evidence.
 4. Do not mask the entire async wait: native selection/content/list changes outside internal scopes invalidate pending work as appropriate. Compare object pairs, not selected indices. Native target changes after an internal scope are followed normally; unrelated refresh/rename keeps explicit New/local targets. If origin/order is uncertain, cancel the job and preserve the draft rather than guess.
@@ -1384,7 +1384,7 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 7. Undo/redo notifications invalidate generation and request reconciliation only. Use documented `is_undo_redoing()` when needed; it is not copy authorization. Re-read persisted source/ownership after native undo, detaching incompatible drafts.
    Native undo was observed to leave `tool_data` at its newer value while restoring old phrase content/seal. Keep the affected association blocked after `is_undo_redoing()` becomes false until Step 1's independent source/output validation succeeds. Re-reading a valid record or adopting the restored seal as a new baseline cannot clear that block. Revalidation remains read-only and never rewrites source to match an inferred undo state.
 
-**Gate 6:** Meaningful notifier mocks cover internal insert/copy/name/cleanup notifications without self-cancellation, external changes during async waits, native selection changes, New preservation on refresh, blocked duplicates, undo/redo invalidation, repeated opens/song changes, and zero old-song callbacks/leaked temporary records.
+**Gate 6:** Meaningful notifier mocks cover internal insert/copy/name/cleanup notifications without self-cancellation, external changes during async waits, column-name/mute changes during normal editing and generation, native selection changes, New preservation on refresh, blocked duplicates, undo/redo invalidation, repeated opens/song changes, and zero old-song callbacks/leaked temporary records. Native acceptance remains open: edit visible and hidden column names/mutes while idle and during generation, verify immediate GUI reconciliation and cancellation without overwrite, then close/reopen and change songs to check listener detachment.
 
 ## Step 7 — Remove competing paths and run local/package checks
 

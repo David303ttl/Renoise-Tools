@@ -184,6 +184,7 @@ function M.new(options)
   local inventory = nil
   local requests = nil
   local integrity = nil
+  local adoption_blocked_reason = nil
   local epoch = 0
   local session = 0
   local opened = false
@@ -212,6 +213,15 @@ function M.new(options)
   local mutation_evidence=nil
   local mutation_group_membership=nil
   local inventory_dirty, reconciliation_pending, mutation_failed = false, false, false
+  local compute_musical_eligibility
+  local draft_options_for_target
+  local cached_independence_projection=nil
+
+  local function invalidate_target_projection()
+    cached_independence_projection=nil
+    if inventory then inventory:invalidate_projection() end
+  end
+  local invalidate
   local native_instrument, native_phrase = nil, nil
   local transitions=require("runtime.transitions").new()
   local editor=nil
@@ -239,6 +249,7 @@ function M.new(options)
   end
 
   local function block(record, code, message)
+    invalidate_target_projection()
     diagnose(record, code, message)
     if not blocked then
       blocked = true
@@ -247,6 +258,7 @@ function M.new(options)
   end
 
   local function retire(record)
+    invalidate_target_projection()
     record.revoked = true
     record.current = false
     record.request = nil
@@ -256,6 +268,10 @@ function M.new(options)
 
   local function context_state()
     local integrity_state=integrity and integrity:state() or {blocked=false}
+    if adoption_blocked_reason then
+      integrity_state.blocked=true
+      integrity_state.reason=integrity_state.reason or adoption_blocked_reason
+    end
     local record = active
     if record and record.settled then record = nil end
     local status = "idle"
@@ -486,6 +502,7 @@ function M.new(options)
     if mutation_depth>0 or mutation_failed then
       return false,"Synchronous mutation is active or requires recovery"
     end
+    if adoption_blocked_reason then return false,adoption_blocked_reason end
     if releasing or (lifecycle and (current_song == nil or not opened)) then
       return false, "No current document dialog is open"
     end
@@ -501,7 +518,7 @@ function M.new(options)
           not rawequal(destination.phrase,editor_target.phrase) or destination.kind~=editor_target.kind then
         return false,"Editor source has not been loaded for this target"
       end
-      local eligible,reason=self:musical_eligibility(active and active.token)
+      local eligible,reason=compute_musical_eligibility(self,active and active.token,destination)
       if not eligible then return false,reason end
       local occupied, inspection_error=inspect_writer(writer)
       if not occupied then
@@ -513,7 +530,7 @@ function M.new(options)
       if active and not active.settled or occupied.status~="idle" then
         if blocked then return false,blocked_reason or "Generation dispatch is blocked" end
         pending_trigger=trigger
-        preserve_editor(destination.kind=="new")
+        preserve_editor(destination.kind=="new",destination)
         return true,"Generation queued for the current writer job"
       end
       self:transition("request",{trigger=trigger})
@@ -554,6 +571,7 @@ function M.new(options)
     if editor then preserve_editor(editor_target and editor_target.kind=="new") end
 
     dispatching = true
+    invalidate_target_projection()
     local record = {
       current = false,
       settled = false,
@@ -676,6 +694,26 @@ function M.new(options)
           terminal.status="integrity_blocked"
           terminal.verified=false
           terminal.reason=adopt_reason or "Committed baseline could not be adopted"
+          if terminal_current and integrity and record.request then
+            local request=record.request
+            local evidence={operation=request.kind,committed=true,
+              instrument=request.instrument,phrase=terminal.phrase,
+              committed_baseline=terminal.baseline,reason=terminal.reason}
+            local recorded,record_error=integrity:record(evidence)
+            if recorded then
+              record.blocker_pending=true
+              transitions:transition("blocker")
+              invalidate("Song integrity requires revalidation")
+            else
+              adoption_blocked_reason=terminal.reason
+              block(record,"completion.baseline_blocker",
+                record_error or "Committed destination requires revalidation")
+            end
+          elseif terminal_current then
+            adoption_blocked_reason=terminal.reason
+            block(record,"completion.baseline_blocker",
+              "Committed destination requires revalidation")
+          end
         end
       end
       if not success and terminal.status=="integrity_blocked" and terminal_current then
@@ -690,9 +728,13 @@ function M.new(options)
           diagnose(record,"completion.draft_clear",clear_error)
         end
       end
-      if terminal_current and success then inventory_dirty=true;reconciliation_pending=true end
+      if terminal_current and success then
+        inventory_dirty=true;reconciliation_pending=true
+        invalidate_target_projection()
+      end
       if terminal_current and effects and effects.reconcile then
         inventory_dirty=true;reconciliation_pending=true
+        invalidate_target_projection()
       end
       if terminal_current and (not record.revoked or record.blocker_pending) then
         last_result=summary(terminal)
@@ -781,7 +823,7 @@ function M.new(options)
     return true
   end
 
-  local function invalidate(reason)
+  invalidate=function(reason)
     local record = active
     if not record then return end
     if not record.blocker_pending then record.gui_delivery = nil end
@@ -797,14 +839,15 @@ function M.new(options)
     end
   end
 
-  preserve_editor=function(force)
+  preserve_editor=function(force,verified_target)
     if (not editor_dirty and not force) or not editor or not inventory or not current_song then return end
-    local target=inventory:target_state()
+    local target=verified_target or inventory:target_state()
     if not target.instrument then return end
     if not editor_target or not rawequal(target.instrument,editor_target.instrument) or
         not rawequal(target.phrase,editor_target.phrase) then return end
     local ok,saved,reason=pcall(drafts.put,current_song,target.instrument,target.phrase,
-      editor.source,editor.output_policy,editor.pb_range,context:draft_options())
+      editor.source,editor.output_policy,editor.pb_range,
+      verified_target and draft_options_for_target(target) or context:draft_options())
     editor.draft_warning=not ok and "Cannot preserve session draft" or (not saved and reason or nil)
   end
 
@@ -863,9 +906,10 @@ function M.new(options)
     return ownership.copy_snapshot(editor_recovery)
   end
 
-  function context:musical_eligibility(token)
+  compute_musical_eligibility=function(self,token,known_target)
     if not current_song or not opened then return nil,"No current document dialog is open" end
     if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    if adoption_blocked_reason then return nil,adoption_blocked_reason end
     local blocked_state=self:integrity_state()
     if blocked_state.blocked then return nil,blocked_state.reason end
     local occupancy=self:occupancy_state(token)
@@ -878,9 +922,13 @@ function M.new(options)
       return undo
     end)
     if not ok or undo then return nil,"Native undo or redo is processing or unavailable" end
-    local target=self:target_state()
+    local target=known_target or self:target_state()
     if target.kind~="new" and target.kind~="owned" then return nil,target.reason or "Target is not writable" end
     return target
+  end
+
+  function context:musical_eligibility(token)
+    return compute_musical_eligibility(self,token)
   end
 
   function context:independence_eligibility()
@@ -896,7 +944,42 @@ function M.new(options)
       return undo
     end)
     if not ok or undo then return nil,"Native undo or redo is processing or unavailable" end
-    return require("runtime.eligibility").independence(current_song,self:target_state())
+    return require("runtime.eligibility").independence(current_song,self:target_projection())
+  end
+
+  function context:independence_projection()
+    if not current_song or not opened then return nil,"No current document dialog is open" end
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    local integrity_state=self:integrity_state()
+    if integrity_state.blocked then return nil,integrity_state.reason end
+    local occupancy=self:occupancy_state()
+    if not occupancy.available or (active and not active.settled) then
+      return nil,"The writer has not settled"
+    end
+    local undo_ok,undo=pcall(function()
+      if type(current_song.is_undo_redoing)~="function" then error("Undo state is unavailable") end
+      local value=current_song:is_undo_redoing()
+      assert(type(value)=="boolean","Undo state is unavailable")
+      return value
+    end)
+    if not undo_ok or undo then return nil,"Native undo or redo is processing or unavailable" end
+    if cached_independence_projection then
+      local value=cached_independence_projection.value
+      if type(value)=="table" then
+        local copy={}
+        for key,item in pairs(value) do copy[key]=item end
+        value=copy
+      end
+      return value,cached_independence_projection.reason
+    end
+    local value,reason=self:independence_eligibility()
+    cached_independence_projection={value=value,reason=reason}
+    if type(value)=="table" then
+      local copy={}
+      for key,item in pairs(value) do copy[key]=item end
+      value=copy
+    end
+    return value,reason
   end
 
   function context:make_independent()
@@ -1052,6 +1135,7 @@ function M.new(options)
       local target
       if kind=="target" and values.kind=="new" then target=inventory:bind_new(values.instrument)
       else target=inventory:bind_phrase(values.instrument,values.phrase) end
+      cached_independence_projection=nil
       local effects=transitions:transition(kind,{instrument=target.instrument,phrase=target.phrase,kind=target.kind,
         semantic_changed=not changed and observed_target~=nil and not ownership.compare(observed_target,semantic(target))})
       apply_effects(effects,"Target changed")
@@ -1065,6 +1149,8 @@ function M.new(options)
       return target,effects
     elseif kind=="refresh" then
       local target=inventory:target_state()
+      inventory_dirty=false
+      cached_independence_projection=nil
       local changed=observed_target~=nil and not ownership.compare(observed_target,semantic(target))
       if changed then pending_trigger=nil end
       local effects=transitions:transition(kind,{semantic_changed=changed})
@@ -1080,16 +1166,16 @@ function M.new(options)
       local source,source_error=require("model.sequencer").copy_source(buffer.source)
       buffer.valid=source~=nil and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
       buffer.reason=not buffer.valid and (source_error or "Invalid source settings") or nil
-      local eligible=self:musical_eligibility(active and active.token)
+      local destination=inventory:edit_target_state()
+      local eligible=compute_musical_eligibility(self,active and active.token,destination)
       local effects=transitions:transition(kind,{changed=changed,valid=buffer.valid,eligible=eligible~=nil})
       apply_effects(effects,"Editor source or settings changed")
       if changed then retain_invalid_editor() end
       editor=buffer
       if kind=="programmatic" and values.restore==true then editor_dirty=false
       elseif changed then editor_dirty=true end
-      local destination=inventory:target_state()
       editor_target={instrument=destination.instrument,phrase=destination.phrase,kind=destination.kind}
-      if changed and not (kind=="programmatic" and values.restore==true) then preserve_editor() end
+      if changed and not (kind=="programmatic" and values.restore==true) then preserve_editor(false,destination) end
       if effects.live_intent then
         effects.accepted,effects.reason=self:request_generation("live")
       end
@@ -1100,7 +1186,10 @@ function M.new(options)
     if kind=="disarm" and pending_trigger=="live" then pending_trigger=nil end
     if kind=="request" or kind=="independence" or kind=="external" or kind=="undo"
         or kind=="close" or kind=="blocker" then pending_trigger=nil end
-    if effects.reconcile then inventory_dirty=true;reconciliation_pending=true end
+    if effects.reconcile then
+      inventory_dirty=true;reconciliation_pending=true
+      invalidate_target_projection()
+    end
     if kind=="independence" then
       local proof,reason=self:independence_eligibility()
       return proof,reason
@@ -1115,6 +1204,7 @@ function M.new(options)
   function context:mark_dirty(reason)
     inventory_dirty=true
     reconciliation_pending=true
+    invalidate_target_projection()
     if mutation_depth==0 then
       pending_trigger=nil
       apply_effects(transitions:transition("external"),reason or "External native change")
@@ -1165,6 +1255,7 @@ function M.new(options)
       mutation_token=nil
       inventory_dirty=true
       reconciliation_pending=true
+      invalidate_target_projection()
       if ok and not mutation_failed then
         local neutral,reason=pcall(function()
           local ownership=require("renoise.phrase_ownership")
@@ -1216,18 +1307,21 @@ function M.new(options)
   function context:reconcile()
     if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
     reconciliation_pending=false
-    inventory_dirty=false
     local ok,instrument,phrase=pcall(function() return current_song.selected_instrument,current_song.selected_phrase end)
     if not ok then return nil,"Cannot inspect native selection" end
     if not rawequal(instrument,native_instrument) or not rawequal(phrase,native_phrase) then
       native_instrument,native_phrase=instrument,phrase
-      return self:transition("native_target",{instrument=instrument,phrase=phrase,kind="existing"})
+      local target,effects=self:transition("native_target",{instrument=instrument,phrase=phrase,kind="existing"})
+      inventory_dirty=false
+      return target,effects
     end
-    return self:refresh_inventory()
+    if inventory_dirty then return self:refresh_inventory() end
+    return inventory:target_projection()
   end
 
   function context:close_dialog()
     if not opened then return false end
+    invalidate_target_projection()
     opened = false
     pending_trigger=nil
     transitions:transition("close")
@@ -1271,12 +1365,14 @@ function M.new(options)
     mutation_depth,mutation_token=0,nil
     mutation_evidence=nil
     inventory_dirty,reconciliation_pending,mutation_failed=false,false,false
+    cached_independence_projection=nil
     pending_trigger=nil
     last_result,last_commit,last_commit_label=nil,nil,nil
     if inventory then inventory:release() end
     inventory = nil
     if integrity then integrity:release() end
     integrity = nil
+    adoption_blocked_reason=nil
     if requests then requests:release() end
     requests = nil
     for record in pairs(records) do
@@ -1302,6 +1398,8 @@ function M.new(options)
     epoch_serial = epoch_serial + 1
     epoch = epoch_serial
     current_song = song
+    adoption_blocked_reason=nil
+    cached_independence_projection=nil
     local selection_ok,selected_instrument,selected_phrase=pcall(function() return song.selected_instrument,song.selected_phrase end)
     if selection_ok then native_instrument,native_phrase=selected_instrument,selected_phrase end
     inventory = require("runtime.inventory").new(song,writer)
@@ -1349,6 +1447,7 @@ function M.new(options)
     if opened then self:close_dialog() end
     session = session + 1
     opened = true
+    invalidate_target_projection()
     gui_delivery = delivery
     return session
   end
@@ -1387,19 +1486,34 @@ function M.new(options)
   end
 
   function context:integrity_state()
-    if not integrity then return {blocked=false,serial=0,recovery={}} end
-    return integrity:state()
+    local state=integrity and integrity:state() or {blocked=false,serial=0,recovery={}}
+    if adoption_blocked_reason then
+      state.blocked=true
+      state.reason=state.reason or adoption_blocked_reason
+    end
+    return state
   end
 
   function context:revalidation_status()
-    if not integrity then return {verified=false,blocked=false,reason="No current document is attached"} end
-    return integrity:status()
+    if not integrity then return {verified=false,blocked=adoption_blocked_reason~=nil,
+      reason=adoption_blocked_reason or "No current document is attached"} end
+    local status,proof=integrity:status()
+    if adoption_blocked_reason then
+      status.verified=false
+      status.reason=adoption_blocked_reason
+      return status
+    end
+    return status,proof
   end
 
   function context:revalidate(proof)
     if not integrity then return false,"No current document is attached" end
+    if adoption_blocked_reason then return false,adoption_blocked_reason end
     local cleared,reason=integrity:clear(proof)
-    if cleared then mutation_failed=false end
+    if cleared then
+      mutation_failed=false;adoption_blocked_reason=nil
+      invalidate_target_projection()
+    end
     return cleared,reason
   end
 
@@ -1418,7 +1532,14 @@ function M.new(options)
   function context:target_state()
     if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
     if not inventory then return {kind="unavailable",reason="No current document is attached"} end
+    cached_independence_projection=nil
     return inventory:target_state()
+  end
+
+  function context:target_projection()
+    if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
+    if not inventory then return {kind="unavailable",reason="No current document is attached"} end
+    return inventory:target_projection()
   end
 
   function context:refresh_inventory() return self:transition("refresh") end
@@ -1435,12 +1556,30 @@ function M.new(options)
     return inventory:phrase_choices(instrument)
   end
 
-  function context:draft_options()
+  draft_options_for_target=function(verified_target)
+    local verified_baseline=verified_target and verified_target.baseline
+    local validation_used=false
     return {validate=function(song,instrument,phrase)
       if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
       if not inventory then return nil,"No current document is attached" end
+      if verified_baseline then
+        if validation_used then return nil,"Fresh target proof was already consumed" end
+        validation_used=true
+        if not rawequal(song,current_song) or
+            not rawequal(instrument,verified_target.instrument) or
+            not rawequal(phrase,verified_target.phrase) or verified_target.kind~="owned" or
+            not verified_baseline.id then
+          return nil,"Fresh target proof does not match the draft destination"
+        end
+        return {source=verified_baseline.source,settings=verified_baseline.settings,
+          baseline=verified_baseline.snapshot,planning_inputs=verified_baseline.planning_inputs}
+      end
       return inventory:draft_options().validate(song,instrument,phrase)
     end}
+  end
+
+  function context:draft_options()
+    return draft_options_for_target(nil)
   end
 
   function context:state()

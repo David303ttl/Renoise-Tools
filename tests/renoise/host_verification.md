@@ -4,6 +4,13 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 
 | Check | Result |
 | --- | --- |
+| Full offline runner | PASS: 18 groups; final Lua rerun 67/67; deterministic audio/oracle checks pass |
+| Editor responsiveness | PASS: 32-step/128-line phrase; five edits average 72.18 ms, maximum 92.72 ms; 160 cached reads 1.54 ms with zero snapshots; hidden/inactive cells and fresh-write rejection verified; `interactive-d3dab6b69a6543459a6503a234270886` |
+| Native and keyboard suite | PASS: transport, both inventory scenarios, real ACID shortcut, Escape and native instrument navigation; `interactive-bd635dc407e543e882b360365d0f16d2` |
+| Make Independent round trip | PASS: native identity/source preservation, same-object regeneration, save/reload and reopened regeneration; `interactive-1bbe975d4f5140b3a9999b622ecf80c9` |
+| Draft Recovery | PASS: native recovery copy/discard and preserved drafts; `interactive-3ca8f52c74b64685aed146051a8951f4` |
+| Integrity and column observers | PASS: post-commit adoption blocker, explicit revalidation, fresh commit, idle/busy column metadata notifications and detach; `interactive-55d891085a5c4f60b28e8f5e870037ff` |
+| Deferred test-driver startup | PASS: idle-only socket startup, unload cancellation and three fresh native integrity runs; normal Renoise session preserved |
 | Offline preflight, transport and runner regressions | PASS |
 | Fresh-launch Native smoke | PASS: handshake, document reset, stable inventory, driver shutdown and installation restoration |
 | Selected-PID Native smoke with a concurrent instance | PASS: target startup resumed after deployment; both instances remained open; original installation restored |

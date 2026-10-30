@@ -144,6 +144,44 @@ local function phrase_index(instrument, phrase)
   return found
 end
 
+local function phrase_inventory(instrument)
+  local ok, inventory = pcall(function()
+    local phrases = instrument.phrases
+    local copy = {}
+    for index = 1, #phrases do copy[index] = phrases[index] end
+    return copy
+  end)
+  if not ok then return nil end
+  return inventory
+end
+
+local function same_inventory(left, right)
+  if type(left) ~= "table" or type(right) ~= "table" or #left ~= #right then return false end
+  for index = 1, #left do
+    if not rawequal(left[index], right[index]) then return false end
+  end
+  return true
+end
+
+-- Recognize only a single addition that preserves the complete ordered inventory.
+local function inventory_addition(before, after)
+  if type(before) ~= "table" or type(after) ~= "table" or #after ~= #before + 1 then
+    return nil
+  end
+  local added, before_index = nil, 1
+  for _, phrase in ipairs(after) do
+    if before_index <= #before and rawequal(phrase, before[before_index]) then
+      before_index = before_index + 1
+    elseif added == nil then
+      added = phrase
+    else
+      return nil
+    end
+  end
+  if before_index ~= #before + 1 then return nil end
+  return added
+end
+
 local function membership(list, value)
   local ok, found = pcall(function()
     for _, item in ipairs(list) do
@@ -460,19 +498,20 @@ local function record_blocker(job, reason, recovery)
     return false
   end
   job.blocker_recorded = true
+  local committed = job.cleanup_warning ~= nil and job.committed_baseline ~= nil
   local evidence = {
     operation = job.replace and "regenerate" or "create",
     instrument = job.instrument, phrase = job.target_phrase or job.phrase,
     baseline = job.request and job.request.baseline, committed_baseline = job.committed_baseline,
     draft_capture = job.draft_capture, recovery = recovery or {},
-    committed = job.cleanup_warning ~= nil and job.committed_baseline ~= nil,
+    destination_phrases = (not committed or job.replace) and job.destination_phrases or nil,
+    committed = committed,
     reason = reason,
   }
   if evidence.committed then evidence.draft_capture = nil end
   if not job.replace then
     evidence.pre_store = job.pre_store
     evidence.pre_store_absent = job.pre_store == nil
-    evidence.destination_phrases = job.destination_phrases
   end
   local ok, recorded = pcall(function() return job.request:record_blocker(job.token, evidence) end)
   return ok and recorded == true
@@ -1073,6 +1112,22 @@ local function commit_destination(job)
             retain(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
           end
         end
+        for _, phrase in ipairs(job.untracked_insertion_phrases or {}) do
+          retain(phrase, "backup", M.RECOVERY_BACKUP_NAME,
+            "uncertain backup insertion left an untracked phrase")
+        end
+        if type(job.destination_phrases) == "table" then
+          local actual = phrase_inventory(job.instrument)
+          if not same_inventory(actual, job.destination_phrases) then
+            phrase_restored = false
+            job.keep_recovery = true
+            append_message("phrase inventory rollback verification failed")
+          end
+        else
+          phrase_restored = false
+          job.keep_recovery = true
+          append_message("phrase inventory rollback verification unavailable")
+        end
         result.integrity_blocked = (not phrase_restored) or (not store_restored) or job.keep_recovery == true
         result.message = result.message or cause
       end
@@ -1088,10 +1143,37 @@ local function commit_destination(job)
           rollback(false, "Not enough phrase slots for staging and rollback backup")
           return result
         end
+        job.backup_inventory_before = phrase_inventory(job.instrument)
+        if not job.backup_inventory_before then
+          rollback(false, "Cannot inspect phrase inventory before backup insertion")
+          return result
+        end
         local inserted, inserted_or_error = pcall(function()
           return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
         end)
         if not inserted or inserted_or_error == nil then
+          local after = phrase_inventory(job.instrument)
+          local addition = inventory_addition(job.backup_inventory_before, after)
+          if addition then
+            backup = addition
+            remember_temporary(job, backup, "backup")
+            job.backup = backup
+          elseif not same_inventory(job.backup_inventory_before, after) then
+            job.untracked_insertion_phrases = {}
+            if type(after) == "table" then
+              for _, phrase in ipairs(after) do
+                local existed = false
+                for _, original in ipairs(job.backup_inventory_before) do
+                  if rawequal(original, phrase) then existed = true; break end
+                end
+                if not existed then
+                  job.untracked_insertion_phrases[#job.untracked_insertion_phrases + 1] = phrase
+                  remember_temporary(job, phrase, "backup")
+                end
+              end
+            end
+            job.keep_recovery = true
+          end
           rollback(false, "Could not insert destination backup: " ..
             tostring(inserted and "no phrase returned" or inserted_or_error))
           return result
@@ -1263,11 +1345,18 @@ local function commit_destination(job)
   local message = outcome and outcome.message or "Phrase commit failed"
   if outcome and outcome.integrity_blocked then
     local evidence = {}
+    for _, captured in ipairs(job.recovery or {}) do evidence[#evidence + 1] = captured end
     for _, item in ipairs({ { job.backup, "backup", M.RECOVERY_BACKUP_NAME },
         { job.phrase, "staging", M.RECOVERY_STAGING_NAME } }) do
       if item[1] and not job.released then
         local inspected, captured = pcall(capture_recovery, job, item[1], item[2], item[3])
-        if inspected and captured then evidence[#evidence + 1] = captured end
+        if inspected and captured then
+          local present = false
+          for _, prior in ipairs(evidence) do
+            if rawequal(prior.phrase, captured.phrase) then present = true; break end
+          end
+          if not present then evidence[#evidence + 1] = captured end
+        end
       end
     end
     job.recovery = evidence

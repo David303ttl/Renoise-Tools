@@ -121,6 +121,9 @@ or local workspace locations.
 
 ## Real Renoise testing
 
+Run `./scripts/run_offline_tests.ps1` for all 18 offline groups, including Lua,
+PowerShell analyzers, oracle validation, harness and packaging checks.
+
 Use your normal Renoise installation. Other Renoise instances and virtual desktops
 may remain in use; no separate account, VM, profile attestation or trace evidence
 is required. The Windows Native runner starts a fresh instance by default:

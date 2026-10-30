@@ -916,7 +916,8 @@ local function test_fixed_native_acceptance_command()
   local completion
   local host, driver = start_driver({
     acceptance_runner = function(case_name, done)
-      assert(case_name == "make-independent" or case_name == "reopen-independent",
+      assert(case_name == "make-independent" or case_name == "reopen-independent" or
+        case_name == "integrity-observers" or case_name == "editor-responsiveness",
         "fixed native acceptance case was not allowlisted")
       completion = done
       return true
@@ -953,6 +954,26 @@ local function test_fixed_native_acceptance_command()
   local reopened = find_response(take_responses(client), "acceptance-reopen")
   assert(reopened and reopened.ok)
   assert_equal(reopened.result.status, "PASS")
+  send_request(host, client, "acceptance-integrity-observers", "acid.acceptance.run", {case = "integrity-observers"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-integrity-observers"), nil,
+    "integrity observer acceptance returned before its native operation settled")
+  assert(completion, "integrity observer acceptance runner was not called")
+  assert(completion({status = "PASS", case = "integrity-observers", post_commit_blocked = true}))
+  fire_idle(host)
+  local integrity = find_response(take_responses(client), "acceptance-integrity-observers")
+  assert(integrity and integrity.ok)
+  assert_equal(integrity.result.status, "PASS")
+  send_request(host, client, "acceptance-editor-responsiveness", "acid.acceptance.run", {case = "editor-responsiveness"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-editor-responsiveness"), nil,
+    "editor responsiveness acceptance returned before native rendering settled")
+  assert(completion, "editor responsiveness acceptance runner was not called")
+  assert(completion({status = "PASS", case = "editor-responsiveness", unchanged_snapshot_scans = 0}))
+  fire_idle(host)
+  local responsiveness = find_response(take_responses(client), "acceptance-editor-responsiveness")
+  assert(responsiveness and responsiveness.ok)
+  assert_equal(responsiveness.result.status, "PASS")
   driver.stop()
 end
 

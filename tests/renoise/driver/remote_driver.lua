@@ -365,7 +365,8 @@ local function valid_args_for_operation(current, request)
   elseif operation == "acid.acceptance.run" then
     return object_has_only_keys(args, {case = true}, {"case"}) and
       (args.case == "make-independent" or args.case == "draft-recovery" or
-        args.case == "reopen-independent" or args.case == "api-probe")
+        args.case == "reopen-independent" or args.case == "api-probe" or
+        args.case == "integrity-observers" or args.case == "editor-responsiveness")
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end
@@ -956,7 +957,8 @@ local function process_record(current, record)
     end
     local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete)
     if not call_ok then
-      finish_error(current, record, "acceptance_error", "native acceptance case raised an error")
+      finish_error(current, record, "acceptance_error",
+        "native acceptance case raised an error: " .. tostring(accepted))
     elseif accepted == false then
       finish_error(current, record, "acceptance_unavailable", tostring(detail or "native acceptance case did not start"))
     elseif type(accepted) == "table" then

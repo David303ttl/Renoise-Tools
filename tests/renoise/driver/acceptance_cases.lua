@@ -130,7 +130,7 @@ local function run_make_independent(done)
       groups and #groups[old_id] == 1 and #groups[outcome.id] == 1 and
       rawequal(target.instrument, instrument) and rawequal(target.phrase, duplicate)
     local details = {
-      status = passed and "PASS" or "FAIL",
+      status = identity_passed and "PASS" or "FAIL",
       case = "make-independent",
       old_id = old_id,
       new_id = ownership.id(duplicate),
@@ -143,7 +143,7 @@ local function run_make_independent(done)
       target_remains_selected = rawequal(target.instrument, instrument) and rawequal(target.phrase, duplicate),
     }
     local changed_source = sequence.copy_source(source)
-    changed_source.pitch_events[1].note = 5
+    changed_source.pitch_events[1] = sequence.new_pitch(5,0,true,false)
     local duplicate_index
     for index, phrase in ipairs(instrument.phrases) do
       if rawequal(phrase, duplicate) then duplicate_index = index; break end
@@ -365,10 +365,615 @@ local function run_draft_recovery(done)
   return true
 end
 
+local function run_integrity_observers(done)
+  local song=renoise.song()
+  local instrument=song.instruments[song.selected_instrument_index]
+  local sequence=require("model.sequencer")
+  local writer=require("writers.phrase_writer")
+  local inventory_module=require("runtime.inventory")
+  local original_new=inventory_module.new
+  local fail_adoption=true
+  inventory_module.new=function(...)
+    local inventory=original_new(...)
+    local adopt=inventory.adopt
+    inventory.adopt=function(self,...)
+      if fail_adoption then
+        fail_adoption=false
+        return nil,"Injected native acceptance adoption failure"
+      end
+      return adopt(self,...)
+    end
+    return inventory
+  end
+  local delivered_result
+  local sink_calls=0
+  local observed={idle=0,busy=0}
+  local attached,context_or_error=pcall(function()
+    local runtime=require("runtime.context").new({
+      writer=writer,
+      capture=function() return nil,"The attached runtime owns request capture" end,
+      sink=function(request,completion)
+        sink_calls=sink_calls+1
+        local accepted,reason
+        if request.kind=="create" then accepted,reason=writer.create(request,completion)
+        elseif request.kind=="regenerate" then accepted,reason=writer.regenerate(request,completion)
+        else return false,"Unexpected request kind" end
+        if accepted and sink_calls==2 and writer.state()=="busy" then
+          local phrase=observed.phrase
+          local old=phrase:column_is_muted(1)
+          phrase:set_column_is_muted(1,not old)
+          phrase:set_column_is_muted(1,old)
+          observed.active_mutation=true
+        end
+        return accepted,reason
+      end,
+      drafts=require("runtime.draft_cache"),
+      cancel=writer.cancel
+    })
+    runtime:attach_document(song)
+    return runtime
+  end)
+  inventory_module.new=original_new
+  if not attached then
+    done({status="FAIL",case="integrity-observers",reason=tostring(context_or_error)})
+    return true
+  end
+  local context=context_or_error
+  context:open_dialog(function(result) delivered_result=result end)
+  if song.transport.timing_model~=renoise.Transport.TIMING_MODEL_LPB then
+    context:release_document()
+    done({status="FAIL",case="integrity-observers",reason="Native acceptance requires LPB timing"})
+    return true
+  end
+  song.transport.lpb=16
+  song.transport.groove_enabled=false
+  local bound=context:bind_new(instrument)
+  if not bound or bound.kind~="new" then
+    context:release_document()
+    done({status="FAIL",case="integrity-observers",reason="New Phrase target could not be selected"})
+    return true
+  end
+  local source=sequence.new_pattern(4)
+  source.pitch_events[1]=sequence.new_pitch(4,0,true,false)
+  source.time_events[1]="N"
+  context:transition("edit",{source=source,output_policy="play_once",pb_range=0})
+  local accepted,request_error=context:request_generation("manual")
+  if not accepted then
+    context:release_document()
+    done({status="FAIL",case="integrity-observers",reason=tostring(request_error or "initial request rejected")})
+    return true
+  end
+  local function fail(reason)
+    pcall(function() context:release_document() end)
+    done({status="FAIL",case="integrity-observers",reason=tostring(reason)})
+  end
+  local function first_commit()
+    local result=delivered_result
+    if type(result)~="table" or result.status~="integrity_blocked" or result.committed~=true or
+        not result.phrase or not context:integrity_state().blocked then
+      fail("post-commit adoption failure did not persist a blocker")
+      return
+    end
+    observed.phrase=result.phrase
+    context:bind_new(instrument)
+    context:close_dialog()
+    context:open_dialog(function(value) delivered_result=value end)
+    local blocked=context:request_generation("manual")
+    if blocked then fail("generation resumed after dialog reopen without revalidation");return end
+
+    local observer=require("runtime.observers").new()
+    observer:attach(song,{
+      occupancy_state=function()
+        local status=writer.state()
+        return {status=status}
+      end,
+      is_temporary=function(_,target_instrument,phrase)
+        return writer.is_temporary(song,target_instrument,phrase)
+      end,
+      mutation_state=function() return {depth=0} end,
+      mark_dirty=function() end
+    },function(kind,phrase,internal)
+      if kind=="content" and rawequal(phrase,observed.phrase) then
+        if writer.state()=="busy" then observed.busy=observed.busy+1
+        else observed.idle=observed.idle+1 end
+      end
+    end)
+    local phrase=observed.phrase
+    local old_name=phrase:column_name(1)
+    local old_mute=phrase:column_is_muted(1)
+    local changed_name=old_name=="ACID acceptance column" and "ACID acceptance column 2" or "ACID acceptance column"
+    phrase:set_column_name(1,changed_name)
+    phrase:set_column_is_muted(1,not old_mute)
+    phrase:set_column_name(1,old_name)
+    phrase:set_column_is_muted(1,old_mute)
+    if observed.idle<4 then observer:detach();fail("column name/mute changes did not notify during idle editing");return end
+    observer:refresh()
+    phrase:set_column_name(1,changed_name)
+    phrase:set_column_name(1,old_name)
+    if observed.idle<6 then observer:detach();fail("column listeners did not survive observer refresh");return end
+    phrase:set_column_name(1,changed_name)
+    local status,proof=context:revalidation_status()
+    if status.verified or proof then observer:detach();fail("changed committed destination passed revalidation");return end
+    phrase:set_column_name(1,old_name)
+    status,proof=context:revalidation_status()
+    if not status.verified or not context:revalidate(proof) then
+      observer:detach();fail(status.reason or "restored destination did not revalidate");return
+    end
+    context:bind_new(instrument)
+    source.pitch_events[1]=sequence.new_pitch(5,0,true,false)
+    context:transition("edit",{source=source,output_policy="play_once",pb_range=0})
+    delivered_result=nil
+    local next_accepted,next_error=context:request_generation("manual")
+    if not next_accepted then observer:detach();fail(next_error or "fresh request was rejected after revalidation");return end
+    if not observed.active_mutation or observed.busy<2 then
+      observer:detach();fail("column mute change was not observed while the native writer was busy");return
+    end
+    if writer.state()~="busy" then observer:detach();fail("native writer did not remain active after the observer check");return end
+    local second_waits=0
+    local second_idle=renoise.tool().app_idle_observable
+    local wait_second
+    wait_second=function()
+      if not delivered_result then
+        second_waits=second_waits+1
+        if second_waits>6000 then
+          pcall(function() second_idle:remove_notifier(wait_second) end)
+          observer:detach();fail("native writer did not deliver its second terminal result");return
+        end
+        return
+      end
+      pcall(function() second_idle:remove_notifier(wait_second) end)
+      local committed=delivered_result
+      local count=observed.idle+observed.busy
+      observer:detach()
+      phrase:set_column_name(1,changed_name)
+      if count~=observed.idle+observed.busy or observer:state().attached then
+        fail("column listeners remained active after detach");return
+      end
+      local passed=type(committed)=="table" and committed.kind=="success" and committed.verified==true and
+        context:integrity_state().blocked==false and sink_calls==2
+      context:release_document()
+      done({status=passed and "PASS" or "FAIL",case="integrity-observers",
+        post_commit_blocked=true,revalidation_required=true,restored_destination_revalidated=true,
+        column_name_idle_notifications=observed.idle,column_mute_busy_notifications=observed.busy,
+        listeners_detached=not observer:state().attached,generation_calls=sink_calls,
+        fresh_commit=committed and committed.status or nil,
+        reason=not passed and "fresh generation did not commit after explicit revalidation" or nil})
+    end
+    second_idle:add_notifier(wait_second)
+  end
+  local first_waits=0
+  local first_idle=renoise.tool().app_idle_observable
+  local wait_first
+  wait_first=function()
+    if delivered_result then
+      pcall(function() first_idle:remove_notifier(wait_first) end)
+      first_commit();return
+    end
+    first_waits=first_waits+1
+    if first_waits>6000 then
+      pcall(function() first_idle:remove_notifier(wait_first) end)
+      local writer_status,writer_token=writer.state()
+      local runtime_status=context:state()
+      fail("native writer did not deliver its first terminal result; writer="..
+        tostring(writer_status).." token="..tostring(writer_token~=nil).." runtime="..
+        tostring(runtime_status.status).." diagnostic="..
+        tostring(runtime_status.last_diagnostic and runtime_status.last_diagnostic.message)..
+        " sink_calls="..tostring(sink_calls))
+      return
+    end
+  end
+  first_idle:add_notifier(wait_first)
+  return true
+end
+
+local function run_editor_responsiveness(done)
+  local song=renoise.song()
+  local instrument_index=song.selected_instrument_index
+  local instrument=song.instruments[instrument_index]
+  local sequence=require("model.sequencer")
+  local editor=require("model.editor_state")
+  local writer=require("writers.phrase_writer")
+  local ownership=require("renoise.phrase_ownership")
+  local validator=require("writers.phrase_validator")
+  local factory=dofile(renoise.tool().bundle_path.."\\__dev\\writer_request.lua")
+  local original_store=song.tool_data
+  local original_snapshot=ownership.snapshot
+  local original_copy_snapshot=ownership.copy_snapshot
+  local original_compare=ownership.compare
+  local original_classify=validator.classify
+  local captured_column_name
+  local capture_calls,sink_calls=0,0
+  local rejected_target_reason
+  local metrics={}
+  local scans=0
+  local profile={}
+  local profile_names={"snapshot","copy_snapshot","compare","classify"}
+  local function reset_profile()
+    for _,name in ipairs(profile_names) do profile[name]={calls=0,elapsed_ms=0} end
+  end
+  reset_profile()
+  local phrase
+  local context
+  local observer
+  local function cleanup()
+    if observer then pcall(function() observer:detach() end) end
+    if context then pcall(function() context:release_document() end) end
+    ownership.snapshot=original_snapshot
+    ownership.copy_snapshot=original_copy_snapshot
+    ownership.compare=original_compare
+    validator.classify=original_classify
+    if phrase then
+      for index,item in ipairs(instrument.phrases) do
+        if rawequal(item,phrase) then
+          pcall(function() instrument:delete_phrase_at(index) end)
+          break
+        end
+      end
+    end
+    pcall(function() song.tool_data=original_store end)
+  end
+  local function fail(reason)
+    local result={status="FAIL",case="editor-responsiveness",reason=tostring(reason)}
+    for key,value in pairs(metrics) do result[key]=value end
+    cleanup()
+    done(result)
+  end
+  local function verify_hidden_snapshot_cells()
+    local probe_index=#instrument.phrases+1
+    local probe
+    local ok,reason=pcall(function()
+      probe=instrument:insert_phrase_at(probe_index)
+      assert(probe,"native phrase insertion returned no phrase")
+      probe.number_of_lines=512
+      probe.visible_note_columns=1
+      probe.visible_effect_columns=1
+      local hidden_line=probe:line(512)
+      local hidden_note=hidden_line:note_column(12)
+      local hidden_effect=hidden_line:effect_column(8)
+      local empty_line=probe:line(511)
+      local empty_note=empty_line:note_column(1)
+      local empty_effect=empty_line:effect_column(1)
+      hidden_note.note_value=48
+      hidden_note.volume_value=73
+      hidden_effect.number_value=12
+      hidden_effect.amount_value=90
+      local snapshot,snapshot_error=ownership.snapshot(probe)
+      assert(snapshot,snapshot_error or "hidden-cell phrase snapshot failed")
+      local copied_note=snapshot.lines[512].notes[12]
+      local copied_effect=snapshot.lines[512].effects[8]
+      assert(copied_note.note_value==hidden_note.note_value and
+        copied_note.volume_value==hidden_note.volume_value and copied_note.is_empty==false,
+        "snapshot lost inactive hidden note-cell values")
+      assert(copied_effect.number_value==hidden_effect.number_value and
+        copied_effect.amount_value==hidden_effect.amount_value and copied_effect.is_empty==false,
+        "snapshot lost inactive hidden effect-cell values")
+      local copied_empty_note=snapshot.lines[511].notes[1]
+      for _,key in ipairs({"note_value","instrument_value","volume_value","panning_value",
+          "delay_value","effect_number_value","effect_amount_value"}) do
+        assert(copied_empty_note[key]==empty_note[key],"snapshot empty note default differs at "..key)
+      end
+      assert(copied_empty_note.is_empty==true,"snapshot changed an empty note cell")
+      local copied_empty_effect=snapshot.lines[511].effects[1]
+      for _,key in ipairs({"number_value","amount_value"}) do
+        assert(copied_empty_effect[key]==empty_effect[key],"snapshot empty effect default differs at "..key)
+      end
+      assert(copied_empty_effect.is_empty==true,"snapshot changed an empty effect cell")
+      metrics.hidden_snapshot_line=512
+      metrics.hidden_snapshot_note_column=12
+      metrics.hidden_snapshot_effect_column=8
+      metrics.hidden_snapshot_values_verified=true
+      metrics.empty_snapshot_defaults_match_native=true
+    end)
+    if probe then
+      for index,item in ipairs(instrument.phrases) do
+        if rawequal(item,probe) then
+          pcall(function() instrument:delete_phrase_at(index) end)
+          break
+        end
+      end
+    end
+    return ok,reason
+  end
+  local source=sequence.new_pattern(32)
+  for step=1,32 do
+    source.pitch_events[step]=sequence.new_pitch((step-1)%13,0,true,false)
+    source.time_events[step]="N"
+  end
+  local hidden_snapshot_ok,hidden_snapshot_error=verify_hidden_snapshot_cells()
+  if not hidden_snapshot_ok then fail(hidden_snapshot_error);return true end
+  local create_request,create_error=factory.build(song,instrument_index,source,#instrument.phrases+1,
+    {output_policy="play_once",pb_range=0})
+  if not create_request or create_request.kind~="create" then
+    done({status="FAIL",case="editor-responsiveness",reason=describe_failure(create_error or "long phrase request was not a create")})
+    return true
+  end
+  local accepted,start_error=writer.create(create_request,function(result)
+    if type(result)~="table" or result.kind~="success" or result.verified~=true or not result.phrase then
+      fail(describe_failure(result or "long phrase creation failed"));return
+    end
+    phrase=result.phrase
+    context=require("runtime.context").new({
+      writer=writer,
+      capture=function(_,token)
+        capture_calls=capture_calls+1
+        local target=context:target_state()
+        if target.kind~="owned" then
+          rejected_target_reason=target.reason
+          return nil,target.reason or "Target is not safely owned"
+        end
+        local request,reason=factory.build(song,instrument_index,source,target.phrase_index,
+          {token=token,output_policy="play_once",pb_range=0})
+        captured_column_name=request and request.baseline and request.baseline.snapshot.columns[1].name
+        return request,reason
+      end,
+      sink=function(request,completion)
+        sink_calls=sink_calls+1
+        if request.kind=="regenerate" then return writer.regenerate(request,completion) end
+        if request.kind=="create" then return writer.create(request,completion) end
+        return false,"Unexpected request kind"
+      end,
+      cancel=writer.cancel
+    })
+    context:attach_document(song)
+    context:open_dialog()
+    local bound=context:bind_phrase(instrument,phrase)
+    if not bound or bound.kind~="owned" then fail(bound and bound.reason or "long phrase could not be bound");return end
+    local loaded,load_error=context:transition("programmatic",{
+      source=source,output_policy="play_once",pb_range=0
+    })
+    if not loaded then fail(load_error or "editor source could not be initialized for the target");return end
+
+    local unpack_values=unpack or table.unpack
+    local function pack_values(...) return {n=select("#",...),...} end
+    local function profile_function(target,key,name)
+      local original=target[key]
+      target[key]=function(...)
+        local started=os.clock()
+        local values=pack_values(original(...))
+        local elapsed=(os.clock()-started)*1000
+        profile[name].calls=profile[name].calls+1
+        profile[name].elapsed_ms=profile[name].elapsed_ms+elapsed
+        if name=="snapshot" then scans=scans+1 end
+        return unpack_values(values,1,values.n)
+      end
+    end
+    local function count_snapshots()
+      ownership.snapshot=function(...)
+        scans=scans+1
+        return original_snapshot(...)
+      end
+    end
+    count_snapshots()
+    local initial=context:target_projection()
+    if initial.kind~="owned" or not rawequal(initial.phrase,phrase) then
+      fail("target projection did not return the generated phrase");return
+    end
+    scans=0
+    local fresh_state_started=os.clock()
+    for _=1,3 do
+      local fresh=context:target_state()
+      if fresh.kind~="owned" or not rawequal(fresh.phrase,phrase) then
+        fail("fresh admission state changed target identity");return
+      end
+    end
+    local fresh_target_elapsed_ms=(os.clock()-fresh_state_started)*1000
+    local fresh_target_scans=scans
+    metrics.fresh_admission_calls=3
+    metrics.fresh_admission_snapshot_scans=fresh_target_scans
+    metrics.fresh_admission_elapsed_ms=fresh_target_elapsed_ms
+    scans=0
+    local render=editor.project(source)
+    local iterations=160
+    local started=os.clock()
+    for _=1,iterations do
+      local projection=context:target_projection()
+      local reconciled,reconcile_error=context:reconcile()
+      if projection.kind~="owned" or not rawequal(projection.phrase,phrase) or
+          not reconciled or not rawequal(reconciled.phrase,phrase) then
+        fail(reconcile_error or "unchanged target projection/reconciliation changed identity");return
+      end
+      for step=1,32 do
+        editor.step_text(render,step,1)
+        editor.step_text(render,step,2)
+      end
+    end
+    local elapsed_ms=(os.clock()-started)*1000
+    local idle_scans=scans
+    metrics.representative_steps=32
+    metrics.phrase_lines=phrase.number_of_lines
+    metrics.unchanged_read_iterations=iterations
+    metrics.unchanged_snapshot_scans=idle_scans
+    metrics.unchanged_read_elapsed_ms=elapsed_ms
+    if idle_scans~=0 then
+      fail("unchanged projection/reconcile/render loop scanned phrase snapshots: "..tostring(idle_scans));return
+    end
+
+    reset_profile()
+    profile_function(ownership,"snapshot","snapshot")
+    profile_function(ownership,"copy_snapshot","copy_snapshot")
+    profile_function(ownership,"compare","compare")
+    profile_function(validator,"classify","classify")
+    local profile_started=os.clock()
+    local profile_transition_started=os.clock()
+    source.pitch_events[1]=sequence.new_pitch(12,0,true,false)
+    local profiled_edit,profiled_error=context:transition("edit",{
+      source=source,output_policy="play_once",pb_range=0
+    })
+    if not profiled_edit then fail(profiled_error or "profiled source edit transition failed");return end
+    metrics.profiled_edit_transition_elapsed_ms=(os.clock()-profile_transition_started)*1000
+    local profile_render_started=os.clock()
+    local profiled_projection=editor.project(source)
+    for step=1,32 do
+      editor.step_text(profiled_projection,step,1)
+      editor.step_text(profiled_projection,step,2)
+    end
+    metrics.profiled_edit_render_elapsed_ms=(os.clock()-profile_render_started)*1000
+    metrics.profiled_edit_sample_elapsed_ms=(os.clock()-profile_started)*1000
+    for _,name in ipairs(profile_names) do
+      metrics["profiled_edit_"..name.."_calls"]=profile[name].calls
+      metrics["profiled_edit_"..name.."_elapsed_ms"]=profile[name].elapsed_ms
+    end
+    ownership.copy_snapshot=original_copy_snapshot
+    ownership.compare=original_compare
+    validator.classify=original_classify
+    count_snapshots()
+
+    scans=0
+    local edit_started=os.clock()
+    local edit_sample_ms={}
+    local edit_sample_text={}
+    local edit_transition_elapsed_ms,edit_render_elapsed_ms=0,0
+    for sample=1,5 do
+      local sample_started=os.clock()
+      source.pitch_events[1]=sequence.new_pitch(sample%2,0,true,false)
+      local transition_started=os.clock()
+      local edited,edit_error=context:transition("edit",{
+        source=source,output_policy="play_once",pb_range=0
+      })
+      if not edited then fail(edit_error or "unarmed source edit transition failed");return end
+      edit_transition_elapsed_ms=edit_transition_elapsed_ms+(os.clock()-transition_started)*1000
+      local render_started=os.clock()
+      local edited_projection=editor.project(source)
+      for step=1,32 do
+        editor.step_text(edited_projection,step,1)
+        editor.step_text(edited_projection,step,2)
+      end
+      edit_render_elapsed_ms=edit_render_elapsed_ms+(os.clock()-render_started)*1000
+      edit_sample_ms[sample]=(os.clock()-sample_started)*1000
+      edit_sample_text[sample]=string.format("%.2f",edit_sample_ms[sample])
+    end
+    local edit_elapsed_ms=(os.clock()-edit_started)*1000
+    local edit_scans=scans
+    metrics.unarmed_edit_samples=5
+    metrics.unarmed_edit_snapshot_scans=edit_scans
+    metrics.unarmed_edit_transition_render_elapsed_ms=edit_elapsed_ms
+    metrics.unarmed_edit_transition_elapsed_ms=edit_transition_elapsed_ms
+    metrics.unarmed_edit_render_elapsed_ms=edit_render_elapsed_ms
+    metrics.unarmed_edit_average_sample_elapsed_ms=edit_elapsed_ms/5
+    local max_edit_sample_ms=0
+    for _,sample_elapsed in ipairs(edit_sample_ms) do
+      if sample_elapsed>max_edit_sample_ms then max_edit_sample_ms=sample_elapsed end
+    end
+    metrics.unarmed_edit_max_sample_elapsed_ms=max_edit_sample_ms
+    metrics.unarmed_edit_sample_timings_ms=table.concat(edit_sample_text,",")
+    if max_edit_sample_ms>100 then
+      fail("source edit transition and render exceeded 100 ms: "..tostring(max_edit_sample_ms));return
+    end
+    if sink_calls~=0 then fail("unarmed source edits unexpectedly started generation");return end
+
+    observer=require("runtime.observers").new()
+    observer:attach(song,context,function() end)
+    local old_name=phrase:column_name(1)
+    local changed_name=old_name=="ACID responsiveness probe" and "ACID responsiveness probe 2" or "ACID responsiveness probe"
+    phrase:set_column_name(1,changed_name)
+    observer:refresh()
+    local fresh=context:reconcile()
+    local dirty_scans=scans
+    metrics.dirty_snapshot_scans=dirty_scans
+    if not fresh or fresh.kind~="unavailable" or not rawequal(fresh.phrase,phrase) or dirty_scans==0 then
+      phrase:set_column_name(1,old_name)
+      fail("column metadata change did not invalidate the stale target baseline");return
+    end
+    local stale_request,stale_reason=context:request_generation("manual")
+    metrics.stale_metadata_request_rejected=not stale_request
+    metrics.stale_metadata_capture_calls=capture_calls
+    if stale_request or sink_calls~=0 or not stale_reason then
+      phrase:set_column_name(1,old_name)
+      fail(stale_reason or "changed metadata reached the generation sink");return
+    end
+    phrase:set_column_name(1,old_name)
+    observer:detach()
+    context:release_document()
+    context=require("runtime.context").new({
+      writer=writer,
+      capture=function(_,token)
+        capture_calls=capture_calls+1
+        local target=context:target_state()
+        if target.kind~="owned" then
+          rejected_target_reason=target.reason
+          return nil,target.reason or "Target is not safely owned"
+        end
+        local request,reason=factory.build(song,instrument_index,source,target.phrase_index,
+          {token=token,output_policy="play_once",pb_range=0})
+        captured_column_name=request and request.baseline and request.baseline.snapshot.columns[1].name
+        return request,reason
+      end,
+      sink=function(request,completion)
+        sink_calls=sink_calls+1
+        return writer.regenerate(request,completion)
+      end,
+      cancel=writer.cancel
+    })
+    context:attach_document(song)
+    context:open_dialog()
+    local rebound=context:bind_phrase(instrument,phrase)
+    if not rebound or rebound.kind~="owned" then
+      phrase:set_column_name(1,old_name)
+      fail(rebound and rebound.reason or "restored phrase could not be rebound");return
+    end
+    local admission_waits=0
+    local completion_idle=renoise.tool().app_idle_observable
+    local request_when_idle
+    request_when_idle=function()
+      if writer.state()=="busy" then
+        admission_waits=admission_waits+1
+        if admission_waits>6000 then
+          pcall(function() completion_idle:remove_notifier(request_when_idle) end)
+          phrase:set_column_name(1,old_name);fail("initial phrase creation did not release the writer slot");return
+        end
+        return
+      end
+      pcall(function() completion_idle:remove_notifier(request_when_idle) end)
+      local requested,request_error=context:request_generation("manual")
+      if not requested then phrase:set_column_name(1,old_name);fail(request_error or "fresh request rejected after metadata edit");return end
+    local completion_waits=0
+    local wait_completion
+    wait_completion=function()
+      if writer.state()=="busy" then
+        completion_waits=completion_waits+1
+        if completion_waits>6000 then
+          pcall(function() completion_idle:remove_notifier(wait_completion) end)
+          phrase:set_column_name(1,old_name);fail("fresh regeneration did not settle");return
+        end
+        return
+      end
+      pcall(function() completion_idle:remove_notifier(wait_completion) end)
+      local committed=type(context:generation_state().last_result)=="table" and
+        context:generation_state().last_result.kind=="success"
+      local preserved=phrase:column_name(1)==old_name and captured_column_name==old_name
+      local generated_lines=phrase.number_of_lines
+      phrase:set_column_name(1,old_name)
+      local elapsed=elapsed_ms
+      local scan_count=idle_scans
+      cleanup()
+      local passed=committed and preserved and capture_calls==1 and sink_calls==1
+      metrics.phrase_lines=generated_lines
+      metrics.unchanged_snapshot_scans=scan_count
+      metrics.stale_metadata_request_rejected=true
+      metrics.restored_metadata_request_committed=committed
+      metrics.metadata_request_used_fresh_baseline=preserved
+      metrics.generation_calls=sink_calls
+      local result={status=passed and "PASS" or "FAIL",case="editor-responsiveness",
+        stale_metadata_request_rejected=true,restored_metadata_request_committed=committed,
+        metadata_request_used_fresh_baseline=preserved,generation_calls=sink_calls,
+        reason=not passed and "metadata-driven fresh request failed" or nil}
+      for key,value in pairs(metrics) do result[key]=value end
+      done(result)
+    end
+    completion_idle:add_notifier(wait_completion)
+    end
+    completion_idle:add_notifier(request_when_idle)
+  end)
+  if not accepted then fail(describe_failure(start_error or "long phrase writer rejected request")) end
+  return true
+end
+
 function M.run(case_name, done)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name == "make-independent" then return run_make_independent(done) end
   if case_name == "draft-recovery" then return run_draft_recovery(done) end
+  if case_name == "integrity-observers" then return run_integrity_observers(done) end
+  if case_name == "editor-responsiveness" then return run_editor_responsiveness(done) end
   if case_name == "reopen-independent" then
     local song = renoise.song()
     local instrument_index = song.selected_instrument_index
@@ -384,8 +989,8 @@ function M.run(case_name, done)
         local id = ownership.id(phrase)
         local source = id and store.read_entry(song, id)
         if source and source.pitch_events[1] then
-          if source.pitch_events[1].note == 5 then new_id, new_phrase = id, phrase
-          elseif source.pitch_events[1].note == 4 then old_id, old_source = id, source end
+          if source.pitch_events[1].note == sequence.BASE_NOTE+5 then new_id, new_phrase = id, phrase
+          elseif source.pitch_events[1].note == sequence.BASE_NOTE+4 then old_id, old_source = id, source end
         end
       end
     end
@@ -403,7 +1008,7 @@ function M.run(case_name, done)
       return true
     end
     local changed_source = sequence.copy_source(assert(store.read_entry(song, new_id)))
-    changed_source.pitch_events[1].note = 6
+    changed_source.pitch_events[1] = sequence.new_pitch(6,0,true,false)
     local target_index
     for index, phrase in ipairs(instrument.phrases) do
       if rawequal(phrase, new_phrase) then target_index = index; break end
