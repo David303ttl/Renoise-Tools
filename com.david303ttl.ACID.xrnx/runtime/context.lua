@@ -214,6 +214,7 @@ function M.new(options)
 
   local function context_state()
     local record = active
+    if record and record.settled then record = nil end
     local status = "idle"
     if blocked then
       status = "blocked"
@@ -507,16 +508,15 @@ function M.new(options)
     return true
   end
 
-  local function invalidate(reason, cleanup)
+  local function invalidate(reason)
     local record = active
     if not record then return end
     record.gui_delivery = nil
     if record.settled or record.rejected then return end
-    local was_current = record.current
     record.current = false
     record.revoked = true
     record.revoke_reason = reason
-    if (was_current or cleanup) and cancel then
+    if cancel then
       local ok, failure = pcall(cancel, record.token, reason)
       if not ok then
         diagnose(record, "lifetime.cancel_failed", reason_text(failure, "Writer cancellation failed"))
@@ -539,7 +539,7 @@ function M.new(options)
     local song = current_song
     opened = false
     gui_delivery = nil
-    invalidate("Document released", true)
+    invalidate("Document released")
     if detach then
       local ok, failure = pcall(detach, song)
       if not ok then diagnose(nil, "lifetime.detach_failed", failure) end

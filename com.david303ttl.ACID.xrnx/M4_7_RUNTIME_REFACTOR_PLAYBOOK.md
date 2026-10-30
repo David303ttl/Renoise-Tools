@@ -988,6 +988,24 @@ callback/temporary-registry scrubbing remains Step 3; observer detachment and
 GUI wiring remain 2.8/Step 6. Actual saved-song cold restart/regeneration and
 native in-flight rendering remain Step 8 acceptance.
 
+**Review corrections (2026-10-30):** Close now requests cancellation for any
+unresolved accepted record, including explicitly revoked and uncertain starts.
+Cancellation acknowledgement, rejection or failure never substitutes for its
+matching terminal completion. A released record's late completion removes its
+token from state projection without retaining the context in the callback or
+affecting a newer operation. Lifetime regressions cover all three start paths
+against acknowledged, rejected and throwing cancellation, duplicate close,
+idle inspection before completion, and late/duplicate callback isolation.
+Verification: all 54 repository specs pass on Lua 5.1; all 51 ACID-selection
+specs pass on Lua 5.4, including dependency checks. Independent implementation
+and regression review passes. Native Renoise checks were not performed for
+these corrections.
+
+Reference-retention assertions inspect retained tokens and completion callbacks;
+they do not prove the entire context is free of old-song references. The 2.8
+production capture/sink wiring must avoid retaining an old song through injected
+dependency closures across document switches.
+
 ### 2.3 — Implement object inventory, classification, and baseline projection
 
 1. Bind exact live instrument/phrase objects with `rawequal`; indices are display/API coordinates resolved immediately before indexed calls. New is a private synthetic sentinel with an explicit instrument, never `#phrases + 1`, missing phrase or a failed lookup.

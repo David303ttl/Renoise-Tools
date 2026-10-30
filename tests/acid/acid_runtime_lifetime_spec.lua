@@ -128,6 +128,59 @@ do
   assert(log.deliveries == 1)
 end
 
+-- Close cancels unresolved accepted work even after authorization was revoked;
+-- neither failed cancellation nor acknowledgement substitutes for completion.
+do
+  for _, acceptance in ipairs({"revoke", "invalid result", "throw"}) do
+    for _, cancellation in ipairs({"acknowledged", "rejected", "throw"}) do
+      local label = acceptance .. " / " .. cancellation
+      local writer = {status = "idle"}
+      function writer:state() return self.status, self.token end
+      local done, token
+      local cancels, captures, deliveries = 0, 0, 0
+      local ctx = context.new{
+        writer = writer,
+        capture = function(_, issued)
+          captures = captures + 1
+          return {token = issued}
+        end,
+        sink = function(request, finish)
+          token, done = request.token, finish
+          writer.status, writer.token = "busy", token
+          if acceptance == "invalid result" then return nil end
+          if acceptance == "throw" then error("failed after writer acceptance") end
+          return true
+        end,
+        cancel = function(issued)
+          assert(rawequal(issued, token) and not issued:is_current(), label)
+          cancels = cancels + 1
+          if cancellation == "throw" then error("cancellation failed") end
+          return cancellation == "acknowledged"
+        end,
+      }
+      ctx:attach_document({})
+      ctx:open_dialog(function() deliveries = deliveries + 1 end)
+      assert(ctx:request_generation("first"), label)
+      if acceptance == "revoke" then
+        assert(ctx:revoke(token, "external invalidation"), label)
+      end
+      assert(not token:is_current() and cancels == 0, label)
+      assert(ctx:close_dialog() == true, label)
+      assert(ctx:close_dialog() == false and cancels == 1, label)
+      assert(writer.status == "busy" and rawequal(writer.token, token), label)
+      local pending = ctx:state()
+      assert(rawequal(pending.token, token) and pending.authorization == false, label)
+      ctx:open_dialog(function() deliveries = deliveries + 1 end)
+      assert(ctx:request_generation("occupied") == false and captures == 1, label)
+      writer.status, writer.token = "idle", nil
+      assert(ctx:request_generation("awaiting-terminal") == false, label)
+      assert(captures == 1 and rawequal(ctx:state().token, token), label)
+      assert(done({status = "cancelled"}) == true, label)
+      assert(ctx:state().token == nil and deliveries == 0, label)
+    end
+  end
+end
+
 -- Release removes host and GUI references from every table/closure reachable
 -- through a retained token or terminal callback, even while rendering stalls.
 do
@@ -154,10 +207,23 @@ do
   assert(log.captures == 1 and log.deliveries == 0)
   writer.status, writer.token = "idle", nil
   assert(done({status = "committed", song = song}) == true)
+  local settled = ctx:state()
+  assert(settled.status == "idle" and settled.token == nil)
+  assert(settled.authorization == false)
+  assert(ctx:request_generation("new-song"))
+  local new_token, new_done = writer.token, log.completions[2]
   assert(done({status = "committed"}) == false)
+  local pending = ctx:state()
+  assert(pending.status == "pending" and pending.blocked == false)
+  assert(rawequal(pending.token, new_token) and pending.authorization == true)
+  assert(new_token:is_current() and writer.status == "busy")
   assert(log.deliveries == 0)
   assert_unreachable({token, done}, {song = song, instrument = instrument,
     phrase = phrase, widget = widget, gui_delivery = gui})
+  writer.status, writer.token = "idle", nil
+  assert(new_done({status = "committed"}) == true)
+  assert(log.deliveries == 1)
+  assert(ctx:state().status == "idle" and ctx:state().token == nil)
 end
 
 -- Reloaded wrappers preserve saved data and receive fresh runtime identity.
