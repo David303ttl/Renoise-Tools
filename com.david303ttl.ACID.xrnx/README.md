@@ -7,10 +7,14 @@ manifest remains at version 0.1.
 
 ## Editing a sequence
 
-Open **Tools > ACID...** or use the Pattern Editor context menu. A fresh draft
-is ready immediately: 32 C pitch entries, 32 NOTE commands, LAST STEP 16 and
-an active PITCH span of 16. Change LAST STEP and the active PITCH span as
-needed. Program view selects one PITCH entry and TIME step for editing. Grid
+Open **Tools > ACID...**, use the Pattern Editor context menu, or assign a
+shortcut to `Global:ACID:Show` in **Edit > Preferences > Keys**. Renoise
+keeps shortcuts in each user's keymap. The current developer keymap assigns
+**Ctrl+Alt+B** to `Global:ACID:Show`; ACID does not set a default. The command
+opens or focuses the same ACID window as the menu entries. A fresh draft is
+ready immediately: 32 C pitch entries, 32 NOTE commands, LAST STEP 16 and an
+active PITCH span of 16. Change LAST STEP and the active PITCH span as needed.
+Program view selects one PITCH entry and TIME step for editing. Grid
 view edits sixteen positions directly across two continuous pages. Both views
 edit the same source; switching views does not change or regenerate the
 sequence. Reducing LAST STEP keeps hidden TIME entries available if the length

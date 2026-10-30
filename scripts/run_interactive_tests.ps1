@@ -59,7 +59,10 @@ $toolDeployed = $false
 $sessionDeployed = $false
 $exeVersionTriplet = $null
 $session = $null
-$keyboardOnlySkipped = $false
+$keyboardConfiguration = $null
+$keyboardExecutable = $null
+$keyboardHelperPath = Join-Path $repoRoot 'tests/renoise/keyboard/send_keys.ahk'
+$activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
 $lastExpected = 'Runner preflight completes without changing developer-owned Renoise state'
 $lastActual = $null
 $lastDiff = $null
@@ -78,11 +81,12 @@ $report = [ordered]@{
     elapsed_ms = 0
     operation_trace = @()
     scenarios = @()
+    keyboard = $null
     scenario_order_acceptance = $null
     error = $null
 }
 $clock = [Diagnostics.Stopwatch]::StartNew()
-$transportOnly = $Scenario -ceq 'transport'
+$transportOnly = $Suite -eq 'Keyboard' -or $Scenario -ceq 'transport'
 
 function Add-Trace {
     param([string]$Operation, [string]$Status, [object]$Details = $null)
@@ -149,22 +153,7 @@ function Get-Preflight {
 
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
-    if ($Suite -eq 'Keyboard') {
-        $keyboardOnlySkipped = $true
-        $report.status = 'FAIL'
-        $report.error = 'Keyboard tests are not implemented. Use -Suite Native for the available tests.'
-        $report.scenarios = @([pscustomobject]@{
-            name = if ($Scenario) { $Scenario } else { 'keyboard' }
-            suite = 'Keyboard'
-            status = 'SKIP'
-            reason = 'Keyboard tests are not implemented.'
-            expected = 'Verified shortcut, dialog focus, and native selection journey'
-            actual = $null
-            diff = @{ required_suite_skipped = $true }
-        })
-        Add-Trace -Operation 'suite.keyboard' -Status 'SKIP' -Details @{ reason = 'Keyboard input adapter and journeys are not implemented.' }
-        throw 'Required Keyboard suite skipped.'
-    }
+    if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
     if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
         throw '-VerifyScenarioOrder requires -Suite Native.'
     }
@@ -180,7 +169,9 @@ try {
     Import-Module (Join-Path $repoRoot 'tests/renoise/runner.psm1') -Force
     Import-Module (Join-Path $repoRoot 'tests/renoise/host_preflight.psm1') -Force
     $scenarioDirectory = Join-Path $repoRoot 'tests/renoise/acid/scenarios'
-    $selectedCatalogScenarios = @(Get-AcidInteractiveScenarioSelection -Scenario $Scenario -Directory $scenarioDirectory)
+    $selectedCatalogScenarios = if ($Suite -in @('Native','All')) {
+        @(Get-AcidInteractiveScenarioSelection -Scenario $Scenario -Directory $scenarioDirectory)
+    } else { @() }
     if ($VerifyScenarioOrder) {
         if ($selectedCatalogScenarios.Count -lt 2) {
             throw "-VerifyScenarioOrder requires at least two distinct catalog scenarios to reverse; found $($selectedCatalogScenarios.Count)."
@@ -201,6 +192,51 @@ try {
     }
     $lastExpected = 'Requested scenario is registered for the selected suite'
     $environment = Import-RenoiseTestEnvironment -Path $TestEnvironment
+    if ($Suite -in @('Keyboard','All')) {
+        $activeSuite = 'Keyboard'
+        $keyboardNegativeCases = [Collections.Generic.List[object]]::new()
+        try {
+            Get-AcidKeyboardConfiguration -Environment ([pscustomobject]@{ Keyboard = [ordered]@{} }) | Out-Null
+            throw 'Keyboard mapping validation accepted an empty configuration.'
+        }
+        catch {
+            if ($_.Exception.Message -notmatch 'Keyboard mapping is missing') { throw }
+            $keyboardNegativeCases.Add([pscustomobject]@{ name = 'missing_mapping'; status = 'PASS'; input_sent = $false })
+            Add-Trace -Operation 'keyboard.negative.missing_mapping' -Status 'PASS' -Details @{ input_sent = $false }
+        }
+        $report.keyboard = [ordered]@{
+            status = 'RUNNING'
+            shortcut = $null
+            auto_hotkey_version = $null
+            negative_cases = @($keyboardNegativeCases)
+            journey = $null
+        }
+        $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment $environment
+        $keyboardExecutable = Find-AutoHotkeyV2Executable -ConfiguredPath $keyboardConfiguration.AutoHotkeyPath
+        if (-not (Test-Path -LiteralPath $keyboardHelperPath -PathType Leaf)) { throw "AutoHotkey helper does not exist: $keyboardHelperPath" }
+        $emptyProcessCheck = {}
+        $versionResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -Mode Version -ProcessCheck $emptyProcessCheck
+        if ($versionResult.ExitCode -ne 0 -or $versionResult.StdOut -cnotmatch '^2\.\d+\.\d+$') {
+            throw "AutoHotkey v2 is required; helper reported '$($versionResult.StdOut)' with exit code $($versionResult.ExitCode)."
+        }
+        $report.keyboard.shortcut = $keyboardConfiguration.ShowShortcut
+        $report.keyboard.auto_hotkey_version = $versionResult.StdOut
+        foreach ($selfTest in @(
+            [pscustomobject]@{ Mode = 'SelfTestWrongPid'; Name = 'wrong_pid' },
+            [pscustomobject]@{ Mode = 'SelfTestFocusMismatch'; Name = 'stolen_focus' }
+        )) {
+            $selfTestResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -Mode $selfTest.Mode -ProcessCheck $emptyProcessCheck
+            if ($selfTestResult.ExitCode -ne 0 -or $selfTestResult.StdOut -notmatch '^PASS self-test ') {
+                $selfTestError = "AutoHotkey '$($selfTest.Name)' guard self-test failed: $($selfTestResult.StdErr) $($selfTestResult.StdOut)"
+                throw $selfTestError.Trim()
+            }
+            $keyboardNegativeCases.Add([pscustomobject]@{ name = $selfTest.Name; status = 'PASS'; input_sent = $false })
+            $report.keyboard.negative_cases = @($keyboardNegativeCases)
+            Add-Trace -Operation "keyboard.negative.$($selfTest.Name)" -Status 'PASS' -Details @{ input_sent = $false; output = $selfTestResult.StdOut }
+        }
+        $report.keyboard.negative_cases = @($keyboardNegativeCases)
+        $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
+    }
     $environmentExe = if ($environment.PSObject.Properties['RenoiseExe']) { [string]$environment.RenoiseExe } else { '' }
     if ($RenoiseExe -and $environmentExe -and
         -not [string]::Equals([IO.Path]::GetFullPath($RenoiseExe), [IO.Path]::GetFullPath($environmentExe), [StringComparison]::OrdinalIgnoreCase)) {
@@ -307,7 +343,9 @@ try {
         if ($ping.protocol_version -ne 1 -or $ping.session -cne $session.Nonce) { throw 'Authenticated handshake reported the wrong protocol or run nonce.' }
         Add-Trace -Operation 'driver.ping' -Status 'PASS' -Details @{ protocol_version = $ping.protocol_version; authenticated = $true }
         $capabilities = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'capabilities' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
-        if ($capabilities.protocol_version -ne 1 -or 'song.snapshot' -notin @($capabilities.operations)) { throw 'Renoise driver capabilities are incomplete.' }
+        $requiredOperations = @('song.snapshot')
+        if ($Suite -in @('Keyboard','All')) { $requiredOperations += @('gui.state','song.prepare_instrument_navigation') }
+        if ($capabilities.protocol_version -ne 1 -or @($requiredOperations | Where-Object { $_ -notin @($capabilities.operations) }).Count -gt 0) { throw 'Renoise driver capabilities are incomplete.' }
         $runtimeVersion = Get-VersionTriplet -Value ([string]$capabilities.renoise_version)
         $runtimeApiVersion = [string]$capabilities.api_version
         $manifestApiVersion = [string]$toolVersion.RenoiseScriptingTool.ApiVersion
@@ -585,8 +623,16 @@ try {
         }
         $report.document_epoch = $cleanupDiagnostics.document_epoch
         Add-Trace -Operation 'scenario.cleanup' -Status 'PASS' -Details @{ document_epoch = $cleanupDiagnostics.document_epoch }
+        $report.scenarios = @($scenarioResults)
         if ($Suite -in @('Keyboard','All')) {
-            $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'SKIP'; reason = 'Keyboard tests are not implemented.'; expected = 'Keyboard E2E'; actual = $null; diff = $null })
+            $activeSuite = 'Keyboard'
+            $journey = Invoke-AcidKeyboardJourney -Client $client -Session $session -Configuration $keyboardConfiguration -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -ProcessId $processIdentity.Id -ProcessCheck $processCheck -CommandTimeoutSeconds $CommandTimeoutSeconds
+            $report.keyboard.journey = $journey
+            $report.keyboard.status = 'PASS'
+            $report.keyboard.negative_cases = @($report.keyboard.negative_cases) + @([pscustomobject]@{ name = 'gui_timeout'; status = 'PASS'; input_sent = $false })
+            Add-Trace -Operation 'keyboard.journey' -Status 'PASS' -Details $journey
+            Add-Trace -Operation 'keyboard.negative.gui_timeout' -Status 'PASS' -Details @{ input_sent = $false; timeout_seconds = $keyboardConfiguration.TimeoutSeconds }
+            $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'PASS'; expected = 'Configured ACID shortcut opens the dialog; native instrument navigation changes the selected index in song readback'; actual = "shortcut=$($journey.shortcut); navigation=$($journey.navigation); selected=$($journey.selected_instrument_before)->$($journey.selected_instrument_after)"; diff = $null })
         }
         $report.scenarios = @($scenarioResults)
         $failedScenarios = @($scenarioResults | Where-Object { $_.status -ne 'PASS' })
@@ -634,33 +680,32 @@ try {
 
 }
 catch {
-    if (-not $keyboardOnlySkipped) {
-        $failureMessage = $_.Exception.Message
-        $report.status = 'ERROR'
-        $report.error = $failureMessage
-        if ($VerifyScenarioOrder -and $report.scenario_order_acceptance -is [Collections.IDictionary]) {
-            $report.scenario_order_acceptance['status'] = 'ERROR'
-            $report.scenario_order_acceptance['error'] = $failureMessage
-        }
-        $failureScenario = [pscustomobject]@{
-            name = if ($Scenario) { $Scenario } else { 'all' }
-            suite = if ($Suite -eq 'All') { 'Native' } else { $Suite }
-            status = 'ERROR'
-            expected = $lastExpected
-            actual = if ($null -ne $lastActual) { $lastActual } else { $failureMessage }
-            diff = if ($null -ne $lastDiff) { $lastDiff } else { @{ error = $failureMessage } }
-        }
-        if (@($report.scenarios).Count -eq 0) { $report.scenarios = @($failureScenario) }
-        else { $report.scenarios = @($report.scenarios) + @([pscustomobject]@{
-            name = 'runner-cleanup'
-            suite = $Suite
-            status = 'ERROR'
-            expected = 'Session, process, and temporary installation cleanup completes safely'
-            actual = $failureMessage
-            diff = @{ cleanup_error = $failureMessage }
-        }) }
-        Add-Trace -Operation 'runner' -Status 'ERROR' -Details @{ message = $failureMessage }
+    $failureMessage = $_.Exception.Message
+    $report.status = 'ERROR'
+    $report.error = $failureMessage
+    if ($VerifyScenarioOrder -and $report.scenario_order_acceptance -is [Collections.IDictionary]) {
+        $report.scenario_order_acceptance['status'] = 'ERROR'
+        $report.scenario_order_acceptance['error'] = $failureMessage
     }
+    if ($report.keyboard -and $report.keyboard.status -eq 'RUNNING') { $report.keyboard.status = 'ERROR' }
+    $failureScenario = [pscustomobject]@{
+        name = if ($Scenario) { $Scenario } else { 'all' }
+        suite = $activeSuite
+        status = 'ERROR'
+        expected = $lastExpected
+        actual = if ($null -ne $lastActual) { $lastActual } else { $failureMessage }
+        diff = if ($null -ne $lastDiff) { $lastDiff } else { @{ error = $failureMessage } }
+    }
+    if (@($report.scenarios).Count -eq 0) { $report.scenarios = @($failureScenario) }
+    else { $report.scenarios = @($report.scenarios) + @([pscustomobject]@{
+        name = 'runner-cleanup'
+        suite = $activeSuite
+        status = 'ERROR'
+        expected = 'Session, process, and temporary installation cleanup completes safely'
+        actual = $failureMessage
+        diff = @{ cleanup_error = $failureMessage }
+    }) }
+    Add-Trace -Operation 'runner' -Status 'ERROR' -Details @{ message = $failureMessage }
 }
 finally {
     if ($deploymentStarted -and -not $driverMayBeLoaded) {

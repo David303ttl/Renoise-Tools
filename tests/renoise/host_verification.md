@@ -11,7 +11,7 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 | Host startup timeout | PASS: exit 1, ERROR report, verified backups retained; both instances preserved; recovery restored original files |
 | Active-connection loss on driver reload | PASS: exit 1, ERROR report, verified backups retained; both instances preserved; recovery restored original files |
 | Release/development package separation | PASS |
-| Keyboard tests | Not implemented |
+| Keyboard E2E | PASS: unattended shortcut, dialog visibility, native navigation readback and input guards; see dated record below |
 | Playback, rendering, undo and persistence acceptance | Not covered by the transport smoke; use the ACID manual guides |
 
 Snapshots contain native inventory values and selection indices. Indices describe
@@ -131,9 +131,34 @@ development package checks, release packaging (28 runtime files), and diff check
 The release archive retains root `main.lua`/`manifest.xml`, private modules, and
 no fixtures, driver, SDK or documentation.
 
-This closes native fixture/isolation coverage only. Keyboard routing, writer
-identity/transactions, actual undo/redo consistency and musical playback remain
-with their later owning steps; full M4 acceptance remains open.
+This closes native fixture/isolation coverage only. Writer identity/transactions,
+actual undo/redo consistency and musical playback remain with their later owning
+steps; full M4 acceptance remains open.
+
+## Keyboard E2E host acceptance (2026-10-30)
+
+The `Keyboard` suite passed unattended on Renoise 3.5.4 Demo / API 6.2 with
+AutoHotkey v2.0.31. The saved developer keymap assigns Ctrl+Alt+B (`^!b`) to
+`Global:ACID:Show`. The runner activated the exact Renoise PID before each input
+sequence and verified foreground ownership; no manual focus or tool reload was
+needed.
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment '<path>' -StartupTimeoutSeconds 30 -Install -ApproveDisposableSong
+```
+
+Run `82763e548e7a4a2e891b3f98676493dc` passed. The report is retained at
+`tmp/interactive-82763e548e7a4a2e891b3f98676493dc/report.json`. It records the
+registered production keybinding, one invocation of the real `gui.show()`
+handler, observed dialog open/close, and native Alt+Down selection readback
+from instrument 1 to 2. Missing mapping, wrong PID, stolen focus and GUI timeout
+guards all passed without sending input. Driver shutdown and installation
+restoration passed. Renoise did not close cleanly, so the runner used its
+identity-checked forced cleanup on the runner-launched disposable process only.
+
+The run used the current working tree based on the recorded repository HEAD,
+including uncommitted T0.6 changes; it is host evidence for that tree, not a
+committed revision.
 
 ## Scenario-order acceptance follow-up (2026-10-30)
 

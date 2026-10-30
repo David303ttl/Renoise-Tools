@@ -23,6 +23,12 @@ end
 
 local function write_configuration(contents)
   local path = os.tmpname()
+  if path:match("^[/\\]") and not path:match("^[A-Za-z]:[/\\]") then
+    -- Windows tmpnam may return a root-relative path such as "\\s123.".
+    local directory = os.getenv("TEMP") or os.getenv("TMP") or "."
+    local separator = package.config:sub(1, 1)
+    path = directory:gsub("[/\\]+$", "") .. separator .. path:gsub("^[/\\]+", "")
+  end
   local file, err = io.open(path, "wb")
   assert(file, err)
   assert(file:write(contents))
@@ -146,6 +152,11 @@ local function make_song(file_name)
     selected_phrase = phrase,
     tool_data = "fixture-source"
   }
+  function song:insert_instrument_at(index)
+    local instrument = {name = "Instrument " .. tostring(index), phrases = {}}
+    table.insert(self.instruments, index, instrument)
+    return instrument
+  end
   return song, instrument, phrase
 end
 
@@ -234,7 +245,7 @@ local function start_driver_attempt(options)
   local host = install_host_stub(options)
   host.config_path = config_path
   local driver, original_dofile = load_driver_for_start()
-  local ok, err = pcall(function() driver.start(config_path) end)
+  local ok, err = pcall(function() driver.start(config_path, options and options.gui_state_reader) end)
   _G.dofile = original_dofile
   os.remove(config_path)
   return host, driver, ok, err
@@ -823,6 +834,82 @@ local function test_diagnostics_counts_other_commands()
   driver.stop()
 end
 
+local function test_gui_state_is_read_from_the_acid_adapter()
+  local ui_state = {dialog_visible = false, show_invocations = 0, show_keybinding_registered = true}
+  local host, driver = start_driver({gui_state_reader = function()
+    return {
+      dialog_visible = ui_state.dialog_visible,
+      show_invocations = ui_state.show_invocations,
+      show_keybinding_registered = ui_state.show_keybinding_registered
+    }
+  end})
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "gui-hidden", "gui.state")
+  fire_idle(host)
+  local hidden = find_response(take_responses(client), "gui-hidden")
+  assert(hidden and hidden.ok)
+  assert_equal(hidden.result.dialog_visible, false)
+  assert_equal(hidden.result.show_invocations, 0)
+  assert_equal(hidden.result.show_keybinding_registered, true)
+
+  ui_state.dialog_visible = true
+  ui_state.show_invocations = 1
+  send_request(host, client, "gui-visible", "gui.state")
+  fire_idle(host)
+  local visible = find_response(take_responses(client), "gui-visible")
+  assert(visible and visible.ok)
+  assert_equal(visible.result.dialog_visible, true)
+  assert_equal(visible.result.show_invocations, 1)
+  assert_equal(visible.result.show_keybinding_registered, true)
+
+  send_request(host, client, "gui-invalid-args", "gui.state", {visible = true})
+  fire_idle(host)
+  local invalid = find_response(take_responses(client), "gui-invalid-args")
+  assert(invalid and not invalid.ok)
+  assert_equal(invalid.error.code, "invalid_arguments")
+  driver.stop()
+end
+
+local function test_gui_state_fails_closed_without_an_adapter()
+  local host, driver = start_driver()
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "gui-no-adapter", "gui.state")
+  fire_idle(host)
+  local response = find_response(take_responses(client), "gui-no-adapter")
+  assert(response and not response.ok)
+  assert_equal(response.error.code, "gui_state_unavailable")
+  driver.stop()
+end
+
+local function test_instrument_navigation_setup_inserts_only_when_needed()
+  local host, driver = start_driver()
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "prepare-navigation", "song.prepare_instrument_navigation")
+  fire_idle(host)
+  local prepared = find_response(take_responses(client), "prepare-navigation")
+  assert(prepared and prepared.ok)
+  assert_equal(prepared.result.instrument_count, 2)
+  assert_equal(prepared.result.selected_instrument_index, 1)
+  assert_equal(#host.song.instruments, 2)
+
+  send_request(host, client, "prepare-navigation-again", "song.prepare_instrument_navigation")
+  fire_idle(host)
+  local prepared_again = find_response(take_responses(client), "prepare-navigation-again")
+  assert(prepared_again and prepared_again.ok)
+  assert_equal(prepared_again.result.instrument_count, 2)
+  assert_equal(#host.song.instruments, 2, "preparation inserted duplicate instruments")
+
+  send_request(host, client, "prepare-navigation-invalid-args", "song.prepare_instrument_navigation", {index = 2})
+  fire_idle(host)
+  local invalid = find_response(take_responses(client), "prepare-navigation-invalid-args")
+  assert(invalid and not invalid.ok)
+  assert_equal(invalid.error.code, "invalid_arguments")
+  driver.stop()
+end
+
 local function test_shutdown_records_completion_after_server_stop()
   local host = start_driver()
   local client = new_client()
@@ -1091,6 +1178,9 @@ test_new_document_requires_preceding_release()
 test_snapshot_encodes_optional_native_data_as_explicit_null()
 test_snapshot_captures_read_only_phrase_state_and_raw_song_bytes()
 test_snapshot_uses_values_with_fresh_host_wrappers()
+test_gui_state_is_read_from_the_acid_adapter()
+test_gui_state_fails_closed_without_an_adapter()
+test_instrument_navigation_setup_inserts_only_when_needed()
 test_diagnostics_counts_other_commands()
 test_shutdown_records_completion_after_server_stop()
 test_json_codec()

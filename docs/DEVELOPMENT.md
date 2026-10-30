@@ -40,6 +40,16 @@ Native integration checks require a Windows installation of Renoise. ARP and
 ACID target Renoise 3.5 / API 6.2; get Renoise from its
 [downloads page](https://renoise.com/downloads).
 
+The Renoise `Keyboard` and `All` interactive suites additionally require
+AutoHotkey v2. Download it from the
+[official AutoHotkey releases](https://github.com/AutoHotkey/AutoHotkey/releases).
+The current developer keymap assigns Ctrl+Alt+B to `Global:ACID:Show`; the runner
+configuration represents it as `^!b`. Renoise stores shortcut assignments per
+user, and ACID supplies no default. The helper activates the selected Renoise
+process and verifies its foreground ownership before each input sequence, so
+Keyboard runs do not require manual focus changes. Native API tests do not
+require AutoHotkey.
+
 ## Install the API reference
 
 Use PowerShell 7 (`pwsh`) for all repository scripts. From the repository root:
@@ -130,7 +140,8 @@ song. Override discovery with `-RenoiseExe '<path>'` or `-ToolsDirectory '<path>
 The runner verifies its target, backs up the installation, stops its test driver,
 and restores unchanged files. Existing Renoise instances remain open. See
 [Renoise testing](../tests/renoise/README.md) for offline harness checks and details.
-Keyboard tests are not implemented; they do not block Native runs or development.
+Keyboard E2E is available through the documented `Keyboard` or `All` suite;
+its setup and host acceptance are separate from the Native suite.
 Release XRNX tools have no dependency on the harness or its developer setup.
 
 Plain-Lua tests verify model logic and mocked API interactions. Actual playback,

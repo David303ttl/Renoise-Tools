@@ -24,6 +24,8 @@ local allowed_operations = {
   ["document.new"] = true,
   ["document.load_fixture"] = true,
   ["song.snapshot"] = true,
+  ["song.prepare_instrument_navigation"] = true,
+  ["gui.state"] = true,
   ["wait.condition"] = true,
   diagnostics = true,
   disconnect = true,
@@ -349,6 +351,7 @@ local function valid_args_for_operation(current, request)
   local args = request.args
   local operation = request.op
   if operation == "ping" or operation == "capabilities" or operation == "song.snapshot" or
+      operation == "song.prepare_instrument_navigation" or operation == "gui.state" or
       operation == "diagnostics" or operation == "disconnect" or operation == "shutdown" then
     return object_has_only_keys(args, {}, {})
   elseif operation == "document.new" then
@@ -912,6 +915,42 @@ local function process_record(current, record)
       return
     end
     finish_record(current, record, true, snapshot)
+  elseif record.operation == "song.prepare_instrument_navigation" then
+    local prepare_ok, result = pcall(function()
+      local song = renoise.song()
+      if #song.instruments < 2 then
+        song:insert_instrument_at(2)
+      end
+      return {
+        instrument_count = #song.instruments,
+        selected_instrument_index = song.selected_instrument_index
+      }
+    end)
+    if not prepare_ok or type(result) ~= "table" or result.instrument_count < 2 then
+      finish_error(current, record, "host_error", "instrument navigation setup failed")
+      return
+    end
+    finish_record(current, record, true, result)
+  elseif record.operation == "gui.state" then
+    if type(current.gui_state_reader) ~= "function" then
+      finish_error(current, record, "gui_state_unavailable", "ACID UI state is unavailable in this driver")
+      return
+    end
+    local read_ok, ui_state = pcall(current.gui_state_reader)
+    if not read_ok or type(ui_state) ~= "table" or type(ui_state.dialog_visible) ~= "boolean" then
+      finish_error(current, record, "gui_state_unavailable", "ACID UI state could not be read")
+      return
+    end
+    local result = {
+      dialog_visible = ui_state.dialog_visible
+    }
+    if is_integer(ui_state.show_invocations) and ui_state.show_invocations >= 0 then
+      result.show_invocations = ui_state.show_invocations
+    end
+    if type(ui_state.show_keybinding_registered) == "boolean" then
+      result.show_keybinding_registered = ui_state.show_keybinding_registered
+    end
+    finish_record(current, record, true, result)
   elseif record.operation == "wait.condition" then
     local spec = validate_wait_args(record.args)
     if not spec then
@@ -1320,7 +1359,7 @@ local function initialize_observers(current)
   end
 end
 
-function driver.start(configuration_path)
+function driver.start(configuration_path, gui_state_reader)
   if started then
     error("ACID development driver has already been started")
   end
@@ -1351,6 +1390,7 @@ function driver.start(configuration_path)
     document_ready = false,
     document_transition_uncertain = false,
     current_song = nil,
+    gui_state_reader = gui_state_reader,
     last_native_inventory_settlement = nil,
     candidate = nil,
     active_client = nil,

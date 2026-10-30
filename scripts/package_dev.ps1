@@ -406,7 +406,18 @@ try {
     $bootstrapMarker
     'do'
     "  local driver = dofile($bundleDriver)"
-    '  driver.start(renoise.tool().bundle_path .. "\\..\\acid-test-session.conf")'
+    '  local original_gui_show = gui.show'
+    '  local show_invocations = 0'
+    '  gui.show = function(...)'
+    '    show_invocations = show_invocations + 1'
+    '    return original_gui_show(...)'
+    '  end'
+    '  driver.start(renoise.tool().bundle_path .. "\\..\\acid-test-session.conf", function()'
+    '    local state = gui.get_ui_state()'
+    '    state.show_invocations = show_invocations'
+    '    state.show_keybinding_registered = renoise.tool():has_keybinding("Global:ACID:Show")'
+    '    return state'
+    '  end)'
     'end'
     ''
   ))

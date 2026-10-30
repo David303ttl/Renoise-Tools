@@ -6,6 +6,12 @@ function Reject([scriptblock]$Action, [string]$Pattern) {
     try { & $Action } catch { if ($_.Exception.Message -notmatch $Pattern) { throw }; return }
     throw "Expected rejection: $Pattern"
 }
+$keyboardEnvironment = '{"Keyboard":{"ShowShortcut":"^!a","TimeoutSeconds":3}}' | ConvertFrom-Json -AsHashtable
+$keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment ([pscustomobject]$keyboardEnvironment)
+Assert ($keyboardConfiguration.ShowShortcut -ceq '^!a' -and $keyboardConfiguration.TimeoutSeconds -eq 3) 'keyboard developer configuration did not load'
+Reject { Get-AcidKeyboardConfiguration -Environment ([pscustomobject]@{ Keyboard = [ordered]@{} }) } 'Keyboard mapping is missing'
+Reject { Get-AcidKeyboardConfiguration -Environment ([pscustomobject]@{ Keyboard = [ordered]@{ ShowShortcut = 'not a key' } }) } 'AutoHotkey v2 key sequence'
+Reject { Wait-AcidObservedState -ReadState { [pscustomobject]@{ visible = $false } } -Condition { param($state) $false } -ProcessCheck {} -TimeoutSeconds 1 -PollMilliseconds 50 } 'Timed out after 1 seconds'
 # A separate runspace supplies real fragmented TCP responses without Renoise.
 foreach ($mode in @('valid','wrong','invalid','string-ok','numeric-ok','missing-ok','missing-result','false-missing-error','lost','timeout','shutdown','shutdown-missing')) {
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
@@ -438,12 +444,13 @@ try {
     $resolved = [IO.Path]::GetFullPath($root)
     if ($resolved.StartsWith([IO.Path]::GetTempPath(), [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
-# Exercise the real script's early refusal and report path without starting Renoise.
+# Exercise the real script's missing-mapping failure and report path without starting Renoise.
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$invocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') -Suite Keyboard 2>&1
-Assert ($LASTEXITCODE -ne 0) 'required keyboard skip returned success'
+$invocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') -Suite Keyboard -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'keyboard run without a mapping returned success'
 $reportLine = @($invocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
 Assert ($reportLine.Count -eq 1) 'runner failed to emit a report'
 $runReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
-Assert ($runReport.status -eq 'FAIL' -and $runReport.scenarios[0].status -eq 'SKIP') 'required skip missing from report'
-Write-Output 'PASS runner transport, ownership and installation lifecycle'
+Assert ($runReport.status -eq 'ERROR' -and $runReport.error -match 'TestEnvironment.Keyboard.ShowShortcut') 'missing shortcut did not fail clearly'
+Assert ($runReport.keyboard.negative_cases[0].name -eq 'missing_mapping' -and $runReport.keyboard.negative_cases[0].input_sent -eq $false) 'missing mapping guard did not report a no-input negative case'
+Write-Output 'PASS runner transport, ownership, keyboard configuration and installation lifecycle'

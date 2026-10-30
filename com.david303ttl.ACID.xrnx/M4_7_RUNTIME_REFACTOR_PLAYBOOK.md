@@ -719,10 +719,10 @@ through ordinary Renoise installation without it or its dependencies.
 PowerShell runner, native document-reset and inventory smoke, and offline runner
 regressions. T0.4 runner acceptance passes for fresh launches, loaded selected
 instances, concurrent instances and timeout/disconnection recovery. T0.5 native
-fixture/isolation acceptance passes; T0.6–T0.8
-remain pending. Keyboard coverage is not implemented.
-Missing keyboard coverage does not block Native
-runs, runtime implementation or normal tool use.
+fixture/isolation acceptance passes. T0.6 keyboard automation and offline guard
+coverage are implemented and Renoise-host acceptance passes. T0.7–T0.8 remain
+pending. Keyboard acceptance does not block Native runs, runtime implementation
+or normal tool use.
 
 #### Developer workflow
 
@@ -733,8 +733,11 @@ runs, runtime implementation or normal tool use.
    virtual desktops may remain in use. Use `-RenoiseExe` or `-ToolsDirectory`
    when automatic discovery does not match the developer's installation.
 3. Preflight checks the executable/version, selected PID and writable temporary
-   directory. Do not require an active desktop, dedicated account, VM, registry
-   profile equality, manual spike, screenshots or environment-bound trace evidence.
+   directory. Native runs do not require an active desktop. Keyboard runs need
+   an interactive Renoise window; the helper activates the selected process and
+   verifies focus automatically. Do not require a dedicated account, VM,
+   registry profile equality, manual spike, screenshots or environment-bound
+   trace evidence.
 4. Temporarily replace ACID only with `-Install`, preserving a verified backup.
    Reset only the disposable test song authorized by `-ApproveDisposableSong`.
    Check listener ownership against the target PID before commands. Do not change
@@ -790,8 +793,8 @@ Native smoke was rerun with successful driver shutdown and installation
 restoration; see the dated commands and report identifiers in
 [host verification](../tests/renoise/host_verification.md#runner-verification-rerun-2026-10-29).
 Earlier selected-instance/concurrency/interruption observations remain identified
-separately from this rerun. This closes runner review only; later native scenario
-and keyboard coverage remain pending below.
+separately from this rerun. This closes runner review only; targeted keyboard
+coverage is completed below under T0.6.
 
 #### T0.5 — Independent native fixtures and scenario isolation
 
@@ -824,22 +827,30 @@ and corrected boundary regressions passed; see the
 
 #### T0.6 — Targeted keyboard E2E
 
-- [ ] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`. Before each
-  input sequence, verify the explicitly selected Renoise PID and foreground
-  window. Abort the sequence if focus moves elsewhere; perform these checks only
-  for keyboard input, not for Native API runs.
-- [ ] Read the shortcut from developer configuration and fail with a clear
+- [x] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`. Before each
+  input sequence, verify the explicitly selected Renoise PID, activate that
+  process's window and wait for it to own the foreground, then recheck PID and
+  foreground. Abort without sending if activation fails or focus changes before
+  input; perform these checks only for keyboard input, not Native API runs.
+- [x] Read the shortcut from developer configuration and fail with a clear
   diagnostic when it is missing. Do not rewrite the developer's keymap. If a
   binding is needed, register the genuine `Global:ACID:Show` action through the
   existing `show_tool` handler; do not add a test-only production action.
-- [ ] Open ACID through that mapped shortcut. Wait for API-visible dialog state,
+- [x] Open ACID through that mapped shortcut. Wait for API-visible dialog state,
   then exercise one native instrument selection/navigation path and confirm it
   through readback. Use API inspection for structural assertions; do not call
   `gui.show()` directly or use fixed delays or screen coordinates as assertions.
-- [ ] Cover a missing mapping, wrong PID, stolen focus and GUI timeout. Each case
+- [x] Cover a missing mapping, wrong PID, stolen focus and GUI timeout. Each case
   must return a failure without sending keys to another window. Keep Native and
   Keyboard independently selectable, and add editing/regeneration journeys only
   with their owning interface work; route them through real GUI handlers.
+
+The automated path and offline guard checks are implemented. The current
+developer keymap assigns Ctrl+Alt+B (`^!b`) to `Global:ACID:Show`. Renoise-host
+acceptance passed on 2026-10-30: the shortcut opened and closed ACID, the real
+handler invocation was observed, and native instrument navigation changed the
+selected index from 1 to 2. See the
+[keyboard verification record](../tests/renoise/host_verification.md#keyboard-e2e-host-acceptance-2026-10-30).
 
 **Complete when:** the configured shortcut opens ACID in the intended Renoise
 window, dialog and selection behavior are confirmed through observable state, and

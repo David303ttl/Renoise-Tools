@@ -1111,4 +1111,9 @@ function M.show()
   idle_notifier=observed_notifier
   observed_idle_observable:add_notifier(observed_notifier)
 end
+
+function M.get_ui_state()
+  local visible=dialog and dialog.visible==true or false
+  return {dialog_visible=visible}
+end
 return M

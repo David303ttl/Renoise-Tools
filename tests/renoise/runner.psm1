@@ -161,6 +161,252 @@ function Import-RenoiseTestEnvironment {
     return [pscustomobject]$config
 }
 
+function Get-AcidKeyboardConfiguration {
+    param([Parameter(Mandatory)][object]$Environment)
+    $keyboard = if ($Environment.PSObject.Properties['Keyboard']) { $Environment.Keyboard } else { $null }
+    if ($keyboard -isnot [Collections.IDictionary]) {
+        throw 'Keyboard mapping is missing: set TestEnvironment.Keyboard.ShowShortcut to the shortcut assigned to Global:ACID:Show in Renoise Preferences > Keys. The runner will not edit the keymap.'
+    }
+    foreach ($key in $keyboard.Keys) {
+        if ($key -cnotin @('ShowShortcut','AutoHotkeyPath','TimeoutSeconds')) {
+            throw "Unsupported TestEnvironment.Keyboard property '$key'."
+        }
+    }
+    $shortcut = if ($keyboard.Contains('ShowShortcut')) { [string]$keyboard['ShowShortcut'] } else { '' }
+    if ([string]::IsNullOrWhiteSpace($shortcut)) {
+        throw 'Keyboard mapping is missing: set TestEnvironment.Keyboard.ShowShortcut to the shortcut assigned to Global:ACID:Show in Renoise Preferences > Keys. The runner will not edit the keymap.'
+    }
+    if ($shortcut.Length -gt 128 -or $shortcut -cnotmatch '^[A-Za-z0-9\^!+#{}]+$') {
+        throw 'TestEnvironment.Keyboard.ShowShortcut must be a 1–128 character AutoHotkey v2 key sequence.'
+    }
+    $timeoutSeconds = 10
+    if ($keyboard.Contains('TimeoutSeconds')) {
+        $value = $keyboard['TimeoutSeconds']
+        if ($value -is [bool] -or ($value -isnot [int] -and $value -isnot [long]) -or $value -lt 1 -or $value -gt 60) {
+            throw 'TestEnvironment.Keyboard.TimeoutSeconds must be an integer from 1 to 60.'
+        }
+        $timeoutSeconds = $value
+    }
+    $autoHotkeyPath = if ($keyboard.Contains('AutoHotkeyPath')) { [string]$keyboard['AutoHotkeyPath'] } else { '' }
+    return [pscustomobject]@{
+        ShowShortcut = $shortcut
+        AutoHotkeyPath = $autoHotkeyPath
+        TimeoutSeconds = $timeoutSeconds
+    }
+}
+
+function Find-AutoHotkeyV2Executable {
+    param([string]$ConfiguredPath)
+    if ($ConfiguredPath) {
+        if (-not (Test-Path -LiteralPath $ConfiguredPath -PathType Leaf)) {
+            throw "Configured AutoHotkey executable does not exist: $ConfiguredPath"
+        }
+        return [IO.Path]::GetFullPath($ConfiguredPath)
+    }
+    foreach ($name in @('AutoHotkey64.exe','AutoHotkey.exe')) {
+        $command = Get-Command -Name $name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($command) { return [IO.Path]::GetFullPath($command.Source) }
+    }
+    throw 'AutoHotkey v2 was not found. Install AutoHotkey v2 or set TestEnvironment.Keyboard.AutoHotkeyPath; Native runs do not require it.'
+}
+
+function Invoke-AcidKeyboardHelper {
+    param(
+        [Parameter(Mandatory)][string]$Executable,
+        [Parameter(Mandatory)][string]$HelperScript,
+        [ValidateSet('Send','Version','SelfTestWrongPid','SelfTestFocusMismatch')][string]$Mode = 'Send',
+        [int]$ProcessId = 0,
+        [string]$Keys,
+        [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [ValidateRange(1,30)][int]$TimeoutSeconds = 5
+    )
+    if ($Mode -eq 'Send') {
+        if ($ProcessId -le 0) { throw 'Keyboard input requires the explicitly selected Renoise process ID.' }
+        if ([string]::IsNullOrEmpty($Keys)) { throw 'Keyboard input sequence cannot be empty.' }
+        & $ProcessCheck
+    }
+    if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) { throw "AutoHotkey executable does not exist: $Executable" }
+    if (-not (Test-Path -LiteralPath $HelperScript -PathType Leaf)) { throw "AutoHotkey helper does not exist: $HelperScript" }
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = [IO.Path]::GetFullPath($Executable)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.ArgumentList.Add([IO.Path]::GetFullPath($HelperScript))
+    switch ($Mode) {
+        'Version' { $startInfo.ArgumentList.Add('--version') }
+        'SelfTestWrongPid' {
+            $startInfo.ArgumentList.Add('--self-test')
+            $startInfo.ArgumentList.Add('wrong-pid')
+        }
+        'SelfTestFocusMismatch' {
+            $startInfo.ArgumentList.Add('--self-test')
+            $startInfo.ArgumentList.Add('focus-mismatch')
+        }
+        'Send' {
+            $startInfo.ArgumentList.Add('--pid')
+            $startInfo.ArgumentList.Add([string]$ProcessId)
+            $startInfo.ArgumentList.Add('--keys')
+            $startInfo.ArgumentList.Add($Keys)
+            $startInfo.ArgumentList.Add('--focus-timeout')
+            $startInfo.ArgumentList.Add([string]$TimeoutSeconds)
+        }
+    }
+    $process = [Diagnostics.Process]::Start($startInfo)
+    if ($null -eq $process) { throw 'Could not start AutoHotkey.' }
+    try {
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill($true) } catch {}
+            throw "AutoHotkey helper timed out after $TimeoutSeconds seconds."
+        }
+        [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = $stdoutTask.GetAwaiter().GetResult().Trim()
+            StdErr = $stderrTask.GetAwaiter().GetResult().Trim()
+        }
+    }
+    finally { $process.Dispose() }
+}
+
+function Wait-AcidObservedState {
+    param(
+        [Parameter(Mandatory)][scriptblock]$ReadState,
+        [Parameter(Mandatory)][scriptblock]$Condition,
+        [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [ValidateRange(1,60)][int]$TimeoutSeconds = 10,
+        [ValidateRange(10,1000)][int]$PollMilliseconds = 100
+    )
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $lastState = $null
+    try {
+        while ($clock.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+            & $ProcessCheck
+            $remainingSeconds = [Math]::Max(1, [Math]::Ceiling($TimeoutSeconds - $clock.Elapsed.TotalSeconds))
+            $lastState = & $ReadState $remainingSeconds
+            if ($clock.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+            if (& $Condition $lastState) { return $lastState }
+            Start-Sleep -Milliseconds $PollMilliseconds
+        }
+    }
+    finally { $clock.Stop() }
+    throw "Timed out after $TimeoutSeconds seconds waiting for the observed condition. Last state: $(ConvertTo-Json -InputObject $lastState -Compress -Depth 4)"
+}
+
+function Invoke-AcidKeyboardJourney {
+    param(
+        [Parameter(Mandatory)][Net.Sockets.TcpClient]$Client,
+        [Parameter(Mandatory)][pscustomobject]$Session,
+        [Parameter(Mandatory)][pscustomobject]$Configuration,
+        [Parameter(Mandatory)][string]$Executable,
+        [Parameter(Mandatory)][string]$HelperScript,
+        [Parameter(Mandatory)][int]$ProcessId,
+        [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [ValidateRange(1,300)][int]$CommandTimeoutSeconds = 10
+    )
+    $stateReadTimeout = [Math]::Min($CommandTimeoutSeconds, $Configuration.TimeoutSeconds)
+    $readGuiState = ({
+        param([int]$ReadTimeoutSeconds = $stateReadTimeout)
+        Invoke-RenoiseDriverRequest -Client $Client -Session $Session -Operation 'gui.state' -Arguments @{} -TimeoutSeconds ([Math]::Min($ReadTimeoutSeconds, $CommandTimeoutSeconds)) -ProcessCheck $ProcessCheck
+    }).GetNewClosure()
+    $readSongSnapshot = ({
+        param([int]$ReadTimeoutSeconds = $stateReadTimeout)
+        Invoke-RenoiseDriverRequest -Client $Client -Session $Session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds ([Math]::Min($ReadTimeoutSeconds, $CommandTimeoutSeconds)) -ProcessCheck $ProcessCheck
+    }).GetNewClosure()
+    $keyboardActions = [Collections.Generic.List[object]]::new()
+    $sendKeys = ({
+        param([string]$Keys, [string]$Action)
+        $sendResult = Invoke-AcidKeyboardHelper -Executable $Executable -HelperScript $HelperScript -Mode Send -ProcessId $ProcessId -Keys $Keys -ProcessCheck $ProcessCheck -TimeoutSeconds ([Math]::Min(30, $Configuration.TimeoutSeconds))
+        if ($sendResult.ExitCode -ne 0) {
+            $message = if ($sendResult.StdErr) { $sendResult.StdErr } else { $sendResult.StdOut }
+            throw "Keyboard action '$Action' was refused or failed (exit $($sendResult.ExitCode)): $message"
+        }
+        $keyboardActions.Add([pscustomobject]@{ action = $Action; keys = $Keys; output = $sendResult.StdOut })
+    }).GetNewClosure()
+    $waitCondition = ({
+        param([scriptblock]$Condition)
+        Wait-AcidObservedState -ReadState $readGuiState -Condition $Condition -ProcessCheck $ProcessCheck -TimeoutSeconds $Configuration.TimeoutSeconds
+    }).GetNewClosure()
+
+    $state = & $readGuiState
+    if ($null -eq $state.show_invocations -or $state.show_invocations -lt 0) {
+        throw 'Keyboard development driver did not expose a valid ACID Show invocation count.'
+    }
+    if ($state.show_keybinding_registered -ne $true) {
+        throw 'ACID has not registered the production Global:ACID:Show keybinding in the selected Renoise process.'
+    }
+    if ($state.dialog_visible) {
+        & $sendKeys '{Esc}' 'close pre-existing ACID dialog'
+        $closed = & $waitCondition { param($observed) $observed.dialog_visible -eq $false }
+        if ($closed.dialog_visible) { throw 'ACID dialog remained visible after Escape.' }
+    }
+
+    try {
+        & $waitCondition { param($observed) $false }
+        throw 'The observed-state timeout guard unexpectedly accepted an impossible condition.'
+    }
+    catch {
+        if ($_.Exception.Message -notmatch '^Timed out after \d+ seconds waiting for the observed condition\.') { throw }
+    }
+
+    $showInvocationsBeforeShortcut = [int]$state.show_invocations
+    & $sendKeys $Configuration.ShowShortcut 'open ACID with the configured shortcut'
+    try {
+        $visible = & $waitCondition {
+            param($observed)
+            $observed.dialog_visible -eq $true -and $observed.show_invocations -gt $showInvocationsBeforeShortcut
+        }
+    }
+    catch {
+        $sentActions = @($keyboardActions | ForEach-Object { "$($_.action) [$($_.keys)]: $($_.output)" }) -join '; '
+        throw "ACID Show shortcut did not open the dialog after [$sentActions]: $($_.Exception.Message)"
+    }
+    if (-not $visible.dialog_visible) { throw 'Configured shortcut did not open the ACID dialog.' }
+
+    & $sendKeys '{Esc}' 'close ACID dialog before native instrument navigation'
+    $closed = & $waitCondition { param($observed) $observed.dialog_visible -eq $false }
+    if ($closed.dialog_visible) { throw 'ACID dialog remained visible before native instrument navigation.' }
+
+    $setup = Invoke-RenoiseDriverRequest -Client $Client -Session $Session -Operation 'song.prepare_instrument_navigation' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $ProcessCheck
+    if ($setup.instrument_count -lt 2) { throw 'Instrument navigation setup did not produce two instruments.' }
+    $before = & $readSongSnapshot
+    $startIndex = [int]$before.selected_instrument_index
+    $instrumentCount = [int]$before.instrument_count
+    if ($instrumentCount -lt 2 -or $startIndex -lt 1 -or $startIndex -gt $instrumentCount) {
+        throw 'Song snapshot returned an invalid instrument selection for native navigation.'
+    }
+    if ($startIndex -lt $instrumentCount) {
+        $navigationKeys = '!{Down}'
+        $navigationName = 'Alt+Down'
+        $expectedIndex = $startIndex + 1
+    }
+    else {
+        $navigationKeys = '!{Up}'
+        $navigationName = 'Alt+Up'
+        $expectedIndex = $startIndex - 1
+    }
+    & $sendKeys $navigationKeys "native $navigationName instrument navigation"
+    $selection = Wait-AcidObservedState -ReadState $readSongSnapshot -Condition { param($observed) $observed.selected_instrument_index -eq $expectedIndex } -ProcessCheck $ProcessCheck -TimeoutSeconds $Configuration.TimeoutSeconds
+    if ($selection.selected_instrument_index -ne $expectedIndex) {
+        throw 'Native instrument navigation readback did not match the expected selection.'
+    }
+
+    return [pscustomobject]@{
+        dialog_open_observed = $true
+        dialog_closed_observed = $true
+        shortcut = $Configuration.ShowShortcut
+        navigation = $navigationName
+        instrument_count = $instrumentCount
+        selected_instrument_before = $startIndex
+        selected_instrument_after = [int]$selection.selected_instrument_index
+        keyboard_actions = @($keyboardActions)
+        show_invocations = [int]$visible.show_invocations
+        gui_timeout_guard = 'PASS'
+    }
+}
+
 function Get-AcidScenarioCatalog {
     param([Parameter(Mandatory)][string]$Directory)
     $pathPattern = '^[A-Za-z_][A-Za-z0-9_]*(\.(?:[A-Za-z_][A-Za-z0-9_]*|\d+))*$'
@@ -669,7 +915,7 @@ function Invoke-AcidNativeScenario {
     }
 }
 
-Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
+Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidKeyboardConfiguration, Find-AutoHotkeyV2Executable, Invoke-AcidKeyboardHelper, Wait-AcidObservedState, Invoke-AcidKeyboardJourney, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
 
 function Get-DirectoryHash {
     param([Parameter(Mandatory)][string]$Path)

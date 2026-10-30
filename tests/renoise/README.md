@@ -79,9 +79,60 @@ because the backup does not copy their external contents.
 allows resetting the test song. The selected PID and listener owner are checked
 before commands. The transport scenario always runs first and checks ping,
 capabilities, new-document completion and stable native inventory readback.
-Keyboard tests are not implemented; use the default `Native` suite. Requesting
-`Keyboard` or `All` reports the missing coverage with a nonzero result, without
-blocking Native runs or ordinary tool use.
+### Keyboard E2E
+
+The `Keyboard` and `All` suites also need AutoHotkey v2. Get it from the
+[official AutoHotkey releases](https://github.com/AutoHotkey/AutoHotkey/releases).
+The runner finds `AutoHotkey64.exe` or `AutoHotkey.exe` on `PATH`; configure
+`Keyboard.AutoHotkeyPath` in the developer's TestEnvironment file if it is
+installed elsewhere.
+
+After ACID loads, Renoise lists its real `Global:ACID:Show` command under Edit >
+Preferences > Keys. The current developer keymap assigns **Ctrl+Alt+B**; enter
+the same key as `^!b` in the AutoHotkey v2 key-sequence configuration. Renoise
+stores assignments per user, and ACID supplies no default. For example:
+
+~~~json
+{
+  "RenoiseExe": "<path to Renoise.exe>",
+  "Keyboard": {
+    "ShowShortcut": "^!b",
+    "AutoHotkeyPath": "<optional path to AutoHotkey64.exe>",
+    "TimeoutSeconds": 10
+  }
+}
+~~~
+
+`^!b` matches the current developer keymap. Change `ShowShortcut` if you assign
+a different key combination in Renoise.
+
+Pass the external configuration file when selecting the Keyboard suite:
+
+~~~powershell
+./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment '<path>' -Install -ApproveDisposableSong
+./scripts/run_interactive_tests.ps1 -Suite All -TestEnvironment '<path>' -Install -ApproveDisposableSong
+~~~
+
+Each sent sequence includes the selected Renoise PID. The AHK helper checks that
+the process is `Renoise.exe`, activates its window, waits up to the configured
+timeout for that exact PID to own the foreground, and rechecks PID and focus
+before sending. It refuses the sequence if activation or either check fails.
+The runner does not change keyboard preferences. It waits for the ACID dialog's
+API-visible state, closes the dialog with Escape, then uses Renoise's native
+Alt+Down/Alt+Up instrument navigation documented in the
+[Instrument Selector manual](https://tutorials.renoise.com/wiki/Instrument_Selector)
+and verifies the selected instrument index through `song.snapshot`.
+The development driver inserts a second blank instrument in the disposable song
+only when needed to make that navigation observable.
+
+Keyboard preflight checks missing mapping configuration, the helper's wrong-PID
+and focus-mismatch guards, and its bounded observed-state timeout. Native remains
+independently selectable and does not require AutoHotkey or a keyboard mapping.
+Reports include the shortcut, AHK version, negative-case results, observed dialog
+state and instrument readback. The unattended Renoise 3.5.4 / API 6.2 host run
+passed on 2026-10-30; see the
+[keyboard verification record](host_verification.md#keyboard-e2e-host-acceptance-2026-10-30).
+Offline checks alone do not establish host acceptance.
 
 The checked-in native fixture is built independently of the production writer:
 
@@ -238,8 +289,8 @@ The standalone `spike_tool/`, `Capture-Foreground.ps1` and
 and keyboard behavior. Their historical observations are in
 [host_verification.md](host_verification.md). They are not setup requirements or
 permission gates for running tests, developing tools, or installing releases.
-Native API tests do not require foreground focus; future keyboard tests must
-focus their selected Renoise window while sending input.
+Native API tests do not require foreground focus. Keyboard tests activate their
+selected Renoise window and verify focus before sending each input sequence.
 
 `./scripts/test_host_preflight_live.ps1 -RenoiseExe '<path>'` checks executable
 and temporary-directory readiness; add `-RenoiseProcessId <pid>` to check a target.
