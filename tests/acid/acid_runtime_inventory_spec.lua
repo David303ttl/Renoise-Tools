@@ -19,7 +19,7 @@ do
  local pristine=ctx:target_state()
  assert(pristine.baseline.source.length==4 and pristine.baseline.settings.pb_range==0)
  assert(pristine.baseline.snapshot.properties.lpb~=1)
- assert(pristine.baseline.planning_inputs.capacities.max_lines==512)
+ assert(pristine.baseline.planning_inputs.capacities.max_lines==helper.limits.max_lines)
  assert(pristine.baseline.planning_inputs.capabilities.sample==true)
  local choices=assert(ctx:phrase_choices(inst))
  for _,choice in ipairs(choices)do assert(not rawequal(choice.phrase,b))end
@@ -71,7 +71,7 @@ for _,fault in ipairs({'missing','corrupt','incompatible','content','collision',
  elseif fault=='incompatible' then
   local changed=seq.copy_source(source);changed.pitch_events[1]=seq.new_pitch(7,0,false,false)
   assert(store.save(song,101,changed,'play_once',0))
- elseif fault=='content' then a.lines[512].note_columns[12].delay_value=1
+ elseif fault=='content' then a.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns].delay_value=1
  elseif fault=='collision' then song.instruments[2]=instrument({phrase(source,101)})
  elseif fault=='inaccessible' then a.script=setmetatable({},{__index=function()error('unreadable script')end})
  elseif fault=='foreign' then a.name='Native phrase' end

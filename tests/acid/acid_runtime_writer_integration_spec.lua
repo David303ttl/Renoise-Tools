@@ -79,6 +79,8 @@ local function make_script()
   return script
 end
 
+local MAX_LINES,MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS=16,2,1
+
 local function make_phrase()
   local phrase={name="",number_of_lines=16,lpb=16,shuffle=0,looping=false,
     loop_start=1,loop_end=16,playback_mode=1,key_tracking=1,base_note=48,
@@ -87,11 +89,11 @@ local function make_phrase()
     panning_column_visible=false,delay_column_visible=false,
     sample_effects_column_visible=false,mapping=nil,cells={},
     script=make_script(),column_names={},column_mutes={}}
-  for column=1,12 do
+  for column=1,MAX_NOTE_COLUMNS do
     phrase.column_names[column]="column "..column
     phrase.column_mutes[column]=false
   end
-  for line=1,512 do
+  for line=1,MAX_LINES do
     phrase.cells[line]={note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
   end
@@ -108,12 +110,12 @@ local function make_phrase()
       self[key]=other[key]
     end
     self.cells={}
-    for line=1,512 do
+    for line=1,MAX_LINES do
       local copy={}
       for key,value in pairs(other.cells[line] or {}) do copy[key]=value end
       self.cells[line]=copy
     end
-    for column=1,12 do
+    for column=1,MAX_NOTE_COLUMNS do
       self.column_names[column]=other.column_names[column]
       self.column_mutes[column]=other.column_mutes[column]
     end
@@ -141,12 +143,20 @@ function song:is_undo_redoing() return false end
 _G.renoise={
   Transport={TIMING_MODEL_LPB=2,TIMING_MODEL_SPEED=1},
   InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1,
-    MAX_NUMBER_OF_LINES=512,MAX_NUMBER_OF_NOTE_COLUMNS=12,
-    MAX_NUMBER_OF_EFFECT_COLUMNS=8},
+    MAX_NUMBER_OF_LINES=MAX_LINES,MAX_NUMBER_OF_NOTE_COLUMNS=MAX_NOTE_COLUMNS,
+    MAX_NUMBER_OF_EFFECT_COLUMNS=MAX_EFFECT_COLUMNS},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function() return song end,
   tool=function() return {app_idle_observable=idle} end,
 }
+-- Renoise exposes API classes as indexed userdata proxies, not Lua tables.
+local function class_proxy(values)
+  local proxy=newproxy(true)
+  getmetatable(proxy).__index=values
+  return proxy
+end
+renoise.InstrumentPhrase=class_proxy(renoise.InstrumentPhrase)
+renoise.Instrument=class_proxy(renoise.Instrument)
 
 local context=require("runtime.context")
 local drafts=require("runtime.draft_cache")
@@ -394,5 +404,139 @@ local recovered=instrument.phrases[#instrument.phrases]
 assert_success(cold[4],recovered,"recovery create")
 assert(recovered.cells[1].note_value==47)
 assert(sink_calls==cancelled_before+2,"unexpected dispatch count after cancellation")
+
+-- Committed output with a leaked backup blocks every later request, including
+-- after dialog reopen, until explicit read-only revalidation proves consistency.
+local native_delete=instrument.delete_phrase_at
+instrument.delete_phrase_at=function(self,index)
+  if self.phrases[index].name==writer.TRANSACTION_BACKUP_NAME then error("injected backup cleanup failure") end
+  return native_delete(self,index)
+end
+cold_ctx:bind_phrase(instrument,recovered)
+edit(cold_ctx,source(49))
+dispatch(cold_ctx)
+drain(cold,5,"committed cleanup failure")
+instrument.delete_phrase_at=native_delete
+assert(cold[5].integrity_blocked and cold[5].committed==true)
+assert(recovered.cells[1].note_value==49,"musical commit was not reported accurately")
+assert(cold_ctx:integrity_state().blocked,"committed cleanup failed to persist its blocker")
+assert(not cold_ctx:request_generation("manual"),"recovery material did not block generation")
+local recovery_phrase=instrument.phrases[#instrument.phrases]
+assert(recovery_phrase.name==writer.RECOVERY_BACKUP_NAME)
+assert(writer.is_temporary(song,instrument,recovery_phrase),
+  "retained recovery phrase lost its writer-temporary registration")
+assert(not cold_ctx:revalidation_status().verified)
+cold_ctx:close_dialog()
+cold_ctx:open_dialog(cold_delivery)
+assert(cold_ctx:integrity_state().blocked and not cold_ctx:request_generation("manual"))
+native_delete(instrument,#instrument.phrases)
+local revalidation,proof=cold_ctx:revalidation_status()
+assert(revalidation.verified,revalidation.reason)
+assert(cold_ctx:revalidate(proof),"verified committed recovery could not be revalidated")
+assert(not cold_ctx:integrity_state().blocked)
+
+-- The module-level runtime is reused across documents. Its released delivery
+-- cannot remain active after the real writer detaches its completion callback.
+render_mode="defer"
+cold_ctx:bind_new(instrument)
+edit(cold_ctx,source(42))
+dispatch(cold_ctx)
+local released_render=next_render("released render")
+local released_song=song
+local released_store=song.tool_data
+local released_stage=instrument.phrases[#instrument.phrases]
+local delivered_before_release=#cold
+cold_ctx:release_document()
+local warning=writer.release()
+assert(type(warning)=="string" and warning:find(writer.PHRASE_NAME,1,true))
+local next_instrument={}
+for key,value in pairs(instrument) do if key~="phrases" then next_instrument[key]=value end end
+next_instrument.phrases={}
+instrument=next_instrument
+song={instruments={instrument},transport={timing_model=2,lpb=16,tpl=12,groove_enabled=false}}
+function song:is_undo_redoing() return false end
+cold_ctx:attach_document(song)
+cold_ctx:open_dialog(cold_delivery)
+cold_ctx:bind_new(instrument)
+edit(cold_ctx,source(46))
+assert(not cold_ctx:request_generation("manual"),"released native render lost occupancy")
+released_render.callback(nil,released_render.count,0)
+assert(writer.state()=="idle" and #cold==delivered_before_release)
+assert(cold_ctx:state().status=="idle","released delivery permanently wedged the reused runtime")
+assert(cold_ctx:state().pending==false and not cold_ctx:flush_pending())
+assert(released_song.tool_data==released_store and released_stage.name==writer.PHRASE_NAME)
+render_mode="sync"
+dispatch(cold_ctx)
+drain(cold,delivered_before_release+1,"new document after released callback")
+assert_success(cold[#cold],instrument.phrases[#instrument.phrases],"new document create")
+
+-- Resolve one explicitly selected member of a three-way same-instrument ID
+-- collision, then save and reopen its unique ID while the other two remain
+-- blocked together. The selected owner remains regenerable throughout.
+do
+  local selected=instrument.phrases[#instrument.phrases]
+  local old_id=assert(ownership.id(selected))
+  local old_source=assert(store.read_entry(song,old_id))
+  local selected_before=assert(ownership.snapshot(selected))
+  local function duplicate_phrase()
+    local duplicate=instrument:insert_phrase_at(#instrument.phrases+1)
+    duplicate:copy_from(selected)
+    duplicate.script.paragraphs={}
+    for index,value in ipairs(selected.script.paragraphs) do
+      duplicate.script.paragraphs[index]=value
+    end
+    duplicate.script.parameters={}
+    for index,value in ipairs(selected.script.parameters) do
+      duplicate.script.parameters[index]={name=value.name,value=value.value}
+    end
+    duplicate.script.pending_changes=selected.script.pending_changes
+    duplicate.script.editor_visible=selected.script.editor_visible
+    return duplicate
+  end
+  local second,third=duplicate_phrase(),duplicate_phrase()
+  assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(second))))
+  assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(third))))
+  local dispatch_count=sink_calls
+  local independent,identity= cold_ctx:make_independent()
+  assert(independent,identity)
+  assert(identity.old_id==old_id and ownership.id(selected)==identity.id)
+  assert(ownership.id(second)==old_id and ownership.id(third)==old_id)
+  local groups=assert(ownership.inventory(song))
+  assert(#groups[old_id]==2 and #groups[identity.id]==1)
+  assert(ownership.compare(selected_before,assert(ownership.snapshot(selected)),'name'),
+    'Make Independent changed musical content')
+  local retained=assert(store.read_entry(song,old_id))
+  local cloned=assert(store.read_entry(song,identity.id))
+  assert(sequencer.same_source(retained,old_source) and sequencer.same_source(cloned,old_source))
+  assert(sequencer.same_source(cold_ctx:editor_state().source,old_source),
+    'Make Independent replaced the committed editor source with a placeholder')
+  assert(sink_calls==dispatch_count,'Make Independent entered the writer')
+  local independent_target=cold_ctx:target_state()
+  assert(independent_target.kind=='owned' and rawequal(independent_target.phrase,selected),
+    tostring(independent_target.kind)..': '..tostring(independent_target.reason))
+
+  edit(cold_ctx,source(49))
+  dispatch(cold_ctx)
+  drain(cold,#cold+1,'regenerate unique holder beside unrelated collision')
+  assert_success(cold[#cold],selected,'regenerate unique holder beside unrelated collision')
+  assert(#instrument.phrases==3 and ownership.id(selected)==identity.id)
+  assert(#assert(ownership.inventory(song))[old_id]==2,
+    'unrelated two-holder collision was altered by regeneration')
+  assert(first_note(assert(store.load(song,instrument,selected)))==49)
+
+  cold_ctx:release_document()
+  cold_ctx:attach_document(song)
+  cold_ctx:open_dialog(cold_delivery)
+  cold_ctx:bind_phrase(instrument,selected)
+  local reopened_target=cold_ctx:target_state()
+  assert(reopened_target.kind=='owned' and reopened_target.baseline.id==identity.id)
+  assert(first_note(assert(store.load(song,instrument,selected)))==49)
+  edit(cold_ctx,source(51))
+  dispatch(cold_ctx)
+  drain(cold,#cold+1,'reopen and regenerate independent holder')
+  assert_success(cold[#cold],selected,'reopen and regenerate independent holder')
+  assert(first_note(assert(store.load(song,instrument,selected)))==51)
+  assert(#assert(ownership.inventory(song))[old_id]==2)
+end
 
 print("ACID runtime writer integration checks passed (native playback unverified)")

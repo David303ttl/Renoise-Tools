@@ -106,6 +106,7 @@ do
   local new_token, new_done = writer.token, log.completions[2]
   assert(old_done({status = "committed"}) == false)
   assert(new_token:is_current(), "duplicate old completion revoked new session")
+  assert(not ctx:state().blocked, "stale old-session completion blocked the new session")
   writer.status, writer.token = "idle", nil
   assert(new_done({status = "committed"}) == true)
   assert(log.deliveries == 1)

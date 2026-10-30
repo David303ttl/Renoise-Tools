@@ -245,7 +245,9 @@ local function start_driver_attempt(options)
   local host = install_host_stub(options)
   host.config_path = config_path
   local driver, original_dofile = load_driver_for_start()
-  local ok, err = pcall(function() driver.start(config_path, options and options.gui_state_reader) end)
+  local ok, err = pcall(function()
+    driver.start(config_path, options and options.gui_state_reader, options and options.acceptance_runner)
+  end)
   _G.dofile = original_dofile
   os.remove(config_path)
   return host, driver, ok, err
@@ -910,6 +912,50 @@ local function test_instrument_navigation_setup_inserts_only_when_needed()
   driver.stop()
 end
 
+local function test_fixed_native_acceptance_command()
+  local completion
+  local host, driver = start_driver({
+    acceptance_runner = function(case_name, done)
+      assert(case_name == "make-independent" or case_name == "reopen-independent",
+        "fixed native acceptance case was not allowlisted")
+      completion = done
+      return true
+    end
+  })
+  local client = new_client()
+  accept(host, client)
+  send_request(host, client, "acceptance-invalid-case", "acid.acceptance.run", {case = "execute"})
+  send_request(host, client, "acceptance-invalid-args", "acid.acceptance.run", {case = "make-independent", command = "arbitrary"})
+  fire_idle(host)
+  local invalid = take_responses(client)
+  assert_equal(find_response(invalid, "acceptance-invalid-case").error.code, "invalid_arguments")
+  assert_equal(find_response(invalid, "acceptance-invalid-args").error.code, "invalid_arguments")
+  assert_equal(completion, nil, "invalid acceptance command reached its runner")
+
+  send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "make-independent"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-run"), nil,
+    "asynchronous acceptance returned before its native operation settled")
+  assert(completion, "fixed acceptance runner was not called")
+  assert(completion({status = "PASS", case = "make-independent", new_id = 12}))
+  fire_idle(host)
+  local result = find_response(take_responses(client), "acceptance-run")
+  assert(result and result.ok)
+  assert_equal(result.result.status, "PASS")
+  assert_equal(result.result.new_id, 12)
+  send_request(host, client, "acceptance-reopen", "acid.acceptance.run", {case = "reopen-independent"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-reopen"), nil,
+    "round-trip acceptance returned before its native operation settled")
+  assert(completion, "round-trip acceptance runner was not called")
+  assert(completion({status = "PASS", case = "reopen-independent", new_id = 12}))
+  fire_idle(host)
+  local reopened = find_response(take_responses(client), "acceptance-reopen")
+  assert(reopened and reopened.ok)
+  assert_equal(reopened.result.status, "PASS")
+  driver.stop()
+end
+
 local function test_shutdown_records_completion_after_server_stop()
   local host = start_driver()
   local client = new_client()
@@ -1181,6 +1227,7 @@ test_snapshot_uses_values_with_fresh_host_wrappers()
 test_gui_state_is_read_from_the_acid_adapter()
 test_gui_state_fails_closed_without_an_adapter()
 test_instrument_navigation_setup_inserts_only_when_needed()
+test_fixed_native_acceptance_command()
 test_diagnostics_counts_other_commands()
 test_shutdown_records_completion_after_server_stop()
 test_json_codec()

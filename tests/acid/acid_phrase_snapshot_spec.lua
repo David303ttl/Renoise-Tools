@@ -20,6 +20,12 @@ assert(captured.script.paragraphs[1]=='return pattern {}' and captured.script.pa
 assert(captured.columns[12].name=='column 12')
 copied.mapping.note_range[1]=12
 assert(captured.mapping.note_range[1]==36)
+copied.mapping.note_range[1]=36
+copied.lines[512].notes[12].delay_value=1
+local equal,tail_reason=ownership.compare(captured,copied)
+assert(not equal and tail_reason=='Phrase differs at lines.512.notes.12.delay_value')
+-- Field-policy permutations need one complete line, not 512 identical lines.
+captured.lines={captured.lines[512]}
 local function changes(path)
   local changed=assert(ownership.copy_snapshot(captured));local parent=changed
   for index=1,#path-1 do parent=parent[path[index]]end
@@ -33,8 +39,8 @@ for key in pairs(captured.properties)do changes({'properties',key})end
 for _,key in ipairs({'name','muted'})do changes({'columns',12,key})end
 for key in pairs(captured.mapping)do if key~='note_range'then changes({'mapping',key})end end
 changes({'mapping','note_range',1});changes({'mapping','note_range',2})
-for key in pairs(captured.lines[512].notes[12])do changes({'lines',512,'notes',12,key})end
-for key in pairs(captured.lines[512].effects[8])do changes({'lines',512,'effects',8,key})end
+for key in pairs(captured.lines[1].notes[12])do changes({'lines',1,'notes',12,key})end
+for key in pairs(captured.lines[1].effects[8])do changes({'lines',1,'effects',8,key})end
 changes({'script','paragraphs',2});changes({'script','parameters',1,'name'});changes({'script','parameters',1,'value'})
 changes({'script','pending_changes'});changes({'script','editor_visible'})
 local renamed=changes({'name'})
@@ -45,7 +51,7 @@ for _,key in ipairs({'number_of_lines','lpb','shuffle','looping','loop_start','l
  assert(ownership.compare(captured,changes({'properties',key}),'generated'))
 end
 -- Generated comparison checks preservation; complete output checks constrain all cells.
-assert(ownership.compare(captured,changes({'lines',512,'notes',12,'volume_value'}),'generated'))
+assert(ownership.compare(captured,changes({'lines',1,'notes',12,'volume_value'}),'generated'))
 for _,path in ipairs({{'properties','visible_note_columns'},{'properties','base_note'},{'properties','autoseek'},
  {'mapping','base_note'},{'columns',12,'muted'},{'script','pending_changes'}})do
  assert(not ownership.compare(captured,changes(path),'generated'))
@@ -72,7 +78,7 @@ local cycle={};cycle.self=cycle;assert(not ownership.copy_snapshot(cycle))
 local several=assert(ownership.copy_snapshot(captured));several.name='different';several.properties.lpb=32
 local same,reason=ownership.compare(captured,several)
 assert(not same and reason=='Phrase differs at name')
-local missing=assert(ownership.copy_snapshot(captured));missing.lines[512].effects[8].is_empty=nil
+local missing=assert(ownership.copy_snapshot(captured));missing.lines[1].effects[8].is_empty=nil
 assert(not ownership.compare(captured,missing))
 local extra=assert(ownership.copy_snapshot(captured));extra.mapping.extra=1
 assert(not ownership.compare(captured,extra))

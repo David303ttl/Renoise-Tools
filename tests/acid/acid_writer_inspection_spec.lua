@@ -2,6 +2,11 @@
 dofile('tests/bootstrap.lua')('acid')
 local columns=dofile('tests/acid/phrase_columns.lua')
 
+-- Explicit bounded host capacities for the fixed three-step source.
+local CAPACITY_LINES=16
+local CAPACITY_NOTE_COLUMNS=4
+local CAPACITY_EFFECT_COLUMNS=2
+
 local function observable()
   local handlers={}
   return {
@@ -18,14 +23,17 @@ local idle,committed=observable(),observable()
 local insertions,last_render,copy_observer={},nil,nil
 local pause_render,fail_delete,forced_insert=false,false,nil
 local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""}}
-local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed}
+local EMPTY_SCRIPT_DIAGNOSTIC="compile error: no script content present."
+local script={paragraphs={},compile_error='',runtime_error='',
+  parameters={},pending_changes=0,editor_visible=true,committed_observable=committed}
 function script:commit()
-  local on_idle
-  on_idle=function()
-    idle:remove_notifier(on_idle)
-    committed:fire()
-  end
-  idle:add_notifier(on_idle)
+  self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
+  self.runtime_error=""
+  committed:fire()
+end
+local function make_script()
+  return setmetatable({paragraphs={},compile_error='',runtime_error='',parameters={},
+    pending_changes=0,editor_visible=true},{__index=script})
 end
 function script:render_to_pattern(_,callback)
   local phrase=instrument.phrases[#instrument.phrases]
@@ -51,18 +59,25 @@ function script:render_to_pattern(_,callback)
   else callback(nil,count,0) end
   return true
 end
-local properties={'name','number_of_lines','lpb','playback_mode','looping',
-  'loop_start','loop_end','key_tracking','visible_note_columns','visible_effect_columns'}
+local properties={'name','number_of_lines','lpb','shuffle','playback_mode','looping',
+  'loop_start','loop_end','key_tracking','base_note','autoseek','visible_note_columns',
+  'visible_effect_columns','instrument_column_visible','volume_column_visible',
+  'panning_column_visible','delay_column_visible','sample_effects_column_visible'}
 function instrument:insert_phrase_at(index)
   if forced_insert then return forced_insert end
-  local phrase={name='',number_of_lines=16,visible_note_columns=1,
-    visible_effect_columns=0,looping=false,loop_start=1,loop_end=16,script=script,cells={}}
-  for line=1,257 do
+  local phrase={name='',number_of_lines=16,lpb=16,shuffle=0,playback_mode=1,
+    key_tracking=1,base_note=48,autoseek=false,visible_note_columns=1,
+    visible_effect_columns=0,looping=false,loop_start=1,loop_end=16,
+    instrument_column_visible=false,volume_column_visible=true,
+    panning_column_visible=false,delay_column_visible=false,
+    sample_effects_column_visible=false,script=make_script(),cells={}}
+  for line=1,CAPACITY_LINES do
     phrase.cells[line]={note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
   end
   function phrase:line(line) return columns.line(self,line) end
   function phrase:column_is_muted() return false end
+  function phrase:column_name(column) return "column "..tostring(column) end
   function phrase:copy_from(other)
     if copy_observer then copy_observer(self) end
     columns.copy(self,other)
@@ -83,11 +98,15 @@ function instrument:delete_phrase_at(index)
   table.remove(self.phrases,index)
 end
 local song={instruments={instrument},transport={timing_model=2}}
-_G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+_G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1,
+    MAX_NUMBER_OF_LINES=CAPACITY_LINES,
+    MAX_NUMBER_OF_NOTE_COLUMNS=CAPACITY_NOTE_COLUMNS,
+    MAX_NUMBER_OF_EFFECT_COLUMNS=CAPACITY_EFFECT_COLUMNS},
   Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function()return song end,tool=function()return {app_idle_observable=idle} end}
 local writer=require('writers.phrase_writer')
+local writer_request=dofile('tests/acid/writer_request.lua')
 local context=require('runtime.context')
 local seq=require('model.sequencer')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
@@ -122,7 +141,11 @@ assert(writer.temporaries==nil and writer.register_temporary==nil
   and writer.list_temporaries==nil,'writer exposed temporary registry authority')
 
 local function generate(target,options)
-  return writer.generate(1,completion,pattern,target or 1,options or {output_policy='play_once'})
+  local request,rejection=writer_request.build(renoise.song(),1,pattern,target or 1,
+    options or {output_policy='play_once'})
+  if not request then return false,rejection end
+  local operation=request.kind=='create' and writer.create or writer.regenerate
+  return operation(request,completion)
 end
 
 local first_token={current=true}
@@ -186,15 +209,30 @@ assert(completed_status=='idle' and completed_token==nil)
 assert(#instrument.phrases==1 and writer.is_temporary(song,instrument,staging)==false,
   'failed render cleanup left a temporary phrase recorded')
 
+-- The explicit contract requires an operation token. A missing token is
+-- rejected before insertion rather than becoming tokenless occupancy.
+local missing_token_request=assert(writer_request.build(song,1,pattern,2,
+  {output_policy='play_once'}))
+missing_token_request.token=nil
+local missing_token_before=#insertions
+local missing_token_started,missing_token_rejection=writer.create(missing_token_request,completion)
+assert(not missing_token_started and missing_token_rejection.code=='source.token',
+  'writer accepted a request without an operation token')
+assert(writer.state()=='idle' and #instrument.phrases==1
+  and #insertions==missing_token_before,
+  'missing-token rejection mutated the host or retained occupancy')
+
+local external_token={current=true}
+function external_token:is_current() return true end
 pause_render=true
 before=#insertions
-assert(generate(2,{output_policy='play_once'}))
+assert(generate(2,{output_policy='play_once',token=external_token}))
 busy_status,busy_token=writer.state()
-assert(busy_status=='busy' and busy_token==nil,
-  'writer.state invented a token when none was supplied')
+assert(busy_status=='busy' and rawequal(busy_token,external_token),
+  'writer.state did not return the exact operation token')
 assert(boundary:request_generation('live_edit')==false
   and captured_requests==1 and sink_requests==1,
-  'runtime treated legacy tokenless occupancy as permission to dispatch')
+  'runtime dispatched while the real writer was occupied')
 staging=insertions[before+1]
 assert(writer.is_temporary(song,instrument,staging)==true)
 idle:fire()
@@ -231,6 +269,11 @@ assert(still_busy=='busy' and rawequal(still_token,exact_token)
   and #instrument.phrases==2 and writer.is_temporary(song,instrument,staging)==true,
   'impostor cancel changed occupancy or temporary bookkeeping')
 assert(writer.cancel(exact_token)==true)
+local cancelled_busy,cancelled_token=writer.state()
+assert(cancelled_busy=='busy' and rawequal(cancelled_token,exact_token)
+  and #instrument.phrases==2 and writer.is_temporary(song,instrument,staging)==true,
+  'in-flight cancellation released native render occupancy before its callback')
+last_render('cancelled native render',0,0)
 assert(writer.state()=='idle' and #instrument.phrases==1
   and writer.is_temporary(song,instrument,staging)==false)
 
@@ -248,20 +291,18 @@ writer.release()
 local repeated_status,repeated_identity=writer.state()
 assert(repeated_status=='busy' and rawequal(repeated_identity,release_token),
   'repeated release overwrote the exact operation token')
-assert(writer.is_temporary(song,instrument,released_stage)==true,
-  'release discarded temporary bookkeeping')
-local cancel_accepted,cancel_status=writer.cancel(release_token)
-assert(cancel_accepted==false and type(cancel_status)=='table'
-  and cancel_status.code=='transaction.cancel_pending',
-  'after-release matching cancel did not retain pending render occupancy')
+assert(writer.is_temporary(song,instrument,released_stage)==false,
+  'release retained temporary registry references')
+assert(writer.cancel(release_token)==true,
+  'released matching token was not recognized')
 local still_released,still_released_token=writer.state()
 assert(still_released=='busy' and rawequal(still_released_token,release_token)
-  and writer.is_temporary(song,instrument,released_stage)==true,
+  and writer.is_temporary(song,instrument,released_stage)==false,
   'after-release cancel retired the pending native render')
 last_render('released terminal',0,0)
 assert(writer.state()=='idle' and select('#',writer.state())==2)
-assert(writer.is_temporary(song,instrument,released_stage)==true,
-  'late terminal discarded retained temporary bookkeeping')
+assert(writer.is_temporary(song,instrument,released_stage)==false,
+  'late terminal revived scrubbed temporary bookkeeping')
 local released_index
 for index,item in ipairs(instrument.phrases) do
   if rawequal(item,released_stage) then released_index=index end
@@ -310,21 +351,24 @@ assert(writer.is_temporary(song,instrument,regenerated_staging)==false
   'committed regeneration left temporary bookkeeping')
 assert(#instrument.phrases==1 and writer.state()=='idle')
 
--- Adapter-shaped integration: status notifications must not settle the runtime
--- delivery record; only the writer's terminal complete result may call done,
--- and done must be the adapter's final action because legacy complete() has
--- already cleared writer occupancy before that callback.
+-- Integration through the explicit contract: capture returns a real request
+-- carrying the runtime token, and the sink dispatches it through the matching
+-- facade. Only the writer's single terminal result calls done.
 local real_delivered,real_accepted
 local real_boundary=context.new{
   writer=writer,
-  capture=function(_,request_token) return {token=request_token} end,
+  capture=function(_,request_token)
+    local request,rejection=writer_request.build(song,1,pattern,1,
+      {output_policy='play_once',token=request_token})
+    assert(request,type(rejection)=='table' and rejection.message or rejection)
+    return request
+  end,
   sink=function(request,done)
-    real_accepted=writer.generate(1,function(result)
-      if type(result)=='table' and result.kind=='complete' then
-        real_delivered=result
-        done(result)
-      end
-    end,pattern,1,{output_policy='play_once',token=request.token})
+    local operation=request.kind=='create' and writer.create or writer.regenerate
+    real_accepted=operation(request,function(result)
+      real_delivered=result
+      done(result)
+    end)
     if real_accepted then return true end
     return false,'real writer rejected the request'
   end,
@@ -348,13 +392,23 @@ function shadow_token_a:is_current() return true end
 function shadow_token_b:is_current() return true end
 forced_insert=shadow_phrase
 fail_delete=true
+pause_render=true
 assert(generate(#instrument.phrases+1,{output_policy='play_once',token=shadow_token_a}))
 assert(writer.cancel(shadow_token_a)==true)
+local shadow_first_render=last_render
+assert(shadow_first_render,'first shadow render did not start')
+shadow_first_render('shadow first cancellation',0,0)
+assert(writer.state()=='idle','first shadow cancellation did not settle')
 renoise.song=function() return shadow_song end
 assert(generate(#instrument.phrases+1,{output_policy='play_once',token=shadow_token_b}))
 assert(writer.cancel(shadow_token_b)==true)
 assert(writer.is_temporary(shadow_song,instrument,shadow_phrase)==true,
   'earlier mismatched temporary record shadowed a later valid record')
+local shadow_second_render=last_render
+assert(shadow_second_render,'second shadow render did not start')
+shadow_second_render('shadow second cancellation',0,0)
+assert(writer.state()=='idle','second shadow cancellation did not settle')
+pause_render=false
 fail_delete=false
 forced_insert=nil
 local shadow_index

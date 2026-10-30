@@ -46,20 +46,20 @@ owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
 instrument's global phrase trigger settings. The decoded Start/Repeating
 preview is read-only.
 
-For the instrument selected in Renoise, choosing an existing Destination phrase
-also selects it in Renoise's Phrase Editor. Selecting an ACID-owned phrase in
-the Phrase Editor loads its source and PB Range into ACID. If ACID targets a
-different instrument, Renoise continues to show its currently selected instrument.
-With Live Edit enabled, selecting a saved phrase loads it without regenerating;
-an existing recovered draft is applied automatically, as are subsequent edits.
+The Destination phrase control binds ACID to an exact instrument and phrase.
+Selecting an ACID-owned phrase in Renoise's Phrase Editor loads its source and
+PB Range into ACID. Navigation and restoring a saved draft never generate music.
+Native instrument and phrase changes refresh the choices without inferring
+that a copied phrase belongs to ACID.
 
 Manual Generate and Regenerate remain available. Live Edit optionally applies
 each valid source edit immediately, with one render in flight. Edits made during
 rendering apply automatically as soon as that render finishes. Undo and Redo cover source edits and
 phrase output policy and PB Range. A failed Live Edit remains armed; correct the source or
-use Retry Live Edit. Enabling Live Edit also applies the current source. New
-destinations create an ACID phrase automatically. Foreign, modified or deleted
-phrases are preserved; Live Edit creates a separate owned phrase for the edits.
+use Retry Live Edit. Enabling Live Edit arms subsequent edits without rendering.
+Only an explicitly selected **New Phrase** destination can create a phrase.
+Foreign, modified, deleted and colliding phrases block generation; choose New
+explicitly to create separate output.
 Uncommitted drafts are stored separately from the last committed phrase in
 song tool data and recover after saving and reopening the XRNS. If a new draft
 has an ambiguous destination or persistence fails, it remains available in the
@@ -69,6 +69,31 @@ foreign or modified phrases and uses staged rendering, ownership checks, source 
 rollback before replacing an owned phrase. The current WIP source schema is
 `ACID-PITCH-TIME-1`. With Live Edit off,
 the source is marked dirty until a successful Generate applies the draft.
+
+Native copies with the same ACID ID block every holder of that ID. Select the
+particular copied phrase in Destination phrase and use **Make Independent**.
+The action requires every holder to match the saved committed source and
+unchanged phrase content. It assigns the selected phrase a fresh ID and clones
+its committed source/settings without rendering or changing its music. Other
+holders keep their IDs; remaining collisions stay blocked. Missing source or
+changed content prevents resolution. ACID never automatically adopts an import.
+
+**Recover Draft** lists detached drafts with their captured instrument/phrase
+labels and reason. **Copy to New** restores the selected source and settings to
+the current instrument's New scratch, preserving any occupied scratch as another
+recovery entry. Copying and discarding do not render, even with Live Edit armed.
+The original recovery entry remains until that exact copied revision creates a
+phrase or you explicitly discard it. Detached recovery entries are session-only;
+save or generate wanted drafts before closing the song.
+
+Create needs one free phrase slot; regenerate needs two for staging and a
+verified backup. An in-flight native render retains its slot until its callback
+settles, including after cancellation. If cleanup or rollback cannot be verified,
+ACID blocks further writes and retains recovery evidence. **Revalidate** checks
+consistency without rendering, repairing ownership or deleting recovery objects.
+It requires the native render to have settled and recorded recovery objects to
+be absent. Use native undo or a known-good saved song when consistency cannot be
+established, then explicitly Generate or edit after successful revalidation.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE

@@ -226,15 +226,15 @@ local function preflight(snapshot,output)
   if snapshot.mapping.present and properties.number_of_lines~=output.expected.properties.number_of_lines then
     return nil,"Mapped phrase length changes are unsupported"
   end
-  for line_index=1,512 do
+  for line_index=1,#snapshot.lines do
     local line=snapshot.lines[line_index]
-    for column=1,12 do
+    for column=1,#line.notes do
       if (line_index>properties.number_of_lines or column>properties.visible_note_columns)
           and not line.notes[column].is_empty then
         return nil,"Phrase contains hidden or inactive note data"
       end
     end
-    for column=1,8 do
+    for column=1,#line.effects do
       if (line_index>properties.number_of_lines or column>properties.visible_effect_columns)
           and not line.effects[column].is_empty then
         return nil,"Phrase contains hidden or inactive effect data"
@@ -254,15 +254,15 @@ local function expected_output(snapshot,output)
   for key in pairs(output.expected.properties) do generated[key]=snapshot.properties[key] end
   local same,reason=ownership.compare(generated,output.expected.properties)
   if not same then return nil,"Committed output differs: "..reason end
-  for line_index=1,512 do
+  for line_index=1,#snapshot.lines do
     local actual=snapshot.lines[line_index]
     local expected=output.expected.lines[line_index]
-    for column=1,12 do
+    for column=1,#actual.notes do
       local wanted=expected and expected.note_columns[column] or output.expected.empty_note
       local same,reason=ownership.compare(actual.notes[column],wanted)
       if not same then return nil,"Committed note output differs at line "..line_index.." column "..column..": "..reason end
     end
-    for column=1,8 do
+    for column=1,#actual.effects do
       local wanted=expected and expected.effect_columns[column] or output.expected.empty_effect
       local same,reason=ownership.compare(actual.effects[column],wanted)
       if not same then return nil,"Committed effect output differs at line "..line_index.." column "..column..": "..reason end
@@ -282,7 +282,7 @@ local function compatibility(phrase,committed,capabilities,capacities,options)
   if type(committed)~="table" or
       not policies.valid_output_policy(committed.output_policy) or
       type(committed.pb_range)~="number" then return nil,"Invalid committed source settings" end
-  local baseline,snapshot_error=ownership.snapshot(phrase)
+  local baseline,snapshot_error=ownership.snapshot(phrase,capacities)
   if not baseline then return nil,snapshot_error end
   local status=ownership.status(phrase)
   if status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end

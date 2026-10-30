@@ -2,9 +2,13 @@ dofile('tests/bootstrap.lua')('acid')
 local context=require('runtime.context')
 local ownership=require('renoise.phrase_ownership')
 local validator=require('writers.phrase_validator')
+local limits={max_lines=16,max_note_columns=2,max_effect_columns=1,number_of_lines=16}
+renoise={InstrumentPhrase={MAX_NUMBER_OF_LINES=limits.max_lines,
+ MAX_NUMBER_OF_NOTE_COLUMNS=limits.max_note_columns,
+ MAX_NUMBER_OF_EFFECT_COLUMNS=limits.max_effect_columns}}
 local phrase_fixture=dofile('tests/acid/complete_phrase_fixture.lua')
 local function fixture()
- local source=phrase_fixture();source.name=assert(ownership.make_name(source,1))
+ local source=phrase_fixture(limits);source.name=assert(ownership.make_name(source,1))
  local instrument={name='Sampler',phrases={source}}
  local song={instruments={instrument},selected_instrument=instrument,selected_phrase=source,
   tool_data='',is_undo_redoing=function()return false end}

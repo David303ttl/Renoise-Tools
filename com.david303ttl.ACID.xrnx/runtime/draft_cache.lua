@@ -136,7 +136,7 @@ function M.detach(song,instrument,phrase,reason)
   local entry=assert(copied({token=next_token(),pattern=record.pattern,
     output_policy=record.output_policy,pb_range=record.pb_range,baseline=record.baseline,
     labels=record.labels,reason=type(reason)=="string" and reason or "Draft target changed",
-    session_only=true}))
+    revision=next_token(),session_only=true}))
   state(song,true).recovery[entry.token]=entry
   records[phrase or NEW]={detached=true,reason=entry.reason}
   return entry.token
@@ -164,6 +164,16 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
     verified=nil
     validation_error=validation_error or "Committed draft baseline changed"
   end
+  if previous and verified and matching(phrase,previous.baseline,verified) and
+      sequencer.same_source(previous.pattern,source) and
+      previous.output_policy==output_policy and previous.pb_range==pb_range and
+      (phrase~=nil or not scratch_changed(previous.baseline,verified)) then
+    local saved,save_error=store.write_draft(song,instrument,phrase,source,output_policy,pb_range)
+    if not saved then return nil,save_error,metadata(previous) end
+    previous.persistent=true
+    previous.warning=nil
+    return true,nil,metadata(previous)
+  end
   local revision=next_token()
   local record={pattern=source,output_policy=output_policy,pb_range=pb_range,
     baseline=phrase==nil and previous and previous.baseline or verified,
@@ -183,36 +193,42 @@ end
 
 local function resolve(song,instrument,phrase,options)
   local valid,target_error=valid_target(song,instrument,phrase)
-  if not valid then return nil,target_error end
+  if not valid then return nil,target_error,nil,"invalid" end
   local options_valid,options_error=valid_options(options)
-  if not options_valid then return nil,options_error end
+  if not options_valid then return nil,options_error,nil,"invalid" end
   local verified,err=baseline(song,instrument,phrase,options)
   local records=bucket(song,instrument,false)
   local record=records and records[phrase or NEW]
   if not verified then
     if record then M.detach(song,instrument,phrase,err) end
-    return nil,err
+    return nil,err,nil,"unverified"
   end
-  if record and record.detached then return nil,record.reason,verified end
+  if record and record.detached then return nil,record.reason,verified,"detached" end
   if record then
     if not matching(phrase,record.baseline,verified) then
       M.detach(song,instrument,phrase,"Committed draft baseline changed")
-      return nil,"Committed draft baseline changed",verified
+      return nil,"Committed draft baseline changed",verified,"detached"
     end
     if phrase==nil and scratch_changed(record.baseline,verified) then
       record.persistent=false
       record.warning=scratch_warning(verified)
     end
-    return record,nil,verified
+    return record,nil,verified,"session"
+  end
+  if phrase==nil and not verified.durable then
+    return nil,scratch_warning(verified),verified,"absent"
   end
   local source,policy,pb=store.read_draft(song,instrument,phrase)
-  if not source then return nil,policy,verified end
+  if not source then
+    if policy then return nil,policy,verified,"error" end
+    return nil,policy,verified,"absent"
+  end
   local revision=next_token()
   record={pattern=assert(sequencer.copy_source(source)),output_policy=policy,pb_range=pb,
     baseline=verified,labels=labels(instrument,phrase),token=next_token(),revision=revision,
     persistent=true,recovered=true}
   bucket(song,instrument,true)[phrase or NEW]=record
-  return record,nil,verified
+  return record,nil,verified,"session"
 end
 
 function M.get(song,instrument,phrase,options)
@@ -257,8 +273,8 @@ local function current_capture(song,captured)
 end
 
 function M.capture(song,instrument,phrase,options)
-  local record,err=resolve(song,instrument,phrase,options)
-  if not record then return nil,err or "No current session draft" end
+  local record,err,_,state=resolve(song,instrument,phrase,options)
+  if not record then return nil,err or "No current session draft",state end
   local kind=phrase and "existing" or "new"
   local captured={kind=kind,song=song,instrument=instrument,phrase=phrase,
     token=record.token,revision=record.revision}
@@ -285,7 +301,7 @@ function M.capture(song,instrument,phrase,options)
   return descriptor,function(token,revision)
     return captured.song~=nil and token==captured.token and revision==captured.revision and
       current_capture(captured.song,captured)
-  end
+  end,"session"
 end
 
 -- This guard remains valid after an authorized destination mutation.
@@ -316,24 +332,52 @@ function M.list(song)
   return result
 end
 
-function M.discard(song,token)
+function M.discard(song,token,revision)
+  if type(token)=="table" then
+    if getmetatable(token)~=nil or revision~=nil then return false end
+    revision=token.revision
+    token=token.token
+  end
   local session=state(song,false)
-  if not session or not session.recovery[token] then return false end
+  local entry=session and session.recovery[token]
+  if not entry or (revision~=nil and revision~=entry.revision) then return false end
   session.recovery[token]=nil
   return true
 end
 
-function M.copy_to_new(song,instrument,token,options)
+function M.copy_to_new(song,instrument,selection,revision_or_options,options)
   local valid,target_error=valid_target(song,instrument,nil)
   if not valid then return nil,target_error end
+  local token,revision
+  if type(selection)=="table" then
+    if getmetatable(selection)~=nil or options~=nil then return nil,"Invalid recovery selection" end
+    token,revision=selection.token,selection.revision
+    options=revision_or_options
+  else
+    token=selection
+    if type(revision_or_options)=="number" then
+      revision=revision_or_options
+    else
+      options=revision_or_options
+    end
+  end
+  if not policies.is_integer(token) or token<1 or
+      (revision~=nil and (not policies.is_integer(revision) or revision<1)) then
+    return nil,"Invalid recovery selection"
+  end
   local options_valid,options_error=valid_options(options)
   if not options_valid then return nil,options_error end
   local session=state(song,false)
   local entry=session and session.recovery[token]
-  if not entry then return nil,"Recovery entry is unavailable" end
+  if not entry or (revision~=nil and revision~=entry.revision) then
+    return nil,"Recovery entry is unavailable or has changed"
+  end
   local verified,err=scratch_baseline(song,instrument)
   if not verified then return nil,err end
-  local outgoing=resolve(song,instrument,nil,options)
+  local outgoing,outgoing_error,_,outgoing_state=resolve(song,instrument,nil,options)
+  if not outgoing and outgoing_state=="error" then
+    return nil,outgoing_error or "Cannot preserve the current New Phrase scratch"
+  end
   if outgoing then M.detach(song,instrument,nil,"Scratch preserved before recovery copy") end
   local saved,save_error=M.put(song,instrument,nil,entry.pattern,entry.output_policy,entry.pb_range,options)
   local record=bucket(song,instrument,false)[NEW]

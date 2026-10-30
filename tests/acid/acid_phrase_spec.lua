@@ -1,6 +1,11 @@
 dofile('tests/bootstrap.lua')('acid')
 local output_planner=require('model.output_planner')
 local columns=dofile('tests/acid/phrase_columns.lua')
+
+-- Explicit bounded host capacities for the representative rendered sources.
+local CAPACITY_LINES=32
+local CAPACITY_NOTE_COLUMNS=2
+local CAPACITY_EFFECT_COLUMNS=1
 local function observable()
   local handlers = {}
   return {
@@ -45,7 +50,7 @@ phrase = {script=make_script(),name="", number_of_lines=32,visible_note_columns=
   instrument_column_visible=false,volume_column_visible=true,
   panning_column_visible=false,delay_column_visible=false,
   sample_effects_column_visible=false,mapping=nil,cells={}}
-for i=1,512 do
+for i=1,CAPACITY_LINES do
   phrase.cells[i]={note_value=121,instrument_value=255,volume_value=255,
     panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
 end
@@ -72,7 +77,7 @@ function phrase:copy_from(other)
   self.sample_effects_column_visible=other.sample_effects_column_visible
   self.name=other.name
   self.cells={}
-  for i=1,512 do
+  for i=1,CAPACITY_LINES do
     self.cells[i]={}
     for k,v in pairs(other.cells[i] or {}) do self.cells[i][k]=v end
   end
@@ -89,7 +94,7 @@ function instrument:insert_phrase_at(i)
     instrument_column_visible=false,volume_column_visible=true,
     panning_column_visible=false,delay_column_visible=false,
     sample_effects_column_visible=false,mapping=nil,cells={}}
-  for j=1,512 do
+  for j=1,CAPACITY_LINES do
     temp.cells[j]={note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
   end
@@ -115,7 +120,7 @@ function instrument:insert_phrase_at(i)
     self.panning_column_visible=other.panning_column_visible
     self.delay_column_visible=other.delay_column_visible
     self.sample_effects_column_visible=other.sample_effects_column_visible
-    for j=1,512 do
+    for j=1,CAPACITY_LINES do
       local from=other.cells[j] or {}
       self.cells[j]={}
       for k,v in pairs(from) do self.cells[j][k]=v end
@@ -131,7 +136,10 @@ end
 local song={instruments={instrument},transport={timing_model=2}}
 _G.renoise={
   Transport={TIMING_MODEL_LPB=2,TIMING_MODEL_SPEED=1},
-  InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+  InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1,
+    MAX_NUMBER_OF_LINES=CAPACITY_LINES,
+    MAX_NUMBER_OF_NOTE_COLUMNS=CAPACITY_NOTE_COLUMNS,
+    MAX_NUMBER_OF_EFFECT_COLUMNS=CAPACITY_EFFECT_COLUMNS},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function()return song end,
   tool=function()return {app_idle_observable=idle} end
@@ -165,7 +173,10 @@ local function generate(callback,pattern,target,options)
   pattern=pattern or source_fixture()
   options=options or {}
   options.output_policy=options.output_policy or "play_once"
-  return writer_request.generate(writer,1,callback,pattern,target,options)
+  local request,rejection=writer_request.build(song,1,pattern,target,options)
+  if not request then return false,rejection end
+  local operation=request.kind=="create" and writer.create or writer.regenerate
+  return operation(request,callback)
 end
 local ok,err=generate(function(value)messages[#messages+1]=value end)
 assert(ok,err)
@@ -603,8 +614,11 @@ local release_count=#instrument.phrases
 local release_source=song.tool_data
 assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
 idle:fire()
+assert(writer.state()=='busy','release test writer lost occupancy before release')
+assert(released_callback,'release test native render callback missing')
 local retained=instrument.phrases[#instrument.phrases]
 writer.release()
+assert(writer.state()=='busy','release did not retain the in-flight native render slot')
 local released_messages=#messages
 local deleted=instrument.delete_phrase_at
 instrument.delete_phrase_at=function()error("released instrument accessed")end
@@ -612,9 +626,14 @@ for _=1,600 do idle:fire() end
 assert(not generate(function()end,source_fixture(),1))
 released_callback(nil,8,0)
 released_callback(nil,8,0)
-assert(#messages==released_messages+1 and messages[#messages].status=="cancelled")
-assert(messages[#messages].phrase==nil and song.tool_data==release_source)
-assert(#instrument.phrases==release_count+1 and instrument.phrases[#instrument.phrases]==retained)
+assert(#messages==released_messages,'released render delivered a stale terminal result')
+assert(writer.state()=='idle','late release callback did not retire the tombstone')
+local released_diagnostic=writer.diagnostic()
+assert(released_diagnostic and released_diagnostic.code=='transaction.released',
+  'released render did not retain its diagnostic evidence')
+assert(song.tool_data==release_source)
+assert(#instrument.phrases==release_count+1 and instrument.phrases[#instrument.phrases]==retained,
+  'released staging material was not retained for recovery')
 instrument.delete_phrase_at=deleted
 instrument:delete_phrase_at(#instrument.phrases)
 script.render_to_pattern=base_render

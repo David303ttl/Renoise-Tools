@@ -8,7 +8,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $pwsh = Get-Command -Name 'pwsh' -ErrorAction Stop
 $checks = @(
-    [pscustomobject]@{ Name = 'Lua interpreter policy'; Script = 'tests/lua_interpreter_spec.ps1'; Arguments = @() }
+    [pscustomobject]@{ Name = 'Lua interpreter policy'; Script = 'tests/lua_interpreter_spec.ps1'; Arguments = @('-LuaCommand', $LuaCommand) }
     [pscustomobject]@{ Name = 'Lua specs'; Script = 'scripts/run_tests.ps1'; Arguments = @('-LuaCommand', $LuaCommand) }
     [pscustomobject]@{ Name = 'Host preflight'; Script = 'scripts/test_host_preflight.ps1'; Arguments = @() }
     [pscustomobject]@{ Name = 'Renoise runner'; Script = 'tests/renoise/runner_spec.ps1'; Arguments = @() }
@@ -29,7 +29,7 @@ foreach ($check in $checks) {
 }
 
 if ($failures.Count -gt 0) {
-    Write-Error ("Offline checks failed: " + ($failures -join ', '))
+    Write-Error ("Offline checks failed: " + ($failures -join ', ')) -ErrorAction Continue
     exit 1
 }
 

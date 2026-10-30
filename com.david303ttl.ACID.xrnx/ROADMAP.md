@@ -5,7 +5,7 @@
 **Integration target:** `develop`
 **Document status:** implementation plan; M4 timing contract implementation-ready; M3.5/M3.6 audio acceptance and TB-303 hardware fidelity remain separately evidence-gated  
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
-**Updated:** 2026-10-28
+**Updated:** 2026-10-30
 
 ## 1. Product objective and scope
 
@@ -636,7 +636,7 @@ Phrase timing contract is LPB 16/12 with four lines per source step and protecte
 | Current max-32 Straight/Triplet playback | Pending: LPB 16/12 and four lines per step |
 | Play Once and Repeat boundaries | Pending: N=32 lengths, loop seam and exclusive-end sentinel |
 | Targeted plugin PB attack/reset alignment | Pending after conditional-reset/layout change |
-| Local verification | Pass: 32 ACID specs, oracle controls, 25-file ACID package and archive licenses |
+| Local verification | Historical M4.6 pass: 32 ACID specs, oracle controls, 25-file ACID package and archive licenses. Current cutover evidence is recorded under M4.7. |
 
 Articulation resolution is layout-driven through planning and validation.
 Pitch-bend center reset is conditional on whether the channel is known centered;
@@ -649,36 +649,28 @@ defect.
 
 ### M4.7 — Instrument/phrase synchronization and regeneration safety (P0)
 
-Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). Its fixed policies are normative. Complete each gate before its dependent work; failed evidence returns to the responsible contract.
+Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). Its fixed policies are normative. The atomic cutover landed at `6413e5f`; Gates 2–9 remain independent acceptance for the implemented runtime, writer and scheduler, and failed evidence returns to the responsible contract.
 
 - [x] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility; findings incorporated into the playbook contracts.
 - [x] Shared validation/store contracts and complete field-preservation policy; [Gate 1 verification](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#18--close-gate-1-and-hand-contracts-to-runtime-integration).
 - [x] **Step 1A complete:** dependency direction/cycle removal, single musical policies and planner contracts, canonical GUI source/projection, lossless store codec cleanup, confirmed dead-code removal; [Gate 1A verification](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-1a--post-gate-1-architecture-and-technical-debt-cutover).
-- [ ] [Real-Renoise tests — T0.1–T0.8](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#real-renoise-tests): T0.1–T0.4 complete, including loaded-instance reload, concurrent-instance checks and timeout/disconnection recovery. Remaining work: independent fixtures/snapshots, scenario isolation, keyboard E2E, verification integration and coverage handoff. Develop tests alongside runtime changes; available suites and normal tool use remain independent of T0 completion.
-- [ ] Runtime context and GUI state cutover through strict [Step 2 substeps 2.1–2.9](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-2--centralize-runtime-state-transitions-and-operation-guards): single writer occupancy authority, raw identity, no ownership exclusions, frozen guards, blocker/release safety and per-substep evidence. **2.1–2.7 complete:** private interface boundary, read-only writer queries, document/session lifetime seams, revocable delivery records and local closure-scrubbing/isolation checks; object inventory, verified classification and copied baseline projection; exclusion rejection, synchronous mutation/reconciliation, integrity blockers, transition revisions, frozen requests and checkpoint guards; GUI cutover and 2.8–2.9 remain pending; focused native checks develop alongside the owning changes. Add focused real-DAW regressions at the owning steps.
-- [ ] Explicit create/regenerate writer and one cancellation/completion handshake; decompose existing finalize into guarded phases and replace unjustified writer/capacity literals without changing failure safety.
-- [ ] Explicit Make Independent for matching valid collision groups; no automatic re-keying or source-less adoption.
-- [ ] Draft precedence, recovery chooser, read-only revalidation, and one manual/Live Edit request pipeline; unify late-create draft movement, exact-revision clearing and armed state.
-- [ ] Native observers, internal mutation reconciliation, and release/late-callback handling.
-- [ ] Remove competing paths and recheck Gate 1A architecture/policy/codec invariants after runtime integration; pass the then-current focused suites, repository suites, and package checks.
-- [ ] Pass native acceptance A–E, including field preservation, drafts, cancellation, copies, and undo.
-- [ ] Final documentation/review and focused commit; keep M4 open until acceptance passes.
+- [x] [Real-Renoise tests — T0.1–T0.8](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#real-renoise-tests): harness, independent fixtures/isolation, keyboard E2E host acceptance, verification integration and coverage handoff complete; the optional Keyboard post-policy rerun remains pending and does not block available suites or runtime work.
+- [x] Runtime context and GUI state cutover through [Step 2 implementation and closeout 2.1–2.9](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-2--centralize-runtime-state-transitions-and-operation-guards): **Gate 2 complete.** One runtime authority/scheduler, explicit create/regenerate, no legacy path; current full suites, packaging, hygiene and independent final correction review pass. Exact totals, timings and case mapping are in playbook 2.9. Gates 3–9 remain independent acceptance.
+- [ ] Explicit create/regenerate writer and one cancellation/completion handshake; **implemented with the cutover and safety follow-up locally verified; Gate 3 remains open** for its independent complete writer acceptance matrix. Capacity, verified backup/rollback, checked cleanup, committed-baseline and release corrections plus migrated regressions passed earlier; current full-suite rerun is pending.
+- [ ] Explicit Make Independent for matching valid collision groups; no automatic re-keying or source-less adoption. **Implemented and covered by local runtime/GUI cases; native Make Independent passed in Renoise 3.5.4. Gate 4 remains open** for independent acceptance and undo/redo evidence.
+- [ ] Draft precedence, recovery chooser, read-only revalidation, and one manual/Live Edit request pipeline; **implemented, wired and covered by exact-revision local recovery cases; native draft recovery passed in Renoise 3.5.4. Gate 5 remains open** for independent complete acceptance and undo/redo/cold-process persistence evidence.
+- [ ] Native observers, internal mutation reconciliation, and release/late-callback handling are implemented with local lifecycle and inventory coverage. **Gate 6 remains open** for final independent/native lifecycle evidence.
+- [ ] Complete the 36-case integration closeout; **Gate 7 remains open** pending final integrated local verification and independent review. See playbook 2.9 and `tests/acid/runtime_acceptance.md` for case evidence and pending work.
+- [ ] Pass native acceptance A–E, including field preservation, drafts, cancellation, copies, and undo. Draft recovery and Make Independent have passed targeted checks in Renoise 3.5.4; **Gate 8 remains open** for the remaining A–E criteria, including undo/redo and cold-process save/reopen.
+- [ ] Final M4 documentation/review and release closeout after native acceptance; the Gate 2 follow-up commit does not satisfy this independent gate. **Gate 9 open.**
 
-Gate 0 repository evidence was rechecked on 2026-10-29: pinned SDK setup
-succeeded, definitions and offline docs were inspected, runtime/storage call
-sites were inventoried, and all 34 ACID specs passed. The
-[prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record)
-contains the inventory, native observations and tested unsupported-script
-rejection predicate. **Steps 0–1A are complete**; the playbook's Gate 1 table
-maps the shared contracts to passing tests and native helper checks. Runtime
-integration and native acceptance remain open.
-Native follow-up in Renoise 3.5.4 / API 6.2 found that undo can restore old
-notes/seal while retaining the newer source record; the existing loader accepts
-the mismatch. The playbook therefore
-requires independent source/output compatibility validation, including after
-reload, or blocked regeneration with explicit source recovery to New. Valid
-seal plus valid source alone cannot authorize writing. Steps 1/3/4/6 implement
-and test these requirements; Step 8 verifies the finished native behavior.
+**Gate 0 / Steps 0–1A:** complete. The pinned API review, initial 34-spec
+baseline, repository inventory and native feasibility findings are recorded in
+the [prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record).
+The native undo/source mismatch found there is addressed by the independent
+source/output compatibility contract; full native undo and cold-reopen
+acceptance remain open under Gate 8. Current M4.7 implementation and test
+status is tracked above and in playbook 2.9.
 
 - **Live Edit scheduling:** real edits dispatch immediately through one serialized request pipeline, retaining only the latest pending snapshot. Arming, no-op edits, navigation and restoration enqueue nothing. A canceled in-flight render retains occupancy until its terminal callback; stale or blocked completion cannot automatically authorize another write. No debounce timer.
 - **Live inventory:** newly added, deleted, renamed and reordered Renoise instruments appear in ACID without reopening. Track native selected instrument and phrase using supported API 6.2 observables and a guarded idle update. Detach notifiers on close/song change.

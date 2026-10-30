@@ -7,6 +7,11 @@ local HASH_MULTIPLIER = 33
 local HASH_MODULUS = 2147483647
 local HASH_FIELD_SEPARATOR = 124
 local MAX_PHRASE_ID = 2147483647
+-- API 6.2 values used only when no host phrase API is available, such as
+-- detached snapshot checks. A live host always supplies the actual caps.
+local PINNED_MAX_LINES = 512
+local PINNED_NOTE_COLUMNS = 12
+local PINNED_EFFECT_COLUMNS = 8
 local function hash(phrase)
   local acc=HASH_INITIAL
   local function feed(value)
@@ -191,11 +196,71 @@ local function fields(object,names,kind)
   return result
 end
 
-local function capture(phrase)
+local function positive_integer(input)
+  return type(input)=="number" and input%1==0 and input>0
+end
+
+local function nonnegative_integer(input)
+  return type(input)=="number" and input%1==0 and input>=0
+end
+
+local function valid_capacities(max_lines,note_columns,effect_columns)
+  return positive_integer(max_lines) and positive_integer(note_columns) and
+    nonnegative_integer(effect_columns)
+end
+
+-- Callers with a validated workspace pass its capacities so bounded mocks do
+-- not inspect native maximums. Without a host, detached checks use the pinned
+-- API 6.2 phrase bounds.
+local function snapshot_capacities(limits)
+  if limits~=nil then
+    if type(limits)~="table" or getmetatable(limits)~=nil then
+      return nil,"Invalid phrase snapshot capacities"
+    end
+    local max_lines=rawget(limits,"max_lines")
+    local note_columns=rawget(limits,"max_note_columns")
+    local effect_columns=rawget(limits,"max_effect_columns")
+    if not valid_capacities(max_lines,note_columns,effect_columns) then
+      return nil,"Invalid phrase snapshot capacities"
+    end
+    return {max_lines=max_lines,note_columns=note_columns,effect_columns=effect_columns}
+  end
+  local api_ok,api=pcall(function()
+    local host=rawget(_G,"renoise")
+    return host and host.InstrumentPhrase
+  end)
+  if not api_ok or api==nil then
+    return {max_lines=PINNED_MAX_LINES,note_columns=PINNED_NOTE_COLUMNS,
+      effect_columns=PINNED_EFFECT_COLUMNS}
+  end
+  local function read(key)
+    local ok,value=pcall(function()return api[key]end)
+    if not ok then return nil,false end
+    return value,true
+  end
+  local max_lines,lines_ok=read("MAX_NUMBER_OF_LINES")
+  local note_columns,notes_ok=read("MAX_NUMBER_OF_NOTE_COLUMNS")
+  local effect_columns,effects_ok=read("MAX_NUMBER_OF_EFFECT_COLUMNS")
+  if not lines_ok or not notes_ok or not effects_ok then
+    return nil,"Cannot inspect native phrase snapshot capacities"
+  end
+  if max_lines==nil then max_lines=PINNED_MAX_LINES end
+  if note_columns==nil then note_columns=PINNED_NOTE_COLUMNS end
+  if effect_columns==nil then effect_columns=PINNED_EFFECT_COLUMNS end
+  if not valid_capacities(max_lines,note_columns,effect_columns) then
+    return nil,"Native phrase snapshot capacities are invalid"
+  end
+  return {max_lines=max_lines,note_columns=note_columns,effect_columns=effect_columns}
+end
+
+local function capture(phrase,capacities)
   local result={name=value(phrase,"name","string"),properties={},columns={},lines={}}
   for _,key in ipairs(numeric_properties) do result.properties[key]=value(phrase,key,"number") end
   for _,key in ipairs(boolean_properties) do result.properties[key]=value(phrase,key,"boolean") end
-  for column=1,12 do
+  if result.properties.number_of_lines>capacities.max_lines then
+    error("phrase length exceeds snapshot capacity",0)
+  end
+  for column=1,capacities.note_columns do
     local name,muted=phrase:column_name(column),phrase:column_is_muted(column)
     if type(name)~="string" or type(muted)~="boolean" then error("unreadable column metadata",0) end
     result.columns[column]={name=name,muted=muted}
@@ -220,15 +285,15 @@ local function capture(phrase)
     local parameter=parameters[index]
     result.script.parameters[index]={name=value(parameter,"name","string"),value=value(parameter,"value","number")}
   end
-  for line_index=1,512 do
+  for line_index=1,capacities.max_lines do
     local line=phrase:line(line_index)
     local captured={notes={},effects={}}
-    for column=1,12 do
+    for column=1,capacities.note_columns do
       local cell=line:note_column(column)
       captured.notes[column]=fields(cell,note_fields,"number")
       captured.notes[column].is_empty=value(cell,"is_empty","boolean")
     end
-    for column=1,8 do
+    for column=1,capacities.effect_columns do
       local cell=line:effect_column(column)
       captured.effects[column]=fields(cell,effect_fields,"number")
       captured.effects[column].is_empty=value(cell,"is_empty","boolean")
@@ -239,8 +304,12 @@ local function capture(phrase)
 end
 
 -- Snapshots contain detached values, including hidden columns and inactive lines.
-function M.snapshot(phrase)
-  local ok,result=pcall(capture,phrase)
+-- Optional limits are a validated workspace {max_lines,max_note_columns,
+-- max_effect_columns}; omitted limits use the live host phrase API when present.
+function M.snapshot(phrase,limits)
+  local capacities,capacity_error=snapshot_capacities(limits)
+  if not capacities then return nil,capacity_error end
+  local ok,result=pcall(capture,phrase,capacities)
   if not ok then return nil,"Cannot inspect complete phrase: "..tostring(result) end
   return result
 end
@@ -318,6 +387,26 @@ function M.compare(left,right,policy)
   end
   local changed=difference(left,right,"",allowed)
   if changed then return false,"Phrase differs at "..changed end
+  return true
+end
+
+-- Native destination-to-backup copies omit phrase mappings. Verify everything
+-- else exactly, require the backup mapping to be absent, and compare the
+-- destination's own mapping separately after replacement.
+function M.compare_backup(destination, backup)
+  if type(destination) ~= "table" or type(backup) ~= "table" then
+    return false, "Missing phrase snapshot"
+  end
+  if type(backup.mapping) ~= "table" or backup.mapping.present ~= false then
+    return false, "Backup unexpectedly contains a phrase mapping"
+  end
+  local function allowed(path)
+    if path == "name" then return true end
+    if path == "mapping" or path:match("^mapping%.") then return true end
+    return false
+  end
+  local changed = difference(destination, backup, "", allowed)
+  if changed then return false, "Phrase differs at " .. changed end
   return true
 end
 

@@ -2,15 +2,15 @@
 
 **Branch:** `feature/hardening4`
 
-**Execution:** Steps 0, 1, 1A, then 2–9 are dependency-ordered. Finish each gate before starting the next; failed evidence sends work back to the responsible contract, then through affected gates again. Tests are added with the behavior they verify, not deferred to Step 7. Step 0 includes a small native feasibility gate before runtime changes; Step 8 remains full native acceptance. The production cutover is atomic: Step 2 freezes runtime contracts without wiring the GUI; Step 3 establishes the explicit writer contract; Step 5 proves the single runtime scheduler and then swaps the GUI to it in one change. No step adds a legacy adapter, a second scheduler, an old callback path, a feature flag, dual dispatch, or a compatibility API. Saved-song formats remain unchanged.
+**Execution:** Steps 0–1A completed in order. The atomic production cutover at `6413e5f` implemented the runtime/writer/scheduler path from Steps 2/3/5; Gates 2–9 are independent acceptance gates, not a requirement to restore an obsolete serial migration. Failed evidence sends work back to the responsible contract and affected gates. Tests accompany their behavior rather than waiting for Step 7. Step 0 supplied early native feasibility; Step 8 remains full native acceptance. One runtime authority/scheduler dispatches directly to the explicit writer; the legacy scheduler, adapter, old writer entry points and unwired GUI paths are gone. No step adds a legacy adapter, second scheduler, old callback path, feature flag, dual dispatch or compatibility API. Saved-song formats remain unchanged.
 
-**Final status:** M4 stays OPEN until native Renoise acceptance passes.
+**Final status:** M4 stays OPEN until all remaining independent gates, including native Renoise acceptance, pass.
 
 **Scope:** Post-Gate-1 dependency/policy/duplication cleanup plus runtime binding, writer safety, native synchronization, Live Edit, explicit copied-ID resolution, and source/draft recovery. Preserve sequencer/compiler semantics, timing, articulation, current persistence formats, manifest versions, and M5 layout. Refactor existing owners in place; do not introduce shadow state, wrapper APIs, or a transitional production path.
 
 ## Fixed decisions and responsibility boundaries
 
-### Current implementation gaps
+### Prerequisite Findings
 
 Earlier audit on 2026-10-29 recorded a clean working tree. The Step 0 rerun on
 the same date inspected `feature/hardening4` at `a2c25d4` (two commits ahead
@@ -34,7 +34,11 @@ requires independent compatibility validation or blocked regeneration, with
 implementation and regression coverage assigned to Steps 1, 3 and 6 and
 native acceptance assigned to Step 8.
 
-| Current gap | Responsible gate / existing code |
+The following is the historical prerequisite inventory, including module paths
+that the clean cutover subsequently removed. Current implementation and verified
+corrections are recorded in 2.8–2.9; the responsibility table below is normative.
+
+| Prerequisite finding | Responsible gate / original code |
 | --- | --- |
 | Arming already makes no render request and GUI tests assert it; preserve this through runtime cutover and prevent generation on guarded source/draft recovery | Steps 2/5: `gui.lua`, `tests/acid/acid_gui_views_spec.lua` |
 | Durable draft reads/writes/clears use a sealed ID without requiring a unique live holder; Make Independent is absent | Steps 1/4/5: `model/draft_cache.lua`, `model/pattern_store.lua` |
@@ -52,13 +56,13 @@ a candidate for test-helper relocation or removal after checking its assertions,
 rather than assuming a runtime responsibility. Neither cleanup satisfies a
 write-safety gate.
 
-This plan retains the existing asynchronous phrase-script renderer, staging/backup transaction, and song-local source/draft store, refactored in place. The production cutover is one change after the writer contract and single scheduler are tested; no legacy adapter, parallel scheduler, old callback path, or compatibility API is introduced. It does not require a new renderer, persistence layer, event bus, general transaction framework, or controller hierarchy.
+This plan retains the existing asynchronous phrase-script renderer, staging/backup transaction, and song-local source/draft store, refactored in place. The atomic production cutover landed at `6413e5f` as one change; it joined the explicit writer contract and single scheduler to the GUI and deleted the legacy paths. No legacy adapter, parallel scheduler, old callback path, or compatibility API exists to preserve. It does not require a new renderer, persistence layer, event bus, general transaction framework, or controller hierarchy.
 
 | Responsibility | Single owner / existing home |
 |---|---|
 | Active target, session/revision checks, native reconciliation | One runtime context used by `gui.lua`; consolidate existing state, adding a small private module only if needed |
 | User controls and presentation | `gui.lua`; widgets dispatch user actions and render state |
-| Serialized generation and cancellation | One runtime scheduler (a single queue owned by the runtime context; a private helper is allowed only if it remains the sole queue) and the writer's final job/terminal contract. The `model.live_regen` scheduling and arming path is deleted at cutover, never wrapped |
+| Serialized generation and cancellation | One runtime scheduler (a single queue owned by the runtime context; a private helper is allowed only if it remains the sole queue) and the writer's final job/terminal contract. The `model.live_regen` scheduling and arming path was deleted at the `6413e5f` cutover, never wrapped |
 | Phrase mutation, staging, backup, verification, cleanup | `writers.phrase_writer`; two explicit musical operations sharing private helpers |
 | Ownership parsing, seal, complete phrase comparison | `renoise.phrase_ownership`; no second ownership implementation |
 | Canonical source/settings and durable draft serialization | `renoise.pattern_store`; preserve its format and guarded commit/restore helpers |
@@ -432,7 +436,7 @@ an occupied outgoing scratch as another entry. Only successful create of that
 exact copied revision or explicit discard removes the original. Dialog close
 retains session drafts; document release drops old-song associations/recovery
 with the volatile-loss warning. Reload restores only safe durable records.
-GUI actions and widgets remain Step 5's responsibility.
+GUI actions and widgets were Step 5's responsibility; the `6413e5f` cutover wired them.
 
 **Complete when:** tests prove precedence, current-baseline hydration of durable
 recovery, detachment on baseline changes, collision isolation, copy/discard
@@ -531,7 +535,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 | `draft_cache.close` | None; GUI releases drafts with `drafts.release(song)`. | `acid_draft_recovery_spec`; remove in 1A.8; it is a no-op. |
 | `draft_cache.capture/is_current/compare_and_clear` | None yet. | `acid_draft_recovery_spec`; retain for Step 5's exact-revision completion guard or a proven equivalent. |
 | `draft_cache.list/discard/copy_to_new/restore` | None yet. | `acid_draft_recovery_spec`; `list` is also used by `acid_repeat_integration_spec`; retain until Step 5 wires and verifies Recover Draft, Copy to New and discard. |
-| `live_regen.armed` | Set and returned internally; GUI reads `state().enabled`. | `acid_live_regen_spec`; delete with the legacy scheduler at the Step 5 cutover after the GUI consumes the runtime arming authority. No derived mirror remains. |
+| `live_regen.armed` | Set and returned internally; GUI reads `state().enabled`. | `acid_live_regen_spec`; deleted with the legacy scheduler at the `6413e5f` cutover after the GUI consumed the runtime arming authority. No derived mirror remains. |
 
 `gate_writer.plan` is used only by `acid_articulation_resolution_spec.lua`, `acid_gate_operations_spec.lua` and an alias assertion in `acid_output_planner_spec.lua`; redirect these checks to `output_planner.plan_gates` and remove the alias in 1A.3. `gate_writer.location` has no callers; remove its export in 1A.3. Keep the function-local `location` helper used for writer diagnostics.
 
@@ -597,7 +601,7 @@ is not native playback, lifecycle or undo acceptance; those remain later gates.
 
 1. Delete `pattrns_writer.generate` if the 1A.1 caller audit confirms no production use; retain `emit`. Remove `memory_status`, `sequencer.describe`, `draft_cache.close` and unused exports only where test assertions can be redirected to the canonical state/behavior. Do not delete legitimate regression coverage merely to remove a module.
 2. **Do not remove** `draft_cache.capture/is_current/compare_and_clear`: Step 1 hardened exact-revision clearing, and Step 5 must use or deliberately subsume it in the one completion path. **Do not remove** `list/discard/copy_to_new/restore` before Step 5 wires Recover Draft and proves occupied-scratch and persistence guards. The absence of a current GUI caller is not proof these contracts are obsolete.
-3. Defer `live_regen.armed` to Step 5's atomic cutover. Delete it with the legacy scheduler and use the runtime arming authority directly; no derived mirror remains. Inventory remaining test-only helpers and delete only proven dead paths; no compatibility stubs for internal APIs.
+3. `live_regen.armed` was deferred to Step 5's atomic cutover, then deleted with the legacy scheduler at `6413e5f`; the GUI uses the runtime arming authority directly and no derived mirror remains. Inventory remaining test-only helpers and delete only proven dead paths; no compatibility stubs for internal APIs.
 
 **Check:** source searches find no orphan imports, function references or fake obsolete test paths. Replaced tests still prove the original safety and musical behavior.
 
@@ -619,14 +623,14 @@ Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
 
 **Gate 1A: complete.** The dependency graph and shared policy checks pass; obsolete imports and APIs are absent; GUI source projection and store codec have single owners; recovery protections remain. Focused, ACID, repository and packaging checks pass. Step 2 may begin. Native lifecycle, undo and musical acceptance remain Step 8.
 
-**Carry forward without premature rewriting:** Step 2 owns the operation token, runtime blocker state and the single scheduler contract, and freezes the runtime seam without wiring the GUI. Step 3 decomposes `phrase_writer.finalize` in place into explicit prepare/stage/render/precommit/commit/rollback/cleanup/terminal helpers around **one** job and publishes the explicit create/regenerate/terminal contract; it replaces the `500` idle diagnostics, `+8` event slack and `126/512` fallback literals with named API-derived or justified bounds and uses passed capacities in validator/snapshot loops without weakening preflight. Step 4 implements the metadata-only resolution against that contract. Step 5 first proves the single scheduler, then performs one atomic GUI cutover: replace the duplicated GUI late-create draft-movement blocks with one successful-commit handler, consume exact-revision capture guards, delete redundant arming storage, route manual Generate and Live Edit through the one scheduler, and delete the legacy `live_regen` scheduling path, old writer entry point/status callbacks and boolean-cancel shortcut. Step 6 owns observer/lifecycle attachment after cutover. Step 7 verifies no leftovers or adapters and enforces the final graph; do not migrate these flows into parallel Step 1A implementations.
+**Carry forward from Gate 1A (historical handoff):** Step 2 owned the operation token, runtime blocker state and the single scheduler contract, and froze the runtime seam before GUI wiring. Step 3 decomposed `phrase_writer.finalize` in place into explicit prepare/stage/render/precommit/commit/rollback/cleanup/terminal helpers around **one** job and published the explicit create/regenerate/terminal contract; it replaced the `500` idle diagnostics, `+8` event slack and `126/512` fallback literals with named API-derived or justified bounds and uses passed capacities in validator/snapshot loops without weakening preflight. Step 4 implements the metadata-only resolution against that contract. The `6413e5f` cutover performed the one atomic GUI change: it replaced the duplicated GUI late-create draft-movement blocks with one successful-commit handler, consumed exact-revision capture guards, deleted redundant arming storage, routed manual Generate and Live Edit through the one scheduler, and deleted the legacy `live_regen` scheduling path, old writer entry point/status callbacks and boolean-cancel shortcut. Step 6 owns observer/lifecycle attachment after cutover. Step 7 verifies no leftovers or adapters and enforces the final graph; do not migrate these flows into parallel Step 1A implementations.
 
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
-**Status:** 2.1–2.7 complete. The 2026-10-30 clean-cutover implementation combines 2.8 with the prerequisite writer and scheduling changes from Steps 3/5, rather than introducing a temporary adapter. Production wiring is implemented; Gate 2 closeout, full regression verification and native acceptance remain open. See the implementation record under 2.8.
+**Status:** Steps 2.1–2.9 and Gate 2 complete (2026-10-30). The atomic cutover landed at `6413e5f`; follow-up safety corrections, current full-suite/package results and independent final correction review are recorded in 2.8–2.9. Gates 3–9 remain independent acceptance.
 
-**Execution order:** 2.1–2.7 (complete) -> 2.8–2.9 in order. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels. Do not add a production adapter, a mutable derived mirror of runtime authority, or duplicate dispatch while the existing GUI remains unwired.
+**Execution order:** 2.1–2.8 implemented; 2.9 consolidates Gate 2 evidence. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not record a gate pass from partial or focused runs. Use behavior-based module/test names, never these planning labels. The cutover has no production adapter, mutable derived mirror of runtime authority, duplicate dispatch, or unwired GUI path to preserve.
 
 ### 2.1 — Freeze ownership, interfaces, and the cutover boundary
 
@@ -636,18 +640,19 @@ correction verification pass. This is not Gate 2 or native writer acceptance.
 
 **Baseline (2026-10-29):** `55f3414`, clean working tree; a fresh
 `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` run passed all 45 specs.
-Implementation is limited to the interface boundary below; real context lifetime,
-authorization capture, GUI cutover and native writer reservation remain later gates.
+Implementation was limited to the interface boundary below; real context
+lifetime, authorization capture and native writer reservation remained later
+gates. The GUI cutover later landed at `6413e5f`.
 
-**Boundary audit:** existing manual and Live Edit token construction and the
-index-based New/append fallback are legacy behavior scheduled for deletion at the
-Step 5 cutover, not interfaces to preserve or adapt. The legacy writer may complete
-synchronously before returning a failure value, clears its slot before terminal
-delivery finishes, and has boolean-returning cancellation without a consistent
-terminal channel. The strict sink must not bind to that API. Step 3 replaces the
-legacy shapes with the explicit writer contract; Step 5 binds the production sink
-directly to it. No adapter, normalizing wrapper, or dual acceptance path is built
-in any step.
+**Boundary audit (historical):** existing manual and Live Edit token construction
+and the index-based New/append fallback were legacy behavior deleted at the
+`6413e5f` cutover, not interfaces to preserve or adapt. The legacy writer could
+complete synchronously before returning a failure value, cleared its slot before
+terminal delivery finished, and had boolean-returning cancellation without a
+consistent terminal channel. The strict sink must not bind to that API. The
+cutover replaced the legacy shapes with the explicit writer contract and bound the
+production sink directly to it. No adapter, normalizing wrapper, or dual
+acceptance path was built in any step.
 
 **Contract and lifetime obligations:** a strict sink calls `done` only after its
 terminal cleanup/evidence work and as its final host/GUI-observable side effect;
@@ -676,9 +681,9 @@ Keep one small private `runtime.context` module outside the dialog lifetime. It 
 | Integrity evidence | Inject `record_blocker(token, evidence)` into the writer request. It verifies the matching live epoch/job, copies scalar/value evidence and retains exact recovery refs only while that song is current. Writer records evidence before its terminal result; stale GUI delivery cannot suppress it. |
 | Admission and completion | Runtime's single `request_generation(trigger)` performs eligibility/capture then passes the request to a replaceable sink. Sink rejection is `false, reason` with no completion; acceptance is `true` with exactly one terminal `done(result)`, possibly before return. Install the delivery record before invoking the sink. A thrown call after possible acceptance is not proof of rejection: consult occupancy and fail closed. |
 
-`create(request, done)` and `regenerate(request, done)` are Step 3's production facades and the only musical write interface after Step 5. A test sink implements their handshake here. Implement and test the minimal production read-only `writer.state()` / `writer.is_temporary(...)` queries over existing private job refs in this substep, before 2.3 consumes them; they expose no host refs or registry mutators. The interface-conformance harness uses fake tokens/records until 2.2/2.7 supply real context requests. 2.8 freezes the runtime-side interface and proves it against the specified create/regenerate/terminal contract; it installs no production sink. Step 3 implements that contract and fixes slot acquisition before insertion, cleanup/terminal ordering and cancellation retirement, removing the legacy boolean-cancel shortcut. Step 5 binds the one scheduler directly to those facades, deletes the legacy call path, and performs the GUI cutover. No temporary adapter, result translation or occupancy mirror exists at any point; while a legacy slot would be acquired after insertion, the installed delivery record may only prevent synchronous reentrant dispatch in tests, not become a second occupancy owner. Do not claim before-insertion native reservation at Gate 2.
+`create(request, done)` and `regenerate(request, done)` are the production facades and the only musical write interface. A test sink implemented their handshake here. Implement and test the minimal production read-only `writer.state()` / `writer.is_temporary(...)` queries over existing private job refs in this substep, before 2.3 consumes them; they expose no host refs or registry mutators. The interface-conformance harness uses fake tokens/records until 2.2/2.7 supply real context requests. 2.8 recorded the runtime-side interface against the create/regenerate/terminal contract. The `6413e5f` cutover implemented that contract, fixed slot acquisition before insertion, cleanup/terminal ordering and cancellation retirement, removed the legacy boolean-cancel shortcut, bound the one scheduler directly to those facades, deleted the legacy call path, and performed the GUI cutover. No temporary adapter, result translation or occupancy mirror remains. Do not claim before-insertion native reservation evidence beyond what Gate 3 records.
 
-**Final-state requirement:** the read-only `writer.state()` / `writer.is_temporary(...)` queries above were implemented against the then-current private job refs for conformance. Step 3 must make occupancy, temporary bookkeeping and terminal reporting native parts of the final writer contract. At Gate 5 the runtime must consume only that contract; no tokenless legacy branch, boolean-cancel shortcut, old status callback or inspection shim may remain in the production path. Gate 2 does not claim that removal.
+**Final-state requirement:** the read-only `writer.state()` / `writer.is_temporary(...)` queries above were implemented against the then-current private job refs for conformance. The cutover made occupancy, temporary bookkeeping and terminal reporting native parts of the final writer contract. Gate 5 verification must confirm the runtime consumes only that contract; no tokenless legacy branch, boolean-cancel shortcut, old status callback or inspection shim remains in the production path. Gate 2 does not claim Gate 5 evidence.
 
 Make Independent has a separate explicit action entry point and eligibility result; it never enters the musical sink. Its metadata transaction remains Step 4. Recovery chooser and Revalidate UI remain Step 5. Step 2 implements their required state/predicate seams, not placeholder actions that mutate data.
 
@@ -707,13 +712,13 @@ No create/regenerate facade, GUI adapter, metadata action or new scheduler was a
 | Independent second-pass closure | Runtime/writer adversarial review and separate documentation review, followed by correction verification | Within-scope findings fixed and covered; later contract/lifetime obligations recorded above |
 
 Stored identifiers, seal/source formats, manifest/API versions and musical
-planning remain unchanged. The context is not wired into the GUI yet: 2.2–2.8
-supply its document/session lifetime seam and freeze the runtime interface, and
-the Step 5 atomic cutover replaces capture and state authorities in one change.
-Temporary registry release scrubbing, the final writer contract and native slot
-reservation remain the owning later gates, not passes inferred from these mocks.
-No new native Renoise playback, undo or lifecycle acceptance was performed;
-M4 remains open and Step 8 remains required.
+planning remain unchanged. Historical 2.1 boundary: the context was not yet wired
+into the GUI; 2.2–2.8 supplied its document/session lifetime seam and froze the
+runtime interface. The later `6413e5f` cutover replaced capture and state
+authorities in one change. Temporary-registry release scrubbing, writer safety
+and native slot reservation remain the owning later gates, not passes inferred
+from these mocks. No new native Renoise playback, undo or lifecycle acceptance
+was performed; M4 remains open and Step 8 remains required.
 
 
 ### Real-Renoise tests
@@ -946,12 +951,12 @@ coverage must pass before that coverage is reported complete.
 
 ### 2.2 — Implement context lifetime and revocable delivery records
 
-**Status:** complete (2026-10-30), at the runtime lifetime boundary. The
-production GUI cutover remains the Step 5 atomic change after Gate 3; Gate 2 and
-native acceptance remain open. Baseline `c6f4104` had a clean tree and passed 50
-Lua specs in the ACID selection
-on Lua 5.4. Pinned SDK setup and tool lifecycle definitions/offline docs were
-checked before implementation.
+**Status:** complete (2026-10-30), at the runtime lifetime boundary. At that
+point the production GUI cutover was still the Step 5 atomic change after Gate 3;
+it has since landed at `6413e5f`. Current Gate 2 evidence is consolidated in 2.9;
+native acceptance remains open. Baseline `c6f4104` had a clean tree and passed 50 Lua specs in the
+ACID selection on Lua 5.4. Pinned SDK setup and tool lifecycle definitions/offline
+docs were checked before implementation.
 
 1. Attach a fresh epoch to each current document, even when a song is reloaded. Opening/reopening creates a fresh dialog session; closing invalidates that session and its requests, preserving object-local drafts and a live song's blockers. Repeated close/release calls are idempotent.
 2. Keep request data behind a mutable delivery/job record. Guard and completion closures capture that record/token, not song, instrument, phrase, widgets or a GUI closure directly. `record.gui_delivery` is the sole GUI callback slot and is nilled on close/release; writer callbacks likewise capture only their scrub-able job record. Freeze copied request values separately from revocation bookkeeping; never overwrite an expected baseline with current host values.
@@ -990,9 +995,10 @@ evidence and Revalidate remain 2.5 and Step 5.
 | Release packaging and diff hygiene | ACID package inspection and `git diff --check` | Pass; 28 entries, root manifests/entry point, private context source matches checkout; SDK/tests/docs excluded |
 
 No native Renoise checks were executed for this change. Production writer
-callback/temporary-registry scrubbing remains Step 3; observer detachment and
-GUI wiring remain the Step 5 atomic cutover and Step 6. Actual saved-song cold restart/regeneration and
-native in-flight rendering remain Step 8 acceptance.
+callback/temporary-registry scrubbing remains Step 3 acceptance; observer
+detachment remains Step 6. GUI wiring was completed by the `6413e5f` cutover.
+Actual saved-song cold restart/regeneration and native in-flight rendering remain
+Step 8 acceptance.
 
 **Review corrections (2026-10-30):** Close now requests cancellation for any
 unresolved accepted record, including explicitly revoked and uncertain starts.
@@ -1039,10 +1045,10 @@ Release clears inventory references and baseline storage.
 | Regression suites | PowerShell 7 runner: 52 ACID specs on Lua 5.4; 55 repository specs on Lua 5.1 | Pass |
 | Release package and diff hygiene | ACID archive: 29 entries, root manifest/entry point, private inventory source matches checkout, no SDK/tests/docs; `git diff --check` | Pass |
 
-Native Renoise checks were not performed. 2.8 freezes the runtime seam; GUI
-cutover remains the Step 5 atomic cutover after Gate 3. Native observer
-integration and cold-process save/reopen/regenerate remain Steps 6/8. Gate 2,
-writer and native acceptance remain open.
+Native Renoise checks were not performed. At this boundary 2.8 was still the
+runtime seam freeze; the GUI cutover later landed at `6413e5f`. Native observer
+integration and cold-process save/reopen/regenerate remain Steps 6/8. Current
+Gate 2 evidence is consolidated in 2.9; writer and native acceptance remain open.
 
 ### 2.4 — Remove ownership exclusions and define synchronous temporary neutrality
 
@@ -1165,10 +1171,10 @@ Step 3 must still check its exact private objects before mutation/deletion.
 
 Implementation and tests were delegated and independently reviewed a second
 time; findings were corrected and affected checks rerun. Native Renoise checks
-were not performed. 2.8 freezes the runtime seam without GUI wiring; the GUI
-authority cutover is the Step 5 atomic change after Gate 3. Gate 2 remains open,
-and production writer/observer/native acceptance remains in its owning later
-steps. No manifest or persisted storage format changed.
+were not performed. At this boundary 2.8 was still the runtime seam freeze; the
+GUI authority cutover later landed at `6413e5f`. Current Gate 2 evidence is in 2.9;
+writer/observer/native acceptance remains in its owning later gates. No manifest
+or persisted storage format changed.
 
 Second-pass corrections cover failed-checkpoint resurrection (request and
 writer token are both revoked), explicit nil fields on New requests, host
@@ -1176,9 +1182,9 @@ changes during validation, retained draft-descriptor/guard release, and editor
 binding during navigation. An outgoing editor buffer cannot overwrite another
 target's draft or authorize generation before that target's source is loaded.
 
-### 2.8 — Freeze the runtime seam and specify the writer contract (no production wiring)
+### 2.8 — Atomic production cutover and follow-up verification
 
-**Status:** implemented as an atomic production cutover (2026-10-30), including the necessary Step 3 writer facade and Step 5 scheduling work. Verification is partial; this is not full gate or native acceptance.
+**Status:** complete. Production cutover implemented at `6413e5f`; follow-up safety corrections, current full local verification and independent final correction review pass. Native acceptance and independent Gates 3–9 remain open.
 
 **Implementation record:**
 
@@ -1186,56 +1192,122 @@ target's draft or authorize generation before that target's source is loaded.
 - Removed `model.live_regen`, the positional writer `generate` entry point, the temporary writer adapter and its obsolete tests. Runtime owns arming, request identity, revisions and the latest pending intent; GUI idle drains pending work after terminal retirement.
 - Writer uses one job lifecycle and native terminal results. Runtime adopts the returned exact-object committed baseline, handles blocker results, and compare-clears the captured session draft; store candidates handle durable removal. Existing source/draft/seal formats and manifest versions are unchanged.
 - Native capture helpers use production runtime requests. Dependency checks reject the obsolete adapter/scheduler and positional writer API. Session-only New drafts no longer prevent source creation when instrument names are ambiguous; older ambiguous durable drafts remain preserved.
-- `acid_runtime_writer_integration_spec.lua` passes with the real runtime, request capture, writer, store and draft cache over an API-shaped host: create, same-object regeneration twice, exact draft removal, read-only cold-context reopen followed by regeneration, superseded async work/latest pending dispatch, and pre-render cancellation/recovery.
-- Focused GUI/runtime, store-candidate, capture-helper and dependency checks passed during implementation. ACID packaging passed (32 runtime entries), archive roots/exclusions passed, and `git diff --check` passed before closeout.
-- Independent preliminary safety and completed-helper second-pass reviews were performed; their findings drove fixes to host-object handling, request hook conventions, pending dispatch, capability identity, draft guards and lifecycle helper source copying. The final integrated second-pass review was interrupted at the user's request to finish and commit, so it is not a completed approval.
-- Full regression verification is NOT green: the latest full ACID run reported `acid_gate_transaction_spec.lua:324`; earlier runs also found unmigrated `writer.generate` callers in `acid_repeat_integration_spec.lua` and `acid_writer_inspection_spec.lua`. The final long-running suite was stopped for the requested immediate commit. Remaining writer safety findings and test migrations require follow-up; no full-suite pass is claimed.
-- Outstanding writer review items at closeout: commit-time slot checks count the existing stage twice; rollback can copy an unverified backup before destination mutation and backup comparison does not account for native mapping omission; cleanup failure/blocker and missing-baseline terminal handling need completion; released-job temporary registry references and recovery reporting need verification. These are open safety work, not accepted behavior.
-- Native Renoise playback, lifecycle, undo/redo, save/reopen and GUI acceptance were not performed in this implementation session. M4 and Gates 2/3/5/8 remain open until their evidence passes.
+- The follow-up baseline reproduced unfinished writer regressions. Those tests now use explicit requests; the test-only positional `writer_request.generate()` convenience is removed. No deleted production interface was restored.
+- Corrected capacity accounting before staging and before backup insertion. Backups are independently verified before destination mutation, allowing only their neutral name and native mapping omission; rollback checks the original baseline and refuses intervening external changes or unverifiable partial replacements.
+- Cleanup failures now record exact recovery objects and an integrity blocker before terminal delivery. Musical commit state is distinguished from clean completion; a missing committed baseline cannot produce verified success. Store rollback remains guarded against newer data.
+- Released jobs scrub temporary records, callbacks and prepared store candidates; an in-flight native render retains only host-free tombstone bookkeeping until its real callback. Cancellation acknowledgements, duplicate callbacks and diagnostic thresholds never release native occupancy early.
+- Runtime request admission supports a clean Owned destination without inventing a session draft; exact-revision guards still reject newer edits. A newest pending draft during create follows the actual promoted destination before redispatch. Closing/reopening and document release revoke stale authorization; old-session terminals cannot alter new-session blockers, inventory, pending intent or GUI delivery. Durable draft access remains unambiguous and read-only loading never renders.
+- ID allocation reserves retained durable-draft IDs as well as saved sources/live names, rejects stale or unreadable hosts, and changes no stored bytes. Snapshot/output verification uses validated capacities; the persisted seal algorithm is unchanged.
+- Full-capacity snapshot/hidden/tail checks and pure musical/oracle coverage remain covered by the passing local suite. Repeated lifecycle/failure fixtures use explicit bounded capacities and representative writer combinations rather than expensive cartesian host transactions. The runner reports timings, bounds each spec at 30 seconds by default, drains output concurrently and stops timed-out process trees; exact full-suite timings are recorded once below.
+- Final review additionally corrected committed-cleanup blocker recording/revalidation, recovery-object temporary registration and reused-runtime admission after document release. Real-writer integration tests prove the blocker survives reopen and prevents requests until explicit revalidation, and that a late released render retires only native occupancy before a fresh request in the new document.
+- Concurrent recovery/Make Independent/observer implementation was preserved and included in the final local reruns. Its acceptance record reports native recovery and Make Independent checks in Renoise 3.5.4; this Gate 2 verification did not independently rerun those native scenarios. Full native undo/redo, cold-process reopen, playback and visual acceptance remain unverified. Historical feasibility observations do not close Step 8.
 
-Finalize the runtime-side authority already built in 2.1–2.7 (document/session lifetime, object inventory, classification, transitions, frozen requests, checkpoint guards, blockers and immutable projections) and freeze the exact interface the Step 5 scheduler will consume. The interface exposes only `request_generation(trigger)`, `revoke(token, reason)`, `state()`, lifecycle attach/open/close/release, and read-only inventory/eligibility/revalidation projections. Mutable authority, delivery/job records, tokens and baseline storage remain closure-private. GUI may keep only transient popup indices and editor presentation caches; after cutover it must not retain target/revision/token authority.
+**Implemented authority and contract:** The runtime context is the sole target/session/revision/arming authority. Its public interface is `request_generation(trigger)`, `revoke(token, reason)`, `state()`, lifecycle attach/open/close/release, and read-only inventory/eligibility/revalidation projections. Mutable authority, delivery/job records, tokens and baseline storage remain closure-private. GUI keeps only transient popup indices and editor presentation caches; it does not retain target/revision/token authority.
 
-Specify the writer contract Step 3 must implement and Step 5 will call directly: explicit `create(request, done)` and `regenerate(request, done)` with no default destination or mode inference; `false, rejection` only before acceptance with no mutation, slot or callback; `true` on acceptance with exactly one terminal `done(result)`; writer-owned occupancy reported as detached scalar state (`"idle", nil` or `"busy", token`); `cancel(token, reason)` that returns only token match and never releases occupancy; token identity equal to the runtime-issued operation token; and terminal results carrying job token, epoch, outcome, reason and committed baselines where applicable. Record this contract beside the runtime interface. Define the Step 5 scheduler invariants now: one queue, one in-flight job, one newest pending intent, occupancy retired only by the matching terminal, blocked results stop dispatch, and no callback may authorize a write.
+The writer contract is the only musical write interface: explicit `create(request, done)` and `regenerate(request, done)` with no default destination or mode inference; `false, rejection` only before acceptance with no mutation, slot or callback; `true` on acceptance with exactly one terminal `done(result)`; writer-owned occupancy reported as detached scalar state (`"idle", nil` or `"busy", token`); `cancel(token, reason)` that returns only token match and never releases occupancy; token identity equal to the runtime-issued operation token; and terminal results carrying job token, epoch, outcome, reason and committed baselines where applicable. Record this contract beside the runtime interface. The runtime scheduler is the sole queue: one in-flight job, one newest pending intent, occupancy retired only by the matching terminal, blocked results stop dispatch, and no callback may authorize a write.
 
 Request shape: the frozen runtime request passed to both facades carries kind, target kind, trigger, the exact runtime token, epoch, dialog session, target/edit/operation revisions, copied source/output policy/PB range, exact instrument and phrase (absent only for explicit New), committed baselines, planning inputs, capabilities/capacities, timing model, groove warning input and draft capture, plus the guard/blocker/mutation/cleanup hooks. The result reports token, epoch, outcome, reason, committed baselines where applicable and recovery facts; success requires verification and carries the exact destination phrase (regenerate: the requested object; create: the promoted object), while failure carries no phrase. No success result may be synthesized from intent.
 
-Do not install a production sink, inspect the legacy writer for production, or construct legacy guard tokens. Conformance tests use the fake sink and Step 3-shaped doubles to prove admission, one-completion, stale/duplicate handling and zero-request behavior. Explicitly test that navigation, reopen, arming, Reset Source, draft/committed restoration and no-op edits enqueue nothing, and that blocked/removed/foreign targets never map to append. Those are runtime-boundary guarantees re-asserted through real GUI handlers in Step 5, not a claim of GUI cutover here.
+**Follow-up verification:** No legacy writer inspection, legacy guard-token constructor, adapter or second scheduler remains. Conformance tests use Step 3-shaped doubles to prove admission, one-completion, stale/duplicate handling and zero-request behavior; they do not substitute for Gate 2's full suite. GUI and runtime integration specs re-assert that navigation, reopen, arming, Reset Source, draft/committed restoration and no-op edits enqueue nothing, and blocked/removed/foreign targets never map to append. Follow-up safety corrections are recorded above; independent Gate 3 acceptance remains below.
 
-**Complete when:** the frozen interface and writer contract are documented; conformance tests cover the handshake, one terminal result, stale/duplicate delivery, blocked results and zero requests; the source tree contains no production adapter, second scheduler, legacy-token constructor or writable mirror; dependency direction and stored formats are unchanged; and the existing GUI/writer paths remain untouched and are explicitly scheduled for deletion at Gate 5.
+**Complete when:** the frozen interface, sole production authority and writer contract are documented; handshake, terminal, stale/duplicate, blocked and zero-request behavior pass; no adapter, legacy-token constructor or writable mirror exists; dependency direction and stored formats are unchanged; and the full-suite/package/diff evidence plus final integrated review pass. Verification evidence is consolidated below.
 
-### 2.9 — Close Gate 2 and hand the writer contract to Step 3
+### 2.9 — Close Gate 2 and hand off independent acceptance
 
-**Status:** pending. Gate 2 is a runtime-contract gate, not a production cutover.
+**Status:** complete (2026-10-30). Current full suites, packaging, hygiene checks and independent final correction review pass. Gates 3–9 remain open independent acceptance; this local closeout does not close M4 or native acceptance.
 
-Run focused runtime/inventory/integrity/transition/request/dependency tests, then `./scripts/run_tests.ps1 -Tool ACID` and `./scripts/run_tests.ps1` in PowerShell 7. If runtime layout changed, run `./scripts/package.ps1 -Tool ACID` and inspect root entries, private modules and development exclusions. Run `git diff --check`; preserve unrelated work and manifest/storage versions.
+Run focused runtime/inventory/integrity/transition/request/dependency tests, then `./scripts/run_tests.ps1 -Tool ACID` and `./scripts/run_tests.ps1` in PowerShell 7. The runner reports per-spec and total elapsed time and stops a spec's process tree after 30 seconds by default; `-SpecTimeoutSeconds` is an explicit override, not a reason to leave expensive fixtures uncorrected. If runtime layout changed, run `./scripts/package.ps1 -Tool ACID` and inspect root entries, private modules and development exclusions. Run `git diff --check`; preserve unrelated work and manifest/storage versions. Record the exact commands and results; do not infer a full pass from earlier focused runs.
 
-Map each 2.1–2.8 completion check to its test file/case/result in the existing checklist. Record the frozen interface, the writer contract handed to Step 3, and every authority the cutover must delete. Separate implemented/tested runtime behavior from production wiring: the GUI and the legacy writer call path still exist and are not evidence that Gate 5 passed.
+The separate PowerShell checks are `pwsh -File ./tests/lua_interpreter_spec.ps1`
+and `pwsh -File ./tests/renoise/test_package_dev.ps1`; they are not counted as Lua specs.
+
+Map each 2.1–2.8 completion check to its test file/case/result in the existing checklist. Record the frozen interface, the writer contract, and the authorities the cutover deleted. The GUI and explicit writer are now the production path; the absence of the legacy scheduler/adapter is the intended architecture, while Gates 3/4/5 remain independent acceptance for writer safety, Make Independent and scheduler/recovery completeness.
+
+Spec names below are under `tests/acid/` unless an explicit path is shown.
+
+| Completion condition | Actual evidence (2026-10-30, Lua 5.1) | Result |
+| --- | --- | --- |
+| 2.1: private authority, acceptance/rejection, synchronous/duplicate/uncertain completion and dependency direction | `acid_runtime_context_spec.lua`, `acid_writer_inspection_spec.lua`, `acid_dependency_graph_spec.lua` | Pass |
+| 2.2: epoch/session lifetime, stale delivery and released-reference isolation | `acid_runtime_lifetime_spec.lua`, `acid_runtime_context_spec.lua`, `acid_writer_safety_spec.lua` release/late-callback cases | Pass, mocked host |
+| 2.3: exact object inventory, verified classification, copied baselines and cold reconstruction | `acid_runtime_inventory_spec.lua`, `acid_output_compatibility_spec.lua`, `acid_runtime_writer_integration_spec.lua` cold-context reopen | Pass; not cold-process native acceptance |
+| 2.4: no ownership exclusions, neutral temporaries and synchronous scope reconciliation | `acid_live_identity_spec.lua`, `acid_runtime_mutation_spec.lua`, `acid_writer_inspection_spec.lua` | Pass |
+| 2.5: blocker evidence before completion, occupied native render and read-only revalidation predicates | `acid_runtime_integrity_spec.lua`, `acid_writer_safety_spec.lua` cleanup/cancellation/release cases | Pass; GUI recovery actions are wired and have separate Gate 5 acceptance |
+| 2.6: transitions/revisions, no-op/arming/navigation and current-session GUI projection | `acid_runtime_transitions_spec.lua`, `acid_runtime_editor_spec.lua`, `acid_gui_admission_spec.lua`, `acid_gui_views_spec.lua` | Pass |
+| 2.7: frozen requests, exact target membership, clean Owned admission and exact draft revisions | `acid_runtime_request_spec.lua`, `acid_draft_recovery_spec.lua`, `acid_store_candidate_spec.lua` | Pass |
+| 2.8: real runtime/writer/store path; create promotion, repeated same-object regeneration, newest pending manual/Live Edit, cancellation and read-only reopen | `acid_runtime_writer_integration_spec.lua`, GUI admission/timing/recovery specs | Pass, mocked host |
+| Follow-up writer capacity, backup insertion/copy/verification, destination/final/store failures, external-change rollback, cleanup/blockers, required baseline and release/tombstone safety | `acid_writer_safety_spec.lua`; migrated `acid_gate_transaction_spec.lua`, `acid_phrase_spec.lua`, `acid_repeat_integration_spec.lua`, `acid_writer_inspection_spec.lua` | Pass |
+| Safe ID allocation, prepared-candidate retirement and unchanged persistence grammar | `acid_id_allocation_spec.lua`, `acid_pattern_store_codec_spec.lua`, existing persistence/store specs | Pass |
+| Minimum-version policy, isolated stdout/stderr/exit status, forwarding wrapper, missing interpreter and runaway process termination | `pwsh -File ./tests/lua_interpreter_spec.ps1` | Pass |
+| Development harness packaging and selected-interpreter entrypoint checks | `pwsh -File ./tests/renoise/test_package_dev.ps1` | Pass; release exclusion, payload/fixture hashes, bootstrap and path/ACL checks |
+| Full ACID selection | `./scripts/run_tests.ps1 -Tool ACID` | 63/63 pass in 72.78s (60 ACID + 3 offline Renoise specs), no timeout; includes preserved concurrent additions and final safety corrections |
+| Full repository | `./scripts/run_tests.ps1` | 66/66 pass in 64.20s, no timeout |
+| Package roots/private modules/exclusions and source-byte identity | `./scripts/package.ps1 -Tool ACID`; inspect all archive entries and compare SHA-256 with source | Pass: 34 entries (32 runtime Lua files plus manifest/LICENSE); root main.lua; every entry SHA-256 matches current source; no SDK/tests/harness/docs |
+| Dependency/source hygiene and unchanged manifest/seal/store formats | Dependency/codec specs, production searches for removed API/scheduler/adapter/status paths, manifest diff | Pass: no competing path or incidental version change |
+| Patch hygiene | `git diff --check` | Earlier check passed; final check after follow-up edits pending |
+| Final integrated independent review after green suites | Fresh writer/runtime reviews, then a fresh correction review and current full reruns | Pass: committed-cleanup blocking, retained recovery registration and reused-runtime release findings corrected; no remaining critical finding in the reviewed correction paths |
 
 | Open obligation | Owning gate |
 | --- | --- |
-| Explicit create/regenerate/terminal writer contract, native slot acquisition before insertion, one completion channel and real cancellation | Step 3 / Gate 3 |
-| Metadata-only Make Independent against the same store/ownership contract | Step 4 / Gate 4 |
-| One runtime scheduler and the single atomic GUI cutover that deletes legacy dispatch, arming storage and callbacks | Step 5 / Gate 5 |
-| Native observer attachment, document/session lifetime and late-callback behavior | Step 6 |
-| Native ordering, playback, undo/redo and cold-save/reopen preservation | Step 8 |
+| Independent writer acceptance matrix: free-slot boundaries, async failures, exact rollback, cleanup, single completion and cancel/release | Step 3 / Gate 3 (open) |
+| Metadata-only Make Independent against the same store/ownership contract | Step 4 / Gate 4 (open) |
+| Independent scheduler/recovery acceptance and final full-suite verification | Step 5 / Gate 5 (open) |
+| Native observer attachment, document/session lifetime and late-callback behavior | Step 6 / Gate 6 (open) |
+| Complete 36-case integration closeout, including copied-ID/recovery flows; final local/package reruns pending | Step 7 / Gate 7 (open) |
+| Native ordering, playback, undo/redo and cold-save/reopen preservation | Step 8 / Gate 8 (open) |
+| Final documentation/review and focused commit | Step 9 / Gate 9 (open) |
 
-**Gate 2:** all 2.1–2.8 checks pass in order; the runtime context is the sole designed authority and its interface is frozen; no ownership exclusion channel remains; no adapter, parallel scheduler, legacy-token bridge or compatibility API was introduced; dependency direction and persisted formats are unchanged; writer hooks, revocable request records and lifecycle seams are implemented/tested; and the explicit writer contract is specified and exercised against Step 3-shaped doubles, not claimed implemented. Gate 2 does not require or claim GUI wiring. Gate 3 implements the writer contract; the GUI cutover cannot begin until Gate 3 passes and the Step 5 scheduler is proven. Native safety remains unverified.
+**Gate 2: complete.** All 2.1–2.8 conditions have mapped local evidence; current full suites, package/source-byte checks, diff hygiene and final correction review pass. Runtime remains the sole authority and scheduler, with explicit create/regenerate and no legacy adapter, positional API, compatibility path or persistence-format change. Gates 3–9 remain independent acceptance and M4 remains open; no native acceptance is inferred from these local results.
+
+### Runtime/recovery integration follow-up (2026-10-30)
+
+The recovery chooser and Make Independent are now implemented through the
+runtime context. `recovery_entries()` exposes detached chooser values;
+`copy_recovery_to_new(token, revision)` and
+`discard_recovery(token, revision)` require the selected entry's exact revision.
+Copy preserves the occupied New scratch as separate recovery material and
+leaves the source entry available. Recovery and discard only update editor
+state; they do not invoke a musical render. A successful verified create clears
+only the copied origin for the exact captured revision. Repeated preservation
+of unchanged source/settings and a matching baseline is idempotent in
+`runtime/draft_cache.lua`, retaining the token/revision/origin; an actual edit
+creates a new revision and retains its recovery origin.
+
+`independence_eligibility()` and `make_independent()` resolve only the explicitly
+bound valid collision holder. The operation changes its ownership identity and
+clones compatible committed source/settings without rendering. Runtime tests
+cover same-instrument and mixed foreign/owned groups, three-holder collisions,
+rollback and stale guards; GUI tests verify the no-render path and that removed
+bound objects remain unavailable. The writer integration case verifies unique
+regeneration while other holders remain blocked, then repeats after runtime
+release/reopen. Recovery/create failure and exact-origin clearing are covered
+in `tests/acid/acid_gui_recovery_spec.lua` and
+`tests/acid/acid_draft_recovery_spec.lua`. The R01–R36 evidence map is
+`tests/acid/runtime_acceptance.md`.
+
+Native Renoise 3.5.4 checks completed for draft recovery and Make Independent
+(run records `tmp/interactive-2c5c874fbd5846a68b60a56544b706a4` and
+`tmp/interactive-f9a33212200a4e08abbcd94ccfe71766`). These are implementation
+acceptance evidence, not closure of Gates 4–8. Native undo/redo grouping,
+cold-process save/reopen/regeneration, and remaining A–E acceptance remain
+pending. Focused final results: **pending parent verification**. Current full
+ACID/repository suites, package inspection, diff check, and independent final
+review: **pending**. Gates remain open until their exact owning criteria pass.
 
 ## Step 3 — Establish the explicit asynchronous writer contract
 
-**Status:** partially implemented in the atomic 2.8 cutover. Explicit writer facades and lifecycle changes are in production; writer regression migration, outstanding safety-review findings and complete Gate 3 evidence remain open. See 2.8 for actual verification, including known failures. No native acceptance is claimed.
+**Status:** implemented with the atomic `6413e5f` cutover; Gate 3 remains OPEN independent acceptance. Follow-up capacity, backup/rollback, cleanup, terminal-baseline and release corrections plus migrated writer regressions now pass the local suite recorded in 2.8–2.9. This does not independently close the complete Gate 3 acceptance matrix or establish native behavior.
 
 **Architectural dependency:** reuse Gate 1A policy/identity/planner owners. Refactor the existing `phrase_writer.finalize` in place into named prepare, stage, render, precommit, commit, rollback, cleanup and terminal phases around **one** job and one callback. Make job state explicit, eliminate duplicate phrase-layout assignment and unnecessary repeated validation **only where the same precommit/postcommit invariants remain proved**. Replace undocumented literals (`500` diagnostics, `+8` slack, `126/512` capacity fallbacks and `512/12/8` field loops) with named, API-derived or validated bounds while preserving fail-closed behavior; the pending-render diagnostic cannot become a timeout that releases occupancy. Test each extracted phase's abort/rollback conditions using the Gate 3 cases. No new writer or transaction authority.
 
 **Contract boundary:** expose the explicit `create(request, done)` and `regenerate(request, done)` facades around the existing job. Both share preparation/render/commit/cleanup helpers. Request fields are those frozen in 2.8; regenerate additionally requires exact phrase object, ID, source baseline and content baseline. Missing arguments reject; no default indices or mode inference. Return `false, rejection` only before accepting a job, with no mutation, occupied slot or completion callback. Once accepted, return `true`; all later failures, including synchronous insertion/render-start failures, use `done(result)` after rollback/cleanup or recorded recovery. Completion may occur before the start call returns, so install the scheduler job first. It is **not** a synchronous rendered result.
 
-The contract is the only musical write interface after Step 5. Do not add a second public musical entry point alongside the final facades, translate old results into the new result shape, preserve old exit statuses, or build a compatibility facade. The existing production call surface remains only until the Step 5 cutover and is deleted there; that coexistence is scheduling continuity, not a compatibility layer, so no adapter, dual dispatch, new callback on the old path, or preservation of both result shapes is allowed. If an in-place writer change cannot keep them working on the branch, land that contract work only as part of the Step 5 cutover (after Gate 4) rather than adding a bridge. No store schema, seal/source grammar, manifest version or saved-song wire format changes.
+The contract is the only musical write interface. Do not add a second public musical entry point alongside the facades, translate old results into the new result shape, preserve old exit statuses, or build a compatibility facade. The `6413e5f` cutover deleted the old production call surface; no adapter, dual dispatch, old-path callback or preservation of both result shapes exists. No store schema, seal/source grammar, manifest version or saved-song wire format changes.
 
 **One completion channel:** An idempotent writer terminal transition calls `done` once when an accepted job retires. Results distinguish committed, canceled-cleaned, failed-cleaned and integrity-blocked outcomes and carry job token, epoch, reason, committed baselines when applicable, and retained recovery facts. Replace the existing result/status handling with this single channel; do not keep a second status callback or normalize two result shapes. Duplicate callbacks are ignored. A still-running native render is nonterminal even after cancellation; lack of a callback is not completion.
 
 An integrity-blocked terminal result retires occupancy only after native rendering has finished (or never started); its song blocker remains. A missing render callback produces nonterminal diagnostics, never this terminal result. Keep writer retirement separate from GUI delivery so release can detach GUI callbacks without losing the one terminal bookkeeping transition.
 
-`cancel(token, reason)` invalidates commit authorization and returns only whether that token matched a known job. Its return value never releases a scheduler or writer slot. Compile-wait cancellation can clean up and call `done` synchronously. Render-in-flight cancellation waits for the native callback. The current `live_regen` boolean-cancel shortcut is not preserved or wrapped; Step 5 deletes it when it installs the single scheduler. Only the matching `done` transition retires the writer job, and a blocked result prevents draining pending work. Stale completion retires its own bookkeeping without updating the GUI. Rejection handling and accepted-job completion must never both settle the same request.
+`cancel(token, reason)` invalidates commit authorization and returns only whether that token matched a known job. Its return value never releases a scheduler or writer slot. Compile-wait cancellation can clean up and call `done` synchronously. Render-in-flight cancellation waits for the native callback. The `live_regen` boolean-cancel shortcut was not preserved or wrapped; the `6413e5f` cutover deleted it with the legacy scheduler. Only the matching `done` transition retires the writer job, and a blocked result prevents draining pending work. Stale completion retires its own bookkeeping without updating the GUI. Rejection handling and accepted-job completion must never both settle the same request.
 
 Execute each job in this order:
 
@@ -1277,16 +1349,16 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 
 ## Step 5 — Set the single runtime scheduler and perform the atomic production cutover
 
-**Status:** partially implemented in the atomic 2.8 cutover: one runtime scheduler and direct GUI dispatch replace the obsolete scheduler/adapter path. Recovery UI, Make Independent dependencies and the complete Gate 5 checklist remain open. The implementation record under 2.8 distinguishes passing local E2E flows from unfinished writer regressions and native acceptance.
+**Status:** cutover landed at `6413e5f`: one runtime scheduler and direct GUI dispatch replace the obsolete scheduler/adapter path. Recovery chooser/copy/discard and Make Independent are wired through the runtime context and covered by focused local tests. Gate 5 remains OPEN for independent scheduler/recovery acceptance, current full-suite verification, and its complete checklist; native acceptance is tracked separately in Step 8.
 
-**Prerequisites:** Gate 3's writer contract, Gate 4's metadata transaction, Step 2's frozen runtime interface, and Step 1's draft/store/recovery APIs. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
+**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 and Gate 4 remain open independent acceptance for writer safety and Make Independent; they do not gate the already-landed cutover. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
 
 **Ordered work:**
 
-1. Implement the one runtime scheduler inside the runtime context (or a private helper that remains the sole queue). It owns one in-flight job and at most one newest pending intent, dispatches only through `create`/`regenerate`, retires occupancy only on the matching terminal result, stops on blocked results, and rejects on document/session invalidation. Test it directly against Step 3 facades with a fake sink: rapid supersession, manual/Live Edit overlap, A → B → A, cancel during compile and render, missing/duplicate/late callback, close/reopen and song switch. No GUI wiring and no change to the legacy scheduler in this sub-step; the legacy scheduler remains the only production dispatch, so the replacement is not a parallel request path.
-2. Perform the single atomic cutover in one change: route manual Generate and armed real edits into `request_generation(trigger)`; replace GUI target/revision/arming/state authority with the runtime projection; bind the writer completion to the one scheduler; and delete, in the same change, the legacy `live_regen` scheduling/arming path, old writer entry point and status callback, boolean-cancel shortcut, duplicate GUI late-create draft-transfer blocks and any mutable derived mirrors. Do not add a feature flag, dual dispatch, adapter, old-callback compatibility shim or fallback to the legacy path.
-3. Complete the GUI draft/recovery wiring in that cutover: consume exact-revision capture/compare-and-clear, preserve outgoing edits on navigation, keep collision drafts object-local, provide Recover Draft/Copy to New and Make Independent through the runtime actions, and keep Revalidate read-only. Arming, loading source/drafts, navigation, cursor/view changes and no-op edits enqueue nothing.
-4. Verify the final state has one target authority, one request entry, one queue, one writer transaction and one completion channel. A source search must find no production caller of the old writer API, no legacy scheduler token/arming state, no duplicate completion handler and no adapter. Persisted source/draft/seal formats, IDs, manifest versions and existing saved-song readability are unchanged; no migration or compatibility reader is added.
+1. The one runtime scheduler is implemented inside the runtime context (or a private helper that remains the sole queue). It owns one in-flight job and at most one newest pending intent, dispatches only through `create`/`regenerate`, retires occupancy only on the matching terminal result, stops on blocked results, and rejects on document/session invalidation. Gate 5 must test it directly against the Step 3 facades with a fake sink: rapid supersession, manual/Live Edit overlap, A → B → A, cancel during compile and render, missing/duplicate/late callback, close/reopen and song switch. There is no legacy scheduler or second production dispatch path.
+2. The single atomic cutover landed at `6413e5f`: manual Generate and armed real edits route into `request_generation(trigger)`; the GUI target/revision/arming/state authority is the runtime projection; writer completion binds to the one scheduler; and the legacy `live_regen` scheduling/arming path, old writer entry point and status callback, boolean-cancel shortcut, duplicate GUI late-create draft-transfer blocks and mutable derived mirrors are deleted. No feature flag, dual dispatch, adapter, old-callback compatibility shim or legacy fallback exists.
+3. Gate 5 verification: confirm exact-revision capture/compare-and-clear, outgoing edit preservation on navigation, object-local collision drafts, Recover Draft/Copy to New, Make Independent runtime actions, and read-only Revalidate. Recovery copy/discard and Make Independent are implemented and wired; focused tests assert that arming, source/draft restoration, navigation, cursor/view changes and no-op edits enqueue nothing.
+4. Gate 5 verification must confirm one target authority, one request entry, one queue, one writer transaction and one completion channel. A source search must find no production caller of the old writer API, no legacy scheduler token/arming state, no duplicate completion handler and no adapter. Persisted source/draft/seal formats, IDs, manifest versions and existing saved-song readability are unchanged; no migration or compatibility reader is added.
 
 **Scheduler and draft behavior:**
 
@@ -1299,7 +1371,7 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 - A stale completion cannot select a target, replace a draft, erase an error or release a newer job. Closing the dialog invalidates/cancels work but preserves session drafts. Song reload reconstructs committed source/settings for each newly validated Owned phrase from persisted records, then restores only a matching unambiguous durable draft; no previous GUI/session state is needed and no read-only restore starts generation. Do not promise durable collision drafts or persistence of volatile unsaved edits.
 - Revalidate is read-only: no render, ownership repair, store write, recovery deletion or baseline adoption. Require no in-flight native render, absent recorded recovery/temporary objects, and the affected destination/source consistent with the recorded pre-transaction state or a completely verified committed state. Validate current live ownership/source associations and draft preconditions. Clear only the same unchanged blocker if every check passes; require a fresh Generate/edit afterward, never drain an old pending request. If exact recovery objects remain, require native inspection/removal before revalidation and never suggest deletion while rendering may still use them. If consistency cannot be verified, keep the blocker and direct the user to native undo or a known-good saved song. Detached drafts remain recoverable. Changing songs clears neither an unresolved global render slot nor evidence in a still-live blocked song.
 
-**Gate 5:** Scheduler tests above pass before the GUI cutover. After the cutover, source search and focused tests prove one runtime target authority, one request entry, one queue, one writer transaction and one completion channel; no production caller of the legacy writer entry point; no `live_regen` scheduling/arming state; no old completion/status callback; no adapter, dual dispatch or feature flag. Integration tests cover edit A → B → A with Live Edit off, multiple instruments/New scratches, foreign/detached recovery, committed-source recognition after simulated cold reopen, dirty save/reopen under the stated durable-format limits, persistence failure warnings, no-op edits, rapid superseding edits, manual/Live Edit overlap, create-then-edit, stale completions, close/reopen and source/settings isolation. Include one durable draft with two ID holders: neither holder may read/overwrite/clear it. Verify musical success removes only its committed draft atomically and failure retains it. Exercise recovery chooser/copy/discard, occupied scratch preservation, no generation on recovery while armed, and exact-revision clearing. Verify Revalidate is read-only, refuses active renders or remaining recovery objects, preserves detached drafts, and never clears a blocker merely on reopen or navigation. Verify saved-song source/draft/seal bytes and manifest versions are unchanged and an existing saved song still classifies through the unchanged strict decoder. Gate 5 is local evidence only; native playback, undo and cold-process save/reopen remain Step 8.
+**Gate 5 (OPEN):** The cutover has landed; Gate 5 closes when the scheduler tests above pass and source search/focused tests prove one runtime target authority, one request entry, one queue, one writer transaction and one completion channel; no production caller of the legacy writer entry point; no `live_regen` scheduling/arming state; no old completion/status callback; no adapter, dual dispatch or feature flag. Integration tests cover edit A → B → A with Live Edit off, multiple instruments/New scratches, foreign/detached recovery, committed-source recognition after simulated cold reopen, dirty save/reopen under the stated durable-format limits, persistence failure warnings, no-op edits, rapid superseding edits, manual/Live Edit overlap, create-then-edit, stale completions, close/reopen and source/settings isolation. Include one durable draft with two ID holders: neither holder may read/overwrite/clear it. Verify musical success removes only its committed draft atomically and failure retains it. Exercise recovery chooser/copy/discard, occupied scratch preservation, no generation on recovery while armed, and exact-revision clearing. Verify Revalidate is read-only, refuses active renders or remaining recovery objects, preserves detached drafts, and never clears a blocker merely on reopen or navigation. Verify saved-song source/draft/seal bytes and manifest versions are unchanged and an existing saved song still classifies through the unchanged strict decoder. Gate 5 is local evidence only; native playback, undo and cold-process save/reopen remain Step 8.
 
 ## Step 6 — Attach native observers and reconcile internal changes
 

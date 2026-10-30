@@ -94,6 +94,7 @@ function New-FixtureRepository {
   $paths = @(
     'scripts'
     'tests/renoise/driver'
+    'tests/acid'
     'tests/renoise/fixtures'
     'tests/renoise/acid/fixtures'
     'tests/renoise/acid/scenarios'
@@ -108,6 +109,8 @@ function New-FixtureRepository {
   Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/package_dev.ps1') -Destination (Join-Path $Root 'scripts/package_dev.ps1')
   Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/remote_driver.lua') -Destination (Join-Path $Root 'tests/renoise/driver/remote_driver.lua')
   Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/json.lua') -Destination (Join-Path $Root 'tests/renoise/driver/json.lua')
+  Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/acceptance_cases.lua') -Destination (Join-Path $Root 'tests/renoise/driver/acceptance_cases.lua')
+  Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/acid/writer_request.lua') -Destination (Join-Path $Root 'tests/acid/writer_request.lua')
 
   $toolRoot = Join-Path $Root $sourceToolName
   $manifest = @'
@@ -242,6 +245,8 @@ function Test-RealDevelopmentBundle {
     $expectedPaths = @($sourceFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
     $expectedPaths += '__dev/remote_driver.lua'
     $expectedPaths += '__dev/json.lua'
+    $expectedPaths += '__dev/acceptance_cases.lua'
+    $expectedPaths += '__dev/writer_request.lua'
     $actualPaths = @(Get-ChildItem -LiteralPath $devTool -File -Recurse | ForEach-Object {
       Get-RelativePath -Root $devTool -Path $_.FullName
     } | Sort-Object)
@@ -322,6 +327,8 @@ try {
   $expectedDevPaths = @($sourcePayloadFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
   $expectedDevPaths += '__dev/remote_driver.lua'
   $expectedDevPaths += '__dev/json.lua'
+  $expectedDevPaths += '__dev/acceptance_cases.lua'
+  $expectedDevPaths += '__dev/writer_request.lua'
   $actualDevPaths = @(Get-ChildItem -LiteralPath $devToolOne -File -Recurse | ForEach-Object { Get-RelativePath -Root $devToolOne -Path $_.FullName } | Sort-Object)
   $expectedDevPaths = @($expectedDevPaths | Sort-Object)
   Assert-True (($actualDevPaths -join '|') -ceq ($expectedDevPaths -join '|')) 'Development bundle contains an unexpected or missing file.'
@@ -344,6 +351,7 @@ try {
     $bootstrapMarker
     'do'
     '  local driver = dofile(renoise.tool().bundle_path .. "\\__dev\\remote_driver.lua")'
+    '  local acceptance = dofile(renoise.tool().bundle_path .. "\\__dev\\acceptance_cases.lua")'
     '  local original_gui_show = gui.show'
     '  local show_invocations = 0'
     '  gui.show = function(...)'
@@ -355,7 +363,7 @@ try {
     '    state.show_invocations = show_invocations'
     '    state.show_keybinding_registered = renoise.tool():has_keybinding("Global:ACID:Show")'
     '    return state'
-    '  end)'
+    '  end, acceptance.run)'
     'end'
     ''
   ))
@@ -374,6 +382,10 @@ try {
   Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/remote_driver.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $driverDevPath -Algorithm SHA256).Hash) 'Development driver differs from its source.'
   $codecDevPath = Join-Path $devToolOne '__dev/json.lua'
   Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/json.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $codecDevPath -Algorithm SHA256).Hash) 'Development JSON codec differs from its source.'
+  $acceptanceDevPath = Join-Path $devToolOne '__dev/acceptance_cases.lua'
+  Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/acceptance_cases.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $acceptanceDevPath -Algorithm SHA256).Hash) 'Development acceptance cases differ from source.'
+  $requestDevPath = Join-Path $devToolOne '__dev/writer_request.lua'
+  Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/acid/writer_request.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $requestDevPath -Algorithm SHA256).Hash) 'Development request factory differs from source.'
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $devToolOne 'acid-test-session.conf'))) 'Session test secrets were copied into the tool bundle.'
 
   $sessionTextOne = [System.IO.File]::ReadAllText($sessionPathOne)

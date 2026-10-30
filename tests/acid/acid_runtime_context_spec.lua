@@ -77,12 +77,15 @@ do
     record_blocker = true, integrity_state = true, revalidation_status = true,
     revalidate = true, transition = true, revision_state = true, editor_state = true,
     musical_eligibility = true, independence_eligibility = true, editor_recovery = true,
-    validate_checkpoint = true, flush_pending = true, generation_state = true}
+    validate_checkpoint = true, flush_pending = true, generation_state = true,
+    make_independent = true, recovery_entries = true,
+    copy_recovery_to_new = true, discard_recovery = true, is_temporary = true}
   for key, value in pairs(ctx) do
     assert(allowed[key], "context exposes private field " .. tostring(key))
     assert(type(value) == "function")
   end
   assert(ctx.writer == nil and ctx.capture == nil and ctx.sink == nil)
+  assert(ctx:is_temporary({}, {}) == false)
   assert(ctx.issue_token == nil and ctx.active == nil and ctx.dispatching == nil)
   assert(ctx.blocked == nil and ctx.blocked_reason == nil)
   assert(ctx.diagnostic_count == nil and ctx.last_diagnostic == nil)

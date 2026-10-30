@@ -206,4 +206,21 @@ do
  song.tool_data={}
  assert(not owner:capture_mutation(),'malformed store was captured')
 end
+-- A committed create is checked against its published baseline, not the
+-- pre-create empty destination/store, after native removal of recovery material.
+do
+ local song,instrument,phrase=helper.fixture()
+ local ctx=helper.runtime(song)
+ local baseline=assert(ctx:bind_phrase(instrument,phrase).baseline)
+ local owner=require('runtime.integrity').new(song,nil,function()return true end)
+ assert(owner:record{operation='create',committed=true,instrument=instrument,phrase=phrase,
+  committed_baseline=baseline,pre_store='obsolete pre-create store',destination_phrases={}})
+ local status,proof=owner:status()
+ assert(status.verified and proof,'committed create was checked against its obsolete pre-state')
+ phrase.base_note=phrase.base_note+1
+ assert(not owner:clear(proof),'committed-create revalidation ignored an intervening change')
+ phrase.base_note=phrase.base_note-1
+ local valid,current=owner:status()
+ assert(valid.verified and owner:clear(current))
+end
 print('ACID runtime integrity blocker and read-only revalidation passed')

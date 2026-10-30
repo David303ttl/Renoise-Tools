@@ -4,6 +4,7 @@ local ownership=require("renoise.phrase_ownership")
 local capabilities=require("renoise.target_capabilities")
 local validator=require("writers.phrase_validator")
 local planner=require("model.output_planner")
+local sequencer=require("model.sequencer")
 local pitch_bend=require("writers.phrase_pitch_bend")
 local M={}
 local RAW_FIELDS={"song","instrument","phrase","token","draft_capture"}
@@ -67,7 +68,8 @@ local function verify(record,request,admission)
   if type(undo)~="boolean" or undo then
     return false,"Native undo or redo is processing or unavailable"
   end
-  if not record.access.drafts.is_current(record.song,record.draft_capture) then
+  if record.draft_capture~=nil and
+      not record.access.drafts.is_current(record.song,record.draft_capture) then
     return false,"Captured draft preconditions changed"
   end
   local profile=capabilities.inspect(record.instrument)
@@ -127,8 +129,20 @@ function M.new(access)
       local output,output_error=planner.plan(editor.source,editor.output_policy,editor.pb_range,limits,profile,
         {pitch_bend_delivery=pitch_bend.delivery_enabled})
       if not output then return nil,output_error end
-      local descriptor,draft_guard=access.drafts.capture(state.song,target.instrument,target.phrase,access.draft_options())
-      if not descriptor then return nil,draft_guard end
+      local descriptor,draft_guard,draft_state=access.drafts.capture(state.song,target.instrument,target.phrase,access.draft_options())
+      if not descriptor then
+        -- A clean committed source needs no session draft. Those two draft
+        -- states grant no removal, while unreadable or dirty drafts reject.
+        local baseline=target.kind=="owned" and target.baseline
+        local settings=baseline and baseline.settings
+        local clean=type(baseline)=="table" and type(baseline.source)=="table" and
+          type(settings)=="table" and sequencer.same_source(editor.source,baseline.source) and
+          editor.output_policy==settings.output_policy and editor.pb_range==settings.pb_range
+        if not clean or (draft_state~="absent" and draft_state~="detached") then
+          return nil,draft_guard
+        end
+        descriptor,draft_guard=nil,nil
+      end
       local transport=state.song.transport
       if type(renoise.Transport.TIMING_MODEL_LPB)~="number" or
           transport.timing_model~=renoise.Transport.TIMING_MODEL_LPB or type(transport.groove_enabled)~="boolean" then

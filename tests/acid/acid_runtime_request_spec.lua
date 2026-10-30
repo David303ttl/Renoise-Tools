@@ -114,6 +114,63 @@ do
  assert(not request:validate_checkpoint())
  assert(log.sinks==1)
 end
+-- A clean committed destination needs no session draft; rejected admission
+-- must not write one, and successful regeneration must not invent one.
+do
+ local song,instrument,phrase,_,source=helper.fixture()
+ local writer={status='idle'}
+ function writer:state()return self.status,self.token end
+ local sink_calls,accept,captured=0,false,nil
+ local ctx=context.new{writer=writer,capture=function()error('runtime must own editor capture')end,
+  sink=function(request,done)
+   sink_calls=sink_calls+1
+   if not accept then return false,'rejected by spec' end
+   captured={request=request,done=done}
+   return true
+  end}
+ local results={}
+ ctx:attach_document(song);ctx:open_dialog(function(result)results[#results+1]=result end)
+ ctx:bind_phrase(instrument,phrase)
+ ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true})
+ local before=song.tool_data
+ assert(cache.get(song,instrument,phrase)==nil,'fixture retained a draft')
+ assert(not ctx:request_generation('manual'),'rejected admission was accepted')
+ assert(sink_calls==1 and song.tool_data==before,
+   'rejected clean admission wrote durable draft data')
+ assert(cache.get(song,instrument,phrase)==nil,'rejected clean admission retained a draft')
+ accept=true
+ assert(ctx:request_generation('manual'))
+ assert(captured.request.draft_capture==nil,
+   'clean committed source acquired a synthetic draft')
+ writer.status,writer.token='busy',captured.request.token
+ assert(captured.done({kind='success',status='committed',verified=true,
+   token=captured.request.token,epoch=captured.request.epoch,phrase=phrase,
+   baseline=captured.request.baseline}))
+ writer.status,writer.token='idle',nil
+ assert(#results==1 and results[1].kind=='success')
+ assert(ctx:target_state().kind=='owned')
+ assert(cache.get(song,instrument,phrase)==nil,'clean success retained a draft')
+ local changed=seq.copy_source(source);changed.pitch_events[1]=seq.new_pitch(7,0,false,false)
+ ctx:transition('edit',{source=changed,output_policy='play_once',pb_range=0})
+ assert(store.read_draft(song,instrument,phrase)~=nil,
+   'dirty source was not preserved before admission')
+ accept=false
+ assert(not ctx:request_generation('manual'))
+ assert(store.read_draft(song,instrument,phrase)~=nil,
+   'rejected dirty admission lost its recoverable draft')
+end
+-- New still captures its explicit scratch draft without an edit.
+do
+ local song,instrument,_,_,source=helper.fixture('new')
+ local captured
+ local ctx=context.new{writer={state=function()return 'idle',nil end},
+  capture=function()error('runtime must own editor capture')end,
+  sink=function(request,done)captured={request=request,done=done};return true end}
+ ctx:attach_document(song);ctx:open_dialog();ctx:bind_new(instrument)
+ ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true})
+ assert(ctx:request_generation('manual'))
+ assert(captured.request.draft_capture~=nil,'New lost its scratch draft capture')
+end
 do
  local ctx,log,_,song,instrument,phrase,other,source=fixture()
  ctx:release_document()
@@ -155,7 +212,7 @@ do
 end
 do
  local ctx,log,_,_,_,phrase=fixture()
- local cell=phrase.lines[512].note_columns[12]
+ local cell=phrase.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns]
  cell.delay_value=1
  local valid,reason=log.request:validate_checkpoint()
  assert(not valid and type(reason)=='string','hidden content did not fail closed')

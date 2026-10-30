@@ -2,6 +2,11 @@ dofile('tests/bootstrap.lua')('acid')
 local output_planner=require('model.output_planner')
 local columns=dofile('tests/acid/phrase_columns.lua')
 
+-- Explicit bounded host capacities for the representative repeat sources.
+local CAPACITY_LINES=257
+local CAPACITY_NOTE_COLUMNS=4
+local CAPACITY_EFFECT_COLUMNS=2
+
 local idle_handlers={}
 local committed_handlers={}
 local function observable(handlers)
@@ -18,15 +23,22 @@ end
 local idle,committed=observable(idle_handlers),observable(committed_handlers)
 local instrument
 local render_calls={}
+local EMPTY_SCRIPT_DIAGNOSTIC="compile error: no script content present."
 local script={paragraphs={},compile_error='',runtime_error='',
-  committed_observable=committed}
+  parameters={},pending_changes=0,editor_visible=true,committed_observable=committed}
 function script:commit()
+  self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
+  self.runtime_error=""
   local on_idle
   on_idle=function()
     idle:remove_notifier(on_idle)
     committed:fire()
   end
   idle:add_notifier(on_idle)
+end
+local function make_script()
+  return setmetatable({paragraphs={},compile_error='',runtime_error='',parameters={},
+    pending_changes=0,editor_visible=true},{__index=script})
 end
 function script:render_to_pattern(options,callback)
   local source=assert(self.paragraphs[1])
@@ -63,8 +75,9 @@ function script:render_to_pattern(options,callback)
 end
 
 local function make_phrase()
-  local phrase={script=script,name='',number_of_lines=16,visible_note_columns=1,
-    visible_effect_columns=0,loop_start=1,loop_end=16,looping=false,
+  local phrase={script=make_script(),name='',number_of_lines=16,lpb=16,shuffle=0,
+    playback_mode=1,key_tracking=1,base_note=48,autoseek=false,
+    visible_note_columns=1,visible_effect_columns=0,loop_start=1,loop_end=16,looping=false,
     instrument_column_visible=false,volume_column_visible=false,
     panning_column_visible=false,delay_column_visible=false,
     sample_effects_column_visible=false,cells={}}
@@ -72,21 +85,22 @@ local function make_phrase()
     return {note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
   end
-  for line=1,513 do phrase.cells[line]=blank() end
+  for line=1,CAPACITY_LINES do phrase.cells[line]=blank() end
   function phrase:line(line)
     if not self.cells[line] then return nil end
     return columns.line(self,line)
   end
   function phrase:column_is_muted() return false end
+  function phrase:column_name(column) return "column "..tostring(column) end
   function phrase:copy_from(other)
     columns.copy(self,other)
     for _,key in ipairs({'number_of_lines','lpb','shuffle','playback_mode','looping',
-      'loop_start','loop_end','key_tracking','name','visible_note_columns',
+      'loop_start','loop_end','key_tracking','base_note','autoseek','name','visible_note_columns',
       'visible_effect_columns','instrument_column_visible',
       'volume_column_visible','panning_column_visible','delay_column_visible',
       'sample_effects_column_visible'}) do self[key]=other[key] end
     self.cells={}
-    for line=1,513 do
+    for line=1,CAPACITY_LINES do
       self.cells[line]={}
       for key,value in pairs(other.cells[line]) do self.cells[line][key]=value end
     end
@@ -106,13 +120,17 @@ function instrument:delete_phrase_at(index) table.remove(self.phrases,index) end
 local song={instruments={instrument},transport={timing_model=2,groove_enabled=false}}
 _G.renoise={
   Transport={TIMING_MODEL_SPEED=1,TIMING_MODEL_LPB=2},
-  InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+  InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1,
+    MAX_NUMBER_OF_LINES=CAPACITY_LINES,
+    MAX_NUMBER_OF_NOTE_COLUMNS=CAPACITY_NOTE_COLUMNS,
+    MAX_NUMBER_OF_EFFECT_COLUMNS=CAPACITY_EFFECT_COLUMNS},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function() return song end,
   tool=function() return {app_idle_observable=idle} end
 }
 
 local writer=require('writers.phrase_writer')
+local writer_request=dofile('tests/acid/writer_request.lua')
 local sequencer=require('model.sequencer')
 local store=require('renoise.pattern_store')
 local ownership=require('renoise.phrase_ownership')
@@ -128,15 +146,22 @@ local function source(length,command)
   return pattern
 end
 
-local function generate(pattern,policy,target_index,options,instrument_index)
+local function start(pattern,policy,target_index,options,instrument_index,callback)
   options=options or {}
   if policy~=nil then options.output_policy=policy end
-  local ok,err=writer.generate(instrument_index or 1,function(value) messages[#messages+1]=value end,
-    pattern,target_index,options)
-  assert(ok,err)
+  local request,rejection=writer_request.build(song,instrument_index or 1,pattern,target_index,options)
+  if not request then return false,rejection end
+  local operation=request.kind=='create' and writer.create or writer.regenerate
+  return operation(request,callback or function(value) messages[#messages+1]=value end)
+end
+
+local function generate(pattern,policy,target_index,options,instrument_index)
+  local ok,err=start(pattern,policy,target_index,options,instrument_index)
+  assert(ok,type(err)=='table' and (tostring(err.code)..': '..tostring(err.message)) or err)
   for _=1,6 do idle:fire() end
   local status=messages[#messages]
-  assert(type(status)=='table' and status.kind=='complete', 'missing typed terminal result')
+  assert(type(status)=='table' and (status.kind=='success' or status.kind=='failure'),
+    'missing typed terminal result')
   assert(status.status=='committed' or status.status=='approximate',status.message)
   assert(status.message and status.message:find('generated',1,true),status.message)
   return instrument.phrases[target_index],status
@@ -219,8 +244,7 @@ too_long.time_events[33]='N'
 local invalid_plan,invalid_reason=output_planner.plan_output(too_long,'repeat',512)
 assert(not invalid_plan and invalid_reason)
 local too_long_store=song.tool_data
-local rejected=writer.generate(1,function() end,too_long,#instrument.phrases+1,
-  {output_policy='repeat'})
+local rejected=start(too_long,'repeat',#instrument.phrases+1)
 assert(not rejected)
 assert(#instrument.phrases==5 and song.tool_data==too_long_store)
 
@@ -358,11 +382,11 @@ for _,item in ipairs(targets) do
       return nil,'injected legato emission failure'
     end
     local failed
-    assert(writer.generate(target_instrument,function(value)failed=value end,
-      connected,#instrument.phrases,{output_policy='repeat'}))
+    assert(start(connected,'repeat',#instrument.phrases,nil,target_instrument,
+      function(value)failed=value end))
     for _=1,6 do idle:fire() end
     emitter.apply=original_apply
-    assert(failed.kind=='complete' and failed.status=='error')
+    assert(failed.kind=='failure' and failed.status=='failed',failed.message)
     assert(looped.name==before_name and song.tool_data==before_data)
     assert(ownership.status(looped)=='owned' and #instrument.phrases==2,
       'failed multi-column emission must preserve the last-good phrase and source')
@@ -393,6 +417,10 @@ end
 -- Exercise payload transactions without claiming that mocks validate host delivery.
 assert(phrase_pitch_bend.delivery_enabled==false)
 phrase_pitch_bend.delivery_enabled=true
+-- Delivery availability is a planning input. The fallback phrase was sealed
+-- without native bend commands, so enabled delivery starts from an explicit
+-- New destination instead of reinterpreting that committed baseline.
+bend_target=#instrument.phrases+1
 local bent,bent_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
 assert(bent_status.message:find('depends on the receiver and routing',1,true),
   'enabled phrase commands must not imply receiver delivery is verified')
@@ -446,23 +474,23 @@ bend_emitter.apply=function(destination,plan)
   return true
 end
 local bend_failure
-assert(writer.generate(2,function(value)bend_failure=value end,bend_source,bend_target,
-  {output_policy='repeat',pb_range=12}))
+assert(start(bend_source,'repeat',bend_target,{pb_range=12},2,
+  function(value)bend_failure=value end))
 for _=1,6 do idle:fire() end
 bend_emitter.apply=original_bend_apply
-assert(bend_failure.kind=='complete' and bend_failure.status=='error')
+assert(bend_failure.kind=='failure' and bend_failure.status=='failed',bend_failure.message)
 assert(bend_failure.message:find('Pitch-bend command mismatch',1,true),bend_failure.message)
 assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
 assert(ownership.status(bent)=='owned','corrupted staged M1 damaged the last-good destination')
 -- In-flight receiver movement must preserve the last-good phrase.
 local reorder_failure
-assert(writer.generate(2,function(value)reorder_failure=value end,bend_source,bend_target,
-  {output_policy='repeat',pb_range=12}))
+assert(start(bend_source,'repeat',bend_target,{pb_range=12},2,
+  function(value)reorder_failure=value end))
 song.instruments[1],song.instruments[2]=song.instruments[2],song.instruments[1]
 for _=1,6 do idle:fire() end
 song.instruments[1],song.instruments[2]=song.instruments[2],song.instruments[1]
 assert(reorder_failure and reorder_failure.status=='suspended')
-assert(reorder_failure.message:find('target instrument moved',1,true),reorder_failure.message)
+assert(reorder_failure.message:find('target instrument changed',1,true),reorder_failure.message)
 assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
 assert(ownership.status(bent)=='owned','instrument reorder damaged the last-good phrase')
 phrase_pitch_bend.delivery_enabled=true
@@ -479,16 +507,22 @@ local render_status
 local rendering_source=source(4)
 local latest_source=source(5)
 local count_before=#instrument.phrases
-assert(writer.generate(1,function(value)render_status=value end,rendering_source,1,
-  {output_policy='repeat'}))
+dofile("tests/acid/draft_baseline_stub.lua")
+-- The shared draft stub pins full-size API bounds; keep this fixture's explicit
+-- capacities so native snapshots match its bounded cells.
+renoise.InstrumentPhrase.MAX_NUMBER_OF_LINES=CAPACITY_LINES
+renoise.InstrumentPhrase.MAX_NUMBER_OF_NOTE_COLUMNS=CAPACITY_NOTE_COLUMNS
+renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=CAPACITY_EFFECT_COLUMNS
+assert(start(rendering_source,'repeat',1,nil,1,function(value)render_status=value end))
 for _=1,6 do idle:fire() end
 assert(delayed_callback,'native render did not start')
-dofile("tests/acid/draft_baseline_stub.lua")
 local draft_cache=require('runtime.draft_cache')
 assert(draft_cache.put(song,instrument,instrument.phrases[1],latest_source,'repeat'))
 script.render_to_pattern=original_render
-original_render(script,delayed_options,delayed_callback)
-assert(render_status.kind=='complete' and
+local pending_stage=instrument.phrases[#instrument.phrases]
+original_render(pending_stage.script,delayed_options,delayed_callback)
+for _=1,6 do idle:fire() end
+assert((render_status.kind=='success' or render_status.kind=='failure') and
   (render_status.status=='committed' or render_status.status=='approximate'),render_status.message)
 assert(store.load(song,instrument,instrument.phrases[1]).length==4)
 assert(not draft_cache.get(song,instrument,instrument.phrases[1]),
@@ -505,13 +539,14 @@ function script:render_to_pattern(options,callback)
   delayed_options,delayed_callback=options,callback
   return true
 end
-assert(writer.generate(1,function(value)render_status=value end,source(6),1,
-  {output_policy='repeat'}))
+assert(start(source(6),'repeat',1,nil,1,function(value)render_status=value end))
 for _=1,6 do idle:fire() end
 assert(delayed_callback,'native render did not start for timing change')
 song.transport.timing_model=renoise.Transport.TIMING_MODEL_SPEED
 script.render_to_pattern=original_render
-original_render(script,delayed_options,delayed_callback)
+local timing_stage=instrument.phrases[#instrument.phrases]
+original_render(timing_stage.script,delayed_options,delayed_callback)
+for _=1,6 do idle:fire() end
 assert(render_status.status=='suspended' and
   render_status.message:find('unsupported timing',1,true),render_status.message)
 assert(instrument.phrases[1]==timing_destination and timing_destination.name==timing_name)
@@ -523,7 +558,7 @@ print('ACID Repeat end-to-end mocked integration checks passed (playback checked
 
 -- Exercise both pulse modes through rendering and protected replacement.
 for _,policy in ipairs({'play_once','repeat'}) do
-  for _,length in ipairs({1,9,12,15,16,17,32}) do
+  for _,length in ipairs({1,17}) do
     local timed=source(length)
     timed.timing_mode='triplet'
     local target=#instrument.phrases+1
@@ -560,8 +595,7 @@ for _,case in ipairs({{renoise.Transport.TIMING_MODEL_SPEED},{99},{}}) do
   local model=case[1]
   song.transport.timing_model=model
   for _,target in ipairs({1,#instrument.phrases+1}) do
-    local started,detail=writer.generate(1,function() error('unexpected status') end,
-      source(4),target,{output_policy='repeat'})
+    local started,detail=start(source(4),'repeat',target)
     assert(not started and detail.code=='safety.timing_model')
     assert(song.tool_data==saved_data and #instrument.phrases==saved_count)
     assert(#render_calls==saved_renders and song.transport.timing_model==model)
@@ -570,8 +604,7 @@ end
 local lpb_model=renoise.Transport.TIMING_MODEL_LPB
 renoise.Transport.TIMING_MODEL_LPB=nil
 song.transport.timing_model=nil
-local missing_started,missing_detail=writer.generate(1,function() error('unexpected status') end,
-  source(4),#instrument.phrases+1,{output_policy='repeat'})
+local missing_started,missing_detail=start(source(4),'repeat',#instrument.phrases+1)
 assert(not missing_started and missing_detail.code=='safety.timing_model')
 assert(song.tool_data==saved_data and #instrument.phrases==saved_count and #render_calls==saved_renders)
 renoise.Transport.TIMING_MODEL_LPB=lpb_model

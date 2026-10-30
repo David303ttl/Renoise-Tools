@@ -6,16 +6,18 @@ local store=require('renoise.pattern_store')
 local seq=require('model.sequencer')
 local cache=require('runtime.draft_cache')
 local phrase_fixture=dofile('tests/acid/complete_phrase_fixture.lua')
-renoise={InstrumentPhrase={MAX_NUMBER_OF_LINES=512,MAX_NUMBER_OF_NOTE_COLUMNS=12,
- MAX_NUMBER_OF_EFFECT_COLUMNS=8,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+local limits={max_lines=20,max_note_columns=2,max_effect_columns=1,number_of_lines=16}
+renoise={InstrumentPhrase={MAX_NUMBER_OF_LINES=limits.max_lines,
+ MAX_NUMBER_OF_NOTE_COLUMNS=limits.max_note_columns,
+ MAX_NUMBER_OF_EFFECT_COLUMNS=limits.max_effect_columns,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
  Instrument={MAX_NUMBER_OF_PHRASES=126,PHRASES_OFF=1},Transport={TIMING_MODEL_LPB=1}}
-local capacities={max_lines=512,max_note_columns=12,max_effect_columns=8,
- play_pattern=1,key_tracking_none=1}
+local capacities={max_lines=limits.max_lines,max_note_columns=limits.max_note_columns,
+ max_effect_columns=limits.max_effect_columns,play_pattern=1,key_tracking_none=1}
 local profile={sample=true,plugin=false,midi=false,alias=false}
 local eq_calls=0
 local content_equality={__eq=function()eq_calls=eq_calls+1;return true end}
 local function phrase(source,id)
- local p=phrase_fixture()
+ local p=phrase_fixture(limits)
  local plan=assert(planner.plan(source,'play_once',0,capacities,profile,{pitch_bend_delivery=true}))
  for key,value in pairs(plan.expected.properties)do p[key]=value end
  for key,value in pairs(plan.required_visibility)do p[key]=value end
@@ -59,4 +61,4 @@ local function fixture(kind)
  end
  return song,inst,a,b,source
 end
-return {fixture=fixture,phrase=phrase,instrument=instrument,runtime=runtime,eq_calls=function()return eq_calls end}
+return {fixture=fixture,phrase=phrase,instrument=instrument,runtime=runtime,limits=limits,eq_calls=function()return eq_calls end}

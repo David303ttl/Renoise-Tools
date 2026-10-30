@@ -215,7 +215,7 @@ do
  assert(not ctx:musical_eligibility())
  assert(ctx:independence_eligibility(),'matching collision should permit explicit resolution proof')
  assert(log.sinks==0)
- copied.lines[512].note_columns[12].delay_value=1
+ copied.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns].delay_value=1
  assert(not ctx:independence_eligibility(),'modified collision holder qualified for resolution')
  assert(log.sinks==0)
 end

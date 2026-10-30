@@ -110,6 +110,8 @@ assert(not cache.get(song,instrument,a),"detached drafts cannot rehydrate agains
 local entries=cache.list(song)
 assert(#entries==1 and entries[1].pattern.length==3 and entries[1].session_only)
 local token=entries[1].token
+local recovery_selection={token=token,revision=entries[1].revision}
+assert(type(recovery_selection.revision)=="number")
 entries[1].pattern.pitch_events[2].accent=false
 assert(cache.list(song)[1].pattern.pitch_events[2].accent)
 local function values_only(value)
@@ -119,10 +121,28 @@ local function values_only(value)
 end
 values_only(cache.list(song))
 assert(store.write_draft(song,other,nil,seq.new_pattern(6),"repeat",0))
-local copied,cp,cb,copy_meta=cache.copy_to_new(song,other,token)
+local occupied_raw=song.tool_data
+local malformed_scratch=occupied_raw:gsub("DRAFT|", "DRAFT|invalid", 1)
+assert(malformed_scratch~=occupied_raw)
+song.tool_data=malformed_scratch
+local rejected_copy,rejected_reason=cache.copy_to_new(song,other,token,recovery_selection.revision)
+assert(not rejected_copy and rejected_reason and song.tool_data==malformed_scratch,
+  "unreadable occupied scratch must block recovery copy without overwriting its bytes")
+assert(#cache.list(song)==1 and cache.list(song)[1].token==token,
+  "an unreadable scratch cannot consume or replace the selected recovery entry")
+song.tool_data=occupied_raw
+assert(store.write_draft(song,other,nil,seq.new_pattern(6),"repeat",0))
+assert(not cache.copy_to_new(song,other,token,recovery_selection.revision+1),
+  "stale chooser revisions cannot copy recovery")
+assert(cache.get(song,other,nil).length==6,"a rejected stale selection leaves the occupied scratch untouched")
+local copied,cp,cb,copy_meta=cache.copy_to_new(song,other,token,recovery_selection.revision)
 assert(copied.length==3 and cp=="repeat" and cb==12 and copy_meta.recovery_token==token)
 assert(#cache.list(song)==2,"occupied scratch remains recoverable")
 assert(cache.get(song,other,nil).length==3)
+local copied_revision=copy_meta.revision
+local forced,_,forced_meta=cache.put(song,other,nil,copied,cp,cb)
+assert(forced and forced_meta.revision==copied_revision,
+  "preserving unchanged New Phrase values keeps the copied recovery revision")
 local create=assert(cache.capture(song,other,nil))
 local create_candidate=assert(store.prepare(song,3,dirty,"repeat",12,
   function(token,revision)return token==create.token and revision==create.revision and cache.is_current(song,create)end,create))
@@ -131,6 +151,9 @@ assert(cache.compare_and_clear(song,create,true))
 assert(#cache.list(song)==1 and cache.list(song)[1].token~=token,
   "successful exact copied revision removes only its recovery origin")
 local scratch_token=cache.list(song)[1].token
+local scratch_entry=cache.list(song)[1]
+assert(not cache.discard(song,scratch_token,scratch_entry.revision+1),
+  "stale chooser revisions cannot discard recovery")
 assert(cache.copy_to_new(song,other,scratch_token))
 local old=assert(cache.capture(song,other,nil))
 assert(cache.put(song,other,nil,seq.new_pattern(7),"repeat",0))
@@ -139,7 +162,8 @@ assert(#cache.list(song)==1,"superseded create preserves recovery origin")
 local changed=assert(cache.capture(song,other,nil))
 assert(cache.compare_and_clear(song,changed,true))
 assert(#cache.list(song)==1,"a later edited revision cannot consume original recovery")
-assert(cache.discard(song,scratch_token) and not cache.discard(song,scratch_token))
+assert(cache.discard(song,scratch_token,scratch_entry.revision) and
+  not cache.discard(song,scratch_token,scratch_entry.revision))
 
 -- Durable hydration captures the currently verified baseline, not historical evidence.
 assert(cache.put(song,instrument,b,dirty,"repeat",24))

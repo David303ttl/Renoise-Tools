@@ -49,8 +49,9 @@ function M.new(song,drafts,idle)
       if record.mutation then return end
       if type(evidence)~="table" or getmetatable(evidence)~=nil then error("Invalid recovery evidence") end
       record.operation=evidence.operation or "regenerate"
+      record.committed=evidence.committed==true
       if record.operation~="create" and record.operation~="regenerate" then error("Invalid recovery operation") end
-      if record.operation=="create" then
+      if record.operation=="create" and not record.committed then
         if not (type(evidence.pre_store)=="string" or
           (evidence.pre_store==nil and evidence.pre_store_absent==true))
           or type(evidence.destination_phrases)~="table" then
@@ -142,7 +143,7 @@ function M.new(song,drafts,idle)
             end
           end
         end
-        if entry.operation=="create" then
+        if entry.operation=="create" and not entry.committed then
           if not ownership.membership(song,entry.instrument) or song.tool_data~=entry.pre_store
             or #entry.instrument.phrases~=#entry.destination_phrases then
             return nil,"Create destination/store preconditions have not been restored"
@@ -155,7 +156,7 @@ function M.new(song,drafts,idle)
         else
           local baseline,baseline_error=current_baseline(entry)
           if not baseline then return nil,baseline_error end
-          local before=entry.baseline and ownership.compare(entry.baseline,baseline)
+          local before=not entry.committed and entry.baseline and ownership.compare(entry.baseline,baseline)
           local committed=entry.committed_baseline and ownership.compare(entry.committed_baseline,baseline)
           if not before and not committed then
             return nil,"Destination/source consistency cannot be verified; use native undo or a known-good saved song"

@@ -12,24 +12,15 @@ local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
 local dialog
 local runtime_context=require("runtime.context")
+local native_observers=require("runtime.observers").new()
 local active_runtime
 local active_live_checkbox
 local attached_song
 local dialog_session
 local idle_observable
 local idle_notifier
-local selected_phrase_observable
-local selected_phrase_notifier
-local function detach_selected_phrase_watch()
-  if selected_phrase_observable and selected_phrase_notifier then
-    pcall(function()
-      selected_phrase_observable:remove_notifier(selected_phrase_notifier)
-    end)
-  end
-  selected_phrase_observable,selected_phrase_notifier=nil,nil
-end
 local function detach_dialog_watch()
-  detach_selected_phrase_watch()
+  native_observers:detach()
   if idle_observable and idle_notifier then
     pcall(function() idle_observable:remove_notifier(idle_notifier) end)
   end
@@ -40,25 +31,31 @@ local function stop_live_context()
     active_runtime:transition("disarm")
     active_runtime:close_dialog()
   end
-  if active_live_checkbox then active_live_checkbox.value=false end
+  local checkbox=active_live_checkbox
   active_live_checkbox=nil
+  if checkbox then pcall(function() checkbox.value=false end) end
 end
 local function release_context()
+  local song=attached_song or renoise.song()
+  if song and drafts.has_volatile(song) then
+    renoise.app():show_warning(
+      "ACID has drafts that could not be saved with this song. They will be lost when it closes.")
+  end
   attached_song=nil
-  if active_runtime then active_runtime:release_document() end
   detach_dialog_watch()
+  if active_runtime then active_runtime:release_document() end
   stop_live_context()
-  phrase_writer.release()
+  if dialog then
+    local stale=dialog
+    dialog=nil
+    dialog_session=nil
+    pcall(function() stale:close() end)
+  end
+  local recovery_warning=phrase_writer.release()
+  if recovery_warning then renoise.app():show_warning(recovery_warning) end
 end
 if renoise.tool().app_release_document_observable then
-  renoise.tool().app_release_document_observable:add_notifier(function()
-    local song=renoise.song()
-    if song and drafts.has_volatile(song) then
-      renoise.app():show_warning(
-        "ACID has drafts that could not be saved with this song. They will be lost when it closes.")
-    end
-    release_context()
-  end)
+  renoise.tool().app_release_document_observable:add_notifier(release_context)
 end
 if renoise.tool().tool_will_unload_observable then
   renoise.tool().tool_will_unload_observable:add_notifier(release_context)
@@ -172,8 +169,8 @@ function M.show()
   local accent=vb:checkbox{value=false}
   local slide=vb:checkbox{value=false}
   local phrase_choice,phrase_targets
-  local bind_selected_phrase_watch
   local apply_pending_selected_phrase_selection
+  local native_projection_dirty=false
   local instrument_choice
   local live_checkbox
   local function destination() return runtime:target_state() end
@@ -195,6 +192,7 @@ function M.show()
     return cached_projection
   end
   local update_live_state
+  local update_actions
   local function save_draft(kind)
     runtime:transition(kind or "edit",{source=pattern,output_policy=output_policy,pb_range=pb_range})
     source_state.text="SOURCE DIRTY: Generate to apply this draft."
@@ -669,48 +667,61 @@ function M.show()
     phrase_choice.value=chosen
     loading=false
     load_target(chosen)
-    if bind_selected_phrase_watch then
-      bind_selected_phrase_watch()
-    end
   end
   local function refresh_phrase_choices(preferred_target)
-    local chosen=phrase_choice.value
     local options,targets=options_for_instrument()
-    phrase_targets=targets
-    if preferred_target then
-      for index,target in ipairs(targets) do
-        if rawequal(target,preferred_target) or (type(preferred_target)=="number" and rawequal(target,instrument_targets[selected_instrument].phrases[preferred_target])) then chosen=index;break end
+    local wanted=preferred_target or bound_phrase()
+    local chosen=#options
+    local found=false
+    if wanted then
+      for index,candidate in ipairs(targets) do
+        if rawequal(candidate,wanted) then chosen=index;found=true;break end
+      end
+      if not found then
+        table.insert(options,#options,"Unavailable bound phrase")
+        table.insert(targets,#targets,wanted)
+        chosen=#options-1
       end
     end
+    phrase_targets=targets
     loading=true
     phrase_choice.items=options
     phrase_choice.value=math.min(chosen,#options)
     loading=false
   end
-  bind_selected_phrase_watch=function()
-    detach_selected_phrase_watch()
-    local observable=song.selected_phrase_observable
-    if not observable or type(observable.add_notifier)~="function" or
-        type(observable.remove_notifier)~="function" then
-      return
+  local function refresh_native_choices()
+    local choices=runtime:instrument_choices() or {}
+    local names,targets={},{}
+    local wanted=bound_instrument()
+    local chosen
+    for _,choice in ipairs(choices) do
+      targets[#targets+1]=choice.instrument
+      names[#names+1]=string.format("%02X: %s",choice.instrument_index-1,choice.instrument_name)
+      if rawequal(choice.instrument,wanted) then chosen=#targets end
     end
-    local notifier=function()
-      if not current_session() or loading or runtime:mutation_state().depth>0 then
-        return
-      end
-      invalidate_projection()
-      runtime:mark_dirty("Native selection changed")
+    if not chosen then
+      targets[#targets+1]=wanted or false
+      names[#names+1]="Unavailable bound instrument"
+      chosen=#targets
     end
-    local ok=pcall(function() observable:add_notifier(notifier) end)
-    if ok then
-      selected_phrase_observable=observable
-      selected_phrase_notifier=notifier
-    end
+    instrument_targets=targets
+    selected_instrument=chosen
+    loading=true
+    instrument_choice.items=names
+    instrument_choice.value=chosen
+    loading=false
+    refresh_phrase_choices(bound_phrase())
   end
   apply_pending_selected_phrase_selection=function()
     if not current_session() then return false end
     local before=destination()
     local target=runtime:reconcile()
+    if native_projection_dirty then
+      native_projection_dirty=false
+      refresh_native_choices()
+      invalidate_projection()
+      if update_actions then update_actions() end
+    end
     if not target or (rawequal(before.instrument,target.instrument) and
         rawequal(before.phrase,target.phrase) and before.kind==target.kind) then return false end
     if target.kind~="owned" then
@@ -744,7 +755,7 @@ function M.show()
     return false
   end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
-    notifier=function(n)select_instrument(n) end}
+    notifier=function(n)if not loading then select_instrument(n) end end}
   instrument_choice=target
   local function result_status(result)
     if result.kind=="success" then
@@ -769,6 +780,7 @@ function M.show()
     return message
   end
   update_live_state=function()
+    if update_actions then update_actions() end
     local state=runtime:generation_state()
     if not state.armed then
       live_state_view.text="LIVE EDIT DISABLED"
@@ -842,6 +854,103 @@ function M.show()
       update();update_live_state()
     end
   end}
+  local recovery_entries={}
+  local recovery_choice
+  local copy_recovery,discard_recovery,independent,revalidate
+  local recovery_detail=vb:multiline_text{id="acid_recovery_detail",width=820,height=32,text=""}
+  local independence_detail=vb:multiline_text{id="acid_independence_detail",width=820,height=32,text=""}
+  local function selected_recovery()
+    return recovery_choice and recovery_entries[recovery_choice.value]
+  end
+  local function project_runtime_editor()
+    local state=runtime:editor_state()
+    if not state then return end
+    pattern,output_policy,pb_range=state.source,state.output_policy,state.pb_range
+    selected_pitch,selected_step,pitch_page,time_page=1,1,1,1
+    invalidate_projection()
+    history:reset(pattern,output_policy,pb_range)
+    update()
+  end
+  recovery_choice=vb:popup{id="acid_recovery_choice",width=420,items={"No detached drafts"},value=1,
+    notifier=function() if not loading and update_actions then update_actions() end end}
+  copy_recovery=vb:button{id="acid_recovery_copy",text="Copy to New",active=false,notifier=function()
+    if not current_session() then return end
+    local entry=selected_recovery()
+    if not entry then return end
+    local copied,reason=runtime:copy_recovery_to_new(entry.token,entry.revision)
+    if copied then
+      refresh_phrase_choices()
+      project_runtime_editor()
+      source_state.text="SOURCE DIRTY: Generate to apply this recovered draft."
+      status.text="Draft copied to New. The original recovery entry stays until this revision is generated or discarded."
+      if type(reason)=="table" and reason.warning then
+        status.text=status.text.."\nDRAFT WARNING: "..tostring(reason.warning)
+      end
+    else status.text="Cannot recover draft: "..tostring(reason) end
+    update_live_state()
+  end}
+  discard_recovery=vb:button{id="acid_recovery_discard",text="Discard",active=false,notifier=function()
+    if not current_session() then return end
+    local entry=selected_recovery()
+    if not entry then return end
+    local discarded,reason=runtime:discard_recovery(entry.token,entry.revision)
+    status.text=discarded and "Selected recovery entry discarded." or ("Cannot discard draft: "..tostring(reason))
+    update_live_state()
+  end}
+  independent=vb:button{id="acid_make_independent",text="Make Independent",active=false,notifier=function()
+    if not current_session() then return end
+    local changed,result=runtime:make_independent()
+    if changed then
+      refresh_phrase_choices(result.phrase)
+      project_runtime_editor()
+      local state=runtime:editor_state()
+      local dirty=state and (not sequencer.same_source(state.source,result.source) or
+        state.output_policy~=result.output_policy or state.pb_range~=result.pb_range)
+      source_state.text=dirty and "SOURCE DIRTY: Generate to apply this draft." or "SOURCE COMMITTED"
+      status.text="Selected phrase is independent. Its musical content is unchanged."
+      if state and state.draft_warning then
+        status.text=status.text.."\nDRAFT WARNING: "..tostring(state.draft_warning)
+      end
+    else status.text="Cannot make independent: "..tostring(result) end
+    update_live_state()
+  end}
+  revalidate=vb:button{id="acid_revalidate",text="Revalidate",active=false,notifier=function()
+    if not current_session() then return end
+    local state,proof=runtime:revalidation_status()
+    if not state.verified then status.text=state.reason or "Recovery consistency could not be verified."
+    else
+      local cleared,reason=runtime:revalidate(proof)
+      status.text=cleared and "Recovery verified. Generate or edit explicitly to continue." or tostring(reason)
+    end
+    update_live_state()
+  end}
+  update_actions=function()
+    local previous=selected_recovery()
+    recovery_entries=runtime:recovery_entries() or {}
+    local items,chosen={},1
+    for index,entry in ipairs(recovery_entries) do
+      local names=entry.labels or {}
+      items[index]=(names.instrument or "Unavailable instrument").." / "..(names.phrase or "Draft")
+      if previous and previous.token==entry.token and previous.revision==entry.revision then chosen=index end
+    end
+    if #items==0 then items[1]="No detached drafts" end
+    loading=true
+    recovery_choice.items=items
+    recovery_choice.value=chosen
+    loading=false
+    local entry=selected_recovery()
+    recovery_choice.active=entry~=nil
+    copy_recovery.active=entry~=nil and current_session() and bound_instrument()~=nil
+    discard_recovery.active=entry~=nil and current_session()
+    recovery_detail.text=entry and ("Session only: "..tostring(entry.reason or "Detached draft")) or ""
+    local eligible,reason=runtime:independence_eligibility()
+    independent.active=eligible~=nil and current_session()
+    independence_detail.text=eligible and "Resolve this copied-ID collision without changing the music."
+      or tostring(reason or "Select a colliding phrase to make it independent.")
+    local integrity=runtime:integrity_state()
+    revalidate.active=integrity.blocked and current_session()
+    if integrity.blocked then independence_detail.text=integrity.reason or "Recovery consistency requires revalidation." end
+  end
   program_panel=vb:column{id="acid_program_panel",spacing=5,
     vb:text{text="PROGRAM ENTRY | choose one shared PITCH position and TIME step",font="bold"},
     vb:row{spacing=8,vb:text{text="PITCH POSITION"},program_pitch_popup,
@@ -896,6 +1005,8 @@ function M.show()
       vb:text{text="PB Range"},pb_range_popup},
     vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."},
     vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
+    vb:row{spacing=8,independent,revalidate},independence_detail,
+    vb:row{spacing=8,vb:text{text="Recover Draft"},recovery_choice,copy_recovery,discard_recovery},recovery_detail,
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
         if runtime:revision_state().armed then
@@ -928,6 +1039,10 @@ function M.show()
     vb:text{text="Live Edit applies changes automatically. With Live Edit off, Generate applies the saved draft."},
     source_state,live_state_view,inspect,status}
   select_instrument(selected_instrument)
+  native_observers:attach(song,runtime,function()
+    native_projection_dirty=true
+    invalidate_projection()
+  end)
   update()
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)
   dialog_session=session
@@ -949,15 +1064,17 @@ function M.show()
       return
     end
     if observed_dialog.visible then
+      if native_projection_dirty then native_observers:refresh() end
       apply_pending_selected_phrase_selection()
       runtime:flush_pending()
       return
     end
     detach_this_watch()
-    detach_selected_phrase_watch()
+    native_observers:detach()
     runtime:transition("disarm")
     runtime:close_dialog()
     observed_checkbox.value=false
+    if rawequal(active_live_checkbox,observed_checkbox) then active_live_checkbox=nil end
     dialog=nil
     dialog_session=nil
     runtime:close_dialog()

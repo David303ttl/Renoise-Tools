@@ -25,6 +25,7 @@ local allowed_operations = {
   ["document.load_fixture"] = true,
   ["song.snapshot"] = true,
   ["song.prepare_instrument_navigation"] = true,
+  ["acid.acceptance.run"] = true,
   ["gui.state"] = true,
   ["wait.condition"] = true,
   diagnostics = true,
@@ -361,6 +362,10 @@ local function valid_args_for_operation(current, request)
     if not object_has_only_keys(args, {root = true, name = true, timeout_ms = true}, {"root", "name"}) then return false end
     if (args.root ~= "fixtures" and args.root ~= "temp") or not valid_fixture_name(args.name) then return false end
     return validate_timeout(args, LIMITS.default_timeout_ms) ~= nil
+  elseif operation == "acid.acceptance.run" then
+    return object_has_only_keys(args, {case = true}, {"case"}) and
+      (args.case == "make-independent" or args.case == "draft-recovery" or
+        args.case == "reopen-independent" or args.case == "api-probe")
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end
@@ -931,6 +936,34 @@ local function process_record(current, record)
       return
     end
     finish_record(current, record, true, result)
+  elseif record.operation == "acid.acceptance.run" then
+    if type(current.acceptance_runner) ~= "function" then
+      finish_error(current, record, "acceptance_unavailable", "native acceptance cases are unavailable")
+      return
+    end
+    local callback_used = false
+    local function complete(result)
+      if callback_used or record.done then return false end
+      callback_used = true
+      if type(result) ~= "table" or
+          (result.status ~= "PASS" and result.status ~= "FAIL" and result.status ~= "ERROR") or
+          result.case ~= record.args.case then
+        finish_error(current, record, "acceptance_result_invalid", "native acceptance returned an invalid result")
+        return false
+      end
+      finish_record(current, record, true, result)
+      return true
+    end
+    local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete)
+    if not call_ok then
+      finish_error(current, record, "acceptance_error", "native acceptance case raised an error")
+    elseif accepted == false then
+      finish_error(current, record, "acceptance_unavailable", tostring(detail or "native acceptance case did not start"))
+    elseif type(accepted) == "table" then
+      complete(accepted)
+    else
+      record.state = "waiting_acceptance"
+    end
   elseif record.operation == "gui.state" then
     if type(current.gui_state_reader) ~= "function" then
       finish_error(current, record, "gui_state_unavailable", "ACID UI state is unavailable in this driver")
@@ -1359,7 +1392,7 @@ local function initialize_observers(current)
   end
 end
 
-function driver.start(configuration_path, gui_state_reader)
+function driver.start(configuration_path, gui_state_reader, acceptance_runner)
   if started then
     error("ACID development driver has already been started")
   end
@@ -1391,6 +1424,7 @@ function driver.start(configuration_path, gui_state_reader)
     document_transition_uncertain = false,
     current_song = nil,
     gui_state_reader = gui_state_reader,
+    acceptance_runner = acceptance_runner,
     last_native_inventory_settlement = nil,
     candidate = nil,
     active_client = nil,

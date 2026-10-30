@@ -4,6 +4,7 @@ param(
     [ValidateSet('ACID')][string]$Tool = 'ACID',
     [ValidateSet('Native','Keyboard','All')][string]$Suite = 'Native',
     [string]$Scenario,
+    [string]$AcceptanceCase,
     [string]$RenoiseExe,
     [int]$RenoiseProcessId = 0,
     [string]$TestEnvironment,
@@ -159,6 +160,10 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe')) {
+        throw "Unsupported native acceptance case '$AcceptanceCase'."
+    }
+    if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }
     if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native') {
         throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites.'
     }
@@ -634,6 +639,69 @@ try {
         }
         $report.document_epoch = $cleanupDiagnostics.document_epoch
         Add-Trace -Operation 'scenario.cleanup' -Status 'PASS' -Details @{ document_epoch = $cleanupDiagnostics.document_epoch }
+        if ($AcceptanceCase) {
+            $lastExpected = "Fixed native acceptance case '$AcceptanceCase' completes with independent postconditions"
+            $lastActual = $null
+            $lastDiff = $null
+            $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments @{ case = $AcceptanceCase } -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
+            $acceptanceStatus = [string]$acceptance.status
+            if ($acceptanceStatus -cnotin @('PASS','FAIL','ERROR') -or $acceptance.case -cne $AcceptanceCase) {
+                throw 'Native acceptance response did not match the selected case.'
+            }
+            $acceptanceActual = ConvertTo-AcidCanonicalJson $acceptance
+            $lastActual = $acceptance
+            $lastDiff = if ($acceptanceStatus -ceq 'PASS') { $null } else { $acceptance }
+            $scenarioResults.Add([pscustomobject]@{
+                name = "acceptance.$AcceptanceCase"
+                suite = 'Native'
+                status = $acceptanceStatus
+                expected = $lastExpected
+                actual = $acceptanceActual
+                diff = $lastDiff
+            })
+            Add-Trace -Operation "acceptance.$AcceptanceCase" -Status $acceptanceStatus -Details $acceptance
+            if ($AcceptanceCase -ceq 'make-independent' -and $acceptanceStatus -ceq 'PASS') {
+                if ($acceptance.roundtrip_fixture -cne 'acceptance-independent.xrns') {
+                    throw 'Make Independent did not return the fixed round-trip fixture name.'
+                }
+                $roundTripPath = Join-Path $installedFixturesPath 'acceptance-independent.xrns'
+                $roundTripItem = Get-Item -LiteralPath $roundTripPath -Force -ErrorAction Stop
+                if ($roundTripItem.PSIsContainer -or ($roundTripItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                    throw 'Make Independent round-trip output is not a plain fixture file.'
+                }
+                $expectedFixtureNames = @((Get-ChildItem -LiteralPath $fixturesSourcePath -File | ForEach-Object Name) + 'acceptance-independent.xrns' | Sort-Object -Unique)
+                $installedFixtureNames = @(Get-ChildItem -LiteralPath $installedFixturesPath -File | ForEach-Object Name | Sort-Object -Unique)
+                if (($installedFixtureNames -join '|') -cne ($expectedFixtureNames -join '|')) {
+                    throw 'Make Independent changed unexpected files in the temporary fixture directory.'
+                }
+                $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
+                $roundTrip = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.load_fixture' -Arguments @{ root = 'fixtures'; name = 'acceptance-independent.xrns'; timeout_ms = 120000 } -TimeoutSeconds ([Math]::Min(123, [Math]::Ceiling(120000 / 1000) + 3)) -ProcessCheck $processCheck
+                if ($roundTrip.operation -cne 'document.load_fixture' -or $roundTrip.document_epoch -le $report.document_epoch) {
+                    throw 'Saved Make Independent song did not reload into a new document epoch.'
+                }
+                $report.document_epoch = $roundTrip.document_epoch
+                Add-Trace -Operation 'acceptance.roundtrip_reload' -Status 'PASS' -Details @{ fixture = $acceptance.roundtrip_fixture; document_epoch = $roundTrip.document_epoch }
+                $reloadedSnapshot = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+                if ($reloadedSnapshot.document_epoch -ne $roundTrip.document_epoch -or
+                    $reloadedSnapshot.instrument_count -ne 10 -or $reloadedSnapshot.phrase_count -ne 2) {
+                    throw 'Reloaded Make Independent inventory did not match the saved native result.'
+                }
+                Add-Trace -Operation 'acceptance.roundtrip_snapshot' -Status 'PASS' -Details @{ instrument_count = $reloadedSnapshot.instrument_count; phrase_count = $reloadedSnapshot.phrase_count }
+                $reopened = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments @{ case = 'reopen-independent' } -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
+                if ($reopened.case -cne 'reopen-independent' -or [string]$reopened.status -cnotin @('PASS','FAIL','ERROR')) {
+                    throw 'Native round-trip acceptance response did not match the fixed case.'
+                }
+                $scenarioResults.Add([pscustomobject]@{
+                    name = 'acceptance.reopen-independent'
+                    suite = 'Native'
+                    status = [string]$reopened.status
+                    expected = 'Saved independent identity and source survive reload, then same-object regeneration succeeds'
+                    actual = ConvertTo-AcidCanonicalJson $reopened
+                    diff = if ([string]$reopened.status -ceq 'PASS') { $null } else { $reopened }
+                })
+                Add-Trace -Operation 'acceptance.reopen-independent' -Status ([string]$reopened.status) -Details $reopened
+            }
+        }
         $report.scenarios = @($scenarioResults)
         if ($Suite -in @('Keyboard','All')) {
             $activeSuite = 'Keyboard'

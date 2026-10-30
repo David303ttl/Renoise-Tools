@@ -414,6 +414,10 @@ function M.candidate_status(candidate)
     error=state.error,previous_raw=state.previous_raw,written_raw=state.written_raw}
 end
 
+function M.release_candidate(candidate)
+  if candidate then candidates[candidate]=nil end
+end
+
 local function remove_captured_draft(song,entries,drafts,removal)
   if not removal or not removal.present then return end
   local index,id,name=draft_target(song,removal.instrument,removal.phrase,entries)
@@ -512,16 +516,27 @@ function M.save(song,id,pattern,output_policy,pb_range)
 end
 
 function M.allocate(song)
-  local entries,err=M.read(song)
-  if not entries then return nil,err end
+  local current,current_error=ownership.is_current(song)
+  if not current then return nil,current_error end
+  local raw,err=raw_data(song)
+  if err then return nil,err end
+  local entries,drafts=decode(raw or "")
+  if not entries then return nil,drafts end
   local highest=0
   for id in pairs(entries) do if id>highest then highest=id end end
-  for _,instrument in ipairs(song.instruments or {}) do
-    for _,phrase in ipairs(instrument.phrases or {}) do
-      local id=ownership.id(phrase)
-      if id and id>highest then highest=id end
-    end
+  -- Retained drafts must never become associated with a newly allocated owner.
+  for _,draft in pairs(drafts) do
+    if draft.phrase_id>highest then highest=draft.phrase_id end
   end
+  local inspected,inspection_error=pcall(function()
+    for _,instrument in ipairs(song.instruments) do
+      for _,phrase in ipairs(instrument.phrases) do
+        local id=ownership.id(phrase)
+        if id and id>highest then highest=id end
+      end
+    end
+  end)
+  if not inspected then return nil,"Cannot inspect ACID phrase IDs: "..tostring(inspection_error) end
   if highest>=MAX_ID then return nil,"ACID phrase ID space exhausted" end
   return highest+1
 end

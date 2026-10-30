@@ -156,7 +156,8 @@ package.loaded["writers.phrase_writer"]={
   is_temporary=function()return false end,
   cancel=function(token)
     return active_request~=nil and rawequal(active_request.token,token)
-  end
+  end,
+  release=function()end
 }
 
 renoise={
@@ -303,4 +304,24 @@ assert(#contexts==1 and context:integrity_state().blocked,
 local blocked_count=#tool.writer_calls
 button(builder,"Generate / Regenerate ACID Phrase"):fire()
 assert(#tool.writer_calls==blocked_count,"a reopened integrity blocker still rejects generation")
+
+-- A new document warns about volatile drafts from the tracked old song, and a
+-- closed dialog's checkbox is not touched by the released runtime.
+fail_draft_persistence=true
+builder.views.acid_program_key_popup:fire(7)
+assert(require("runtime.draft_cache").has_volatile(song),
+  "volatile draft fixture was not created")
+local warnings_before=#warnings
+local closed_checkbox=live_control(builder)
+dialog.visible=false
+tool.app_idle_observable:fire()
+local writes=0
+setmetatable(closed_checkbox,{__newindex=function(node,key,value)
+  if key=="value" then writes=writes+1 end
+  rawset(node,key,value)
+end})
+tool.app_new_document_observable:fire()
+assert(warnings_before+1==#warnings and warnings[#warnings]:find("could not be saved",1,true),
+  "new document did not warn about volatile old-song drafts")
+assert(writes==0,"released runtime wrote a stale dialog checkbox")
 print("acid GUI runtime admission specs passed")

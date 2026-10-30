@@ -1,10 +1,13 @@
 -- Test-only request factory for the explicit writer API.
--- Production code never infers a request from positional arguments.
+-- Production code never infers a request from positional arguments. Callers
+-- dispatch the returned request through writer.create or writer.regenerate so
+-- the tests exercise the same create(request, done) contract as production.
 local ownership=require("renoise.phrase_ownership")
 local capabilities=require("renoise.target_capabilities")
 local pitch_bend=require("writers.phrase_pitch_bend")
 local validator=require("writers.phrase_validator")
 local planner=require("model.output_planner")
+local sequencer=require("model.sequencer")
 local policies=require("model.policies")
 
 local M={}
@@ -58,6 +61,11 @@ function M.build(song,instrument_index,pattern,target_index,options)
   if not policies.valid_pb_range(pb_range) then
     return nil,{kind="failure",status="failed",code="source.pb_range",category="source",
       message="Invalid PB range",reason="Invalid PB range",verified=false}
+  end
+  local source_valid,source_error=sequencer.validate(pattern)
+  if not source_valid then
+    return nil,{kind="failure",status="failed",code="source.invalid",category="source",
+      message=source_error,reason=source_error,verified=false,token=options.token}
   end
   local output,planning_error=planner.plan(pattern,output_policy,pb_range,caps,profile,
     {pitch_bend_delivery=pitch_bend.delivery_enabled})
@@ -143,15 +151,6 @@ function M.build(song,instrument_index,pattern,target_index,options)
     return true
   end
   return request
-end
-
-function M.generate(writer,instrument_index,callback,pattern,target_index,options)
-  local request,reason=M.build(_G.renoise.song(),instrument_index,pattern,target_index,options)
-  if not request then return false,reason end
-  local operation=request.kind=="create" and writer.create or writer.regenerate
-  local accepted,rejection=operation(request,function(result) callback(result) end)
-  if not accepted then return false,rejection end
-  return true
 end
 
 return M
