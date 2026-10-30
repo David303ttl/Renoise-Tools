@@ -828,10 +828,11 @@ and corrected boundary regressions passed; see the
 #### T0.6 — Targeted keyboard E2E
 
 - [x] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`. Before each
-  input sequence, verify the explicitly selected Renoise PID, activate that
-  process's window and wait for it to own the foreground, then recheck PID and
-  foreground. Abort without sending if activation fails or focus changes before
-  input; perform these checks only for keyboard input, not Native API runs.
+  input sequence, verify the explicitly selected Renoise PID and foreground ownership before
+  sending. Never activate a window on a shared desktop; require explicit
+  consent for activation in a dedicated interactive Windows session. Abort
+  rather than redirect input when foreground does not match. Native API tests
+  must never require keyboard focus.
 - [x] Read the shortcut from developer configuration and fail with a clear
   diagnostic when it is missing. Do not rewrite the developer's keymap. If a
   binding is needed, register the genuine `Global:ACID:Show` action through the
@@ -845,7 +846,7 @@ and corrected boundary regressions passed; see the
   Keyboard independently selectable, and add editing/regeneration journeys only
   with their owning interface work; route them through real GUI handlers.
 
-The automated path and offline guard checks are implemented. The current
+The automated path and offline guard checks are implemented. In nonintrusive mode, an existing selected Renoise process must already own the foreground; no window is activated. Explicit activation is allowed only through `-AllowKeyboardFocusActivation` in a dedicated interactive session. The focus guard is exercised through the actual send dispatcher with an injected mismatch. The current
 developer keymap assigns Ctrl+Alt+B (`^!b`) to `Global:ACID:Show`. Renoise-host
 acceptance passed on 2026-10-30: the shortcut opened and closed ACID, the real
 handler invocation was observed, and native instrument navigation changed the

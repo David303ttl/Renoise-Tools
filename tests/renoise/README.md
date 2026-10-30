@@ -109,14 +109,14 @@ a different key combination in Renoise.
 Pass the external configuration file when selecting the Keyboard suite:
 
 ~~~powershell
-./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment '<path>' -Install -ApproveDisposableSong
-./scripts/run_interactive_tests.ps1 -Suite All -TestEnvironment '<path>' -Install -ApproveDisposableSong
+# Dedicated interactive Windows test session only (may activate Renoise)
+./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment '<path>' -Install -ApproveDisposableSong -AllowKeyboardFocusActivation
+./scripts/run_interactive_tests.ps1 -Suite All -TestEnvironment '<path>' -Install -ApproveDisposableSong -AllowKeyboardFocusActivation
+# Shared work desktop: no activation; requires an existing, loaded Renoise PID in foreground
+./scripts/run_interactive_tests.ps1 -Suite Keyboard -RenoiseProcessId <pid> -TestEnvironment '<path>' -Install -ApproveDisposableSong
 ~~~
 
-Each sent sequence includes the selected Renoise PID. The AHK helper checks that
-the process is `Renoise.exe`, activates its window, waits up to the configured
-timeout for that exact PID to own the foreground, and rechecks PID and focus
-before sending. It refuses the sequence if activation or either check fails.
+Each sequence validates the selected Renoise PID. On a shared desktop, the helper never activates another window: if Renoise is not already foreground, it refuses input. The runner also requires an explicit existing `-RenoiseProcessId` in this mode to avoid a focus-stealing application launch. `-AllowKeyboardFocusActivation` explicitly permits activation and is intended only for a separate interactive Windows test session. A global Renoise shortcut cannot be reliably tested through real keyboard input in the background of the same Windows desktop. Native tests remain focus-free.
 The runner does not change keyboard preferences. It waits for the ACID dialog's
 API-visible state, closes the dialog with Escape, then uses Renoise's native
 Alt+Down/Alt+Up instrument navigation documented in the

@@ -7,7 +7,8 @@ ExitApp(exitCode)
 Main() {
     usage := 'Usage: AutoHotkey64.exe <script-path> --pid <Renoise-PID> --keys <AHK key sequence>'
         . ' --focus-timeout <seconds>'
-        . '`nOptions: --help, --version, --self-test <wrong-pid|focus-mismatch>'
+        . ' [--allow-activation]'
+        . '`nOptions: --help, --version, --self-test <wrong-pid|focus-mismatch> [--pid <Renoise-PID>]'
 
     if (A_Args.Length = 1 && A_Args[1] = '--help') {
         FileAppend(usage '`n', '*')
@@ -17,12 +18,12 @@ Main() {
         FileAppend(A_AhkVersion '`n', '*')
         return 0
     }
-    if (A_Args.Length = 2 && A_Args[1] = '--self-test') {
-        return RunGuardSelfTest(A_Args[2])
-    }
-
-    if (A_Args.Length != 6 || A_Args[1] != '--pid' || A_Args[3] != '--keys'
-        || A_Args[5] != '--focus-timeout') {
+    if (A_Args.Length >= 2 && A_Args[1] = '--self-test') {
+        if (A_Args.Length = 2) {
+            return RunGuardSelfTest(A_Args[2])
+        }
+        if (A_Args.Length = 4 && A_Args[3] = '--pid'
+            && RegExMatch(A_Args[4], '^[1-9][0-9]*
         return ReportFailure(2, 'Invalid arguments.`n' . usage)
     }
 
@@ -63,30 +64,22 @@ Main() {
         return ReportFailure(result.Code, result.Message)
     }
 
-    result := ActivateRenoiseWindow(targetPid, timeoutSeconds)
+    ; Never steal focus unless the caller explicitly opts in for a dedicated session.
+    if (allowActivation) {
+        result := ActivateRenoiseWindow(targetPid, timeoutSeconds)
+        if (result.Code != 0) {
+            return ReportFailure(result.Code, result.Message)
+        }
+    }
+
+    ; Uses the same guarded dispatcher as the negative self-tests.
+    result := AttemptForegroundSend(targetPid, keys)
     if (result.Code != 0) {
         return ReportFailure(result.Code, result.Message)
     }
 
-    ; Each sequence is sent only after activating and rechecking the selected Renoise process.
-    result := CheckSelectedRenoisePid(targetPid)
-    if (result.Code != 0) {
-        return ReportFailure(result.Code, result.Message)
-    }
-    result := CheckForegroundPid(targetPid)
-    if (result.Code != 0) {
-        return ReportFailure(result.Code, result.Message)
-    }
-
-    try {
-        SendKeyboardSequence(keys)
-    } catch Error as err {
-        return ReportFailure(5, 'AutoHotkey could not send the requested keyboard sequence: ' . err.Message
-            . ' (' . err.What . ', line ' . err.Line . ')')
-    }
-
-    FileAppend('PASS sent keyboard sequence to Renoise PID ' . targetPid . ' after foreground verification.' '`n', '*')
-
+    FileAppend('PASS sent keyboard sequence to Renoise PID ' . targetPid
+        . '; activation=' . (allowActivation ? 'opted-in' : 'disabled') . '.`n', '*')
     return 0
 }
 
@@ -112,32 +105,49 @@ ActivateRenoiseWindow(targetPid, timeoutSeconds) {
     return CheckForegroundPid(targetPid)
 }
 
-RunGuardSelfTest(testName) {
+RunGuardSelfTest(testName, targetPid := 0) {
     if (testName != 'wrong-pid' && testName != 'focus-mismatch') {
         return ReportFailure(2, 'Self-test must be wrong-pid or focus-mismatch.')
     }
 
     expectedCode := testName = 'wrong-pid' ? 3 : 4
-
-    helperPid := DllCall('Kernel32\GetCurrentProcessId', 'UInt')
+    helperPid := DllCall('Kernel32\\GetCurrentProcessId', 'UInt')
     if (testName = 'wrong-pid') {
-        result := CheckSelectedRenoisePid(helperPid)
+        ; The real dispatcher must reject a non-Renoise PID before sending.
+        result := AttemptForegroundSend(helperPid, '{Esc}')
     } else {
-        result := CheckForegroundPid(helperPid)
+        if (targetPid = 0 || targetPid = helperPid) {
+            return ReportFailure(2, 'Focus self-test requires the selected Renoise PID.')
+        }
+        ; Inject a foreground mismatch at the actual last pre-send guard.
+        ; No window is activated and no keyboard sequence is sent.
+        result := AttemptForegroundSend(targetPid, '{Esc}', helperPid)
     }
 
     if (result.Code = expectedCode) {
-        if (testName = 'wrong-pid') {
-            message := 'PASS self-test wrong-pid: PID guard returned 3 without sending keyboard input.'
-        } else {
-            message := 'PASS self-test focus-mismatch: focus guard returned 4 without sending keyboard input.'
-        }
-        FileAppend(message '`n', '*')
+        FileAppend('PASS self-test ' . testName . ': send dispatcher refused (code '
+            . expectedCode . ') without keyboard input.`n', '*')
         return 0
     }
-
     return ReportFailure(6, 'FAIL self-test ' . testName . ': expected guard code ' . expectedCode
         . ', received ' . result.Code . '.')
+}
+
+AttemptForegroundSend(targetPid, keys, simulatedForegroundPid := -1) {
+    result := CheckSelectedRenoisePid(targetPid)
+    if (result.Code != 0) {
+        return result
+    }
+    result := CheckForegroundPid(targetPid, simulatedForegroundPid)
+    if (result.Code != 0) {
+        return result
+    }
+    try {
+        SendKeyboardSequence(keys)
+    } catch Error as err {
+        return {Code: 5, Message: 'AutoHotkey could not send keyboard input: ' . err.Message}
+    }
+    return {Code: 0, Message: ''}
 }
 
 CheckSelectedRenoisePid(targetPid) {
@@ -156,8 +166,8 @@ CheckSelectedRenoisePid(targetPid) {
     return {Code: 0, Message: ''}
 }
 
-CheckForegroundPid(targetPid) {
-    foregroundPid := GetForegroundProcessId()
+CheckForegroundPid(targetPid, simulatedForegroundPid := -1) {
+    foregroundPid := simulatedForegroundPid = -1 ? GetForegroundProcessId() : simulatedForegroundPid
     if (foregroundPid != targetPid) {
         focusError := 'Refusing keyboard input: foreground PID ' . foregroundPid
             . ' does not match selected Renoise PID ' . targetPid . '.'
@@ -167,8 +177,8 @@ CheckForegroundPid(targetPid) {
 }
 
 SendKeyboardSequence(keys) {
-    SetKeyDelay(20, 10)
-    SendEvent(keys)
+    ; One short input batch, after the exact foreground guard.
+    SendInput(keys)
 }
 
 GetForegroundProcessId() {

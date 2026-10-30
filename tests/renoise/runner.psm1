@@ -182,8 +182,8 @@ function Get-AcidKeyboardConfiguration {
     $timeoutSeconds = 10
     if ($keyboard.Contains('TimeoutSeconds')) {
         $value = $keyboard['TimeoutSeconds']
-        if ($value -is [bool] -or ($value -isnot [int] -and $value -isnot [long]) -or $value -lt 1 -or $value -gt 60) {
-            throw 'TestEnvironment.Keyboard.TimeoutSeconds must be an integer from 1 to 60.'
+        if ($value -is [bool] -or ($value -isnot [int] -and $value -isnot [long]) -or $value -lt 1 -or $value -gt 30) {
+            throw 'TestEnvironment.Keyboard.TimeoutSeconds must be an integer from 1 to 30.'
         }
         $timeoutSeconds = $value
     }
@@ -218,6 +218,7 @@ function Invoke-AcidKeyboardHelper {
         [int]$ProcessId = 0,
         [string]$Keys,
         [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [switch]$AllowFocusActivation,
         [ValidateRange(1,30)][int]$TimeoutSeconds = 5
     )
     if ($Mode -eq 'Send') {
@@ -241,8 +242,12 @@ function Invoke-AcidKeyboardHelper {
             $startInfo.ArgumentList.Add('wrong-pid')
         }
         'SelfTestFocusMismatch' {
+            if ($ProcessId -le 0) { throw 'Focus-mismatch self-test requires a selected Renoise PID.' }
+            & $ProcessCheck
             $startInfo.ArgumentList.Add('--self-test')
             $startInfo.ArgumentList.Add('focus-mismatch')
+            $startInfo.ArgumentList.Add('--pid')
+            $startInfo.ArgumentList.Add([string]$ProcessId)
         }
         'Send' {
             $startInfo.ArgumentList.Add('--pid')
@@ -251,6 +256,7 @@ function Invoke-AcidKeyboardHelper {
             $startInfo.ArgumentList.Add($Keys)
             $startInfo.ArgumentList.Add('--focus-timeout')
             $startInfo.ArgumentList.Add([string]$TimeoutSeconds)
+            if ($AllowFocusActivation) { $startInfo.ArgumentList.Add('--allow-activation') }
         }
     }
     $process = [Diagnostics.Process]::Start($startInfo)
@@ -258,9 +264,10 @@ function Invoke-AcidKeyboardHelper {
     try {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+        $processDeadlineSeconds = $TimeoutSeconds + 3
+        if (-not $process.WaitForExit($processDeadlineSeconds * 1000)) {
             try { $process.Kill($true) } catch {}
-            throw "AutoHotkey helper timed out after $TimeoutSeconds seconds."
+            throw "AutoHotkey helper timed out after $processDeadlineSeconds seconds (focus budget $TimeoutSeconds seconds)."
         }
         [pscustomobject]@{
             ExitCode = $process.ExitCode
@@ -304,6 +311,7 @@ function Invoke-AcidKeyboardJourney {
         [Parameter(Mandatory)][string]$HelperScript,
         [Parameter(Mandatory)][int]$ProcessId,
         [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [switch]$AllowFocusActivation,
         [ValidateRange(1,300)][int]$CommandTimeoutSeconds = 10
     )
     $stateReadTimeout = [Math]::Min($CommandTimeoutSeconds, $Configuration.TimeoutSeconds)
@@ -318,7 +326,7 @@ function Invoke-AcidKeyboardJourney {
     $keyboardActions = [Collections.Generic.List[object]]::new()
     $sendKeys = ({
         param([string]$Keys, [string]$Action)
-        $sendResult = Invoke-AcidKeyboardHelper -Executable $Executable -HelperScript $HelperScript -Mode Send -ProcessId $ProcessId -Keys $Keys -ProcessCheck $ProcessCheck -TimeoutSeconds ([Math]::Min(30, $Configuration.TimeoutSeconds))
+        $sendResult = Invoke-AcidKeyboardHelper -Executable $Executable -HelperScript $HelperScript -Mode Send -ProcessId $ProcessId -Keys $Keys -ProcessCheck $ProcessCheck -AllowFocusActivation:$AllowFocusActivation -TimeoutSeconds ([Math]::Min(30, $Configuration.TimeoutSeconds))
         if ($sendResult.ExitCode -ne 0) {
             $message = if ($sendResult.StdErr) { $sendResult.StdErr } else { $sendResult.StdOut }
             throw "Keyboard action '$Action' was refused or failed (exit $($sendResult.ExitCode)): $message"
@@ -344,7 +352,7 @@ function Invoke-AcidKeyboardJourney {
     }
 
     try {
-        & $waitCondition { param($observed) $false }
+        Wait-AcidObservedState -ReadState $readGuiState -Condition { param($observed) $false } -ProcessCheck $ProcessCheck -TimeoutSeconds 1 -PollMilliseconds 50
         throw 'The observed-state timeout guard unexpectedly accepted an impossible condition.'
     }
     catch {

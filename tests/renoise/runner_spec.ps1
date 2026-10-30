@@ -9,6 +9,7 @@ function Reject([scriptblock]$Action, [string]$Pattern) {
 $keyboardEnvironment = '{"Keyboard":{"ShowShortcut":"^!a","TimeoutSeconds":3}}' | ConvertFrom-Json -AsHashtable
 $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment ([pscustomobject]$keyboardEnvironment)
 Assert ($keyboardConfiguration.ShowShortcut -ceq '^!a' -and $keyboardConfiguration.TimeoutSeconds -eq 3) 'keyboard developer configuration did not load'
+Reject { Get-AcidKeyboardConfiguration -Environment ([pscustomobject]@{ Keyboard = [ordered]@{ ShowShortcut = '^!b'; TimeoutSeconds = 31 } }) } 'integer from 1 to 30'
 Reject { Get-AcidKeyboardConfiguration -Environment ([pscustomobject]@{ Keyboard = [ordered]@{} }) } 'Keyboard mapping is missing'
 Reject { Get-AcidKeyboardConfiguration -Environment ([pscustomobject]@{ Keyboard = [ordered]@{ ShowShortcut = 'not a key' } }) } 'AutoHotkey v2 key sequence'
 Reject { Wait-AcidObservedState -ReadState { [pscustomobject]@{ visible = $false } } -Condition { param($state) $false } -ProcessCheck {} -TimeoutSeconds 1 -PollMilliseconds 50 } 'Timed out after 1 seconds'

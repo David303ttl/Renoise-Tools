@@ -45,10 +45,7 @@ AutoHotkey v2. Download it from the
 [official AutoHotkey releases](https://github.com/AutoHotkey/AutoHotkey/releases).
 The current developer keymap assigns Ctrl+Alt+B to `Global:ACID:Show`; the runner
 configuration represents it as `^!b`. Renoise stores shortcut assignments per
-user, and ACID supplies no default. The helper activates the selected Renoise
-process and verifies its foreground ownership before each input sequence, so
-Keyboard runs do not require manual focus changes. Native API tests do not
-require AutoHotkey.
+user, and ACID supplies no default. On a shared desktop, keyboard testing will not activate Renoise or steal foreground focus. It requires an existing `-RenoiseProcessId` and fails safely when Renoise is not foreground. Genuine unattended keyboard tests require a separate interactive Windows session and explicit `-AllowKeyboardFocusActivation`; Native API tests remain focus-free and require no AutoHotkey.
 
 ## Install the API reference
 

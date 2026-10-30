@@ -12,7 +12,8 @@ param(
     [ValidateRange(1,300)][int]$CommandTimeoutSeconds = 30,
     [switch]$ApproveDisposableSong,
     [switch]$Install,
-    [switch]$VerifyScenarioOrder
+    [switch]$VerifyScenarioOrder,
+    [switch]$AllowKeyboardFocusActivation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -154,6 +155,9 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
+    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native') {
+        throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites.'
+    }
     if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
         throw '-VerifyScenarioOrder requires -Suite Native.'
     }
@@ -212,6 +216,9 @@ try {
             journey = $null
         }
         $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment $environment
+    if ($Suite -in @('Keyboard','All') -and -not $AllowKeyboardFocusActivation -and $RenoiseProcessId -eq 0) {
+        throw 'Nonintrusive Keyboard runs require -RenoiseProcessId for an already-running Renoise instance. Starting Renoise may steal desktop focus. Use -AllowKeyboardFocusActivation only in a dedicated interactive Windows session, or run -Suite Native on your work desktop.'
+    }
         $keyboardExecutable = Find-AutoHotkeyV2Executable -ConfiguredPath $keyboardConfiguration.AutoHotkeyPath
         if (-not (Test-Path -LiteralPath $keyboardHelperPath -PathType Leaf)) { throw "AutoHotkey helper does not exist: $keyboardHelperPath" }
         $emptyProcessCheck = {}
@@ -222,8 +229,7 @@ try {
         $report.keyboard.shortcut = $keyboardConfiguration.ShowShortcut
         $report.keyboard.auto_hotkey_version = $versionResult.StdOut
         foreach ($selfTest in @(
-            [pscustomobject]@{ Mode = 'SelfTestWrongPid'; Name = 'wrong_pid' },
-            [pscustomobject]@{ Mode = 'SelfTestFocusMismatch'; Name = 'stolen_focus' }
+            [pscustomobject]@{ Mode = 'SelfTestWrongPid'; Name = 'wrong_pid' }
         )) {
             $selfTestResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -Mode $selfTest.Mode -ProcessCheck $emptyProcessCheck
             if ($selfTestResult.ExitCode -ne 0 -or $selfTestResult.StdOut -notmatch '^PASS self-test ') {
@@ -626,7 +632,13 @@ try {
         $report.scenarios = @($scenarioResults)
         if ($Suite -in @('Keyboard','All')) {
             $activeSuite = 'Keyboard'
-            $journey = Invoke-AcidKeyboardJourney -Client $client -Session $session -Configuration $keyboardConfiguration -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -ProcessId $processIdentity.Id -ProcessCheck $processCheck -CommandTimeoutSeconds $CommandTimeoutSeconds
+            $focusGuard = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -Mode SelfTestFocusMismatch -ProcessId $processIdentity.Id -ProcessCheck $processCheck
+            if ($focusGuard.ExitCode -ne 0 -or $focusGuard.StdOut -notmatch '^PASS self-test focus-mismatch:') {
+                throw "AutoHotkey focus-mismatch guard failed: $($focusGuard.StdErr) $($focusGuard.StdOut)"
+            }
+            $report.keyboard.negative_cases = @($report.keyboard.negative_cases) + @([pscustomobject]@{ name = 'stolen_focus'; status = 'PASS'; input_sent = $false; simulated = $true })
+            Add-Trace -Operation 'keyboard.negative.stolen_focus' -Status 'PASS' -Details @{ simulated = $true; input_sent = $false; output = $focusGuard.StdOut }
+            $journey = Invoke-AcidKeyboardJourney -Client $client -Session $session -Configuration $keyboardConfiguration -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -ProcessId $processIdentity.Id -ProcessCheck $processCheck -AllowFocusActivation:$AllowKeyboardFocusActivation -CommandTimeoutSeconds $CommandTimeoutSeconds
             $report.keyboard.journey = $journey
             $report.keyboard.status = 'PASS'
             $report.keyboard.negative_cases = @($report.keyboard.negative_cases) + @([pscustomobject]@{ name = 'gui_timeout'; status = 'PASS'; input_sent = $false })

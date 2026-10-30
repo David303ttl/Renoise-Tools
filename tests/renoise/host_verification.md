@@ -141,7 +141,8 @@ The `Keyboard` suite passed unattended on Renoise 3.5.4 Demo / API 6.2 with
 AutoHotkey v2.0.31. The saved developer keymap assigns Ctrl+Alt+B (`^!b`) to
 `Global:ACID:Show`. The runner activated the exact Renoise PID before each input
 sequence and verified foreground ownership; no manual focus or tool reload was
-needed.
+needed. This host acceptance predates the revised opt-in activation policy;
+no post-hardening Windows host rerun is claimed.
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment '<path>' -StartupTimeoutSeconds 30 -Install -ApproveDisposableSong
