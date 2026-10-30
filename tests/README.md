@@ -46,6 +46,12 @@ lua tests/acid/acid_compiler_spec.lua
 `bootstrap.lua` configures module lookup for the selected tool. Specs still run
 as separate processes when using the suite runner.
 
+For ACID runtime tests, use `runtime_phrase_fixture.fixture('new')` for checks
+that need no owned destination. The default fixture retains complete owned
+phrases for content, identity, navigation and recovery checks. Keep full-capacity
+snapshot coverage, including hidden columns and inactive lines. Reuse
+`tests/assert_unreachable.lua` for retained-reference checks.
+
 ## Real Renoise and manual checks
 
 Run the available Native smoke in a fresh Renoise instance with a disposable song:

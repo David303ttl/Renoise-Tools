@@ -2,8 +2,8 @@ local helper=dofile('tests/acid/runtime_phrase_fixture.lua')
 local context=require('runtime.context')
 local seq=require('model.sequencer')
 local cache=require('runtime.draft_cache')
-local function fixture()
- local song,instrument,phrase,other,source=helper.fixture()
+local function fixture(new)
+ local song,instrument,phrase,other,source=helper.fixture(new and 'new')
  local log={captures=0,sinks=0,requests={},done={},cancels=0}
  local ctx=context.new{writer={state=function()return 'idle',nil end},
   capture=function(trigger,token)
@@ -12,7 +12,8 @@ local function fixture()
    log.sinks=log.sinks+1;log.requests[#log.requests+1]=request
    log.done[#log.done+1]=done;return true
   end,cancel=function()log.cancels=log.cancels+1;return true end}
- ctx:attach_document(song);ctx:open_dialog();ctx:bind_phrase(instrument,phrase)
+ ctx:attach_document(song);ctx:open_dialog()
+ if new then ctx:bind_new(instrument)else ctx:bind_phrase(instrument,phrase)end
  ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0})
  return ctx,log,song,instrument,phrase,other,source
 end
@@ -24,7 +25,7 @@ end
 
 -- Source values and revision identities remain distinct through A -> B -> A.
 do
- local ctx,log,song,instrument,phrase,other,source=fixture()
+ local ctx,log,song,instrument,_,_,source=fixture(true)
  local before=ctx:revision_state()
  ctx:transition('edit',values(source))
  assert(ctx:revision_state().edit_revision==before.edit_revision and log.sinks==0)
@@ -37,10 +38,7 @@ do
  local edited=ctx:editor_state()
  edited.source.length=9
  assert(ctx:editor_state().source.length==source.length)
- assert(cache.get(song,instrument,phrase,ctx:draft_options()))
- ctx:bind_phrase(instrument,other)
- ctx:bind_phrase(instrument,phrase)
- assert(log.sinks==0,'navigation generated music')
+ assert(cache.get(song,instrument,nil,ctx:draft_options()))
  ctx:transition('arm')
  assert(log.sinks==0,'arming generated music')
  ctx:transition('reset',values(changed))
@@ -54,9 +52,18 @@ do
  assert(log.sinks==1,'real armed edit did not use generation entry')
 end
 
+-- Owned navigation preserves drafts without generating music.
+do
+ local ctx,log,song,instrument,phrase,other=fixture()
+ assert(cache.get(song,instrument,phrase,ctx:draft_options()))
+ ctx:bind_phrase(instrument,other)
+ ctx:bind_phrase(instrument,phrase)
+ assert(log.sinks==0,'navigation generated music')
+end
+
 -- Arming intent is independent of a captured manual operation.
 do
- local ctx,log,_,_,_,_,source=fixture()
+ local ctx,log,_,_,_,_,source=fixture(true)
  assert(ctx:request_generation('manual'))
  local token=log.requests[1].token
  ctx:transition('arm');ctx:transition('disarm')

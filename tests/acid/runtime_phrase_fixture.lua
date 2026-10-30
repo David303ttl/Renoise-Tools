@@ -45,14 +45,18 @@ local function runtime(song,temporary)
  ctx:attach_document(song);ctx:open_dialog()
  return ctx
 end
-local function fixture()
+local function fixture(kind)
  local source=seq.new_pattern(4)
- local a,b=phrase(source,101),phrase(source,102)
+ local a,b
+ if kind=='new' then a,b={name='Native phrase'},{name='Other native phrase'}
+ else a,b=phrase(source,101),phrase(source,102)end
  local inst=instrument({a,b})
  local song={instruments={inst},tool_data='',transport={timing_model=1,groove_enabled=false},
   is_undo_redoing=function()return false end}
- assert(store.save(song,101,source,'play_once',0))
- assert(store.save(song,102,source,'play_once',0))
+ if kind~='new' then
+  assert(store.save(song,101,source,'play_once',0))
+  assert(store.save(song,102,source,'play_once',0))
+ end
  return song,inst,a,b,source
 end
 return {fixture=fixture,phrase=phrase,instrument=instrument,runtime=runtime,eq_calls=function()return eq_calls end}

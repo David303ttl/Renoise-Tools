@@ -1,33 +1,16 @@
 dofile("tests/bootstrap.lua")("acid")
 local context = require("runtime.context")
 
-local function assert_unreachable(roots, forbidden)
-  local seen = {}
-  local function visit(value, path)
-    for label, object in pairs(forbidden) do
-      assert(not rawequal(value, object), path .. " retains " .. label)
-    end
-    local kind = type(value)
-    if (kind ~= "table" and kind ~= "function") or seen[value] then return end
-    seen[value] = true
-    if kind == "table" then
-      for key, child in pairs(value) do
-        visit(key, path .. ".key")
-        visit(child, path .. "." .. tostring(key))
-      end
-      local mt = getmetatable(value)
-      if type(mt) == "table" then visit(mt, path .. ".metatable") end
-    else
-      local index = 1
-      while true do
-        local name, child = debug.getupvalue(value, index)
-        if not name then break end
-        if name ~= "_ENV" then visit(child, path .. ".upvalue:" .. name) end
-        index = index + 1
-      end
-    end
+local assert_unreachable = dofile('tests/assert_unreachable.lua')
+
+do
+  local forbidden, cycle = {}, {}
+  cycle.self = cycle
+  assert_unreachable(cycle, {song = forbidden})
+  for _, retained in ipairs({{[forbidden] = true},
+    setmetatable({}, {__index = forbidden}), function() return forbidden end}) do
+    assert(not pcall(assert_unreachable, retained, {song = forbidden}))
   end
-  visit(roots, "retained")
 end
 
 local function fixture(reject)

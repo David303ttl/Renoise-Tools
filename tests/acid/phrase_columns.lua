@@ -1,21 +1,22 @@
 local M={}
 local command_fields={panning_string="panning_value",number_string="number_value"}
 local command_strings={panning_value="panning_string",number_value="number_string"}
+local command_cell_metatable={
+  __index=function(value,key)
+    local field=command_strings[key]
+    local text=field and rawget(value,field)
+    if text then return text:byte(1)*256+text:byte(2) end
+  end,
+  __newindex=function(value,key,item)
+    local numeric=command_fields[key]
+    local text=command_strings[key]
+    if numeric then rawset(value,numeric,nil)
+    elseif text then rawset(value,text,nil) end
+    rawset(value,key,item)
+  end
+}
 local function command_cell(cell)
-  return setmetatable(cell,{
-    __index=function(value,key)
-      local field=command_strings[key]
-      local text=field and rawget(value,field)
-      if text then return text:byte(1)*256+text:byte(2) end
-    end,
-    __newindex=function(value,key,item)
-      local numeric=command_fields[key]
-      local text=command_strings[key]
-      if numeric then rawset(value,numeric,nil)
-      elseif text then rawset(value,text,nil) end
-      rawset(value,key,item)
-    end
-  })
+  return setmetatable(cell,command_cell_metatable)
 end
 function M.line(phrase,index)
   if not phrase.cells[index] then return nil end
