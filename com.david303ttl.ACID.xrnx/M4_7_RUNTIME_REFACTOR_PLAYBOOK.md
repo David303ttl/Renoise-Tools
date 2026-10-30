@@ -628,7 +628,7 @@ Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
-**Status:** Steps 2.1–2.9 and Gate 2 complete (2026-10-30). The atomic cutover landed at `6413e5f`; follow-up safety corrections, current full-suite/package results and independent final correction review are recorded in 2.8–2.9. Gates 3–9 remain independent acceptance.
+**Status:** Steps 2.1–2.9 and Gate 2 complete (2026-10-30). The atomic cutover landed at `6413e5f`; follow-up safety corrections, current full-suite/package results and independent final correction review are recorded in 2.8–2.9. Gates 4–9 remain independent acceptance.
 
 **Execution order:** 2.1–2.8 implemented; 2.9 consolidates Gate 2 evidence. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not record a gate pass from partial or focused runs. Use behavior-based module/test names, never these planning labels. The cutover has no production adapter, mutable derived mirror of runtime authority, duplicate dispatch, or unwired GUI path to preserve.
 
@@ -1184,7 +1184,7 @@ target's draft or authorize generation before that target's source is loaded.
 
 ### 2.8 — Atomic production cutover and follow-up verification
 
-**Status:** complete. Production cutover implemented at `6413e5f`; follow-up safety corrections, current full local verification and independent final correction review pass. Native acceptance and independent Gates 3–9 remain open.
+**Status:** complete. Production cutover implemented at `6413e5f`; follow-up safety corrections, current full local verification and independent final correction review pass. Native acceptance and independent Gates 4–9 remain open.
 
 **Implementation record:**
 
@@ -1208,20 +1208,20 @@ The writer contract is the only musical write interface: explicit `create(reques
 
 Request shape: the frozen runtime request passed to both facades carries kind, target kind, trigger, the exact runtime token, epoch, dialog session, target/edit/operation revisions, copied source/output policy/PB range, exact instrument and phrase (absent only for explicit New), committed baselines, planning inputs, capabilities/capacities, timing model, groove warning input and draft capture, plus the guard/blocker/mutation/cleanup hooks. The result reports token, epoch, outcome, reason, committed baselines where applicable and recovery facts; success requires verification and carries the exact destination phrase (regenerate: the requested object; create: the promoted object), while failure carries no phrase. No success result may be synthesized from intent.
 
-**Follow-up verification:** No legacy writer inspection, legacy guard-token constructor, adapter or second scheduler remains. Conformance tests use Step 3-shaped doubles to prove admission, one-completion, stale/duplicate handling and zero-request behavior; they do not substitute for Gate 2's full suite. GUI and runtime integration specs re-assert that navigation, reopen, arming, Reset Source, draft/committed restoration and no-op edits enqueue nothing, and blocked/removed/foreign targets never map to append. Follow-up safety corrections are recorded above; independent Gate 3 acceptance remains below.
+**Follow-up verification:** No legacy writer inspection, legacy guard-token constructor, adapter or second scheduler remains. Conformance tests use Step 3-shaped doubles to prove admission, one-completion, stale/duplicate handling and zero-request behavior; they do not substitute for Gate 2's full suite. GUI and runtime integration specs re-assert that navigation, reopen, arming, Reset Source, draft/committed restoration and no-op edits enqueue nothing, and blocked/removed/foreign targets never map to append. Follow-up safety corrections are recorded above; the closed independent Gate 3 acceptance matrix is below.
 
 **Complete when:** the frozen interface, sole production authority and writer contract are documented; handshake, terminal, stale/duplicate, blocked and zero-request behavior pass; no adapter, legacy-token constructor or writable mirror exists; dependency direction and stored formats are unchanged; and the full-suite/package/diff evidence plus final integrated review pass. Verification evidence is consolidated below.
 
 ### 2.9 — Close Gate 2 and hand off independent acceptance
 
-**Status:** complete (2026-10-30). Current full suites, packaging, hygiene checks and independent final correction review pass. Gates 3–9 remain open independent acceptance; this local closeout does not close M4 or native acceptance.
+**Status:** complete (2026-10-30). Current full suites, packaging, hygiene checks and independent final correction review pass. Gates 4–9 remain open independent acceptance; this local closeout does not close M4 or native acceptance.
 
 Run focused runtime/inventory/integrity/transition/request/dependency tests, then `./scripts/run_tests.ps1 -Tool ACID` and `./scripts/run_tests.ps1` in PowerShell 7. The runner reports per-spec and total elapsed time and stops a spec's process tree after 30 seconds by default; `-SpecTimeoutSeconds` is an explicit override, not a reason to leave expensive fixtures uncorrected. If runtime layout changed, run `./scripts/package.ps1 -Tool ACID` and inspect root entries, private modules and development exclusions. Run `git diff --check`; preserve unrelated work and manifest/storage versions. Record the exact commands and results; do not infer a full pass from earlier focused runs.
 
 The separate PowerShell checks are `pwsh -File ./tests/lua_interpreter_spec.ps1`
 and `pwsh -File ./tests/renoise/test_package_dev.ps1`; they are not counted as Lua specs.
 
-Map each 2.1–2.8 completion check to its test file/case/result in the existing checklist. Record the frozen interface, the writer contract, and the authorities the cutover deleted. The GUI and explicit writer are now the production path; the absence of the legacy scheduler/adapter is the intended architecture, while Gates 3/4/5 remain independent acceptance for writer safety, Make Independent and scheduler/recovery completeness.
+Map each 2.1–2.8 completion check to its test file/case/result in the existing checklist. Record the frozen interface, the writer contract, and the authorities the cutover deleted. The GUI and explicit writer are now the production path; the absence of the legacy scheduler/adapter is the intended architecture, with Gate 3 writer acceptance closed and Gates 4/5 remaining independent acceptance for Make Independent and scheduler/recovery completeness.
 
 Spec names below are under `tests/acid/` unless an explicit path is shown.
 
@@ -1248,7 +1248,6 @@ Spec names below are under `tests/acid/` unless an explicit path is shown.
 
 | Open obligation | Owning gate |
 | --- | --- |
-| Independent writer acceptance matrix: free-slot boundaries, async failures, exact rollback, cleanup, single completion and cancel/release | Step 3 / Gate 3 (open) |
 | Metadata-only Make Independent against the same store/ownership contract | Step 4 / Gate 4 (open) |
 | Independent scheduler/recovery acceptance and final full-suite verification | Step 5 / Gate 5 (open) |
 | Native observer attachment, document/session lifetime and late-callback behavior | Step 6 / Gate 6 (open) |
@@ -1256,7 +1255,7 @@ Spec names below are under `tests/acid/` unless an explicit path is shown.
 | Native ordering, playback, undo/redo and cold-save/reopen preservation | Step 8 / Gate 8 (open) |
 | Final documentation/review and focused commit | Step 9 / Gate 9 (open) |
 
-**Gate 2: complete.** All 2.1–2.8 conditions have mapped local evidence; current full suites, package/source-byte checks, diff hygiene and final correction review pass. Runtime remains the sole authority and scheduler, with explicit create/regenerate and no legacy adapter, positional API, compatibility path or persistence-format change. Gates 3–9 remain independent acceptance and M4 remains open; no native acceptance is inferred from these local results.
+**Gate 2: complete.** All 2.1–2.8 conditions have mapped local evidence; current full suites, package/source-byte checks, diff hygiene and final correction review pass. Runtime remains the sole authority and scheduler, with explicit create/regenerate and no legacy adapter, positional API, compatibility path or persistence-format change. Gates 4–9 remain independent acceptance and M4 remains open; no native acceptance is inferred from these local results.
 
 ### Runtime/recovery integration follow-up (2026-10-30)
 
@@ -1295,7 +1294,7 @@ review: **pending**. Gates remain open until their exact owning criteria pass.
 
 ## Step 3 — Establish the explicit asynchronous writer contract
 
-**Status:** implemented with the atomic `6413e5f` cutover; Gate 3 remains OPEN independent acceptance. Follow-up capacity, backup/rollback, cleanup, terminal-baseline and release corrections plus migrated writer regressions now pass the local suite recorded in 2.8–2.9. This does not independently close the complete Gate 3 acceptance matrix or establish native behavior.
+**Status:** Gate 3 CLOSED (2026-10-31): the direct writer acceptance matrix below passes. Native behavior remains Gate 8; Gates 4–8 remain independent acceptance.
 
 **Architectural dependency:** reuse Gate 1A policy/identity/planner owners. Refactor the existing `phrase_writer.finalize` in place into named prepare, stage, render, precommit, commit, rollback, cleanup and terminal phases around **one** job and one callback. Make job state explicit, eliminate duplicate phrase-layout assignment and unnecessary repeated validation **only where the same precommit/postcommit invariants remain proved**. Replace undocumented literals (`500` diagnostics, `+8` slack, `126/512` capacity fallbacks and `512/12/8` field loops) with named, API-derived or validated bounds while preserving fail-closed behavior; the pending-render diagnostic cannot become a timeout that releases occupancy. Test each extracted phase's abort/rollback conditions using the Gate 3 cases. No new writer or transaction authority.
 
@@ -1333,6 +1332,36 @@ Temporary objects may exist visibly during rendering, so “no write” tests di
 
 **Gate 3:** Direct writer tests cover explicit modes, the create/regenerate free-slot boundaries, no retargeting, async compile/render failures, target edits/removal while waiting, exact-object rollback, store/draft failures, cleanup failure, single completion, cancel during in-flight render, and release/late callbacks with the documented recovery stage. Successful create adds one destination; regenerate retains the same destination and final count. Gate 3 is direct writer evidence only: it does not claim scheduler or GUI cutover, and mocks do not establish native undo, compile timing, native slot ordering or playback. Reuse these tests in Step 5 and Step 7.
 
+### Gate 3 direct acceptance evidence
+
+All spec paths below are relative to `tests/acid/`. Results use Lua 5.1 and mocked Renoise objects; native acceptance remains Step 8.
+
+| Requirement | Direct evidence |
+| --- | --- |
+| Explicit create/regenerate, rejection without mutation/callback/occupancy, failure `phrase=nil` | `acid_writer_safety_spec.lua`: rejection and terminal-shape assertions; `acid_writer_inspection_spec.lua` |
+| Create one-slot and regenerate two-slot boundaries; unavailable/invalid/inconsistent capacities | `acid_writer_safety_spec.lua`: capacity boundaries and native metadata faults |
+| Unreadable preflight inventory/identity, uncertain staging/backup insertion, no modification of unidentified additions | `acid_writer_safety_spec.lua`: getter faults, mismatched returns and ambiguous/unreadable insertion inventories |
+| Exact-object replacement, preserved fields, guarded rollback, source/draft/store failures | `acid_writer_safety_spec.lua`: backup verification, destination/store faults and external-change rollback; `acid_gate_transaction_spec.lua`; `acid_phrase_spec.lua` |
+| Cleanup failure, committed blocked result with baseline, persistent blocker despite rejected/throwing/missing hook | `acid_writer_safety_spec.lua`: recovery and blocker-hook faults; `acid_runtime_writer_integration_spec.lua`: runtime fallback and explicit revalidation |
+| One completion, cancel during native rendering, release and late/duplicate callbacks | `acid_writer_safety_spec.lua`; `acid_script_runner_spec.lua`; `acid_phrase_spec.lua` |
+| Script-wrapper retention, released/completed host-reference collection, candidate retirement | `acid_writer_safety_spec.lua`: weak-reference, completed-regeneration collection and candidate-release assertions; `acid_script_runner_spec.lua` |
+| Compile/clear waits bounded at 500 idle opportunities; render threshold diagnostic only; settled/fresh diagnostics | `acid_writer_safety_spec.lua`: exact threshold assertions; `acid_phrase_spec.lua`: released callback settlement |
+| Finite event budget without slack, full output verification | `acid_repeat_integration_spec.lua`: one event budget per physical step; `acid_writer_safety_spec.lua`; `acid_phrase_validator_spec.lua` |
+
+The 500-callback compile/clear limit is a conservative failure policy, not a duration or native completion guarantee. API 6.2 specifies no idle cadence. It may reject slow compilation safely; it cannot cancel or retire an in-flight render. The renderer uses one event slot per finite emitted step (`repeats=false`); ties and silent rests emit no event, and articulation is applied after rendering. Native capacities must be readable and valid; no pinned fallback authorizes mutation.
+
+| Verification (2026-10-31) | Actual result |
+| --- | --- |
+| `./scripts/setup_sdk.ps1` | Pinned API 6.2 SDK present; phrase/instrument capacities and render options inspected |
+| `./scripts/run_tests.ps1 -Tool ACID` | 64/64 pass, 62.70s, no timeout |
+| `./scripts/run_tests.ps1` | 67/67 pass, 50.39s, no timeout |
+| `./scripts/test_host_preflight.ps1` | Pass |
+| `./tests/renoise/runner_spec.ps1` | Pass |
+| `./tests/renoise/test_package_dev.ps1` | Pass: payload/fixture hashes, release exclusion, bootstrap, interpreter syntax, ACL/path and rejection checks |
+| `./scripts/package.ps1` and ACID archive inspection | Pass: 34 source-identical entries, root `main.lua`/`manifest.xml`, private module directories, no SDK/tests/docs/harness |
+| `git diff --check` and fresh independent code review | Pass |
+| Renoise-native manual checks | Not run for these changes; undo/redo, save/reopen, native ordering and playback remain Gate 8 |
+
 ## Step 4 — Implement explicit Make Independent
 
 This is one metadata/source transaction in the writer, sharing Step 1 store/ownership helpers; it is not another render path.
@@ -1351,7 +1380,7 @@ This is one metadata/source transaction in the writer, sharing Step 1 store/owne
 
 **Status:** cutover landed at `6413e5f`: one runtime scheduler and direct GUI dispatch replace the obsolete scheduler/adapter path. Recovery chooser/copy/discard and Make Independent are wired through the runtime context and covered by focused local tests. Gate 5 remains OPEN for independent scheduler/recovery acceptance, current full-suite verification, and its complete checklist; native acceptance is tracked separately in Step 8.
 
-**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 and Gate 4 remain open independent acceptance for writer safety and Make Independent; they do not gate the already-landed cutover. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
+**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 writer acceptance is closed; Gate 4 remains open independent acceptance for Make Independent and does not gate the already-landed cutover. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
 
 **Ordered work:**
 

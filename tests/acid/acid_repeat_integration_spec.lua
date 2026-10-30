@@ -67,7 +67,7 @@ function script:render_to_pattern(options,callback)
   else
     assert(options.lpb==16 and source:find('unit = "1/16"',1,true))
   end
-  assert(options.max_events==total_steps+8)
+  assert(options.max_events==total_steps)
   render_calls[#render_calls+1]={max_events=options.max_events,steps=total_steps,
     notes=notes,offs=offs}
   callback(nil,notes+offs,0)
@@ -207,7 +207,7 @@ for _,length in ipairs({1,16,17,32}) do
     and instrument.phrase_editor_visible==false,
     'phrase generation changed instrument-wide trigger settings')
   local render=render_calls[#render_calls]
-  assert(render.max_events==2*length+8 and render.steps==2*length)
+  assert(render.max_events==2*length and render.steps==2*length)
   assert(render.notes==2*length and render.offs==0)
 end
 

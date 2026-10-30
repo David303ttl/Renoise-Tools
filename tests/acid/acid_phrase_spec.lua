@@ -628,9 +628,9 @@ released_callback(nil,8,0)
 released_callback(nil,8,0)
 assert(#messages==released_messages,'released render delivered a stale terminal result')
 assert(writer.state()=='idle','late release callback did not retire the tombstone')
-local released_diagnostic=writer.diagnostic()
-assert(released_diagnostic and released_diagnostic.code=='transaction.released',
-  'released render did not retain its diagnostic evidence')
+local settled_diagnostic=writer.diagnostic()
+assert(settled_diagnostic and settled_diagnostic.code=='transaction.released_settled',
+  'settled render did not replace its pending warning with recovery evidence')
 assert(song.tool_data==release_source)
 assert(#instrument.phrases==release_count+1 and instrument.phrases[#instrument.phrases]==retained,
   'released staging material was not retained for recovery')

@@ -6,6 +6,13 @@ with no timeout. Native checks completed in Renoise 3.5.4 cover queued Live Edit
 editor history, draft recovery, Make Independent, song reload and column observers.
 Playback, native song undo grouping and cold-process reopen remain manual checks.
 
+Gate 3 direct writer acceptance is closed on 2026-10-31. The requirement-to-spec
+matrix and command results are in the playbook's Gate 3 direct acceptance table.
+The final ACID selection passes 64/64 specs (62.70s), and the repository passes
+67/67 (50.39s), with no timeout. Host preflight, runner lifecycle, development
+packaging, release packaging and archive identity checks pass. No new native
+manual checks were performed; Gates 4–8 remain independent acceptance.
+
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform
 no native cell scans or seal hashes. Five edits average 1.09 ms, maximum 1.17 ms,

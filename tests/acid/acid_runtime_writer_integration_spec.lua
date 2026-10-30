@@ -224,7 +224,9 @@ local function drain(results,expected,label)
     local status=writer.state()
     if #results>=expected and status=="idle" then return end
   end
-  error(label..": terminal delivery did not arrive")
+  local diagnostic=writer.diagnostic()
+  error(label..": terminal delivery did not arrive (writer="..tostring(writer.state())..
+    ", sink calls="..tostring(sink_calls)..", diagnostic="..tostring(diagnostic and diagnostic.message)..")")
 end
 local function settle_writer(label)
   for _=1,400 do
@@ -439,7 +441,8 @@ edit(cold_ctx,source(49))
 dispatch(cold_ctx)
 drain(cold,5,"committed cleanup failure")
 instrument.delete_phrase_at=native_delete
-assert(cold[5].integrity_blocked and cold[5].committed==true)
+assert(cold[5].integrity_blocked and cold[5].committed==true,
+  tostring(cold[5].kind).."/"..tostring(cold[5].status).." committed="..tostring(cold[5].committed))
 assert(recovered.cells[1].note_value==49,"musical commit was not reported accurately")
 assert(cold_ctx:integrity_state().blocked,"committed cleanup failed to persist its blocker")
 assert(not cold_ctx:request_generation("manual"),"recovery material did not block generation")
@@ -497,6 +500,61 @@ dispatch(cold_ctx)
 drain(cold,7,"generation after explicit adoption revalidation")
 assert(cold[7].kind=="success" and sink_calls==sink_before_blocked_request+1,
   "fresh generation did not dispatch after explicit revalidation")
+
+-- A rejected or throwing writer blocker hook still installs runtime evidence.
+local blocker_target=cold[7].phrase
+local function test_blocker_hook_failure(mode,note)
+  local hook_ctx=new_context()
+  local hook_results,hook_delivery=delivered()
+  hook_ctx:attach_document(song)
+  hook_ctx:open_dialog(hook_delivery)
+  hook_ctx:bind_phrase(instrument,blocker_target)
+  edit(hook_ctx,source(note))
+  local record_blocker=hook_ctx.record_blocker
+  hook_ctx.record_blocker=function()
+    if mode=="throw" then error("injected blocker hook failure") end
+    return false,"injected blocker rejection"
+  end
+  local delete_phrase=instrument.delete_phrase_at
+  instrument.delete_phrase_at=function(self,index)
+    if self.phrases[index].name==writer.TRANSACTION_BACKUP_NAME then
+      error("injected committed backup cleanup failure")
+    end
+    return delete_phrase(self,index)
+  end
+  local expected=#hook_results+1
+  dispatch(hook_ctx)
+  drain(hook_results,expected,"blocker hook "..mode)
+  hook_ctx.record_blocker=record_blocker
+  instrument.delete_phrase_at=delete_phrase
+  assert(hook_results[expected].kind=="failure" and hook_results[expected].status=="integrity_blocked",
+    "blocker hook "..mode.." did not produce a blocked terminal result")
+  assert(hook_ctx:integrity_state().blocked,
+    "blocker hook "..mode.." failed to install runtime integrity evidence")
+  assert(not hook_ctx:request_generation("manual"),
+    "blocker hook "..mode.." allowed a subsequent generation")
+  local recovery=instrument.phrases[#instrument.phrases]
+  assert(recovery.name==writer.RECOVERY_BACKUP_NAME,
+    "blocker hook "..mode.." did not retain its backup")
+  instrument.delete_phrase_at(instrument,#instrument.phrases)
+  local status,proof=hook_ctx:revalidation_status()
+  assert(status.verified, status.reason)
+  assert(hook_ctx:revalidate(proof),"blocker hook "..mode.." evidence could not be revalidated")
+  hook_ctx:release_document()
+end
+test_blocker_hook_failure("reject",53)
+test_blocker_hook_failure("throw",54)
+local verified_ctx=new_context()
+local verified_results,verified_delivery=delivered()
+verified_ctx:attach_document(song)
+verified_ctx:open_dialog(verified_delivery)
+verified_ctx:bind_phrase(instrument,blocker_target)
+edit(verified_ctx,source(55))
+dispatch(verified_ctx)
+drain(verified_results,1,"generation after blocker-hook revalidation")
+assert(verified_results[1].kind=="success",
+  "verified blocker-hook recovery did not release the writer integrity latch")
+verified_ctx:release_document()
 
 -- The module-level runtime is reused across documents. Its released delivery
 -- cannot remain active after the real writer detaches its completion callback.

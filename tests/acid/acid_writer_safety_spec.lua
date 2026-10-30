@@ -29,6 +29,8 @@ local instrument,song
 local render_mode="sync"
 local defer_commit=false
 local commit_failure=false
+local suppress_commit_notifications=false
+local suppress_empty_commit_notification=false
 local corrupt_backup=false
 local copy_failure_after=nil
 local copy_calls=0
@@ -39,6 +41,10 @@ local inserted_backup_phrase=nil
 local fail_inserted_backup_delete=false
 local delete_failure=nil
 local render_queue={}
+local last_render_options=nil
+local last_script_steps=nil
+local inventory_read_failure=false
+local unreadable_inventory=nil
 
 local function make_script()
   local script={paragraphs={},parameters={},pending_changes=0,editor_visible=true,
@@ -47,6 +53,8 @@ local function make_script()
     if commit_failure then error("injected script commit failure",0) end
     self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
     self.runtime_error=""
+    if suppress_commit_notifications or
+        (#self.paragraphs==0 and suppress_empty_commit_notification) then return end
     if defer_commit then
       local notify
       notify=function()
@@ -59,10 +67,14 @@ local function make_script()
     end
   end
   function script:render_to_pattern(options,callback)
+    last_render_options=options
     local source=assert(self.paragraphs[1])
     local values=assert(source:match("local values = { (.-) }\nreturn pattern"))
+    local pulses=assert(source:match('pulse = { (.-) }'))
     local target=instrument.phrases[#instrument.phrases]
     local step,count=0,0
+    local script_steps=0
+    for _ in (pulses..","):gmatch("(.-),") do script_steps=script_steps+1 end
     for token in (values..","):gmatch("(.-),") do
       local volume=tonumber(token:match("volume = ([%d%.]+)"))
       local note=tonumber(token:match("key = (%d+)"))
@@ -84,6 +96,7 @@ local function make_script()
         end
       end
     end
+    last_script_steps=script_steps
     if render_mode=="defer" then
       render_queue[#render_queue+1]={callback=callback,count=count}
       return true
@@ -177,6 +190,14 @@ local function new_host(capacity)
       error("injected backup insertion failure after mutation",0)
     elseif insert_calls==1 and backup_insert_behavior=="throw_after_stage_insert" then
       error("injected staging insertion failure after mutation",0)
+    elseif insert_calls==1 and inventory_read_failure then
+      unreadable_inventory=self.phrases
+      self.phrases=nil
+      setmetatable(self,{__index=function(_,key)
+        if key=="phrases" and inventory_read_failure then
+          error("injected unreadable phrase inventory",0)
+        end
+      end})
     elseif insert_calls==2 and backup_insert_behavior=="nil_after_insert" then
       return nil
     elseif insert_calls==2 and backup_insert_behavior=="ambiguous_extra" then
@@ -261,9 +282,27 @@ local function source(note)
   return pattern
 end
 
+local recorded_blockers=setmetatable({},{__mode="k"})
+
 local function build(pattern,target_index,options)
   local request,reason=wrequest.build(song,1,pattern,target_index,options)
   assert(request,type(reason)=="table" and reason.message or tostring(reason))
+  local request_song=song
+  local is_current=request.is_current
+  local validate_checkpoint=request.validate_checkpoint
+  local record_blocker=request.record_blocker
+  function request:is_current()
+    return not recorded_blockers[request_song] and is_current(self)
+  end
+  function request:validate_checkpoint()
+    if recorded_blockers[request_song] then return false,"Song integrity requires revalidation" end
+    return validate_checkpoint(self)
+  end
+  function request:record_blocker(token,evidence)
+    local recorded=record_blocker(self,token,evidence)
+    if recorded then recorded_blockers[request_song]=true end
+    return recorded
+  end
   return request
 end
 
@@ -272,9 +311,19 @@ local function start(request,done)
   local calls={}
   local accepted,rejection=operation(request,function(result)
     calls[#calls+1]=result
+    if result.kind=="failure" then assert(result.phrase==nil,"failure exposed a destination phrase") end
     if done then done(result) end
   end)
   return accepted,rejection,calls
+end
+
+local function assert_writer_blocks_followup()
+  local later=build(source(58),2)
+  local operation=later.kind=="create" and writer.create or writer.regenerate
+  local calls=0
+  local accepted,rejection=operation(later,function() calls=calls+1 end)
+  assert(not accepted and rejection.status=="integrity_blocked")
+  assert(calls==0)
 end
 
 local function drain(limit)
@@ -283,6 +332,20 @@ local function drain(limit)
     if writer.state()=="idle" then return end
   end
   error("writer did not settle")
+end
+
+local function assert_recorded_blocker_prevents_write()
+  local count,raw,inserts=#instrument.phrases,song.tool_data,insert_calls
+  local request=build(source(58),count+1)
+  local accepted,rejection,calls=start(request)
+  if accepted then
+    drain()
+    assert(#calls==1 and calls[1].kind=="failure" and calls[1].phrase==nil)
+  else
+    assert(rejection.kind=="failure" and rejection.phrase==nil and #calls==0)
+  end
+  assert(#instrument.phrases==count and song.tool_data==raw and insert_calls==inserts,
+    "recorded integrity blocker allowed a subsequent mutation")
 end
 
 local function assert_idle()
@@ -427,6 +490,52 @@ do
   assert_idle()
 end
 
+-- Host-dependent preflight getter failures reject before mutation or callback.
+do
+  new_host()
+  local request=build(source(48),1)
+  request.instrument=nil
+  setmetatable(request,{__index=function(_,key)
+    if key=="instrument" then error("injected unreadable instrument identity",0) end
+  end})
+  local calls=0
+  local accepted,rejection=writer.create(request,function() calls=calls+1 end)
+  assert(not accepted and rejection.code=="safety.preflight",rejection and rejection.message)
+  assert(calls==0 and #instrument.phrases==0 and song.tool_data=="")
+  assert_idle()
+end
+
+do
+  new_host()
+  local request=build(source(48),1)
+  instrument.phrases=nil
+  setmetatable(instrument,{__index=function(_,key)
+    if key=="phrases" then error("injected unreadable phrase inventory",0) end
+  end})
+  local calls=0
+  local accepted,rejection=writer.create(request,function() calls=calls+1 end)
+  assert(not accepted and type(rejection)=="table")
+  assert(calls==0 and song.tool_data=="")
+  assert_idle()
+end
+
+do
+  local host_instrument,phrase=create_owned(48)
+  local request=build(source(52),1)
+  local original_name=phrase.name
+  phrase.name=nil
+  setmetatable(phrase,{__index=function(_,key)
+    if key=="name" then error("injected unreadable phrase identity",0) end
+  end})
+  local calls=0
+  local accepted,rejection=writer.regenerate(request,function() calls=calls+1 end)
+  setmetatable(phrase,nil)
+  phrase.name=original_name
+  assert(not accepted and type(rejection)=="table")
+  assert(calls==0 and #host_instrument.phrases==1 and song.tool_data~="")
+  assert_idle()
+end
+
 -- Capacity boundaries: create needs one free slot before staging; regenerate
 -- needs two before staging and one after the stage exists.
 do
@@ -466,6 +575,129 @@ do
   assert(#host_instrument.phrases==2 and rawequal(host_instrument.phrases[1],phrase))
 end
 
+-- Missing and malformed native capacity metadata rejects before mutation.
+do
+  new_host()
+  local request=build(source(48),1)
+  local calls=0
+  local function rejected(code,expected_phrases)
+    local phrase_count=#instrument.phrases
+    local raw=song.tool_data
+    local accepted,rejection=writer.create(request,function() calls=calls+1 end)
+    assert(not accepted and rejection.code==code,rejection and rejection.message)
+    assert(calls==0 and #instrument.phrases==(expected_phrases or phrase_count) and
+      song.tool_data==raw)
+    assert_idle()
+  end
+  local instrument_api=renoise.Instrument
+  for _,value in ipairs({false,0,1.5,-1}) do
+    instrument_api.MAX_NUMBER_OF_PHRASES=value
+    rejected("capability.capacity")
+  end
+  instrument_api.MAX_NUMBER_OF_PHRASES=nil
+  rejected("capability.capacity")
+  instrument_api.MAX_NUMBER_OF_PHRASES=126
+
+  local phrase_api=renoise.InstrumentPhrase
+  for _,case in ipairs({
+      {key="MAX_NUMBER_OF_LINES",value=false},
+      {key="MAX_NUMBER_OF_LINES",value=0},
+      {key="MAX_NUMBER_OF_LINES",value=1.5},
+      {key="MAX_NUMBER_OF_NOTE_COLUMNS",value=nil},
+      {key="MAX_NUMBER_OF_NOTE_COLUMNS",value=0},
+      {key="MAX_NUMBER_OF_EFFECT_COLUMNS",value=-1},
+      {key="MAX_NUMBER_OF_EFFECT_COLUMNS",value=1.5},
+    }) do
+    local original=phrase_api[case.key]
+    phrase_api[case.key]=case.value
+    rejected("capability.limits")
+    phrase_api[case.key]=original
+  end
+
+  -- A valid integer limit smaller than the live inventory is still unsafe.
+  instrument.phrases={make_phrase(),make_phrase()}
+  instrument_api.MAX_NUMBER_OF_PHRASES=1
+  rejected("safety.phrase_capacity",2)
+  instrument_api.MAX_NUMBER_OF_PHRASES=126
+end
+
+-- Native idle bounds fire at the documented 500th opportunity. Compile and
+-- clear waits fail safely; the render threshold only diagnoses and retains the
+-- occupied slot until its native callback settles.
+do
+  new_host()
+  local request=build(source(48),1)
+  local accepted,rejection,calls
+
+  suppress_commit_notifications=true
+  accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  for _=1,499 do idle:fire() end
+  assert(#calls==0 and writer.state()=="busy",
+    "compile wait expired before its 500th idle opportunity")
+  idle:fire()
+  suppress_commit_notifications=false
+  assert(#calls==1 and calls[1].kind=="failure" and
+    calls[1].code=="transaction.render" and writer.state()=="idle",
+    "compile wait did not expire at its 500th idle opportunity")
+
+  new_host()
+  suppress_empty_commit_notification=true
+  request=build(source(50),1)
+  accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  assert(#calls==0 and writer.state()=="busy")
+  for _=1,499 do idle:fire() end
+  assert(#calls==0 and writer.state()=="busy",
+    "script-clear wait expired before its 500th idle opportunity")
+  idle:fire()
+  suppress_empty_commit_notification=false
+  assert(#calls==1 and calls[1].kind=="failure" and
+    calls[1].code=="phrase.script_clear" and writer.state()=="idle",
+    "script-clear wait did not expire at its 500th idle opportunity")
+
+  new_host()
+  render_mode="defer"
+  request=build(source(52),1)
+  accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  assert(#render_queue==1 and last_render_options and
+    last_script_steps and last_render_options.max_events==last_script_steps,
+    "render event budget must match the emitted one-event-per-step script bound")
+  for _=1,499 do idle:fire() end
+  assert(#calls==0 and writer.state()=="busy" and writer.diagnostic()==nil,
+    "pending-render diagnostic appeared before its 500th idle opportunity")
+  idle:fire()
+  local diagnostic=writer.diagnostic()
+  assert(#calls==0 and writer.state()=="busy" and diagnostic and
+    diagnostic.code=="transaction.render_pending",
+    "500th render idle opportunity must diagnose without releasing occupancy")
+  local next_request=build(source(54),2)
+  local next_calls=0
+  local next_accepted,next_rejection=writer.create(next_request,function() next_calls=next_calls+1 end)
+  assert(not next_accepted and next_rejection.code=="transaction.busy" and next_calls==0,
+    "pending native render admitted a subsequent writer request")
+  local queued=table.remove(render_queue,1)
+  queued.callback(nil,queued.count,0)
+  drain()
+  render_mode="sync"
+  assert(#calls==1 and calls[1].kind=="success" and writer.state()=="idle")
+  assert(writer.diagnostic()==nil,
+    "settled native callback left the pending-render diagnostic stale")
+
+  render_mode="defer"
+  local fresh_request=build(source(56),2)
+  local fresh_accepted,fresh_rejection,fresh_calls=start(fresh_request)
+  assert(fresh_accepted,fresh_rejection and fresh_rejection.message)
+  assert(#fresh_calls==0 and writer.state()=="busy" and writer.diagnostic()==nil,
+    "a fresh accepted request inherited the prior pending-render warning")
+  local fresh_render=table.remove(render_queue,1)
+  fresh_render.callback(nil,fresh_render.count,0)
+  drain()
+  render_mode="sync"
+  assert(#fresh_calls==1 and fresh_calls[1].kind=="success" and writer.diagnostic()==nil)
+end
+
 -- Native backup insertion may mutate the phrase list before throwing or
 -- returning nil. Reconcile the exact list and prove rollback removed the
 -- inserted backup and staging phrase without touching the owned destination.
@@ -488,11 +720,11 @@ for _, behavior in ipairs({ "throw_after_insert", "nil_after_insert" }) do
   assert(rawequal(phrase,original[1]) and song.tool_data==raw)
 end
 
--- Failed cleanup and ambiguous inventory changes retain every discovered
--- insertion, register it as temporary recovery material and block integrity.
+-- Failed cleanup retains identified writer objects. Ambiguous additions are
+-- recorded as inventory evidence and never renamed or registered as owned.
 for _, scenario in ipairs({
     { behavior="throw_after_insert", cleanup_failure=true, recovery_count=1 },
-    { behavior="ambiguous_extra", recovery_count=2 },
+    { behavior="ambiguous_extra", recovery_count=1, reject_blocker=true },
     { behavior="ambiguous_reorder", recovery_count=1 },
   }) do
   local host_instrument,phrase=create_owned(48)
@@ -500,6 +732,9 @@ for _, scenario in ipairs({
   backup_insert_behavior=scenario.behavior
   fail_inserted_backup_delete=scenario.cleanup_failure==true
   local request=build(source(56),1)
+  if scenario.reject_blocker then
+    request.record_blocker=function() return false end
+  end
   local accepted,rejection,calls=start(request)
   assert(accepted,rejection and rejection.message)
   drain()
@@ -515,10 +750,49 @@ for _, scenario in ipairs({
   assert(destination_present,"uncertain insertion recovery removed the destination")
   local recovery=calls[1].recovery or {}
   assert(#recovery==scenario.recovery_count,calls[1].message)
-  for _,item in ipairs(recovery) do
-    assert(writer.is_temporary(song,host_instrument,item.phrase),
-      "uncertain insertion recovery lost temporary registration")
+  if scenario.behavior=="throw_after_insert" then
+    assert(recovery[1].phrase and writer.is_temporary(song,host_instrument,recovery[1].phrase),
+      "identified retained backup lost temporary registration")
+  else
+    assert((recovery[1].role=="staging-inventory" or recovery[1].role=="backup-inventory") and
+      recovery[1].phrase==nil)
+    if not scenario.reject_blocker then
+      assert(type(request.blocker)=="table" and request.blocker.reason,
+        "ambiguous inventory did not record a blocker")
+    end
+    for _,item in ipairs(host_instrument.phrases) do
+      assert(item.name~=writer.RECOVERY_STAGING_NAME and item.name~=writer.RECOVERY_BACKUP_NAME,
+        "unidentified phrase was renamed as recovery material")
+      assert(not writer.is_temporary(song,host_instrument,item),
+        "unidentified phrase was registered as writer-owned")
+    end
+    if scenario.reject_blocker then
+      assert_writer_blocks_followup()
+    else
+      assert_recorded_blocker_prevents_write()
+    end
   end
+end
+
+-- An unreadable inventory after insertion retains scalar recovery evidence and
+-- leaves unidentified objects untouched.
+do
+  new_host()
+  inventory_read_failure=true
+  local request=build(source(48),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  inventory_read_failure=false
+  instrument.phrases=unreadable_inventory
+  unreadable_inventory=nil
+  assert(#calls==1 and calls[1].kind=="failure" and
+    calls[1].status=="integrity_blocked" and calls[1].phrase==nil)
+  assert(#(calls[1].recovery or {})>0 and calls[1].recovery[1].phrase==nil)
+  assert(#instrument.phrases==1 and instrument.phrases[1].name=="")
+  assert(not writer.is_temporary(song,instrument,instrument.phrases[1]))
+  assert(type(request.blocker)=="table" and request.blocker.reason)
+  assert_recorded_blocker_prevents_write()
 end
 
 -- Verified backup covers everything except its neutral name and the mapping
@@ -744,7 +1018,26 @@ do
   local raw=song.tool_data
   local original_commit=store.commit
   store.commit=function() error("injected commit failure",0) end
-  delete_failure=function(candidate) return candidate.name==writer.TRANSACTION_BACKUP_NAME end
+  local recovery_renames=0
+  local tracked_backup
+  delete_failure=function(candidate)
+    if candidate.name~=writer.TRANSACTION_BACKUP_NAME then return false end
+    if not tracked_backup then
+      tracked_backup=candidate
+      local name=candidate.name
+      candidate.name=nil
+      setmetatable(candidate,{
+        __index=function(_,key) if key=="name" then return name end end,
+        __newindex=function(object,key,value)
+          if key=="name" then
+            if value==writer.RECOVERY_BACKUP_NAME then recovery_renames=recovery_renames+1 end
+            name=value
+          else rawset(object,key,value) end
+        end,
+      })
+    end
+    return true
+  end
   local request=build(source(50),1)
   local accepted,rejection,calls=start(request)
   assert(accepted,rejection and rejection.message)
@@ -759,8 +1052,25 @@ do
   assert(#recovery==1 and recovery[1].role=="backup")
   assert(rawequal(recovery[1].phrase,host_instrument.phrases[2]))
   assert(recovery[1].phrase.name==writer.RECOVERY_BACKUP_NAME)
+  assert(recovery_renames==1,"retained backup was renamed more than once")
   assert(writer.is_temporary(song,host_instrument,recovery[1].phrase))
   assert(writer.state()=="idle")
+end
+
+-- A committed destination with failed backup cleanup is a blocked failure
+-- that preserves the committed baseline and recovery object.
+do
+  local host_instrument,phrase=create_owned(48)
+  delete_failure=function(candidate) return candidate.name==writer.TRANSACTION_BACKUP_NAME end
+  local request=build(source(52),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  delete_failure=nil
+  assert(#calls==1 and calls[1].kind=="failure" and calls[1].status=="integrity_blocked")
+  assert(calls[1].phrase==nil and calls[1].committed==true)
+  assert(type(calls[1].baseline)=="table" and calls[1].baseline.id==ownership.id(phrase))
+  assert(#(calls[1].recovery or {})==1 and #host_instrument.phrases==2)
 end
 
 -- A staging cleanup failure during a render failure records a persistent
@@ -999,6 +1309,56 @@ do
   assert(#calls==1 and calls[1].kind=="success",calls[1] and calls[1].message)
   assert(release_candidate_calls==1,"terminal success retained its store candidate")
   assert_idle()
+end
+
+-- Successful regeneration releases its deleted stage and native wrapper.
+do
+  local host_instrument,phrase=create_owned(48)
+  render_mode="defer"
+  local request=build(source(52),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  local stage=host_instrument.phrases[2]
+  local refs=setmetatable({stage=stage,script=stage.script},{__mode="v"})
+  local queued=table.remove(render_queue,1)
+  queued.callback(nil,queued.count,0)
+  drain()
+  assert(#calls==1 and calls[1].kind=="success" and rawequal(calls[1].phrase,phrase))
+  assert(#host_instrument.phrases==1)
+  stage,queued=nil,nil
+  inserted_backup_phrase=nil
+  for _=1,3 do collectgarbage("collect") end
+  assert(refs.stage==nil and refs.script==nil,"completed regeneration retained its deleted stage")
+  render_mode="sync"
+end
+
+-- Missing, rejected and throwing blocker hooks produce a blocked terminal
+-- result and prevent later direct writer requests from being admitted.
+for _, mode in ipairs({ "false", "throw", "missing" }) do
+  local host_instrument,phrase=create_owned(48)
+  delete_failure=function(candidate) return candidate.name==writer.TRANSACTION_BACKUP_NAME end
+  local request=build(source(52),1)
+  if mode=="false" then
+    request.record_blocker=function() return false end
+  elseif mode=="throw" then
+    request.record_blocker=function() error("injected blocker hook failure",0) end
+  else
+    request.record_blocker=nil
+  end
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  delete_failure=nil
+  assert(#calls==1 and calls[1].kind=="failure" and
+    calls[1].status=="integrity_blocked" and calls[1].integrity_blocked==true and calls[1].phrase==nil)
+  local later=build(source(54),2)
+  local later_calls=0
+  local later_operation=later.kind=="create" and writer.create or writer.regenerate
+  local later_accepted,later_rejection=later_operation(later,function() later_calls=later_calls+1 end)
+  assert(not later_accepted and later_rejection.status=="integrity_blocked")
+  assert(later_calls==0 and #host_instrument.phrases==2)
+  assert(type(writer.diagnostic())=="table" and
+    writer.diagnostic().code=="transaction.blocker_recording")
 end
 
 print("ACID writer safety checks passed (mocked Renoise; native playback unverified)")

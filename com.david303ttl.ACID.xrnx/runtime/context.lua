@@ -376,12 +376,7 @@ function M.new(options)
     copy.request=copy.request==nil and (record.request or nil) or copy.request
     local valid_token=copy.token~=nil and rawequal(copy.token,record.token)
     local success=copy.kind=="success" and copy.verified==true and valid_token
-    if success and copy.integrity_blocked==true then
-      success=false
-      copy.status="integrity_blocked"
-      copy.reason=copy.reason or copy.message or
-        "Committed output retained recovery material and requires revalidation"
-    elseif success and not host_object(copy.phrase) then
+    if success and not host_object(copy.phrase) then
       success=false
       copy.status="failed"
       copy.reason="Writer success did not include its destination phrase"
@@ -762,6 +757,29 @@ function M.new(options)
       end
       if not success and terminal.status=="integrity_blocked" and terminal_current then
         pending_trigger=nil
+        if not record.blocker_pending then
+          local request=record.request
+          local evidence={operation=request and request.kind or "regenerate",
+            committed=terminal.committed==true,
+            instrument=request and request.instrument or nil,
+            phrase=terminal.phrase or request and request.phrase or nil,
+            baseline=request and request.baseline or nil,
+            committed_baseline=terminal.baseline,
+            recovery=terminal.recovery or {},reason=terminal.reason or terminal.message}
+          local recorded_ok,recorded,record_error=pcall(function()
+            return integrity and integrity:record(evidence)
+          end)
+          if recorded_ok and recorded then
+            record.blocker_pending=true
+            transitions:transition("blocker")
+            invalidate("Song integrity requires revalidation")
+          else
+            adoption_blocked_reason=terminal.reason or
+              record_error or "Integrity recovery evidence could not be recorded"
+            block(record,"completion.integrity_blocker",
+              record_error or adoption_blocked_reason)
+          end
+        end
       end
       local request=record.request
       if success and destination_current and request and request.draft_capture and
@@ -1769,6 +1787,13 @@ function M.new(options)
     if adoption_blocked_reason then return false,adoption_blocked_reason end
     local cleared,reason=integrity:clear(proof)
     if cleared then
+      if type(writer.clear_integrity_blocker)=="function" then
+        local writer_cleared,writer_error=pcall(writer.clear_integrity_blocker,current_song)
+        if not writer_cleared or writer_error==false then
+          adoption_blocked_reason="Writer integrity blocker could not be cleared after revalidation"
+          return false,adoption_blocked_reason
+        end
+      end
       mutation_failed=false;adoption_blocked_reason=nil
       invalidate_target_projection()
     end

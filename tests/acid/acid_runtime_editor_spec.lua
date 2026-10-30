@@ -146,8 +146,8 @@ do
  local ctx,log,_,_,phrase,_,_=fixture()
  assert(ctx:request_generation('manual'))
  local request=log.requests[1]
- log.done[1]({kind='success',status='committed',verified=true,integrity_blocked=true,
-   token=request.token,epoch=request.epoch,request=request,phrase=phrase,
+ log.done[1]({kind='failure',status='integrity_blocked',verified=false,
+   token=request.token,epoch=request.epoch,request=request,phrase=nil,
    baseline=request.baseline,message='recovery material retained'})
  local state=ctx:generation_state()
  assert(state.last_result and state.last_result.kind=='failure' and not state.last_commit,

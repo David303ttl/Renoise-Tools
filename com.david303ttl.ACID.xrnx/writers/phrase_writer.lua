@@ -35,14 +35,6 @@ local STATUS_BUSY = "busy"
 local COMMIT_WAIT_TICKS = 500
 local SCRIPT_SETTLE_TICKS = 500
 local RENDER_PENDING_TICKS = 500
--- Reserve boundary/controller-event headroom; complete output validation is
--- independent of this conservative render budget and permits no missing cells.
-local RENDER_EVENT_MARGIN = 8
--- Documented API 6.2 bounds when a host-shaped fixture omits the constants.
-local PINNED_MAX_LINES = 512
-local PINNED_NOTE_COLUMNS = 12
-local PINNED_EFFECT_COLUMNS = 8
-local PINNED_PHRASE_CAPACITY = 126
 local UNDO_CREATE = "ACID: Generate phrase"
 local UNDO_REGENERATE = "ACID: Regenerate phrase"
 
@@ -52,6 +44,7 @@ local released_token = nil
 local delivering = false
 local temporaries = {}
 local last_diagnostic = nil
+local integrity_blocker_errors = setmetatable({}, { __mode = "k" })
 
 local function pack(...) return {n = select("#", ...), ...} end
 
@@ -90,9 +83,9 @@ local function phrase_limits()
   local max_lines = read("MAX_NUMBER_OF_LINES")
   local max_note_columns = read("MAX_NUMBER_OF_NOTE_COLUMNS")
   local max_effect_columns = read("MAX_NUMBER_OF_EFFECT_COLUMNS")
-  if max_lines == nil then max_lines = PINNED_MAX_LINES end
-  if max_note_columns == nil then max_note_columns = PINNED_NOTE_COLUMNS end
-  if max_effect_columns == nil then max_effect_columns = PINNED_EFFECT_COLUMNS end
+  if max_lines == nil or max_note_columns == nil or max_effect_columns == nil then
+    return nil, "Native phrase limits are unavailable"
+  end
   if not positive_integer(max_lines) or not positive_integer(max_note_columns) or
       not nonnegative_integer(max_effect_columns) then
     return nil, "Native phrase limits are invalid"
@@ -112,7 +105,7 @@ local function phrase_capacity()
   if not api_ok or instrument_api == nil then return nil, "Instrument API is unavailable" end
   local value_ok, value = pcall(function() return instrument_api.MAX_NUMBER_OF_PHRASES end)
   if not value_ok then return nil, "Native phrase capacity is unavailable" end
-  if value == nil then value = PINNED_PHRASE_CAPACITY end
+  if value == nil then return nil, "Native phrase capacity is unavailable" end
   if not positive_integer(value) then return nil, "Native phrase capacity is invalid" end
   return value
 end
@@ -260,6 +253,13 @@ end
 function M.diagnostic()
   if not last_diagnostic then return nil end
   return { code = last_diagnostic.code, message = last_diagnostic.message }
+end
+
+function M.clear_integrity_blocker(song)
+  if song ~= nil then integrity_blocker_errors[song] = nil end
+  if last_diagnostic and last_diagnostic.code == "transaction.blocker_recording" then
+    last_diagnostic = nil
+  end
 end
 
 local function set_diagnostic(code, message)
@@ -444,37 +444,33 @@ local function cleanup_temporaries(job)
       failed(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
     end
   end
-  for _, phrase in ipairs(job.untracked_insertion_phrases or {}) do
-    failed(phrase, "staging", M.RECOVERY_STAGING_NAME,
-      "staging insertion identity was ambiguous")
-  end
   return recovery, #errors > 0 and table.concat(errors, " and ") or nil
 end
 
 local function inserted_identity(before, after, returned)
   local addition = inventory_addition(before, after)
   if addition == nil or returned == nil or not rawequal(addition, returned) then
-    return nil, addition
+    return nil
   end
   local occurrences = 0
   for _, phrase in ipairs(after) do
     if rawequal(phrase, returned) then occurrences = occurrences + 1 end
   end
-  if occurrences ~= 1 then return nil, addition end
+  if occurrences ~= 1 then return nil end
   return addition
 end
 
-local function new_inventory_members(before, after)
-  local added = {}
-  if type(before) ~= "table" or type(after) ~= "table" then return added end
+local function new_inventory_member_count(before, after)
+  if type(before) ~= "table" or type(after) ~= "table" then return 0 end
+  local count = 0
   for _, phrase in ipairs(after) do
     local existed = false
     for _, original in ipairs(before) do
       if rawequal(original, phrase) then existed = true; break end
     end
-    if not existed then added[#added + 1] = phrase end
+    if not existed then count = count + 1 end
   end
-  return added
+  return count
 end
 
 local function forget_job_temporaries(job)
@@ -502,6 +498,7 @@ local function settle(job, result)
   if job.settled then return false end
   job.settled = true
   job.cancelled = true
+  if not job.blocker_record_failed then last_diagnostic = nil end
   unlink(job)
   current = nil
   busy = false
@@ -534,10 +531,8 @@ local function failure_suffix(job)
 end
 
 local function record_blocker(job, reason, recovery)
-  if job.released or type(job.request) ~= "table" or type(job.request.record_blocker) ~= "function" then
-    return false
-  end
-  job.blocker_recorded = true
+  if job.blocker_recorded then return true end
+  if job.released then return false end
   local committed = job.cleanup_warning ~= nil and job.committed_baseline ~= nil
   local evidence = {
     operation = job.replace and "regenerate" or "create",
@@ -553,8 +548,23 @@ local function record_blocker(job, reason, recovery)
     evidence.pre_store = job.pre_store
     evidence.pre_store_absent = job.pre_store == nil
   end
-  local ok, recorded = pcall(function() return job.request:record_blocker(job.token, evidence) end)
-  return ok and recorded == true
+  local ok, recorded = pcall(function()
+    if type(job.request) ~= "table" or type(job.request.record_blocker) ~= "function" then
+      error("Integrity blocker hook is unavailable", 0)
+    end
+    job.blocker_recording = true
+    return job.request:record_blocker(job.token, evidence)
+  end)
+  job.blocker_recording = false
+  if ok and recorded == true then
+    job.blocker_recorded = true
+    return true
+  end
+  local blocker_error = "ACID integrity blocker could not be recorded; restart Renoise before generating again"
+  if job.song ~= nil then integrity_blocker_errors[job.song] = blocker_error end
+  job.blocker_record_failed = true
+  set_diagnostic("transaction.blocker_recording", blocker_error)
+  return false
 end
 
 local function terminal_failure(job, status, code, category, reason, extra)
@@ -568,6 +578,7 @@ local function terminal_failure(job, status, code, category, reason, extra)
   local diagnostics = {}
   for _, item in ipairs(job.approximations or {}) do diagnostics[#diagnostics + 1] = item end
   for _, item in ipairs(extra.diagnostics or {}) do diagnostics[#diagnostics + 1] = item end
+  local integrity_reason = job.integrity_reason
   if cleanup_error then
     status = "integrity_blocked"
     code = code == "transaction.cancelled" and "transaction.cancelled_recovery" or code
@@ -577,12 +588,20 @@ local function terminal_failure(job, status, code, category, reason, extra)
   elseif job.keep_recovery and extra.recovery_message then
     message = message .. "; " .. extra.recovery_message
   end
+  if integrity_reason then
+    status, category = "integrity_blocked", "integrity"
+    job.keep_recovery = true
+    message = message .. "; " .. integrity_reason .. "; instrument inventory requires inspection"
+  end
   if extra.recovery then recovery = extra.recovery end
   if next(recovery or {}) == nil and job.recovery then recovery = job.recovery end
-  if cleanup_error then record_blocker(job, message, recovery) end
+  if next(recovery or {}) == nil and job.recovery_evidence then recovery = job.recovery_evidence end
+  if cleanup_error or integrity_reason or status == "integrity_blocked" then
+    record_blocker(job, message, recovery or job.recovery_evidence)
+  end
   local result = {
     kind = "failure", status = status, token = job.token, epoch = job.epoch,
-    request = job.request, phrase = extra.phrase or job.keep_recovery and job.phrase or nil,
+    request = job.request, phrase = nil,
     verified = false, reason = reason, code = code, category = category,
     message = message, diagnostics = diagnostics,
     target = { instrument_index = job.instrument_index, phrase_index = job.target_index },
@@ -602,6 +621,17 @@ local function terminal_success(job, counts, diagnostics, approximation)
   if job.cleanup_warning then
     message = message .. "\n" .. job.cleanup_warning
     record_blocker(job, message, job.recovery)
+    local result = {
+      kind = "failure", status = "integrity_blocked", token = job.token, epoch = job.epoch,
+      request = job.request, phrase = nil, verified = false, committed = true,
+      reason = message, code = "transaction.cleanup", category = "integrity",
+      message = message, diagnostics = diagnostics,
+      target = { instrument_index = job.instrument_index, phrase_index = job.target_index },
+      counts = counts, id = job.id, baseline = job.committed_baseline,
+      recovery = job.recovery, integrity_blocked = true,
+    }
+    settle(job, result)
+    return
   end
   local result = {
     kind = "success", status = approximation and "approximate" or "committed",
@@ -1044,6 +1074,297 @@ local function snapshot_target_baseline(job, phrase)
   return baseline
 end
 
+local function prepare_destination_backup(job, destination, capacity)
+  local captured, destination_before = pcall(ownership.snapshot, destination, job.limits)
+  if not captured or type(destination_before) ~= "table" then
+    return nil, job.backup, "Cannot capture destination before replacement"
+  end
+  if #job.instrument.phrases + 1 > capacity then
+    return destination_before, job.backup, "Not enough phrase slots for staging and rollback backup"
+  end
+  local inventory_before = phrase_inventory(job.instrument)
+  if not inventory_before then
+    return destination_before, job.backup, "Cannot inspect phrase inventory before backup insertion"
+  end
+  local inserted, returned = pcall(function()
+    return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
+  end)
+  local after = phrase_inventory(job.instrument)
+  if not after then
+    job.integrity_reason = "Cannot inspect inventory after backup insertion"
+    job.recovery_evidence = { { role = "backup-inventory", reason = job.integrity_reason } }
+    job.keep_recovery = true
+    return destination_before, job.backup, job.integrity_reason
+  end
+  local backup = inserted_identity(inventory_before, after, inserted and returned or nil)
+  local insertion_failed = not inserted or returned == nil
+  if not backup and insertion_failed then
+    backup = inventory_addition(inventory_before, after)
+  end
+  if insertion_failed and backup then
+    remember_temporary(job, backup, "backup")
+    job.backup = backup
+    return destination_before, backup,
+      "Could not insert destination backup: " .. tostring(inserted and "no phrase returned" or returned)
+  end
+  if not backup then
+    local addition_count = new_inventory_member_count(inventory_before, after)
+    if addition_count > 0 then
+      job.keep_recovery = true
+      job.integrity_reason = "Backup insertion changed inventory ambiguously"
+      job.recovery_evidence = { {
+        role = "backup-inventory", reason = job.integrity_reason, additions = addition_count,
+      } }
+    elseif not same_inventory(inventory_before, after) then
+      job.keep_recovery = true
+      job.integrity_reason = "Backup insertion changed inventory ambiguously"
+      job.recovery_evidence = { { role = "backup-inventory", reason = job.integrity_reason } }
+    end
+    return destination_before, job.backup,
+      "Could not insert destination backup: " .. tostring(inserted and
+        "returned phrase did not match the single inventory addition" or returned)
+  end
+  remember_temporary(job, backup, "backup")
+  job.backup = backup
+  local copied, copy_error = pcall(function()
+    backup:copy_from(destination)
+    backup.name = M.TRANSACTION_BACKUP_NAME
+  end)
+  if not copied then return destination_before, backup,
+    "Could not create destination backup: " .. tostring(copy_error) end
+  local captured_backup, backup_snapshot = pcall(ownership.snapshot, backup, job.limits)
+  if not captured_backup or type(backup_snapshot) ~= "table" then
+    return destination_before, backup, "Cannot inspect destination backup"
+  end
+  -- Phrase copies omit mappings; destination mapping is checked after replacement.
+  local compared, same, difference = pcall(ownership.compare_backup, destination_before, backup_snapshot)
+  if not compared or not same then
+    return destination_before, backup, "Destination backup coverage failed: " .. tostring(difference)
+  end
+  job.backup_verified = true
+  return destination_before, backup
+end
+
+local function write_destination(job, destination, destination_before)
+  local copied, copy_error = pcall(function()
+    if job.replace then
+      destination:copy_from(job.phrase)
+      local preserved, preserve_error = restore_preserved_metadata(destination, destination_before,
+        job.required_visibility)
+      if not preserved then error(preserve_error, 0) end
+    end
+    local name, name_error = ownership.make_name(destination, job.id)
+    if not name then error(name_error, 0) end
+    destination.name = name
+  end)
+  if not copied then return nil, "Phrase replacement failed: " .. tostring(copy_error) end
+  local written_ok, written_snapshot = pcall(ownership.snapshot, destination, job.limits)
+  if not written_ok or type(written_snapshot) ~= "table" then
+    return nil, "Cannot capture the written destination before commit"
+  end
+  if job.replace then
+    local preserved, preservation_error = verify_preserved_snapshot(written_snapshot,
+      destination_before, job.required_visibility)
+    if not preserved then
+      return written_snapshot, "Destination preservation failed: " .. tostring(preservation_error)
+    end
+  end
+  local checked, verified, validation_error = pcall(validator.verify, destination, job.plan,
+    job.layout.lines_per_step, job.layout, job.expected_articulation)
+  if not checked or not verified then
+    return written_snapshot,
+      "Copied phrase validation failed: " .. tostring(checked and validation_error or verified)
+  end
+  return written_snapshot
+end
+
+local function commit_source(job, destination)
+  local called, committed, store_error = pcall(store.commit, job.song, job.store_candidate)
+  if not called then store_error, committed = committed, nil end
+  if not committed then return nil, "Source commit failed: " .. tostring(store_error) end
+  local final_ok, final_error = pcall(function()
+    local status = ownership.status(destination)
+    if status ~= "owned" or ownership.id(destination) ~= job.id then
+      error("final phrase seal verification failed", 0)
+    end
+    local saved, saved_policy, saved_pb_range = store.load(job.song, job.instrument, destination)
+    if not saved then error("final phrase source association verification failed: " .. tostring(saved_policy), 0) end
+    if saved_policy ~= job.output_policy then error("final phrase output policy verification failed", 0) end
+    if saved_pb_range ~= job.pb_range then error("final phrase PB range verification failed", 0) end
+    if not sequencer.same_source(saved, job.pattern) then
+      error("final phrase source snapshot differs from frozen input", 0)
+    end
+  end)
+  if not final_ok then return nil,
+    "Final phrase/source verification failed: " .. tostring(final_error) end
+  local baseline, baseline_error = snapshot_target_baseline(job, destination)
+  if not baseline then return nil, "Postcommit baseline verification failed: " .. tostring(baseline_error) end
+  return baseline
+end
+
+local function cleanup_committed_temporaries(job, backup)
+  if backup then
+    if try_delete_phrase(job.instrument, backup) then
+      forget_temporary(backup)
+      job.backup = nil
+    else
+      job.cleanup_warning = "Committed output; recovery backup remains in the instrument."
+      local evidence, recovery_error = capture_recovery(job, backup, "backup", M.RECOVERY_BACKUP_NAME)
+      if evidence then
+        job.recovery = job.recovery or {}
+        job.recovery[#job.recovery + 1] = evidence
+      end
+      if recovery_error then job.cleanup_warning = job.cleanup_warning .. " " .. recovery_error end
+    end
+  end
+  if job.replace then
+    if try_delete_phrase(job.instrument, job.phrase) then
+      job.temporary = false
+      forget_temporary(job.phrase)
+    else
+      job.cleanup_warning = (job.cleanup_warning and job.cleanup_warning .. " " or "") ..
+        "Committed output; staging phrase remains in the instrument."
+      local evidence, recovery_error = capture_recovery(job, job.phrase, "staging", M.RECOVERY_STAGING_NAME)
+      if evidence then
+        job.recovery = job.recovery or {}
+        job.recovery[#job.recovery + 1] = evidence
+      end
+      if recovery_error then job.cleanup_warning = job.cleanup_warning .. " " .. recovery_error end
+    end
+  else
+    job.temporary = false
+    forget_temporary(job.phrase)
+  end
+end
+
+local function rollback_commit(job, result, destination, backup, destination_before,
+    destination_written, commit_attempted, cause)
+  local function append_message(message)
+    result.message = result.message and (result.message .. "; " .. message) or message
+  end
+  local function retain(phrase, role, label, message)
+    local evidence, recovery_error = capture_recovery(job, phrase, role, label)
+    if evidence then
+      job.recovery = job.recovery or {}
+      job.recovery[#job.recovery + 1] = evidence
+    end
+    job.keep_recovery = true
+    append_message(message .. (recovery_error and (": " .. recovery_error) or ""))
+  end
+  local phrase_restored = true
+  if job.replace and backup then
+    local current_ok, current = pcall(ownership.snapshot, destination, job.limits)
+    if not current_ok or type(current) ~= "table" then
+      phrase_restored = false
+      job.keep_recovery = true
+      job.swapped = true
+      append_message("destination rollback refused: cannot inspect destination")
+    else
+      local same_before = snapshots_equal(current, destination_before)
+      local same_written = destination_written ~= nil and snapshots_equal(current, destination_written)
+      if same_before then
+        -- The destination was never replaced; no copy back is needed.
+      elseif not same_written then
+        phrase_restored = false
+        job.keep_recovery = true
+        job.swapped = true
+        append_message("destination rollback refused: destination changed outside the transaction")
+      elseif not job.backup_verified then
+        phrase_restored = false
+        job.keep_recovery = true
+        job.swapped = true
+        append_message("destination rollback refused: backup was not verified before mutation")
+      else
+        local restored, restore_error = pcall(function()
+          destination:copy_from(backup)
+          local preserved, preserve_error = restore_preserved_metadata(destination, destination_before)
+          if not preserved then error(preserve_error, 0) end
+          destination.name = job.target_name
+        end)
+        local restored_ok, restored_snapshot = pcall(ownership.snapshot, destination, job.limits)
+        local exact, difference
+        if restored_ok and type(restored_snapshot) == "table" then
+          exact, difference = snapshots_equal(restored_snapshot, destination_before)
+        end
+        if not restored or not restored_ok or not exact then
+          phrase_restored = false
+          job.keep_recovery = true
+          job.swapped = true
+          append_message("destination rollback failed: " ..
+            tostring(restored and (difference or restored_snapshot) or restore_error))
+        end
+      end
+    end
+  end
+  local store_restored = true
+  if commit_attempted then
+    local called, restored, restore_error = pcall(store.restore, job.song, job.store_candidate)
+    if not called or not restored then
+      store_restored = false
+      append_message("source rollback failed: " .. tostring(called and restore_error or restored))
+    end
+  end
+  if job.replace and backup and phrase_restored then
+    if remove_phrase(job, backup) then
+      job.backup = nil
+    else
+      retain(backup, "backup", M.RECOVERY_BACKUP_NAME, "backup cleanup failed")
+    end
+  end
+  if job.temporary then
+    if remove_phrase(job, job.phrase) then
+      job.temporary = false
+    else
+      retain(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
+    end
+  end
+  if type(job.destination_phrases) == "table" then
+    local actual = phrase_inventory(job.instrument)
+    if not same_inventory(actual, job.destination_phrases) then
+      phrase_restored = false
+      job.keep_recovery = true
+      append_message("phrase inventory rollback verification failed")
+    end
+  else
+    phrase_restored = false
+    job.keep_recovery = true
+    append_message("phrase inventory rollback verification unavailable")
+  end
+  result.integrity_blocked = not phrase_restored or not store_restored or job.keep_recovery == true
+  result.message = result.message or cause
+end
+
+local function has_recovery_phrase(evidence, phrase)
+  for _, prior in ipairs(evidence) do
+    if type(prior) == "table" and rawequal(prior.phrase, phrase) then return true end
+  end
+  return false
+end
+
+local function append_recovery(evidence, item)
+  if type(item) == "table" and item.phrase ~= nil and has_recovery_phrase(evidence, item.phrase) then return end
+  evidence[#evidence + 1] = item
+end
+
+local function collect_recovery(job)
+  local evidence = {}
+  for _, source in ipairs({ job.recovery_evidence or {}, job.recovery or {} }) do
+    for _, item in ipairs(source) do append_recovery(evidence, item) end
+  end
+  for _, item in ipairs({ { job.backup, "backup", M.RECOVERY_BACKUP_NAME },
+      { job.phrase, "staging", M.RECOVERY_STAGING_NAME } }) do
+    local phrase = item[1]
+    if phrase and not job.released then
+      if not has_recovery_phrase(evidence, phrase) then
+        local inspected, captured = pcall(capture_recovery, job, phrase, item[2], item[3])
+        if inspected and captured then append_recovery(evidence, captured) end
+      end
+      job.keep_recovery = true
+    end
+  end
+  return evidence
+end
+
 local function commit_destination(job)
   local valid, reason = checkpoint(job)
   if not valid then
@@ -1075,319 +1396,42 @@ local function commit_destination(job)
       local backup = job.backup
       local destination = job.replace and job.target_phrase or job.phrase
       local destination_before, destination_written
-      local function append_message(text)
-        result.message = result.message and (result.message .. "; " .. text) or text
-      end
-      local function retain(phrase, role, label, message)
-        local evidence, recovery_error = capture_recovery(job, phrase, role, label)
-        if evidence then
-          job.recovery = job.recovery or {}
-          job.recovery[#job.recovery + 1] = evidence
-        end
-        job.keep_recovery = true
-        append_message(message .. (recovery_error and (": " .. recovery_error) or ""))
-      end
       local function rollback(commit_attempted, cause)
-        local phrase_restored = true
-        if job.replace and backup then
-          local current_ok, current = pcall(ownership.snapshot, destination, job.limits)
-          if not current_ok or type(current) ~= "table" then
-            phrase_restored = false
-            job.keep_recovery = true
-            job.swapped = true
-            append_message("destination rollback refused: cannot inspect destination")
-          else
-            local same_before = snapshots_equal(current, destination_before)
-            local same_written = destination_written ~= nil and
-              snapshots_equal(current, destination_written)
-            if same_before then
-              -- The destination was never replaced; no copy back is needed.
-            elseif not same_written then
-              -- Never overwrite an external change with an old snapshot.
-              phrase_restored = false
-              job.keep_recovery = true
-              job.swapped = true
-              append_message("destination rollback refused: destination changed outside the transaction")
-            elseif not job.backup_verified then
-              phrase_restored = false
-              job.keep_recovery = true
-              job.swapped = true
-              append_message("destination rollback refused: backup was not verified before mutation")
-            else
-              local restored, restore_error = pcall(function()
-                destination:copy_from(backup)
-                local preserved, preserve_error = restore_preserved_metadata(destination, destination_before)
-                if not preserved then error(preserve_error, 0) end
-                destination.name = job.target_name
-              end)
-              local restored_ok, restored_snapshot = pcall(ownership.snapshot, destination, job.limits)
-              local exact, difference
-              if restored_ok and type(restored_snapshot) == "table" then
-                exact, difference = snapshots_equal(restored_snapshot, destination_before)
-              end
-              if not restored or not restored_ok or not exact then
-                phrase_restored = false
-                job.keep_recovery = true
-                job.swapped = true
-                append_message("destination rollback failed: " ..
-                  tostring(restored and (difference or restored_snapshot) or restore_error))
-              end
-            end
-          end
-        end
-        local store_restored = true
-        if commit_attempted then
-          local called, restored, restore_error = pcall(store.restore, job.song, job.store_candidate)
-          if not called or not restored then
-            store_restored = false
-            append_message("source rollback failed: " .. tostring(called and restore_error or restored))
-          end
-        end
-        if not job.replace and job.temporary then
-          if remove_phrase(job, job.phrase) then
-            job.temporary = false
-            forget_temporary(job.phrase)
-          else
-            retain(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
-          end
-        end
-        if job.replace and backup and phrase_restored then
-          if remove_phrase(job, backup) then
-            job.backup = nil
-            forget_temporary(backup)
-          else
-            retain(backup, "backup", M.RECOVERY_BACKUP_NAME, "backup cleanup failed")
-          end
-        end
-        if job.replace and job.temporary then
-          if remove_phrase(job, job.phrase) then
-            job.temporary = false
-            forget_temporary(job.phrase)
-          else
-            retain(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
-          end
-        end
-        for _, phrase in ipairs(job.untracked_insertion_phrases or {}) do
-          retain(phrase, "backup", M.RECOVERY_BACKUP_NAME,
-            "uncertain backup insertion left an untracked phrase")
-        end
-        if type(job.destination_phrases) == "table" then
-          local actual = phrase_inventory(job.instrument)
-          if not same_inventory(actual, job.destination_phrases) then
-            phrase_restored = false
-            job.keep_recovery = true
-            append_message("phrase inventory rollback verification failed")
-          end
-        else
-          phrase_restored = false
-          job.keep_recovery = true
-          append_message("phrase inventory rollback verification unavailable")
-        end
-        result.integrity_blocked = (not phrase_restored) or (not store_restored) or job.keep_recovery == true
-        result.message = result.message or cause
+        rollback_commit(job, result, destination, backup, destination_before,
+          destination_written, commit_attempted, cause)
       end
       if job.replace then
-        local captured, snapshot_value = pcall(ownership.snapshot, destination, job.limits)
-        if not captured or type(snapshot_value) ~= "table" then
-          result.message = "Cannot capture destination before replacement"
-          result.integrity_blocked = true
-          return result
-        end
-        destination_before = snapshot_value
-        if #job.instrument.phrases + 1 > capacity then
-          rollback(false, "Not enough phrase slots for staging and rollback backup")
-          return result
-        end
-        job.backup_inventory_before = phrase_inventory(job.instrument)
-        if not job.backup_inventory_before then
-          rollback(false, "Cannot inspect phrase inventory before backup insertion")
-          return result
-        end
-        local inserted, inserted_or_error = pcall(function()
-          return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
-        end)
-        local after = phrase_inventory(job.instrument)
-        local identity, addition = inserted_identity(job.backup_inventory_before, after,
-          inserted and inserted_or_error or nil)
-        local insertion_failed = not inserted or inserted_or_error == nil
-        if not identity and insertion_failed then
-          identity = inventory_addition(job.backup_inventory_before, after)
-        end
-        if insertion_failed and identity then
-          backup = identity
-          remember_temporary(job, backup, "backup")
-          job.backup = backup
-          rollback(false, "Could not insert destination backup: " ..
-            tostring(inserted and "no phrase returned" or inserted_or_error))
-          return result
-        end
-        if not identity then
-          local additions = new_inventory_members(job.backup_inventory_before, after)
-          if #additions > 0 then
-            job.untracked_insertion_phrases = additions
-            for _, phrase in ipairs(additions) do remember_temporary(job, phrase, "backup") end
-            job.keep_recovery = true
-          elseif not same_inventory(job.backup_inventory_before, after) then
-            job.keep_recovery = true
-          end
-          rollback(false, "Could not insert destination backup: " ..
-            tostring(inserted and "returned phrase did not match the single inventory addition"
-              or inserted_or_error))
-          return result
-        end
-        backup = identity
-        remember_temporary(job, backup, "backup")
-        job.backup = backup
-        local backed_up, backup_error = pcall(function()
-          backup:copy_from(destination)
-          backup.name = M.TRANSACTION_BACKUP_NAME
-        end)
-        if not backed_up then
-          rollback(false, "Could not create destination backup: " .. tostring(backup_error))
-          return result
-        end
-        local captured_backup, backup_snapshot = pcall(ownership.snapshot, backup, job.limits)
-        if not captured_backup or type(backup_snapshot) ~= "table" then
-          rollback(false, "Cannot inspect destination backup")
-          return result
-        end
-        -- Native copies do not create phrase mappings, so the backup is the
-        -- destination minus its name and mapping. The destination mapping is
-        -- verified separately after the replacement copy.
-        local compared, same, difference = pcall(ownership.compare_backup,
-          destination_before, backup_snapshot)
-        if not compared or not same then
-          rollback(false, "Destination backup coverage failed: " .. tostring(difference))
-          return result
-        end
-        job.backup_verified = true
-      end
-      local copied, copy_error = pcall(function()
-        if job.replace then
-          destination:copy_from(job.phrase)
-          -- Preflight proves the destination exposes the required output;
-          -- keep its settings and metadata while retaining required visibility.
-          local preserved, preserve_error = restore_preserved_metadata(destination, destination_before,
-            job.required_visibility)
-          if not preserved then error(preserve_error, 0) end
-        end
-        local name, name_error = ownership.make_name(destination, job.id)
-        if not name then error(name_error, 0) end
-        destination.name = name
-      end)
-      if not copied then
-        rollback(false, "Phrase replacement failed: " .. tostring(copy_error))
-        return result
-      end
-      local written_ok, written_snapshot = pcall(ownership.snapshot, destination, job.limits)
-      if not written_ok or type(written_snapshot) ~= "table" then
-        rollback(false, "Cannot capture the written destination before commit")
-        return result
-      end
-      destination_written = written_snapshot
-      if job.replace then
-        local preserved, preservation_error = verify_preserved_snapshot(written_snapshot,
-          destination_before,job.required_visibility)
-        if not preserved then
-          rollback(false, "Destination preservation failed: " .. tostring(preservation_error))
+        local backup_error
+        destination_before, backup, backup_error = prepare_destination_backup(job, destination, capacity)
+        if backup_error then
+          rollback(false, backup_error)
           return result
         end
       end
-      local checked, verified, validation_error = pcall(validator.verify, destination, job.plan,
-        job.layout.lines_per_step, job.layout, job.expected_articulation)
-      if not checked or not verified then
-        rollback(false, "Copied phrase validation failed: " ..
-          tostring(checked and validation_error or verified))
+      local write_error
+      destination_written, write_error = write_destination(job, destination, destination_before)
+      if write_error then
+        rollback(false, write_error)
         return result
       end
       -- A thrown setter may already have changed song data; always inspect and
       -- roll the guarded candidate back after any commit attempt.
-      local commit_called, committed, store_error = pcall(store.commit, job.song, job.store_candidate)
-      if not commit_called then
-        store_error, committed = committed, nil
-      end
-      if not committed then
-        rollback(true, "Source commit failed: " .. tostring(store_error))
-        return result
-      end
-      local final_ok, final_error = pcall(function()
-        local status = ownership.status(destination)
-        if status ~= "owned" or ownership.id(destination) ~= job.id then
-          error("final phrase seal verification failed", 0)
-        end
-        local saved, saved_policy, saved_pb_range = store.load(job.song, job.instrument, destination)
-        if not saved then error("final phrase source association verification failed: " .. tostring(saved_policy), 0) end
-        if saved_policy ~= job.output_policy then error("final phrase output policy verification failed", 0) end
-        if saved_pb_range ~= job.pb_range then error("final phrase PB range verification failed", 0) end
-        if not sequencer.same_source(saved, job.pattern) then
-          error("final phrase source snapshot differs from frozen input", 0)
-        end
-      end)
-      if not final_ok then
-        rollback(true, "Final phrase/source verification failed: " .. tostring(final_error))
-        return result
-      end
-      local committed_baseline, baseline_error = snapshot_target_baseline(job, destination)
+      local committed_baseline, source_error = commit_source(job, destination)
       if not committed_baseline then
-        rollback(true, "Postcommit baseline verification failed: " .. tostring(baseline_error))
+        rollback(true, source_error)
         return result
       end
       job.committed_baseline = committed_baseline
       job.destination = destination
       job.target_index = phrase_index(job.instrument, destination) or job.target_index
       job.swapped = job.replace
-      if backup then
-        if try_delete_phrase(job.instrument, backup) then
-          forget_temporary(backup)
-          job.backup = nil
-        else
-          job.cleanup_warning = "Committed output; recovery backup remains in the instrument."
-          local evidence, recovery_error = capture_recovery(job, backup, "backup",
-            M.RECOVERY_BACKUP_NAME)
-          if evidence then
-            job.recovery = job.recovery or {}
-            job.recovery[#job.recovery + 1] = evidence
-          end
-          if recovery_error then
-            job.cleanup_warning = job.cleanup_warning .. " " .. recovery_error
-          end
-        end
-      end
-      if job.replace then
-        if try_delete_phrase(job.instrument, job.phrase) then
-          job.temporary = false
-          forget_temporary(job.phrase)
-        else
-          job.cleanup_warning = (job.cleanup_warning and job.cleanup_warning .. " " or "") ..
-            "Committed output; staging phrase remains in the instrument."
-          local evidence, recovery_error = capture_recovery(job, job.phrase, "staging",
-            M.RECOVERY_STAGING_NAME)
-          if evidence then
-            job.recovery = job.recovery or {}
-            job.recovery[#job.recovery + 1] = evidence
-          end
-          if recovery_error then
-            job.cleanup_warning = job.cleanup_warning .. " " .. recovery_error
-          end
-        end
-      else
-        job.temporary = false
-        forget_temporary(job.phrase)
-      end
+      cleanup_committed_temporaries(job, backup)
       result.committed = true
       return result
     end)
   end)
   if not ok then
-    local recovery = {}
-    for _, item in ipairs({ { job.backup, "backup", M.RECOVERY_BACKUP_NAME },
-        { job.phrase, "staging", M.RECOVERY_STAGING_NAME } }) do
-      if item[1] and not job.released then
-        local inspected, evidence = pcall(capture_recovery, job, item[1], item[2], item[3])
-        if inspected and evidence then recovery[#recovery + 1] = evidence end
-        job.keep_recovery = true
-      end
-    end
+    local recovery = collect_recovery(job)
     record_blocker(job, "Synchronous commit raised an exception", recovery)
     terminal_failure(job, "integrity_blocked", "transaction.commit", "integrity",
       "Phrase commit raised an exception: " .. tostring(error_message),
@@ -1401,21 +1445,7 @@ local function commit_destination(job)
   end
   local message = outcome and outcome.message or "Phrase commit failed"
   if outcome and outcome.integrity_blocked then
-    local evidence = {}
-    for _, captured in ipairs(job.recovery or {}) do evidence[#evidence + 1] = captured end
-    for _, item in ipairs({ { job.backup, "backup", M.RECOVERY_BACKUP_NAME },
-        { job.phrase, "staging", M.RECOVERY_STAGING_NAME } }) do
-      if item[1] and not job.released then
-        local inspected, captured = pcall(capture_recovery, job, item[1], item[2], item[3])
-        if inspected and captured then
-          local present = false
-          for _, prior in ipairs(evidence) do
-            if rawequal(prior.phrase, captured.phrase) then present = true; break end
-          end
-          if not present then evidence[#evidence + 1] = captured end
-        end
-      end
-    end
+    local evidence = collect_recovery(job)
     job.recovery = evidence
     if #evidence > 0 then message = message .. "; recovery phrase retained" end
     record_blocker(job, message, evidence)
@@ -1524,6 +1554,9 @@ local function render_done(job, error_message, rendered_events, skipped_events)
       diagnostics = {},
     }
     settle(job, result)
+    set_diagnostic("transaction.released_settled",
+      "Native rendering finished after document release. The neutral phrase '" .. M.PHRASE_NAME ..
+      "' remains as recovery material and requires inspection before reuse.")
     return
   end
   job.render_started = false
@@ -1565,19 +1598,34 @@ local function stage(job)
       return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
     end)
     local after = phrase_inventory(job.instrument)
-    local phrase, addition = inserted_identity(before, after, inserted and returned or nil)
+    if not after then
+      job.keep_recovery = true
+      job.integrity_reason = "Cannot inspect instrument inventory after staging insertion"
+      job.recovery_evidence = { {
+        role = "staging-inventory", reason = job.integrity_reason,
+      } }
+      error(job.integrity_reason, 0)
+    end
+    local phrase = inserted_identity(before, after, inserted and returned or nil)
     local insertion_failed = not inserted or returned == nil
     if not phrase and insertion_failed then
       phrase = inventory_addition(before, after)
     end
     if not phrase then
-      local additions = new_inventory_members(before, after)
-      if #additions > 0 then
-        job.untracked_insertion_phrases = additions
-        for _, candidate in ipairs(additions) do remember_temporary(job, candidate, "staging") end
+      local addition_count = new_inventory_member_count(before, after)
+      if addition_count > 0 then
         job.keep_recovery = true
+        job.integrity_reason = "Staging insertion changed inventory ambiguously"
+        job.recovery_evidence = { {
+          role = "staging-inventory", reason = job.integrity_reason,
+          additions = addition_count,
+        } }
       elseif not same_inventory(before, after) then
         job.keep_recovery = true
+        job.integrity_reason = "Staging insertion changed inventory ambiguously"
+        job.recovery_evidence = { {
+          role = "staging-inventory", reason = job.integrity_reason,
+        } }
       end
       error("Staging insertion did not return the single new inventory member", 0)
     end
@@ -1612,7 +1660,7 @@ local function stage(job)
   end
   job.script = job.phrase.script
   local runner, runner_error = script_runner.new(job.script, {
-    lpb = job.layout.lpb, max_events = job.plan.length + RENDER_EVENT_MARGIN,
+    lpb = job.layout.lpb, max_events = job.plan.length,
   }, {
     rendering = function()
       if current ~= job or job.settled then return end
@@ -1647,8 +1695,19 @@ local function start(request, done, kind)
       "ACID is already generating a phrase"
     return false, failure(request, "transaction.busy", "transaction", message)
   end
-  local job, rejection = build_job(request, done, kind)
+  local song_ok, request_song = pcall(function() return request and request.song end)
+  local blocker_error = song_ok and request_song and integrity_blocker_errors[request_song]
+  if blocker_error then
+    return false, failure(request, "transaction.integrity_blocked", "integrity", blocker_error,
+      "integrity_blocked")
+  end
+  local built, job, rejection = pcall(build_job, request, done, kind)
+  if not built then
+    return false, failure(request, "safety.preflight", "safety",
+      "Cannot inspect the phrase destination safely: " .. tostring(job))
+  end
   if not job then return false, rejection end
+  last_diagnostic = nil
   current, busy, released_token = job, true, nil
   local ok, error_message = pcall(stage, job)
   if not ok then
@@ -1687,6 +1746,7 @@ function M.cancel(token, reason)
   if not job then return false end
   local job_token = job.released and released_token or job.token
   if not rawequal(job_token, token) then return false end
+  if job.blocker_recording then return true end
   job.cancelled = true
   job.cancel_reason = reason or "Generation cancelled"
   -- Recording recovery evidence invalidates the request from inside the writer;
