@@ -159,4 +159,51 @@ do
  assert(not ctx:revalidate(proof),'newer real draft revision did not block revalidation')
  assert(ctx:integrity_state().blocked)
 end
+-- A failed creation has no destination baseline; exact preconditions permit cleanup.
+do
+ local song,instrument,phrase=helper.fixture()
+ local owner=require('runtime.integrity').new(song,nil,function()return true end)
+ local before={instrument.phrases[1],instrument.phrases[2]}
+ local store=song.tool_data
+ local recovery={name='Failed create'}
+ instrument.phrases[3]=recovery
+ assert(owner:record{operation='create',instrument=instrument,pre_store=store,
+  destination_phrases=before,recovery={{phrase=recovery}}})
+ assert(not owner:status().verified,'retained create recovery accepted')
+ instrument.phrases[3]=nil
+ song.tool_data=store..'changed'
+ assert(not owner:status().verified,'changed create store accepted')
+ song.tool_data=store
+ instrument.phrases[1],instrument.phrases[2]=before[2],before[1]
+ assert(not owner:status().verified,'changed destination order accepted')
+ instrument.phrases[1],instrument.phrases[2]=before[1],before[2]
+ local status,proof=owner:status()
+ assert(status.verified and proof,'cleaned failed create required a destination baseline')
+ assert(owner:state().blocked,'inspection cleared failed create blocker')
+ assert(owner:clear(proof))
+ assert(not owner:state().blocked)
+ local incomplete=require('runtime.integrity').new(song,nil,function()return true end)
+ assert(incomplete:record{operation='create',instrument=instrument})
+ assert(not incomplete:status().verified,'missing create preconditions accepted')
+end
+do
+ local song,instrument=helper.fixture()
+ instrument.phrases={}
+ local owner=require('runtime.integrity').new(song,nil,function()return true end)
+ assert(owner:record{operation='create',instrument=instrument,pre_store=song.tool_data,
+  destination_phrases={}})
+ local status,proof=owner:status()
+ assert(status.verified and owner:clear(proof),'empty create destination could not recover')
+ song.tool_data=nil
+ assert(owner:record{operation='create',instrument=instrument,pre_store_absent=true,
+  destination_phrases={}})
+ local absent,absent_proof=owner:status()
+ assert(absent.verified and owner:clear(absent_proof),'absent new-song store could not recover')
+ local captured=assert(owner:capture_mutation())
+ assert(owner:record(captured))
+ local mutation,mutation_proof=owner:status()
+ assert(mutation.verified and owner:clear(mutation_proof),'absent mutation store could not recover')
+ song.tool_data={}
+ assert(not owner:capture_mutation(),'malformed store was captured')
+end
 print('ACID runtime integrity blocker and read-only revalidation passed')

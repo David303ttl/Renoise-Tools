@@ -1104,8 +1104,29 @@ integration remains Step 3.
 objects. `record_blocker`, `integrity_state`, `occupancy_state`,
 `revalidation_status` and explicit `revalidate` keep song blockers separate
 from protocol diagnostics and writer-owned occupancy. Revalidation reruns
-read-only checks against the exact proof version. Missing destination evidence
-remains blocked; create-recovery evidence integration belongs to Step 3.
+read-only checks against the exact proof version. Failed creation uses explicit
+create evidence: the pre-transaction store and exact destination phrase list,
+plus recovery objects that must be absent. It does not classify a nonexistent
+destination. Production writer evidence integration remains Step 3.
+Create reports carry `operation="create"`, `instrument`, `destination_phrases`
+(the pre-transaction ordered object list), `pre_store` (exact bytes), and
+`recovery`; use `pre_store_absent=true` for an explicitly absent store.
+Regeneration reports retain their existing pre/committed baseline contract.
+
+Review corrections for mutation and recovery require a temporary registry before
+entering a scope, boolean registry results at exit, neutral registered temporaries
+and no duplicate live ownership IDs, including unregistered copies. The outer
+scope captures private recovery evidence before running its action. Any action or
+exit-verification failure records that evidence and revokes authorization.
+After writer settlement, explicit revalidation requires exact restoration of
+store bytes, instrument/phrase membership and order, names and phrase snapshots.
+Unreadable preconditions reject before mutation; changed or incomplete recovery
+evidence remains blocked. Revalidation never retries the failed request.
+
+Correction verification (2026-10-30): focused mutation/integrity checks pass;
+all 60 repository specs pass on Lua 5.1.5 and all 57 ACID-selection specs pass
+on Lua 5.4. The ACID package contains 33 runtime entries with root entry points
+and no development files. Native recovery, undo and playback remain unverified.
 
 `runtime.transitions` and the context's `transition`, `revision_state`,
 `editor_state` and `editor_recovery` own the transition table. Actual editor

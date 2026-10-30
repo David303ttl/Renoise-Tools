@@ -33,6 +33,9 @@
 --       success or exception, revokes authorization on exception, and
 --       rethrows the original failure. No user callback, idle wait, or render
 --       wait may run inside it.
+--       Requires writer.is_temporary and captures exact pre-scope recovery
+--       evidence. A failed outer scope records that evidence for explicit
+--       revalidation after settlement and native restoration.
 --     request.record_blocker(token, evidence)
 --       Verifies the matching live epoch/job, retains copied scalar/value
 --       evidence and exact recovery references only while that song is
@@ -194,6 +197,7 @@ function M.new(options)
   local last_diagnostic = nil
   local diagnosed_context = {}
   local mutation_depth, mutation_token = 0, nil
+  local mutation_evidence=nil
   local inventory_dirty, reconciliation_pending, mutation_failed = false, false, false
   local native_instrument, native_phrase = nil, nil
   local transitions=require("runtime.transitions").new()
@@ -733,6 +737,14 @@ function M.new(options)
         (mutation_depth>0 and not rawequal(mutation_token,token)) then
       error("Mutation requires the current operation token",0)
     end
+    if mutation_depth==0 then
+      if type(writer.is_temporary)~="function" then
+        error("Mutation requires a temporary phrase registry",0)
+      end
+      local evidence,reason=integrity:capture_mutation()
+      if not evidence then error(reason or "Cannot capture mutation recovery evidence",0) end
+      mutation_evidence=evidence
+    end
     mutation_depth=mutation_depth+1
     mutation_token=token
     local scope_song,scope_epoch=current_song,epoch
@@ -755,14 +767,18 @@ function M.new(options)
       if ok and not mutation_failed then
         local neutral,reason=pcall(function()
           local ownership=require("renoise.phrase_ownership")
+          assert(type(writer.is_temporary)=="function","Temporary phrase registry is unavailable")
           for _,instrument in ipairs(current_song.instruments) do
             for _,phrase in ipairs(instrument.phrases) do
-              if writer.is_temporary then
-                local temporary=writer.is_temporary(current_song,instrument,phrase)
-                assert(type(temporary)=="boolean","Invalid temporary registry result")
-                assert(not temporary or not ownership.id(phrase),"Writer temporary retains an ownership identity")
-              end
+              local temporary=writer.is_temporary(current_song,instrument,phrase)
+              assert(type(temporary)=="boolean","Invalid temporary registry result")
+              assert(not temporary or not ownership.id(phrase),"Writer temporary retains an ownership identity")
             end
+          end
+          local groups,inventory_error=ownership.inventory(current_song)
+          assert(groups,inventory_error)
+          for _,holders in pairs(groups) do
+            assert(#holders==1,"Mutation left a duplicate ownership identity")
           end
           native_instrument=current_song.selected_instrument
           native_phrase=current_song.selected_phrase
@@ -774,6 +790,11 @@ function M.new(options)
           ok,failure=false,reason
         end
       end
+      if mutation_failed then
+        integrity:record(mutation_evidence)
+        transitions:transition("blocker")
+      end
+      mutation_evidence=nil
     end
     if not ok then error(failure,0) end
     return (unpack or table.unpack)(values,1,values.n)
@@ -832,6 +853,7 @@ function M.new(options)
     editor_recovery={}
     native_instrument,native_phrase=nil,nil
     mutation_depth,mutation_token=0,nil
+    mutation_evidence=nil
     inventory_dirty,reconciliation_pending,mutation_failed=false,false,false
     if inventory then inventory:release() end
     inventory = nil

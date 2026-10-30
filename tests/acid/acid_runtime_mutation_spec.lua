@@ -6,7 +6,8 @@ local phrase_fixture=dofile('tests/acid/complete_phrase_fixture.lua')
 local function fixture()
  local source=phrase_fixture();source.name=assert(ownership.make_name(source,1))
  local instrument={name='Sampler',phrases={source}}
- local song={instruments={instrument},selected_instrument=instrument,selected_phrase=source}
+ local song={instruments={instrument},selected_instrument=instrument,selected_phrase=source,
+  tool_data='',is_undo_redoing=function()return false end}
  local temporaries={}
  local writer={status='idle'}
  function writer:state()return self.status,self.token end
@@ -18,7 +19,58 @@ local function fixture()
  cancel=function()log.cancels=log.cancels+1;return true end}
  ctx:attach_document(song);ctx:open_dialog();assert(ctx:bind_new(instrument).kind=='new')
  assert(ctx:request_generation('manual'))
- return ctx,log,song,instrument,source,temporaries
+ return ctx,log,song,instrument,source,temporaries,writer
+end
+
+-- Missing registries reject before invoking the mutation action.
+do
+ local ctx,log,_,_,_,_,writer=fixture()
+ writer.is_temporary=nil
+ local ran=false
+ assert(not pcall(function()ctx:mutate(log.token,function()ran=true end)end))
+ assert(not ran and not ctx:mutation_state().failed)
+end
+
+-- Unregistered copied owners and unreadable registry responses fail closed.
+for _,registry in ipairs({'copy','invalid','throws','removed'})do
+ local ctx,log,_,instrument,source,_,writer=fixture()
+ local ok=pcall(function()ctx:mutate(log.token,function()
+  if registry=='copy' then instrument.phrases[2]={name=source.name}
+  elseif registry=='invalid' then writer.is_temporary=function()return nil end
+  elseif registry=='throws' then writer.is_temporary=function()error('registry unavailable')end
+  else writer.is_temporary=nil end
+ end)end)
+ assert(not ok and ctx:mutation_state().failed and not log.token:is_current())
+ assert(ctx:integrity_state().blocked)
+end
+
+-- Failed scopes require exact native restoration and explicit proof after settlement.
+do
+ local ctx,log,song,instrument,source=fixture()
+ local name,base_note,store=source.name,source.base_note,song.tool_data
+ local sentinel={reason='mutation failure'}
+ local ok,reason=pcall(function()ctx:mutate(log.token,function()
+  source.name='Changed';source.base_note=source.base_note+1
+  song.tool_data='changed';instrument.phrases[2]={name='Recovery'}
+  error(sentinel)
+ end)end)
+ assert(not ok and rawequal(reason,sentinel) and ctx:integrity_state().blocked)
+ assert(not ctx:revalidation_status().verified)
+ log.done({kind='failed'})
+ assert(not ctx:revalidation_status().verified)
+ instrument.phrases[2]=nil;source.name=name;source.base_note=base_note
+ assert(not ctx:revalidation_status().verified,'changed store was accepted')
+ song.tool_data=store
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and proof and ctx:mutation_state().failed)
+ source.name='Changed again'
+ assert(not ctx:revalidate(proof),'restoration proof accepted changed phrase')
+ source.name=name
+ local restored,current=ctx:revalidation_status()
+ assert(restored.verified and ctx:revalidate(current))
+ assert(not ctx:mutation_state().failed and not ctx:integrity_state().blocked)
+ assert(log.captures==1 and log.sinks==1,'recovery retried generation')
+ assert(ctx:reconcile().kind=='new')
 end
 
 -- Copy/name/list callbacks remain synchronous dirtiness; only neutral outer exit reconciles.
