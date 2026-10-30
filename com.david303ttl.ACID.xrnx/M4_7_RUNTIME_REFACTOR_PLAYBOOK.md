@@ -721,8 +721,9 @@ regressions. T0.4 runner acceptance passes for fresh launches, loaded selected
 instances, concurrent instances and timeout/disconnection recovery. T0.5 native
 fixture/isolation acceptance passes. T0.6 keyboard automation and offline guard
 coverage are implemented and Renoise-host acceptance passes. T0.7 harness
-integration and failure classification pass; T0.8 coverage handoff remains
-pending. See the [T0.7 verification record](../tests/renoise/host_verification.md#t07-harness-integration-and-native-e2e-2026-10-30).
+integration and failure classification pass; T0.8 coverage handoff is complete.
+Boundary checks, the Native catalog/order rerun and remaining acceptance owners
+are recorded in the [T0.8 verification record](../tests/renoise/host_verification.md#t08-coverage-handoff-and-closeout-2026-10-30).
 Keyboard acceptance does not block Native runs, runtime implementation or normal
 tool use.
 
@@ -892,29 +893,38 @@ behavior.
 
 #### T0.8 — Coverage handoff and closeout
 
-- [ ] Review dependency and package boundaries. Test infrastructure must stay out
+- [x] Review dependency and package boundaries. Test infrastructure must stay out
   of ACID runtime imports and release bundles. Remove unused test hooks and
   duplicate fixtures; preserve production interfaces, manifest/API versions and
   wire formats. Keep repository documentation free of machine-specific paths.
-- [ ] Maintain a compact case-to-test table in the existing Renoise test guide.
+- [x] Maintain a compact case-to-test table in the existing Renoise test guide.
   For each case, record the owning M4.7 step, relevant Step 8 A–E acceptance
   contract, Native/Keyboard/Manual method, independent assertion and current
   status. Add cases with the behavior that owns them; do not duplicate future
   feature tests in the harness foundation.
-- [ ] Hand off coverage to its owning step: document/session lifetime, selection,
+- [x] Hand off coverage to its owning step: document/session lifetime, selection,
   inventory and release/reload to Steps 2.2–2.9; create/regenerate/rollback and
   occupancy to Step 3; explicit copy resolution to Step 4; drafts, scheduling and
   persistence to Step 5; notifications and late callbacks to Step 6. No mock or
   harness result substitutes for a native assertion of host behavior.
-- [ ] Run only Step 8 cases whose owning behavior is implemented. Record native
+- [x] Run only Step 8 cases whose owning behavior is implemented. Record native
   undo/redo and save/reload results, plus visual/audible checks as Manual where
   automation cannot establish them. Keep unimplemented cases assigned to their
   owning steps with status pending; do not report them as passed or block
   unrelated runtime development on their absence.
-- [ ] Close the harness handoff when its applicable checks pass and every
+- [x] Close the harness handoff when its applicable checks pass and every
   unexecuted behavior has an explicit owner and status. Keep Step 8 open until its
   applicable native, keyboard and manual acceptance checks pass; T0 completion
   does not certify unimplemented writer behavior.
+
+**Status: complete (2026-10-30).** The [coverage handoff](../tests/renoise/README.md#coverage-handoff)
+assigns each remaining behavior to its runtime gate and Step 8 contract.
+All six offline groups (53 Lua specs on Lua 5.1), release/development packaging
+and the Native catalog with reverse-order isolation pass. The optional Keyboard
+rerun stopped at preflight without input; its post-policy host acceptance stays
+pending. Actual writer undo/redo, source/draft save/reload and visual/audible
+acceptance remain explicitly pending under Steps 3–6 and 8. No new runtime
+behavior or full Step 8 acceptance is inferred from harness completion.
 
 **Complete when:** package/dependency review passes, current coverage has an
 independent assertion and owner, applicable harness and host checks have recorded

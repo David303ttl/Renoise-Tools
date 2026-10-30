@@ -69,6 +69,15 @@ local function validate(sources)
   end
   local pb_choice_table_count = 0
   for name, source in pairs(sources) do
+    local module_path = "." .. name .. "."
+    for _, directory in ipairs({"test", "tests", "sdk", "fixtures", "scenarios", "keyboard", "__dev"}) do
+      assert(not module_path:find("." .. directory .. ".", 1, true),
+        "development module in runtime inventory: " .. name)
+    end
+    for _, token in ipairs(tokens(source)) do
+      assert(token.kind ~= "name" or (token.value ~= "dofile" and token.value ~= "loadfile"),
+        name .. " uses a runtime file loader outside the private require graph")
+    end
     graph[name] = dependencies(source)
     local owner = name:match("^([^.]+)%.")
     for dependency in pairs(graph[name]) do
@@ -138,6 +147,11 @@ validate({["model.a"]="", ["renoise.a"]="require('model.a')", ["writers.a"]="req
 rejects({["model.policies"]="", ["model.a"]="", ["writers.a"]="local choices = {0, 2, 12, 24, 48}"}, "duplicates the PB choices policy")
 rejects({["writers.phrase_ownership"]="", ["writers.a"]="require('writers.phrase_ownership')"}, "obsolete module")
 rejects({["model.pattern_store"]=""}, "obsolete module remains")
+rejects({["tests.driver"]=""}, "development module in runtime inventory")
+rejects({["__dev.remote_driver"]=""}, "development module in runtime inventory")
+rejects({["gui"]="dofile('tests/driver.lua')"}, "runtime file loader")
+rejects({["gui"]="local loader = loadfile"}, "runtime file loader")
+rejects({["gui"]="require('__dev.remote_driver')"}, "missing module")
 
 local root = "com.david303ttl.ACID.xrnx"
 local command = 'pwsh -NoProfile -Command "Get-ChildItem -LiteralPath ' .. root

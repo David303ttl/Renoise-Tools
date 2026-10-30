@@ -269,6 +269,41 @@ Run offline harness checks without Renoise:
 lua tests/renoise/remote_driver_spec.lua
 ```
 
+## Coverage handoff
+
+Owners and A–E contracts refer to the
+[runtime playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
+The table separates recorded harness acceptance from behavior acceptance. `PASS`
+below cites existing results, not a new execution. `PENDING` means the owning
+runtime gate and its native acceptance remain open; it does not block unrelated
+runtime work. Methods on pending rows are the required verification method.
+Native assertions must inspect host state independently of ACID's success result.
+Mocks can establish local contracts but cannot close these native rows.
+
+| Case / test or guide | Owning step | Step 8 | Method | Independent assertion | Current status |
+| --- | --- | --- | --- | --- | --- |
+| Harness reset, read-only fixture inventory, repeat and deliberate assertion failure: `-Suite Native`, `phrase-inventory`, `phrase-inventory-expected-diff` | T0; handoff to 2.2–2.3 / 2.9 | A, D foundation only | Native | New document epoch; exact golden native fields and store bytes; two stable snapshots; unchanged selection; no undo/redo history; wrong note expectation returns FAIL/nonzero; subsequent clean run passes | PASS recorded in [harness verification](host_verification.md#t07-harness-integration-and-native-e2e-2026-10-30); no owned-target or writer claim |
+| Fixture isolation/order: `-VerifyScenarioOrder` | T0; handoff to 2.2–2.3 | A foundation only | Native | Individually loaded and reverse-order snapshots match after removing only document epoch; each load observes two matching idle cycles | PASS rerun in [handoff verification](host_verification.md#t08-coverage-handoff-and-closeout-2026-10-30) |
+| Real Show shortcut, Escape and native instrument navigation: `-Suite Keyboard` | T0; handoff to 2.6 / 2.8 | A routing foundation only | Keyboard + Native | API-visible dialog opens/closes; native selected instrument changes 1 → 2; wrong PID/focus/configuration/timeout guards reject | PASS before activation-policy hardening; post-hardening host rerun PENDING, as recorded in [keyboard verification](host_verification.md#keyboard-e2e-host-acceptance-2026-10-30) |
+| Document/session lifetime, release/reload and late delivery | 2.2, 2.9; writer disposal in 3; observers in 6 | A, C | Native + Keyboard | Close/reopen and new/reloaded document cannot receive old delivery; no old-song callback accesses or leaked listeners; only exact safe recovery objects remain | PENDING runtime/native acceptance; harness epochs do not prove session isolation |
+| Live inventory, classification, raw identity and preserved baselines | 2.3, 2.9 | A, C | Native + Keyboard | Add/rename/remove/reorder and same-index replacement preserve exact target identity; identical-content phrases remain distinct; Foreign/Unavailable never becomes New; no navigation writes | PENDING; current foreign-fixture readback proves values only |
+| Mutation scope, temporary neutrality and no ownership exclusions | 2.4; real writer integration in 3 | A, C, D | Native | Stage/backup names contain no owner ID across async waits; all live holders count toward collisions; own notifications do not bind temporary objects or mask external changes | PENDING; fake-writer tests cannot prove native notification ordering |
+| Song blockers, global occupancy and explicit read-only revalidation | 2.5; writer terminal in 3; UI in 5 | C, D | Native + Keyboard | Pending render denies writes across songs; only its terminal callback retires occupancy; completed recovery remains blocked until an unchanged successful read-only proof; no repair writes or automatic retry | PENDING; missing/duplicate callbacks remain local injection cases unless observed natively |
+| Transitions, frozen request guards and GUI authority | 2.6–2.8; closeout in 2.9 | A, B, C | Native + Keyboard | Opening/navigation/arming/reset/recovery make no request; native selection, changed baselines, removed targets and old sessions prevent stale commit or append; both manual and Live Edit use exact intended target | PENDING; Show/navigation foundation does not prove admission safety |
+| Create/regenerate, capacity, rollback, preservation and undo/redo | 3 | B, C, D | Native + Manual | Create adds one actual destination; regenerate retains exact object/count; insufficient slots mutate nothing; failures restore destination/store or retain named blocked recovery; sentinel metadata/mapping/script survive; each reachable native undo/redo state is consistent or visibly blocked | PENDING; native undo/redo execution and grouping unverified; fixture no-history checks are not writer undo acceptance |
+| Explicit Make Independent for native copies | 4 | C, D | Native + Keyboard | Same-/cross-instrument and mixed-instrument copies block all colliding holders; selected valid holder alone gets new ID/source; note/effect bytes and original association stay unchanged; 3-holder and source-less cases reject/admit as specified; undo/redo and save/reload remain safe | PENDING; no automatic adoption or copy-resolution pass claimed |
+| Drafts, scheduling, recovery and save/reload: [regeneration](../acid/acid_regeneration_manual.md), [Live Edit](../acid/acid_live_edit_manual.md) | 5 | B, C, D | Native + Keyboard + Manual | Dirty A survives B/close/reopen/save/reload with its own settings; occupied scratch/recovery remains recoverable without rendering; only matching committed revision clears; requests never overlap or drain after blocked/stale completion | PENDING; actual runtime save/reload and durable/session draft acceptance unverified |
+| Notifications, undo invalidation and late callbacks | 6 | A, C, D | Native + Keyboard | Internal mutations reconcile once without self-cancellation; external changes revoke authorization; native undo cannot silently adopt mismatched source/output; repeated opens/documents leave no duplicate listeners or old callbacks | PENDING; driver notifier cleanup does not establish runtime watcher safety |
+| Supported musical output: [gate](../acid/acid_gate_manual.md), [timing](../acid/acid_timing_manual.md), [slide](../acid/acid_slide_manual.md), [articulation](../acid/acid_articulation_manual.md) | 3 / 5; final acceptance in 8 | E | Native + Manual | Independently inspect final pitch/gate/accent/slide cells and timing/loop metadata; listen on supported sampler/VST paths and record observed playback separately | MANUAL / PENDING current-writer acceptance; harness and synthetic cells do not establish audible behavior |
+
+Steps 2.9 and 7 must map their local regressions to actual test cases/results;
+the handoff does not pre-author future scenario fixtures or replace those gates.
+Step 8 stays open until applicable A–E native, keyboard and manual checks pass,
+including final-writer sentinel-field round trips, real undo/redo and save/reload.
+Unsupported-field preflight rejection must be recorded as rejection, not a
+preservation pass. Add each behavior's scenarios with its owning implementation;
+the read-only harness catalog deliberately contains no simulated future writer.
+
 ## Pinned API 6.2 contract
 
 These signatures come from `sdk/renoise-api-6.2/definitions/` and the matching
@@ -301,8 +336,10 @@ The standalone `spike_tool/`, `Capture-Foreground.ps1` and
 and keyboard behavior. Their historical observations are in
 [host_verification.md](host_verification.md). They are not setup requirements or
 permission gates for running tests, developing tools, or installing releases.
-Native API tests do not require foreground focus. Keyboard tests activate their
-selected Renoise window and verify focus before sending each input sequence.
+Native API tests do not require foreground focus. Nonintrusive Keyboard tests
+require an existing selected PID that already owns foreground focus. Activation
+requires `-AllowKeyboardFocusActivation` in a dedicated interactive session;
+both modes verify focus before sending each input sequence.
 
 `./scripts/test_host_preflight_live.ps1 -RenoiseExe '<path>'` checks executable
 and temporary-directory readiness; add `-RenoiseProcessId <pid>` to check a target.

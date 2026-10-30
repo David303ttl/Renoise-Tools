@@ -252,3 +252,65 @@ for this environment workaround.
 These were offline checks using mocks, local transport and generated packages.
 Renoise Native or Keyboard acceptance was not rerun; playback, undo/redo and
 visual or audible behavior remain unverified by these runs.
+
+## T0.8 coverage handoff and closeout (2026-10-30)
+
+The harness handoff is complete. The [coverage table](README.md#coverage-handoff)
+assigns remaining runtime acceptance to Steps 2.2–2.9, 3–6 and Step 8 A–E,
+with an independent assertion, verification method and explicit pending status.
+This closes T0 only; Step 8 and M4 remain open.
+
+Environment: PowerShell 7, Lua 5.1.5, Renoise 3.5.4 Demo / API 6.2,
+ACID tool 0.1. Runs used source HEAD
+`f119838ccb8411bc30b8cc2340d6a3ce5c6b638b` plus the T0.8 working-tree
+changes. Process-local temporary directories were resolved under ignored
+`tmp/handoff-verification` to avoid short-path resolution issues.
+
+```powershell
+$taskTemp = Join-Path (Get-Location) 'tmp/handoff-verification'
+New-Item -ItemType Directory -Force $taskTemp | Out-Null
+$env:TEMP = $taskTemp
+$env:TMP = $taskTemp
+$lua51 = Join-Path $env:LOCALAPPDATA 'Programs/Lua-5.1.5/lua51.exe'
+./scripts/run_offline_tests.ps1 -LuaCommand $lua51
+./scripts/package.ps1 -Tool ACID
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -VerifyScenarioOrder -StartupTimeoutSeconds 45
+```
+
+| Check / artifact under ignored `tmp/` | Result |
+| --- | --- |
+| `handoff-offline.log` | PASS: all six offline groups; 53 Lua specs on Lua 5.1.5, interpreter policy, preflight, runner, development package and release-license checks |
+| ACID release/development package review | PASS: 28 runtime files; root manifest/main and private modules preserved; no SDK, tests, fixtures, driver or documentation in release; staged payload and fixture hashes match |
+| `interactive-19a646d346c24fa5b44a0a02663b0d2a/report.json` | PASS: authenticated ping/capabilities, observed new document, inventory and both scenarios individually and in reverse order; all four loads settled for two matching idle cycles; canonical snapshots match excluding only document epoch |
+| Native cleanup in the same report | PASS: scenario reset, driver shutdown and installation restore; normal process close required identity-checked forced cleanup of the runner-launched disposable process |
+| `interactive-2bc729b344254d39b9cf1223109a4014/report.json` | ERROR at optional Keyboard preflight: no existing selected PID supplied; nonintrusive mode refused a fresh launch; no tool installation, song changes or keyboard input occurred |
+
+The optional Keyboard attempt used:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment tmp/acid-e2e-environment.json -Install -ApproveDisposableSong -StartupTimeoutSeconds 45
+```
+
+That environment file is an ignored local configuration, shaped as documented in
+the test guide. No existing Renoise process was available, and focus activation
+was not enabled. The attempt is ERROR, not PASS or an executed keyboard journey;
+post-policy Keyboard host acceptance remains pending. Earlier shortcut/focus
+acceptance and the T0.7 deliberate assertion failure retain their separately
+dated evidence; neither was rerun here.
+
+Dependency review found only private production imports and no unused runtime
+test hooks or duplicate native fixtures. The dependency spec now rejects
+development module paths and file-loader bypasses of the private require graph;
+negative controls and the actual graph pass. Development packaging derives the
+driver/bootstrap from test sources without changing production entrypoints.
+Tracked Markdown was checked for machine-specific paths. Production interfaces,
+manifest/API versions, persisted formats and transport wire formats are unchanged.
+
+The applicable Native foundation checks pass. Native writer undo/redo and
+grouping, source/draft save/reload, final-writer field preservation, copy
+resolution and lifecycle safety remain PENDING with their owners in the table.
+Visual and audible checks remain MANUAL / PENDING. Fixture loads and an empty
+undo history do not establish writer persistence or undo behavior. No new
+save/reload, playback, visual or audible acceptance was performed. Add those
+scenarios with their owning behavior instead of simulating future writer passes
+in the harness.
