@@ -4,7 +4,6 @@ local M = {}
 local sequencer=require("model.sequencer")
 local policies=require("model.policies")
 local editor=require("model.editor_state")
-local live_regen=require("model.live_regen")
 local drafts=require("runtime.draft_cache")
 local store=require("renoise.pattern_store")
 local ownership=require("renoise.phrase_ownership")
@@ -12,10 +11,11 @@ local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
 local dialog
-local generation=0
-local dialog_generation=-1
-local active_live
+local runtime_context=require("runtime.context")
+local active_runtime
 local active_live_checkbox
+local attached_song
+local dialog_session
 local idle_observable
 local idle_notifier
 local selected_phrase_observable
@@ -36,13 +36,16 @@ local function detach_dialog_watch()
   idle_observable,idle_notifier=nil,nil
 end
 local function stop_live_context()
-  local live,checkbox=active_live,active_live_checkbox
-  active_live,active_live_checkbox=nil,nil
-  if live then live:stop() end
-  if checkbox then checkbox.value=false end
+  if active_runtime then
+    active_runtime:transition("disarm")
+    active_runtime:close_dialog()
+  end
+  if active_live_checkbox then active_live_checkbox.value=false end
+  active_live_checkbox=nil
 end
 local function release_context()
-  generation=generation+1
+  attached_song=nil
+  if active_runtime then active_runtime:release_document() end
   detach_dialog_watch()
   stop_live_context()
   phrase_writer.release()
@@ -54,19 +57,13 @@ if renoise.tool().app_release_document_observable then
       renoise.app():show_warning(
         "ACID has drafts that could not be saved with this song. They will be lost when it closes.")
     end
-    if song then drafts.release(song) end
     release_context()
   end)
 end
 if renoise.tool().tool_will_unload_observable then
   renoise.tool().tool_will_unload_observable:add_notifier(release_context)
 end
-renoise.tool().app_new_document_observable:add_notifier(function()
-  generation=generation+1
-  detach_dialog_watch()
-  stop_live_context()
-  phrase_writer.cancel()
-end)
+renoise.tool().app_new_document_observable:add_notifier(release_context)
 
 local keys={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B","C+"}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
@@ -77,7 +74,7 @@ local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
 
 function M.show()
   if dialog and dialog.visible then
-    if dialog_generation==generation then dialog:show();return end
+    if active_runtime and active_runtime:lifetime_state().open and dialog_session==active_runtime:lifetime_state().session then dialog:show();return end
     detach_dialog_watch()
     stop_live_context()
     dialog:close(); dialog=nil
@@ -95,7 +92,12 @@ function M.show()
   local updating=false
   local preview_cycle=1
   local update
-  local opened=generation
+  local runtime
+  local session
+  local function current_session()
+    local state=runtime and runtime:lifetime_state()
+    return state and state.open and state.session==session
+  end
   local output_policy,pb_range
   local function reset_source(length)
     pattern=sequencer.new_pattern(length)
@@ -109,8 +111,10 @@ function M.show()
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
   local editor_view=1
   local labels={}
+  local instrument_targets={}
   for i,instrument in ipairs(song.instruments) do
     local name=instrument.name~="" and instrument.name or "(unnamed)"
+    instrument_targets[i]=instrument
     labels[i]=string.format("%02X: %s",i-1,name)
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
@@ -170,33 +174,33 @@ function M.show()
   local phrase_choice,phrase_targets
   local bind_selected_phrase_watch
   local apply_pending_selected_phrase_selection
-  local pending_selected_phrase_instrument,pending_selected_phrase
-  local internal_phrase_mutation=false
+  local instrument_choice
   local live_checkbox
-  local live
-  local live_target
-  local bound_instrument,bound_phrase
-  local revision=0
+  local function destination() return runtime:target_state() end
+  local function bound_instrument() return destination().instrument end
+  local function bound_phrase() return destination().phrase end
+  local function revision() return runtime:revision_state().edit_revision end
   local projected_revision,cached_projection,projected_instrument,projected_phrase
   local function invalidate_projection()
     cached_projection=nil
   end
   local function project()
-    if not cached_projection or projected_revision~=revision or
-        not rawequal(projected_instrument,bound_instrument) or
-        not rawequal(projected_phrase,bound_phrase) then
+    if not cached_projection or projected_revision~=revision() or
+        not rawequal(projected_instrument,bound_instrument()) or
+        not rawequal(projected_phrase,bound_phrase()) then
       cached_projection=editor.project(pattern)
-      projected_revision=revision
-      projected_instrument,projected_phrase=bound_instrument,bound_phrase
+      projected_revision=revision()
+      projected_instrument,projected_phrase=bound_instrument(),bound_phrase()
     end
     return cached_projection
   end
   local update_live_state
-  local function save_draft()
-    revision=revision+1
+  local function save_draft(kind)
+    runtime:transition(kind or "edit",{source=pattern,output_policy=output_policy,pb_range=pb_range})
     source_state.text="SOURCE DIRTY: Generate to apply this draft."
-    if not bound_instrument then return true end
-    return drafts.put(song,bound_instrument,bound_phrase,pattern,output_policy,pb_range)
+    if not bound_instrument() then return true end
+    local state=runtime:editor_state()
+    return state and not state.draft_warning,state and state.draft_warning
   end
   local loading=false
   local function default_pitch()
@@ -381,12 +385,12 @@ function M.show()
   end
   local function changed(request_live)
     if not history:record(pattern,output_policy,pb_range) then update();return end
-    local saved,save_error=save_draft()
+    local saved,save_error=save_draft(request_live==false and "reset" or "edit")
     update()
-    if live and request_live~=false then live:changed();update_live_state() end
-    local state=live and type(live.state)=="function" and live:state()
-    if state and state.enabled then
-      if state.busy then
+    update_live_state()
+    local state=runtime:generation_state()
+    if state.armed and request_live~=false then
+      if state.pending or state.busy then
         status.text=state.pending and "LIVE EDIT RENDERING: applying the latest edit next."
           or "LIVE EDIT RENDERING: applying edits."
       end
@@ -554,38 +558,55 @@ function M.show()
       local message,err=inspector.inspect_selection()
       status.text=message or err
     end}
+  local deliver
+  if not active_runtime then
+    active_runtime=runtime_context.new({writer=phrase_writer,capture=function() return nil,"No editor source" end,
+      sink=function(request,done)
+        if request.kind=="create" then
+          if type(phrase_writer.create)~="function" then return false,"Explicit writer create is unavailable" end
+          return phrase_writer.create(request,done)
+        elseif request.kind=="regenerate" then
+          if type(phrase_writer.regenerate)~="function" then return false,"Explicit writer regenerate is unavailable" end
+          return phrase_writer.regenerate(request,done)
+        end
+        return false,"Request has no explicit writer operation"
+      end,
+      cancel=function(token,reason)
+        if type(phrase_writer.cancel)~="function" then return false end
+        return phrase_writer.cancel(token,reason)
+      end,drafts=drafts})
+  end
+  runtime=active_runtime
+  if not rawequal(attached_song,song) or not runtime:lifetime_state().song_attached then
+    runtime:attach_document(song)
+    attached_song=song
+  end
+  session=runtime:open_dialog(function(result) deliver(result.request,result) end)
   local function options_for_instrument()
-    local instrument=song.instruments[selected_instrument]
+    local instrument=instrument_targets[selected_instrument]
+    local choices=runtime:phrase_choices(instrument) or {}
     local names,targets={},{}
-    for i,phrase in ipairs(instrument.phrases) do
-      local status=ownership.status(phrase)
-      names[#names+1]=string.format("%02d: %s (%s)",i,
-        phrase.name~="" and phrase.name or "(unnamed)",status)
-      targets[#targets+1]=i
+    for _,choice in ipairs(choices) do
+      if choice.kind~="new" then
+        names[#names+1]=string.format("%02d: %s (%s)",choice.phrase_index,
+          choice.phrase_name,ownership.status(choice.phrase))
+        targets[#targets+1]=choice.phrase
+      end
     end
     names[#names+1]="NEW PHRASE (append)"
-    targets[#targets+1]=#instrument.phrases+1
+    targets[#targets+1]=false
     return names,targets
   end
   local function load_target(index)
-    local was_armed=live and type(live.state)=="function" and live:state().enabled or false
-    if was_armed then live:rebind("Destination changed") end
-    local instrument=song.instruments[selected_instrument]
+    local instrument=instrument_targets[selected_instrument]
     local target=phrase_targets[index]
-    bound_instrument=instrument
-    bound_phrase=target and instrument.phrases[target] or nil
-    if was_armed and bound_phrase and ownership.status(bound_phrase)~="owned" then
-      bound_phrase=nil
-      target=#instrument.phrases+1
-      loading=true
-      phrase_choice.value=#phrase_choice.items
-      loading=false
-    end
-    revision=revision+1
+    if target then runtime:bind_phrase(instrument,target)
+    else runtime:bind_new(instrument) end
+    local target_index=destination().phrase_index
     local source_available=false
-    if target and target<=#instrument.phrases then
+    if target and target_index then
       local source,output_policy_or_error,stored_pb_range=
-        store.load(song,instrument,instrument.phrases[target])
+        store.load(song,instrument,target)
       if source then
         source_available=true
         pattern=source
@@ -593,7 +614,7 @@ function M.show()
         pb_range=stored_pb_range or policies.DEFAULT_PB_RANGE
         selected_pitch=1;selected_step=1
         pitch_page=1;time_page=1
-        status.text=string.format("Restored ACID source for phrase %02d.",target)
+        status.text=string.format("Restored ACID source for phrase %02d.",target_index)
       else
         reset_source()
         status.text="Source unavailable: "..tostring(output_policy_or_error)..
@@ -603,9 +624,9 @@ function M.show()
       reset_source()
       status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
     end
-    local draft,policy,draft_pb_range=drafts.get(song,bound_instrument,bound_phrase)
+    local draft,policy,draft_pb_range=drafts.get(song,bound_instrument(),bound_phrase())
     source_state.text=draft and "SOURCE DIRTY: Generate to apply this draft." or
-      (not bound_phrase and "SOURCE DIRTY: Generate to apply this draft." or
+      (not bound_phrase() and "SOURCE DIRTY: Generate to apply this draft." or
         (source_available and "SOURCE COMMITTED" or "SOURCE UNAVAILABLE"))
     if draft then
       pattern,output_policy=draft,policy
@@ -614,6 +635,7 @@ function M.show()
     elseif policy then
       status.text="DRAFT RECOVERY ERROR: "..tostring(policy).."; existing phrase output is protected."
     end
+    runtime:transition("programmatic",{source=pattern,output_policy=output_policy,pb_range=pb_range,restore=true})
     history:reset(pattern,output_policy,pb_range)
     update()
     if update_live_state then update_live_state() end
@@ -623,7 +645,6 @@ function M.show()
   phrase_choice=vb:popup{width=360,items=phrase_names,
     value=#phrase_names,notifier=function(n)
       if not loading then
-        pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
         load_target(n)
       end
     end}
@@ -634,11 +655,11 @@ function M.show()
     loading=true
     phrase_choice.items=options
     local chosen=#options
-    local instrument=song.instruments[n]
+    local instrument=instrument_targets[n]
     local current_phrase=rawequal(song.selected_instrument,instrument) and
       song.selected_phrase or nil
     if current_phrase then
-      for index,phrase in ipairs(instrument.phrases) do
+      for index,phrase in ipairs(phrase_targets) do
         if rawequal(phrase,current_phrase) and ownership.status(phrase)=="owned" then
           chosen=index
           break
@@ -658,7 +679,7 @@ function M.show()
     phrase_targets=targets
     if preferred_target then
       for index,target in ipairs(targets) do
-        if target==preferred_target then chosen=index;break end
+        if rawequal(target,preferred_target) or (type(preferred_target)=="number" and rawequal(target,instrument_targets[selected_instrument].phrases[preferred_target])) then chosen=index;break end
       end
     end
     loading=true
@@ -668,26 +689,17 @@ function M.show()
   end
   bind_selected_phrase_watch=function()
     detach_selected_phrase_watch()
-    pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
     local observable=song.selected_phrase_observable
     if not observable or type(observable.add_notifier)~="function" or
         type(observable.remove_notifier)~="function" then
       return
     end
     local notifier=function()
-      if opened~=generation or loading or internal_phrase_mutation then
+      if not current_session() or loading or runtime:mutation_state().depth>0 then
         return
       end
-      local instrument=song.selected_instrument
       invalidate_projection()
-      if not instrument or
-          not rawequal(song.instruments[selected_instrument],instrument) then
-        return
-      end
-      local phrase=song.selected_phrase
-      if not phrase or ownership.status(phrase)~="owned" then return end
-      pending_selected_phrase_instrument=instrument
-      pending_selected_phrase=phrase
+      runtime:mark_dirty("Native selection changed")
     end
     local ok=pcall(function() observable:add_notifier(notifier) end)
     if ok then
@@ -696,57 +708,59 @@ function M.show()
     end
   end
   apply_pending_selected_phrase_selection=function()
-    local instrument,phrase=pending_selected_phrase_instrument,pending_selected_phrase
-    pending_selected_phrase_instrument,pending_selected_phrase=nil,nil
-    if not instrument or not phrase or opened~=generation or
-        not rawequal(song.instruments[selected_instrument],instrument) then
+    if not current_session() then return false end
+    local before=destination()
+    local target=runtime:reconcile()
+    if not target or (rawequal(before.instrument,target.instrument) and
+        rawequal(before.phrase,target.phrase) and before.kind==target.kind) then return false end
+    if target.kind~="owned" then
+      if target.phrase then refresh_phrase_choices(target.phrase) end
+      status.text=target.reason or "Native destination is unavailable; select the destination again."
       return false
     end
-    local index
-    for position,item in ipairs(instrument.phrases) do
-      if rawequal(item,phrase) then index=position;break end
+    if not rawequal(instrument_targets[selected_instrument],target.instrument) then
+      for index,instrument in ipairs(instrument_targets) do
+        if rawequal(instrument,target.instrument) then
+          selected_instrument=index
+          loading=true
+          if instrument_choice then instrument_choice.value=index end
+          loading=false
+          refresh_phrase_choices(target.phrase)
+          break
+        end
+      end
+      if not rawequal(instrument_targets[selected_instrument],target.instrument) then
+        status.text="Native destination is unavailable; select the destination again."
+        return false
+      end
     end
-    if not index or ownership.status(phrase)~="owned" then return false end
-    local selected_target=phrase_targets[phrase_choice.value]
-    if not phrase or (selected_target==index and rawequal(bound_phrase,phrase)) then
-      return false
+    if target.phrase then
+      refresh_phrase_choices(target.phrase)
+      for choice,phrase in ipairs(phrase_targets) do
+        if rawequal(phrase,target.phrase) then load_target(choice);return true end
+      end
     end
-    refresh_phrase_choices(index)
-    load_target(index)
-    return true
+    status.text="Native destination is unavailable; select the destination again."
+    return false
   end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)select_instrument(n) end}
-  live_target=function()
-    local instrument=song.instruments[selected_instrument]
-    if not rawequal(instrument,bound_instrument) then
-      return nil,"Target instrument changed; select the destination again."
+  instrument_choice=target
+  local function result_status(result)
+    if result.kind=="success" then
+      return (result.status=="approximate" or result.approximate==true) and "APPROXIMATE" or "COMMITTED"
     end
-    local index=phrase_targets[phrase_choice.value]
-    if not bound_phrase and index==#instrument.phrases+1 then return index end
-    if bound_phrase then
-      local found
-      for position,phrase in ipairs(instrument.phrases) do
-        if rawequal(phrase,bound_phrase) then found=position;break end
-      end
-      if found and ownership.status(bound_phrase)=="owned" and ownership.id(bound_phrase) then
-        local source=store.load(song,instrument,bound_phrase)
-        if source then
-          refresh_phrase_choices(found)
-          return found
-        end
-      end
-    end
-    bound_phrase=nil
-    refresh_phrase_choices(#instrument.phrases+1)
-    return #instrument.phrases+1
+    local status=tostring(result.status or "error")
+    if status=="failed" or status=="error" then return "ERROR" end
+    return string.upper(status)
   end
-  local function describe_live_result(result)
-    local message="LIVE EDIT "..string.upper(result.status)..": "..tostring(result.message)
+  local function describe_result(result,prefix)
+    local message=prefix..result_status(result)..": "..
+      tostring(result.reason or result.message or result.code or "Phrase generation ended")
     if type(result.diagnostics)=="table" and #result.diagnostics>0 then
       local details={}
       for _,detail in ipairs(result.diagnostics) do
-        if not tostring(result.message):find(tostring(detail),1,true) then
+        if not message:find(tostring(detail),1,true) then
           details[#details+1]=tostring(detail)
         end
       end
@@ -754,138 +768,51 @@ function M.show()
     end
     return message
   end
-  local function target_summary(instrument,index)
-    local phrase=instrument and instrument.phrases and instrument.phrases[index]
-    local instrument_name=instrument and instrument.name or "(unnamed instrument)"
-    local phrase_name=phrase and phrase.name~="" and phrase.name or "(unnamed phrase)"
-    return string.format("%s / %02d %s",instrument_name,index,phrase_name)
-  end
-  local function mutate_phrases(action)
-    local previous=internal_phrase_mutation
-    internal_phrase_mutation=true
-    local ok,result=pcall(action)
-    internal_phrase_mutation=previous
-    if not ok then error(result) end
-    return result
-  end
   update_live_state=function()
-    if not live then
+    local state=runtime:generation_state()
+    if not state.armed then
       live_state_view.text="LIVE EDIT DISABLED"
       return
     end
-    if type(live.state)~="function" then
-      live_state_view.text="LIVE EDIT ACTIVE"
-      return
-    end
-    local state=live:state()
-    local prefix="LIVE EDIT "..state.status
-    live_state_view.text=prefix
+    live_state_view.text="LIVE EDIT "..state.status
     if state.last_commit then
       local commit=state.last_commit
-      local committed_target=commit.target_label or
-        target_summary(song.instruments[commit.target and commit.target.instrument_index],
-          commit.target and commit.target.phrase_index or 0)
       live_state_view.text=live_state_view.text.."\nLAST COMMIT: "..
         string.upper(tostring(commit.status or "committed")).." | "..
-        tostring(committed_target)
+        tostring(state.last_commit_label or "Verified destination")
     end
   end
-  local function result_issue(result,message)
-    result.draft_warning=message
-    result.diagnostics=result.diagnostics or {}
-    result.diagnostics[#result.diagnostics+1]="DRAFT WARNING: "..message
+  deliver=function(request,result)
+    if type(request)~="table" or not current_session() then return end
+    local success=result.kind=="success" and result.verified==true
+    local prefix=request.trigger=="manual" and "GENERATION " or "LIVE EDIT "
+    if success then
+      if result.destination_current~=false and result.phrase then
+        refresh_phrase_choices(result.phrase)
+      end
+      if result.stale==true then
+        update_live_state()
+        return
+      end
+      if not result.phrase then
+        source_state.text="SOURCE UNAVAILABLE"
+        status.text=prefix.."ERROR: destination identity could not be verified; select the destination again."
+        update_live_state()
+        return
+      end
+      source_state.text="SOURCE COMMITTED"
+    end
+    status.text=describe_result(result,prefix)
+    update_live_state()
   end
-  live=live_regen.new(function(done,token)
-    if opened~=generation or not dialog or not dialog.visible then
-      return nil,"ACID dialog is no longer active"
-    end
-    local target_index,reason=live_target()
-    if not target_index then return nil,{kind="complete",status="error",message=reason,diagnostics={reason}} end
-    update_live_state()
-    -- Freeze the source for the asynchronous renderer; subsequent UI edits
-    -- are scheduled for another pass and cannot mutate the running job.
-    local copy,copy_error=sequencer.copy_source(pattern)
-    if not copy then
-      return nil,{kind="complete",status="error",message=copy_error,diagnostics={copy_error}}
-    end
-    local requested_revision=revision
-    local live_token_current=token.is_current
-    token.is_current=function(self)
-      return revision==requested_revision and live_token_current(self)
-    end
-    local requested_pb_range=pb_range
-    local requested_instrument,requested_phrase=bound_instrument,bound_phrase
-    local called,success,reason=pcall(phrase_writer.generate,selected_instrument,
-      function(result)
-        if type(result)=="table" and result.kind=="status" then
-          status.text="LIVE EDIT "..string.upper(tostring(result.status or "RENDERING"))..": "..
-            tostring(result.message or "Building phrase.")
-          return
-        end
-        if type(result)~="table" or result.kind~="complete" then
-          result={kind="complete",status="error",message="Phrase writer returned an invalid result.",
-            diagnostics={tostring(result)}}
-        end
-        if result.status=="committed" or result.status=="approximate" then
-          local result_target=result.target and result.target.phrase_index or target_index
-          result.target_label=target_summary(requested_instrument,result_target)
-          if not requested_phrase then
-            local created=requested_instrument.phrases[result_target]
-            if rawequal(bound_instrument,requested_instrument) and not bound_phrase then
-              bound_phrase=created
-              refresh_phrase_choices(result_target)
-            end
-            if revision~=requested_revision and created then
-              local draft,policy,draft_pb_range=drafts.get(song,requested_instrument,nil)
-              if draft then
-                local moved,move_error=drafts.put(song,requested_instrument,created,
-                  draft,policy,draft_pb_range)
-                if moved then
-                  local cleared,clear_error=drafts.clear(song,requested_instrument,nil)
-                  if cleared==nil then result_issue(result,tostring(clear_error)) end
-                else result_issue(result,tostring(move_error)) end
-              end
-            end
-          end
-        end
-        if (result.status=="committed" or result.status=="approximate") and revision==requested_revision then
-          local cleared,clear_error=drafts.clear(song,requested_instrument,requested_phrase)
-          if cleared==nil then
-            source_state.text="SOURCE COMMITTED; DRAFT RECOVERY PENDING"
-            result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
-          else
-            source_state.text="SOURCE COMMITTED"
-          end
-        end
-        done(result)
-      end,copy,target_index,{token=token,output_policy=output_policy,phrase_mutation=mutate_phrases,
-        pb_range=requested_pb_range})
-    if not called then
-      local message=tostring(success)
-      return nil,{kind="complete",status="error",message=message,diagnostics={message}}
-    end
-    return success,reason
-  end,function(result)
-    if opened~=generation then return end
-    if result.code=="safety.target_changed" and live:state().enabled then
-      live:changed()
-      update_live_state()
-      return
-    end
-    status.text=describe_live_result(result)
-    update_live_state()
-  end,function(token,reason)
-    return phrase_writer.cancel(token,reason)
-  end)
-  active_live=live
   live_checkbox=vb:checkbox{value=false,notifier=function(value)
     if value then
       apply_pending_selected_phrase_selection()
-      live:set_enabled(true)
+      runtime:transition("arm")
       status.text="Live Edit enabled; the next source edit will be applied."
       update_live_state()
     else
-      live:stop()
+      runtime:transition("disarm")
       update_live_state()
       status.text="Live Edit disabled; manual Generate/Regenerate is available."
     end
@@ -900,7 +827,7 @@ function M.show()
       local saved,save_error=save_draft()
       status.text=saved and "Edit undone and saved with the song." or
         "Edit undone; session recovery only: "..tostring(save_error)
-      update();if live then live:changed();update_live_state() end
+      update();update_live_state()
     end
   end}
   redo_button=vb:button{text="Redo",active=false,notifier=function()
@@ -912,7 +839,7 @@ function M.show()
       local saved,save_error=save_draft()
       status.text=saved and "Edit redone and saved with the song." or
         "Edit redone; session recovery only: "..tostring(save_error)
-      update();if live then live:changed();update_live_state() end
+      update();update_live_state()
     end
   end}
   program_panel=vb:column{id="acid_program_panel",spacing=5,
@@ -955,7 +882,6 @@ function M.show()
       vb:text{text="Preview"},preview_popup},
     vb:row{spacing=8,
       vb:button{text="Reset Source",notifier=function()
-        if live then live:rebind("Source reset") end
         reset_source(last_step_box.value)
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
         status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
@@ -972,12 +898,15 @@ function M.show()
     vb:row{spacing=6,vb:text{text="Destination phrase"},phrase_choice},
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
-        live:retry()
+        if runtime:revision_state().armed then
+          local accepted,reason=runtime:request_generation("live")
+          if not accepted then status.text=describe_result({kind="failure",status="error",reason=reason},"LIVE EDIT ") end
+        end
         update_live_state()
       end}},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
-        if opened~=generation then
+        if not current_session() then
           status.text="Song changed. Close and reopen ACID.";return
         end
         apply_pending_selected_phrase_selection()
@@ -989,96 +918,20 @@ function M.show()
           status.text="Cannot generate: "..e.message
           return
         end
-        local frozen_source,freeze_error=sequencer.copy_source(pattern)
-        if not frozen_source then
-          status.text="Cannot generate: "..tostring(freeze_error)
-          return
-        end
-        local requested_instrument=selected_instrument
-        local requested_choice=phrase_choice.value
-        local requested_target=phrase_targets[requested_choice]
-        if not rawequal(song.instruments[requested_instrument],bound_instrument) or
-            (bound_phrase and not rawequal(bound_instrument.phrases[requested_target],bound_phrase)) or
-            (not bound_phrase and requested_target~=#bound_instrument.phrases+1) then
-          status.text="Target changed; select the destination again."
-          return
-        end
-        local requested_revision=revision
-        local manual_token={is_current=function()
-          return opened==generation and revision==requested_revision
-        end}
-        local requested_pb_range=pb_range
-        local requested_object,requested_phrase=bound_instrument,bound_phrase
-        local ok,generated,err=pcall(phrase_writer.generate,
-          requested_instrument,function(result)
-            if type(result)=="table" and result.kind=="status" then
-              status.text="GENERATION "..string.upper(tostring(result.status or "RENDERING"))..": "..
-                tostring(result.message or "Building phrase.")
-              return
-            end
-            if opened==generation then
-              if type(result)~="table" or result.kind~="complete" then
-                status.text="GENERATION ERROR: phrase writer returned an invalid result."
-                return
-              end
-              if result.kind=="complete" and (result.status=="committed" or result.status=="approximate") then
-                local result_target=result.target.phrase_index
-                local preferred_target
-                if selected_instrument==requested_instrument and
-                    phrase_choice.value==requested_choice then
-                  preferred_target=result_target
-                  bound_phrase=requested_object.phrases[result_target]
-                end
-                if revision==requested_revision then
-                  local cleared,clear_error=drafts.clear(song,requested_object,requested_phrase)
-                  if cleared==nil then
-                    source_state.text="SOURCE COMMITTED; DRAFT RECOVERY PENDING"
-                    result_issue(result,"Phrase committed, but its saved draft could not be cleared: "..tostring(clear_error))
-                  else
-                    source_state.text="SOURCE COMMITTED"
-                  end
-                elseif not requested_phrase then
-                  local committed_phrase=requested_object.phrases[result_target]
-                  local draft,draft_policy,draft_pb_range=
-                    drafts.get(song,requested_object,nil)
-                  if committed_phrase and draft then
-                    local moved,move_error=drafts.put(song,requested_object,committed_phrase,
-                      draft,draft_policy,draft_pb_range)
-                    if moved then
-                      local cleared,clear_error=drafts.clear(song,requested_object,nil)
-                      if cleared==nil then
-                        result_issue(result,"New phrase draft was copied, but its temporary entry remains: "..tostring(clear_error))
-                      end
-                    else
-                      result_issue(result,"New phrase draft could not be moved: "..tostring(move_error))
-                    end
-                  elseif draft_policy then
-                    result_issue(result,"New phrase draft could not be read: "..tostring(draft_policy))
-                  end
-                end
-                refresh_phrase_choices(preferred_target)
-              end
-              status.text=describe_live_result(result):gsub("^LIVE EDIT ","GENERATION ")
-            end
-          end,frozen_source,
-          requested_target,{token=manual_token,output_policy=output_policy,pb_range=requested_pb_range,
-            phrase_mutation=mutate_phrases})
-        if not ok then status.text="ACID error: "..tostring(generated)
-        elseif not generated then
-          status.text=type(err)=="table" and err.message or tostring(err or "Generation refused")
-        end
+        local accepted,reason=runtime:request_generation("manual")
+        if not accepted then status.text="Cannot generate: "..tostring(reason)
+        elseif reason then status.text=tostring(reason) end
       end},
       vb:button{text="Sampler audit",notifier=function()
-        status.text=sampler.describe(song.instruments[selected_instrument])
+        status.text=sampler.describe(instrument_targets[selected_instrument])
       end}},
     vb:text{text="Live Edit applies changes automatically. With Live Edit off, Generate applies the saved draft."},
     source_state,live_state_view,inspect,status}
   select_instrument(selected_instrument)
   update()
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)
-  dialog_generation=opened
+  dialog_session=session
   local observed_dialog=dialog
-  local observed_live=live
   local observed_checkbox=live_checkbox
   idle_observable=renoise.tool().app_idle_observable
   local observed_idle_observable=idle_observable
@@ -1097,16 +950,17 @@ function M.show()
     end
     if observed_dialog.visible then
       apply_pending_selected_phrase_selection()
+      runtime:flush_pending()
       return
     end
     detach_this_watch()
     detach_selected_phrase_watch()
-    observed_live:stop()
+    runtime:transition("disarm")
+    runtime:close_dialog()
     observed_checkbox.value=false
-    if active_live==observed_live then active_live=nil end
-    if rawequal(active_live_checkbox,observed_checkbox) then active_live_checkbox=nil end
     dialog=nil
-    dialog_generation=-1
+    dialog_session=nil
+    runtime:close_dialog()
   end
   idle_notifier=observed_notifier
   observed_idle_observable:add_notifier(observed_notifier)

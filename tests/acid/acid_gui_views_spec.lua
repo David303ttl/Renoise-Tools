@@ -86,60 +86,91 @@ function app:show_custom_dialog(_,content)
 end
 function app:show_warning(message) error(message) end
 
-local render_calls,edit_notifications=0,0
+local render_calls=0
 local writer_releases=0
 local generation_request,generation_callback
-package.loaded["model.live_regen"]={new=function(render,on_result)
-  local self={enabled=false,busy=false,pending=false,status="CLEAN",last_result=nil,last_commit=nil}
-  local function dispatch()
-    if not self.enabled or self.busy or not self.pending then return end
-    self.pending=false
-    self.busy=true
-    self.status="RENDERING"
-    render(function(result)
-      self.busy=false
-      self.last_result=result
-      if result.status=="committed" or result.status=="approximate" then self.last_commit=result end
-      self.status=string.upper(result.status)
-      if on_result then on_result(result) end
-      if self.pending then dispatch() end
-    end,{is_current=function()return true end})
-  end
-  function self:changed()
-    if not self.enabled then return end
-    edit_notifications=edit_notifications+1
-    self.pending=true
-    dispatch()
-  end
-  function self:set_enabled(value) self.enabled=value==true end
-  function self:rebind() end
-  function self:stop() self.enabled=false;self.pending=false end
-  function self:retry() self.pending=true;dispatch();return true end
-  function self:state()
-    return {enabled=self.enabled,busy=self.busy,pending=self.pending,status=self.status,
-      last_result=self.last_result,last_commit=self.last_commit}
-  end
-  return self
-end}
-package.loaded["writers.phrase_writer"]={
-  generate=function(instrument_index,callback,pattern,target_index,options)
-    render_calls=render_calls+1
-    generation_request={instrument_index=instrument_index,target_index=target_index,
-      pattern=pattern,options=options}
-    local target_instrument=song.instruments[instrument_index]
-    if instrument_index==1 and target_index<=#target_instrument.phrases then
-      -- Staging changes the editor selection without touching the playback program.
-      options.phrase_mutation(function()
-        select_native_phrase(#target_instrument.phrases+1)
+local active_request
+local function terminal_result(call,status,message)
+  local success=status=="committed" or status=="approximate"
+  local phrase=call.phrase or call.request.phrase
+  local result={kind=success and "success" or "failure",status=status or (success and "committed" or "failed"),
+    verified=success,token=call.request.token,epoch=call.request.epoch,request=call.request,
+    phrase=success and phrase or nil,reason=success and nil or (message or "invalidated"),
+    message=message or "invalidated"}
+  if success then
+    if call.request.kind=="regenerate" then
+      result.baseline=call.request.baseline
+    else
+      local ok,candidate=pcall(function()
+        return require("writers.phrase_validator").classify(call.request.song,
+          call.request.instrument,phrase,{},{},{})
       end)
-      assert(song.selected_phrase==nil)
+      if ok and candidate then
+        result.baseline={id=phrase.id,source=candidate.source,settings=candidate.settings,
+          snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
+      else
+        result.baseline={id=phrase and phrase.id,source=call.request.source,
+          settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
+          snapshot={content=0},planning_inputs={}}
+      end
     end
-    generation_callback=callback
-    return true
+  end
+  return result
+end
+local function start(kind,request,done)
+  render_calls=render_calls+1
+  local call={kind=kind,request=request,token=request.token,source=request.source,
+    pb_range=request.pb_range}
+  call.pattern=request.source
+  for index,instrument in ipairs(request.song.instruments) do
+    if rawequal(instrument,request.instrument) then call.instrument_index=index;break end
+  end
+  if kind=="create" then
+    call.target_index=#request.instrument.phrases+1
+  else
+    for index,phrase in ipairs(request.instrument.phrases) do
+      if rawequal(phrase,request.phrase) then call.target_index=index;break end
+    end
+  end
+  call.options={token=request.token,pb_range=request.pb_range,
+    phrase_mutation=function(action)
+      local values={n=0}
+      local function packed(...) return {n=select("#",...),...} end
+      local ok,out=pcall(function() return packed(request:mutate(request.token,action)) end)
+      if not ok then error(out,0) end
+      if kind=="create" and out.n>0 and type(out[1])=="table" then call.phrase=out[1] end
+      return (unpack or table.unpack)(out,1,out.n)
+    end}
+  generation_request=call
+  local target_instrument=request.instrument
+  if rawequal(request.instrument,song.instruments[1]) and call.target_index<=#target_instrument.phrases then
+    -- Staging changes the editor selection without touching the playback program.
+    call.options.phrase_mutation(function()
+      select_native_phrase(#target_instrument.phrases+1)
+    end)
+    assert(song.selected_phrase==nil)
+  end
+  active_request=request
+  generation_callback=function(result)
+    active_request=nil
+    done(result)
+    tool.app_idle_observable:fire()
+  end
+  return true
+end
+package.loaded["writers.phrase_writer"]={
+  create=function(request,done) return start("create",request,done) end,
+  regenerate=function(request,done) return start("regenerate",request,done) end,
+  state=function()
+    return active_request and "busy" or "idle",active_request and active_request.token or nil
   end,
-  cancel=function() return true end,
+  is_temporary=function()return false end,
+  cancel=function(token)
+    return active_request~=nil and rawequal(active_request.token,token)
+  end,
   release=function() writer_releases=writer_releases+1 end
 }
+
 package.loaded["renoise.phrase_ownership"]={
   status=function() return "owned" end,
   id=function(phrase) return phrase.id end
@@ -183,7 +214,7 @@ renoise={
   app=function()return app end
 }
 
-dofile("tests/acid/draft_baseline_stub.lua")
+dofile("tests/acid/gui_host_stub.lua")
 local editor=require("model.editor_state")
 local project=editor.project
 local projection_calls=0
@@ -208,29 +239,29 @@ local initial_projections=projection_calls
 view:fire(2)
 assert(not program.visible and grid.visible)
 assert(display_snapshot()==initial)
-assert(edit_notifications==0 and render_calls==0)
+assert(render_calls==0)
 view:fire(1)
 assert(program.visible and not grid.visible)
 assert(display_snapshot()==initial)
-assert(edit_notifications==0 and render_calls==0)
+assert(render_calls==0)
 assert(projection_calls==initial_projections,"view navigation reuses the validated projection")
 
 builder.views.acid_program_time_command:fire(3)
 assert(projection_calls==initial_projections+1,"a TIME edit projects once")
 assert(builder.views.acid_grid_time_01.value==3)
 assert(builder.views.acid_preview_summary.text:find("REST",1,true))
-assert(edit_notifications==0 and render_calls==0)
+assert(render_calls==0)
 builder.views.acid_editor_view:fire(2)
 assert(builder.views.acid_grid_time_01.value==3)
-assert(edit_notifications==0 and render_calls==0)
+assert(render_calls==0)
 builder.views.acid_editor_view:fire(1)
 builder.views.acid_program_key_popup:fire(2)
 assert(projection_calls==initial_projections+2,"a PITCH edit projects once")
 assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
-assert(edit_notifications==0 and render_calls==0)
+assert(render_calls==0)
 builder.views.acid_editor_view:fire(2)
 assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
-assert(edit_notifications==0 and render_calls==0)
+assert(render_calls==0)
 
 local last_step
 local output_popup
@@ -301,8 +332,7 @@ assert(not button("Redo").active,"new edits discard the redo branch")
 phrase_popup:fire(1)
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request.target_index==1,"the first owned phrase can be generated in place")
-generation_callback({kind="complete",status="committed",message="Phrase 01 generated.",
-  diagnostics={},target={phrase_index=1}})
+generation_callback(terminal_result(generation_request,"committed","Phrase 01 generated."))
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual regeneration accepts structural selection changes without altering playback")
 
@@ -320,8 +350,7 @@ assert(generation_request.options.pb_range==24,
   "manual generation receives the selected phrase's PB Range")
 assert(phrase_popup.value==2,
   "successful generation must keep the selected destination phrase")
-generation_callback({kind="complete",status="committed",message="Phrase generated.",
-  diagnostics={},target={phrase_index=2}})
+generation_callback(terminal_result(generation_request,"committed","Phrase generated."))
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual generation leaves host selection unchanged after staging")
 local draft_warning
@@ -350,15 +379,14 @@ assert(target_popup,"target instrument selector was not created")
 target_popup:fire(2)
 local created_phrase={id=23,name="Generated phrase"}
 instrument.phrases[3]=created_phrase
-generation_callback({kind="complete",status="committed",message="Phrase generated.",
-  diagnostics={},target={phrase_index=3}})
+generation_callback(terminal_result(generation_request,"committed","Phrase generated."))
 local draft_cache=require("runtime.draft_cache")
-local recovered,recovered_policy,recovered_pb_range=draft_cache.get(song,instrument,created_phrase)
+local recovered,recovered_policy,recovered_pb_range=draft_cache.get(song,instrument,nil)
 assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat" and
   recovered_pb_range==48,
-  "the newest NEW PHRASE edit moves onto the phrase committed by its render")
-assert(not draft_cache.get(song,instrument,nil),
-  "the committed NEW PHRASE draft key is cleared after it moves")
+  "stale create completion preserves the newest New Phrase draft at its original target")
+assert(not draft_cache.get(song,instrument,created_phrase),
+  "stale create completion cannot associate newer edits with an unverified destination")
 assert(not draft_cache.get(song,instrument_two,instrument_two.phrases[1]),
   "completion never attaches an in-flight source draft to the current foreign target")
 
@@ -381,15 +409,16 @@ builder.views.acid_program_key_popup:fire(2)
 assert(render_calls==4 and generation_request.target_index==4,
   "an edit after arming appends the selected new phrase")
 local appended={id=24,name="Live appended phrase"}
-instrument.phrases[4]=appended
-generation_callback({kind="complete",status="committed",message="Live append committed.",
-  diagnostics={},target={instrument_index=1,phrase_index=4}})
+generation_request.options.phrase_mutation(function()
+  instrument.phrases[4]=appended
+  return appended
+end)
+generation_callback(terminal_result(generation_request,"committed","Live append committed."))
 assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
 builder.views.acid_program_key_popup:fire(5)
 assert(render_calls==5 and generation_request.target_index==4,
   "the next edit regenerates the same appended phrase in place")
-generation_callback({kind="complete",status="committed",message="Live regeneration committed.",
-  diagnostics={},target={instrument_index=1,phrase_index=4}})
+generation_callback(terminal_result(generation_request,"committed","Live regeneration committed."))
 assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
 
 instrument.phrase_program=2
@@ -416,8 +445,7 @@ assert(render_calls==6 and generation_request.target_index==2,
   "an edit after a native phrase switch targets the selected phrase")
 instrument.phrase_program=2
 instrument.phrase_program_observable:fire()
-generation_callback({kind="complete",status="committed",message="Native phrase selection regenerated.",
-  diagnostics={},target={instrument_index=1,phrase_index=2}})
+generation_callback(terminal_result(generation_request,"committed","Native phrase selection regenerated."))
 assert(song.selected_phrase==nil and instrument.phrase_program==2,
   "Live Edit preserves a playback program change made during rendering")
 builder.views.acid_program_key_popup:fire(6)
@@ -425,8 +453,7 @@ assert(render_calls==7 and generation_request.target_index==2,
   "subsequent PITCH edits keep regenerating the phrase selected in Renoise")
 instrument.phrase_program=1
 instrument.phrase_program_observable:fire()
-generation_callback({kind="complete",status="committed",message="Selected phrase regenerated again.",
-  diagnostics={},target={instrument_index=1,phrase_index=2}})
+generation_callback(terminal_result(generation_request,"committed","Selected phrase regenerated again."))
 assert(instrument.phrase_program==1,
   "Live Edit also preserves a playback program change back to phrase 01")
 assert(#instrument.phrases==4,"native phrase selection must not create another destination")
@@ -439,14 +466,14 @@ tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native selection")
 live_checkbox:fire(true)
 assert(render_calls==7,"rearming Live Edit does not request a render")
-builder.views.acid_program_key_popup:fire(2)
+builder.views.acid_program_key_popup:fire(3)
 assert(render_calls==8 and generation_request.target_index==1,
   "an edit after rearming targets the selected phrase 01")
+
 generation_request.options.phrase_mutation(function()
   select_native_phrase(2)
 end)
-generation_callback({kind="complete",status="committed",message="Live phrase 01 regenerated.",
-  diagnostics={},target={instrument_index=1,phrase_index=1}})
+generation_callback(terminal_result(generation_request,"committed","Live phrase 01 regenerated."))
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1 and generation_request.target_index==1,
   "ACID generation cannot redirect its selected phrase through native phrase notifications")
@@ -469,12 +496,14 @@ package.loaded["renoise.phrase_ownership"].status=function(phrase)
 end
 select_native_phrase(3)
 tool.app_idle_observable:fire()
-assert(render_calls==after_cancel and phrase_popup.value==2,
-  "foreign phrase selection does not append or redirect the ACID destination")
+assert(render_calls==after_cancel and phrase_popup.value==3,
+  "foreign native selection is reflected without appending or redirecting to New")
 instrument.phrases[3].foreign=nil
 select_native_phrase(1)
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"owned phrase selection still synchronizes after cancellation")
+
+generation_callback(terminal_result(generation_request,"suspended","cancelled render cleaned"))
 
 local before_queued_generate=render_calls
 live_checkbox:fire(true)
@@ -484,8 +513,7 @@ assert(render_calls==before_queued_generate and phrase_popup.value==1,
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(render_calls==before_queued_generate+1 and generation_request.target_index==2,
   "explicit Generate applies queued native selection and renders while Live Edit is armed")
-generation_callback({kind="complete",status="committed",message="Queued destination generated.",
-  diagnostics={},target={instrument_index=1,phrase_index=2}})
+generation_callback(terminal_result(generation_request,"committed","Queued destination generated."))
 live_checkbox:fire(false)
 
 assert(song.selected_phrase_observable:listener_count()==1,

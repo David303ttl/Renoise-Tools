@@ -35,6 +35,14 @@ do
  source.pitch_events[1].accent=true
  assert(not request.source.pitch_events[1].accent,'captured source retained editor input')
 end
+-- A newer captured draft revision revokes the exact request guard.
+do
+ local ctx,log,_,song,instrument,phrase=fixture()
+ assert(cache.put(song,instrument,phrase,seq.new_pattern(5),'play_once',0,ctx:draft_options()))
+ assert(not log.request:is_current(),'draft revision change did not revoke exact capture')
+ assert(not log.request:validate_checkpoint())
+end
+
 do
  local _,log=fixture(true)
  log.request.source.length=9

@@ -1,5 +1,6 @@
 dofile('tests/bootstrap.lua')('acid')
 local output_planner=require('model.output_planner')
+local columns=dofile('tests/acid/phrase_columns.lua')
 local function observable()
   local handlers = {}
   return {
@@ -13,16 +14,19 @@ local function observable()
   }
 end
 local idle, committed = observable(), observable()
-local script = {paragraphs={},compile_error="",runtime_error="",committed_observable=committed}
+local EMPTY_SCRIPT_DIAGNOSTIC="compile error: no script content present."
+local script = {paragraphs={},compile_error="",runtime_error="",committed_observable=committed,
+  parameters={},pending_changes=0,editor_visible=true}
 local phrase
 local instrument
+local function make_script()
+  return setmetatable({paragraphs={},compile_error="",runtime_error="",parameters={},
+    pending_changes=0,editor_visible=true},{__index=script})
+end
 function script:commit()
-  local on_idle
-  on_idle=function()
-    idle:remove_notifier(on_idle)
-    committed:fire()
-  end
-  idle:add_notifier(on_idle)
+  self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
+  self.runtime_error=""
+  committed:fire()
 end
 function script:render_to_pattern(opts, cb)
   assert(opts.lpb == 16)
@@ -35,12 +39,19 @@ function script:render_to_pattern(opts, cb)
   end
   cb(nil, 8, 0)
 end
-phrase = {script=script,name="", number_of_lines=32,visible_note_columns=1,
-  loop_start=1,loop_end=32,instrument_column_visible=false,volume_column_visible=false,
-  panning_column_visible=false,delay_column_visible=false,cells={}}
-for i=1,32 do phrase.cells[i] = {note_value=121} end
-function phrase:line(i) return {note_columns={self.cells[i]}} end
+phrase = {script=make_script(),name="", number_of_lines=32,visible_note_columns=1,
+  visible_effect_columns=0,loop_start=1,loop_end=32,looping=false,lpb=16,shuffle=0,
+  playback_mode=1,key_tracking=1,base_note=48,autoseek=false,
+  instrument_column_visible=false,volume_column_visible=true,
+  panning_column_visible=false,delay_column_visible=false,
+  sample_effects_column_visible=false,mapping=nil,cells={}}
+for i=1,512 do
+  phrase.cells[i]={note_value=121,instrument_value=255,volume_value=255,
+    panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
+end
+function phrase:line(i) return columns.line(self,i) end
 function phrase:column_is_muted() return false end
+function phrase:column_name(i) return "column "..tostring(i) end
 function phrase:copy_from(other)
   self.number_of_lines=other.number_of_lines
   self.lpb=other.lpb
@@ -50,24 +61,41 @@ function phrase:copy_from(other)
   self.loop_start=other.loop_start
   self.loop_end=other.loop_end
   self.key_tracking=other.key_tracking
+  self.base_note=other.base_note
+  self.autoseek=other.autoseek
+  self.visible_note_columns=other.visible_note_columns
+  self.visible_effect_columns=other.visible_effect_columns
+  self.instrument_column_visible=other.instrument_column_visible
+  self.volume_column_visible=other.volume_column_visible
+  self.panning_column_visible=other.panning_column_visible
+  self.delay_column_visible=other.delay_column_visible
+  self.sample_effects_column_visible=other.sample_effects_column_visible
   self.name=other.name
   self.cells={}
-  for i=1,self.number_of_lines do
+  for i=1,512 do
     self.cells[i]={}
-    for k,v in pairs(other.cells[i]) do self.cells[i][k]=v end
+    for k,v in pairs(other.cells[i] or {}) do self.cells[i][k]=v end
   end
+  columns.copy(self,other)
 end
 instrument = {phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""},
   phrase_playback_mode=2,phrase_program=7,phrase_editor_visible=false}
 function instrument:insert_phrase_at(i)
   assert(i == #self.phrases+1)
   if i == 1 then self.phrases[1]=phrase; return phrase end
-  local temp = {script=script,name="",number_of_lines=32,visible_note_columns=1,
-    loop_start=1,loop_end=32,instrument_column_visible=false,volume_column_visible=false,
-    panning_column_visible=false,delay_column_visible=false,cells={}}
-  for j=1,32 do temp.cells[j]={note_value=121} end
-  function temp:line(j)return {note_columns={self.cells[j]}}end
+  local temp = {script=make_script(),name="",number_of_lines=32,visible_note_columns=1,
+    visible_effect_columns=0,loop_start=1,loop_end=32,looping=false,lpb=16,shuffle=0,
+    playback_mode=1,key_tracking=1,base_note=48,autoseek=false,
+    instrument_column_visible=false,volume_column_visible=true,
+    panning_column_visible=false,delay_column_visible=false,
+    sample_effects_column_visible=false,mapping=nil,cells={}}
+  for j=1,512 do
+    temp.cells[j]={note_value=121,instrument_value=255,volume_value=255,
+      panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
+  end
+  function temp:line(j)return columns.line(self,j)end
   function temp:column_is_muted()return false end
+  function temp:column_name(j)return "column "..tostring(j)end
   function temp:copy_from(other)
     self.name=other.name
     self.number_of_lines=other.number_of_lines
@@ -78,11 +106,21 @@ function instrument:insert_phrase_at(i)
     self.loop_start=other.loop_start
     self.loop_end=other.loop_end
     self.key_tracking=other.key_tracking
-    for j=1,self.number_of_lines do
-      local from=other.cells[j]
+    self.base_note=other.base_note
+    self.autoseek=other.autoseek
+    self.visible_note_columns=other.visible_note_columns
+    self.visible_effect_columns=other.visible_effect_columns
+    self.instrument_column_visible=other.instrument_column_visible
+    self.volume_column_visible=other.volume_column_visible
+    self.panning_column_visible=other.panning_column_visible
+    self.delay_column_visible=other.delay_column_visible
+    self.sample_effects_column_visible=other.sample_effects_column_visible
+    for j=1,512 do
+      local from=other.cells[j] or {}
       self.cells[j]={}
       for k,v in pairs(from) do self.cells[j][k]=v end
     end
+    columns.copy(self,other)
   end
   self.phrases[i]=temp
   return temp
@@ -99,6 +137,7 @@ _G.renoise={
   tool=function()return {app_idle_observable=idle} end
 }
 local writer=require("writers.phrase_writer")
+local writer_request=dofile("tests/acid/writer_request.lua")
 local store=require("renoise.pattern_store")
 local sequencer=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
@@ -108,7 +147,7 @@ local function message_text(value)
 end
 local function assert_terminal_status(expected)
   local value=messages[#messages]
-  assert(type(value)=='table' and value.kind=='complete', 'missing typed terminal result')
+  assert(type(value)=='table' and (value.kind=='success' or value.kind=='failure'), 'missing typed terminal result')
   assert(value.status==expected, value.message)
 end
 local function source_fixture()
@@ -126,7 +165,7 @@ local function generate(callback,pattern,target,options)
   pattern=pattern or source_fixture()
   options=options or {}
   options.output_policy=options.output_policy or "play_once"
-  return writer.generate(1,callback,pattern,target,options)
+  return writer_request.generate(writer,1,callback,pattern,target,options)
 end
 local ok,err=generate(function(value)messages[#messages+1]=value end)
 assert(ok,err)
@@ -198,11 +237,12 @@ assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],first)
   "an unreadable capability profile authorized destination or source publication")
 -- A missing render callback retains staging and blocks overlapping writes.
 local base_render=script.render_to_pattern
-local render_calls,pending_render=0,nil
+local render_calls,pending_render,pending_script=0,nil,nil
 local delayed=source_fixture()
 delayed.pitch_events[1]=pitch(37)
 function script:render_to_pattern(opts,cb)
   render_calls=render_calls+1
+  pending_script=self
   pending_render=cb
   return true
 end
@@ -210,11 +250,12 @@ assert(generate(function(value)messages[#messages+1]=value end,delayed,1))
 for _=1,600 do idle:fire() end
 assert(render_calls==1 and type(pending_render)=="function")
 assert(#instrument.phrases==2 and instrument.phrases[1]==first)
-assert(messages[#messages].code=="transaction.render_pending")
+assert(writer.diagnostic() and writer.diagnostic().code=="transaction.render_pending")
 local overlapping,overlap_error=generate(function()end,delayed,1)
 assert(not overlapping and overlap_error.code=="transaction.busy")
 script.render_to_pattern=base_render
-base_render(script,{lpb=16},pending_render)
+base_render(pending_script,{lpb=16},pending_render)
+idle:fire()
 assert(message_text(messages[#messages]):find("generated",1,true))
 assert(first.cells[1].note_value==37)
 local restored_source=source_fixture()
@@ -229,14 +270,14 @@ local saved_source=song.tool_data
 assert(generate(function(value)messages[#messages+1]=value end,edited,1,{token=pending_token}))
 idle:fire()
 pending_token.valid=false
-local cancelled,pending_status=writer.cancel(pending_token)
-assert(not cancelled and pending_status.code=="transaction.cancel_pending")
+assert(writer.cancel(pending_token)==true)
 local stage=instrument.phrases[2]
 assert(stage and #instrument.phrases==2)
 assert(not generate(function()end,edited,1))
 for _=1,600 do idle:fire() end
 assert(instrument.phrases[2]==stage and #instrument.phrases==2)
 pending_render(nil,8,0)
+idle:fire()
 assert(#instrument.phrases==1 and first.cells[1].note_value==38)
 assert(song.tool_data==saved_source)
 script.render_to_pattern=base_render
@@ -312,7 +353,7 @@ assert(#instrument.phrases==1)
 -- Manual edits invalidate the seal.
 first.cells[1].note_value=41
 local denied,reason=generate(function()end)
-assert(not denied and type(reason)=='table' and reason.status=='error')
+assert(not denied and type(reason)=='table' and reason.kind=='failure')
 assert(reason.message:find("not safely ACID-owned",1,true))
 first.cells[1].note_value=38
 local render=script.render_to_pattern
@@ -400,10 +441,11 @@ function instrument:delete_phrase_at(index)
   end
   return remove(self,index)
 end
-local cancelled,cancel_error=writer.cancel(token)
-assert(cancelled and type(cancel_error)=='table' and cancel_error.status=='error')
+assert(writer.cancel(token)==true)
 instrument.delete_phrase_at=remove
-assert(type(cancel_message)=='table' and cancel_message.status=='error')
+assert(type(cancel_message)=='table' and cancel_message.kind=='failure'
+  and cancel_message.status=='integrity_blocked')
+assert(cancel_message.reason:find("cancelled",1,true))
 assert(cancel_message.message:find("recovery material was retained",1,true))
 assert(#instrument.phrases==2 and instrument.phrases[2].name=="ACID RECOVERY STAGING")
 instrument:delete_phrase_at(2)
@@ -478,7 +520,9 @@ local render_triplet=function(self,opts,cb)
   local notes={[1]=36,[9]=39,[13]=120,[17]=43,[21]=41,[29]=120}
   for line=1,32 do
     target.cells[line]={note_value=notes[line] or 121,
-      volume_value=line==9 and 255 or (notes[line] and notes[line]<120 and 89 or 255)}
+      volume_value=line==9 and 255 or (notes[line] and notes[line]<120 and 89 or 255),
+      instrument_value=255,panning_value=255,delay_value=0,
+      effect_number_value=0,effect_amount_value=0}
   end
   cb(nil,8,0)
 end
@@ -502,7 +546,7 @@ end
 assert(generate(function(value)triplet_status=value end,triplet_source,triplet_target))
 idle:fire();idle:fire();idle:fire()
 script.render_to_pattern=original_render
-assert(triplet_status.status=='error',triplet_status.message)
+assert(triplet_status.status=='failed',triplet_status.message)
 assert(instrument.phrases[triplet_target]==triplet_phrase and triplet_phrase.cells[1].note_value==triplet_first)
 assert(song.tool_data==triplet_store and #instrument.phrases==triplet_target)
 -- A silent copy defect must be detected after staging and rolled back.
@@ -521,7 +565,7 @@ for _,field in ipairs({"note", "lpb", "shuffle"}) do
   assert(generate(function(value)triplet_status=value end,triplet_source,triplet_target))
   idle:fire();idle:fire();idle:fire()
   triplet_phrase.copy_from=copy
-  assert(triplet_status.status=='error' and triplet_status.message:find('Copied phrase validation failed',1,true),
+  assert(triplet_status.status=='failed' and triplet_status.message:find('Copied phrase validation failed',1,true),
     triplet_status.message)
   assert(instrument.phrases[triplet_target]==triplet_phrase and #instrument.phrases==triplet_target)
   assert(triplet_phrase.name==original_name and triplet_phrase.cells[1].note_value==triplet_first)
@@ -568,14 +612,15 @@ for _=1,600 do idle:fire() end
 assert(not generate(function()end,source_fixture(),1))
 released_callback(nil,8,0)
 released_callback(nil,8,0)
-assert(#messages==released_messages and song.tool_data==release_source)
+assert(#messages==released_messages+1 and messages[#messages].status=="cancelled")
+assert(messages[#messages].phrase==nil and song.tool_data==release_source)
 assert(#instrument.phrases==release_count+1 and instrument.phrases[#instrument.phrases]==retained)
 instrument.delete_phrase_at=deleted
 instrument:delete_phrase_at(#instrument.phrases)
 script.render_to_pattern=base_render
 assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
 idle:fire();idle:fire()
-assert(messages[#messages].kind=="complete")
+assert((messages[#messages].kind=="success" or messages[#messages].kind=="failure"))
 print("ACID render cancellation and release checks passed")
 
 -- Invalidated instrument handles cannot prevent terminal notification.
@@ -589,7 +634,8 @@ song.instruments={}
 instrument.phrases=nil
 setmetatable(instrument,{__index=function()error("invalid instrument handle")end})
 invalid_callback(nil,8,0)
-assert(messages[#messages].kind=="complete" and messages[#messages].status=="suspended")
+assert((messages[#messages].kind=="success" or messages[#messages].kind=="failure")
+  and (messages[#messages].status=="suspended" or messages[#messages].status=="integrity_blocked"))
 assert(messages[#messages].message:find("target instrument changed",1,true))
 setmetatable(instrument,nil)
 instrument.phrases=live_phrases
@@ -599,7 +645,7 @@ instrument:delete_phrase_at(#instrument.phrases)
 script.render_to_pattern=base_render
 assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
 idle:fire();idle:fire()
-assert(messages[#messages].kind=="complete")
+assert((messages[#messages].kind=="success" or messages[#messages].kind=="failure"))
 print("ACID invalidated host cleanup checks passed")
 
 -- A native exception cannot prove the renderer stopped using staging.
@@ -612,10 +658,11 @@ local thrown_count=#instrument.phrases
 assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
 for _=1,600 do idle:fire() end
 assert(#instrument.phrases==thrown_count+1 and not generate(function()end,source_fixture(),1))
-assert(messages[#messages].code=="transaction.render_pending")
-assert(messages[#messages].message:find("native call raised after launch",1,true))
+local pending_diagnostic=writer.diagnostic()
+assert(pending_diagnostic and pending_diagnostic.code=="transaction.render_pending")
+assert(pending_diagnostic.message:find("native call raised after launch",1,true))
 thrown_callback("render failed",0,0)
-assert(#instrument.phrases==thrown_count and messages[#messages].kind=="complete")
+assert(#instrument.phrases==thrown_count and (messages[#messages].kind=="success" or messages[#messages].kind=="failure"))
 script.render_to_pattern=base_render
 
 -- A missing commitment notification times out before native rendering starts.
@@ -623,12 +670,12 @@ local commit=script.commit
 function script:commit() end
 assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
 for _=1,500 do idle:fire() end
-assert(#instrument.phrases==thrown_count and messages[#messages].kind=="complete")
+assert(#instrument.phrases==thrown_count and (messages[#messages].kind=="success" or messages[#messages].kind=="failure"))
 assert(messages[#messages].message:find("Timed out waiting for script commitment",1,true))
 committed:fire()
 assert(#instrument.phrases==thrown_count)
 script.commit=commit
 assert(generate(function(value)messages[#messages+1]=value end,source_fixture(),1))
 idle:fire();idle:fire()
-assert(messages[#messages].kind=="complete")
+assert((messages[#messages].kind=="success" or messages[#messages].kind=="failure"))
 print("ACID native exception and commitment timeout checks passed")

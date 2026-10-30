@@ -17,7 +17,7 @@ function M.new(song,writer)
   local baselines={}
   local owner={}
 
-  local function classify(instrument,phrase)
+  local function classify(instrument,phrase,adopt)
     local ok,candidate,reason,kind=pcall(function()
       local profile,profile_error=capabilities.inspect(instrument)
       if not profile then return nil,profile_error,"unavailable" end
@@ -39,6 +39,10 @@ function M.new(song,writer)
     if not baseline then return nil,copy_error,"unavailable" end
     local bucket=baselines[instrument]
     if not bucket then bucket={};baselines[instrument]=bucket end
+    if adopt then
+      bucket[phrase]={baseline=baseline}
+      return candidate,nil,"owned",baseline
+    end
     local previous=bucket[phrase]
     if previous then
       local same,difference=ownership.compare(previous.baseline,baseline)
@@ -121,6 +125,22 @@ function M.new(song,writer)
     end)
     if not ok then return nil,"Cannot inspect phrase inventory" end
     return result,err
+  end
+
+  -- Replace the verified baseline only with exact postcommit writer evidence.
+  function owner:adopt(instrument,phrase,baseline)
+    local member,membership_error=ownership.membership(song,instrument,phrase)
+    if not member then return nil,membership_error end
+    local id=ownership.validate_identity(song,instrument,phrase)
+    if not id then return nil,"Committed destination identity is not unique" end
+    local copied,copy_error=ownership.copy_snapshot(baseline)
+    if not copied then return nil,copy_error end
+    if copied.id~=nil and copied.id~=id then return nil,"Committed baseline identity changed" end
+    copied.id=id
+    local bucket=baselines[instrument]
+    if not bucket then bucket={};baselines[instrument]=bucket end
+    bucket[phrase]={baseline=copied}
+    return copied
   end
 
   function owner:refresh_inventory() return self:target_state() end

@@ -54,18 +54,18 @@ local instrument_name=instrument.name
 -- Keep the terminal's module cache isolated to ACID, as the writer helper does.
 local old_path = package.path
 package.path = root .. "/com.david303ttl.ACID.xrnx/?.lua;" .. old_path
-local loaded, writer, sequencer, ownership, store, live = pcall(function()
+local loaded, writer, sequencer, ownership, store, runtime_context, policies = pcall(function()
   return require("writers.phrase_writer"), require("model.sequencer"),
     require("renoise.phrase_ownership"), require("renoise.pattern_store"),
-    require("model.live_regen")
+    require("runtime.context"), require("model.policies")
 end)
 package.path = old_path
 assert(loaded, writer)
 local module_sources={}
 for name, entry in pairs({
-  writer={writer.generate,"writers/phrase_writer.lua"},
+  writer={writer.create,"writers/phrase_writer.lua"},
   sequencer={sequencer.new_pattern,"model/sequencer.lua"},
-  live={live.new,"model/live_regen.lua"},
+  context={runtime_context.new,"runtime/context.lua"},
   ownership={ownership.status,"renoise/phrase_ownership.lua"},
   store={store.load,"renoise/pattern_store.lua"}
 }) do
@@ -87,7 +87,7 @@ for _, index in ipairs(source.slide_pitch_indices or {}) do
 end
 for index, command in ipairs(source.time) do pattern.time_events[index] = command end
 
-local target = #instrument.phrases + 1
+local target_index
 local result_path = root .. "/tmp/acid-articulation/lifecycle_" .. output_policy .. "_" .. os.time() .. ".txt"
 local song_path = root .. "/tmp/acid-articulation/lifecycle_" .. output_policy .. "_" .. os.time() .. ".xrns"
 local function unused(pathname)
@@ -110,19 +110,10 @@ record("instrument_index",instrument_index)
 record("instrument_name",instrument_name)
 record("initial_phrase_count",#instrument.phrases)
 record("song_roundtrip_path",song_path:gsub("\\","/"))
-record("live_edit_path","production model.live_regen with Renoise timers and production phrase_writer")
+record("live_edit_path","production runtime context manual/live admission with explicit phrase_writer create/regenerate")
 
 local function pattern_equal(left,right)
-  if not left or not right or left.length~=right.length or
-    left.pitch_length~=right.pitch_length then return false end
-  for index=1,64 do
-    local a,b=left.pitch_events[index],right.pitch_events[index]
-    if not a or not b or a.note~=b.note or a.accent~=b.accent or a.slide~=b.slide then return false end
-  end
-  for index=1,64 do
-    if left.time_events[index]~=right.time_events[index] then return false end
-  end
-  return true
+  return sequencer.same_source(left,right)
 end
 
 local function checked_source(current_song,current_instrument,phrase_index,expected,expected_policy)
@@ -144,7 +135,7 @@ end
 local function save_and_reopen(expected)
   local current_song=renoise.song()
   local current_instrument=current_song.instruments[instrument_index]
-  local phrase=checked_source(current_song,current_instrument,target,expected,output_policy)
+  local phrase=checked_source(current_song,current_instrument,target_index,expected,output_policy)
   record("pre_save_phrase_status","owned")
   record("pre_save_source_status","exact")
   record("pre_save_phrase_name",phrase.name)
@@ -166,7 +157,7 @@ local function save_and_reopen(expected)
       local reopened=assert(renoise.song(), "Song did not reopen")
       local reopened_instrument=assert(reopened.instruments[instrument_index], "Probe instrument missing after reopen")
       assert(reopened_instrument.name==instrument_name, "Instrument order/name changed during roundtrip")
-      local reopened_phrase=checked_source(reopened,reopened_instrument,target,expected,output_policy)
+       local reopened_phrase=checked_source(reopened,reopened_instrument,target_index,expected,output_policy)
       assert(reopened_phrase.number_of_lines==layout.number_of_lines
         and reopened_phrase.looping==layout.looping
         and reopened_phrase.loop_start==layout.loop_start
@@ -201,78 +192,118 @@ local function save_and_reopen(expected)
   end
 end
 
-local function run_live_edit()
-  local initial=checked_source(song,instrument,target,pattern,output_policy)
-  record("generate_status","passed")
-  record("generate_phrase_status",ownership.status(initial))
+local pb_range=policies.DEFAULT_PB_RANGE
+local runtime
+local target
+local phase="generate"
+local edits={}
+local stage=1
+local current_edit=pattern
+
+local function failed_result(result)
+  local detail=type(result)=="table" and (result.message or result.reason) or result
+  if output then finish_record("FAIL",tostring(detail)) end
+  print("ACID lifecycle generation failed: "..tostring(detail).."; evidence: "..result_path)
+end
+
+local function defer(action)
+  local observer=renoise.tool().app_idle_observable
+  local handler
+  handler=function()
+    pcall(function() observer:remove_notifier(handler) end)
+    local applied,error_message=pcall(action)
+    if not applied then failed_result(error_message) end
+  end
+  observer:add_notifier(handler)
+end
+
+local function build_edits()
   local function clone_pattern(input,length)
-    local copy=sequencer.new_pattern(length or input.length)
-    copy.pitch_length=input.pitch_length
-    for index=1,64 do
-      local p=input.pitch_events[index]
-      copy.pitch_events[index]={note=p.note,accent=p.accent,slide=p.slide,
-        key=p.key,octave=p.octave}
-    end
-    for index=1,64 do copy.time_events[index]=input.time_events[index] end
+    local copy=assert(sequencer.copy_source(input))
+    copy.length=length or copy.length
     return copy
   end
-  local edits={}
   if case_id:match("^writer_repeat_glide_") then
     local extended=clone_pattern(pattern,pattern.length+1)
     extended.time_events[extended.length]="T"
-    edits={
+    return {
       {pattern=extended,label="Live Edit LAST STEP 8 to 9; append held TIE"},
       {pattern=clone_pattern(pattern),label="Live Edit LAST STEP 9 to 8; restore original source"}
     }
-  else
-    local edited=clone_pattern(pattern)
-    for index=1,edited.pitch_length do
-      local note=edited.pitch_events[index].note
-      edited.pitch_events[index]=fixture_pitch(note==60 and note-1 or note+1,
-        edited.pitch_events[index].accent,edited.pitch_events[index].slide)
-    end
-    edits={{pattern=edited,label="Live Edit active PITCH span +1 semitone"}}
   end
+  local edited=clone_pattern(pattern)
+  for index=1,edited.pitch_length do
+    local note=edited.pitch_events[index].note
+    edited.pitch_events[index]=fixture_pitch(note==60 and note-1 or note+1,
+      edited.pitch_events[index].accent,edited.pitch_events[index].slide)
+  end
+  return {{pattern=edited,label="Live Edit active PITCH span +1 semitone"}}
+end
 
-  local stage=1
-  local current_edit=edits[stage].pattern
-  local controller
-  controller=live.new(renoise.tool(),function(finish,token)
-    return writer.generate(instrument_index,function(result)
-      record("live_writer_status",type(result)=="table" and result.message or result)
-      if type(result)=="table" and result.kind=="complete" then
-        finish(result)
-      end
-    end,current_edit,target,{token=token,output_policy=output_policy})
-  end,function(result)
-    if result.status~="committed" and result.status~="approximate" then
-      controller:stop()
-      finish_record("FAIL",result.message)
-      print("ACID lifecycle Live Edit failed: "..tostring(result.message).."; evidence: "..result_path)
-      return
+local function apply_live_edit()
+  local editor,effects=runtime:transition("edit",
+    {source=current_edit,output_policy=output_policy,pb_range=pb_range})
+  if not editor or not effects or effects.accepted~=true then
+    failed_result(effects and effects.reason or "Live Edit did not enter runtime admission")
+  end
+end
+
+local function advance_live_edit()
+  stage=stage+1
+  if stage<=#edits then
+    current_edit=edits[stage].pattern
+    apply_live_edit()
+    return
+  end
+  runtime:transition("disarm")
+  runtime:close_dialog()
+  record("live_edit_status","passed")
+  save_and_reopen(current_edit)
+end
+
+local function handle_terminal(result)
+  local writer_key=phase=="generate" and "generate_writer_status" or "live_writer_status"
+  record(writer_key,type(result)=="table" and result.message or result)
+  if type(result)~="table" or result.kind~="success" or result.verified~=true then
+    failed_result(result)
+    return
+  end
+  local current_song=renoise.song()
+  local current_instrument=assert(current_song.instruments[instrument_index])
+  if phase=="generate" then
+    target=assert(result.phrase,"Writer success did not return its destination phrase")
+    for index,candidate in ipairs(current_instrument.phrases) do
+      if rawequal(candidate,target) then target_index=index;break end
     end
-    local current_song=renoise.song()
-    local current_instrument=current_song.instruments[instrument_index]
-    local phrase=checked_source(current_song,current_instrument,target,current_edit,output_policy)
-    assert(ownership.status(phrase)=="owned", "Live Edit output lost its ownership seal")
-    record("live_edit_stage_"..stage,edits[stage].label)
-    record("live_edit_stage_"..stage.."_phrase_status","owned")
-    record("live_edit_stage_"..stage.."_source_status","exact")
-    record("live_edit_stage_"..stage.."_phrase_name",phrase.name)
-    stage=stage+1
-    if stage<=#edits then
-      current_edit=edits[stage].pattern
-      controller:changed()
-      return
-    end
-    controller:stop()
-    record("live_edit_status","passed")
-    save_and_reopen(current_edit)
-  end,nil,function(token,reason)
-    return writer.cancel(token,reason)
-  end)
-  controller:set_enabled(true)
-  controller:changed()
+    assert(target_index,"Generate did not publish its phrase")
+    local generated=checked_source(current_song,current_instrument,target_index,pattern,output_policy)
+    assert(ownership.status(generated)=="owned",
+      "Normal Generate did not create a valid ACID-owned phrase")
+    record("generate_status","passed")
+    record("generate_phrase_status",ownership.status(generated))
+    runtime:bind_phrase(current_instrument,target)
+    edits=build_edits()
+    phase="live"
+    stage=1
+    current_edit=edits[1].pattern
+    defer(function()
+      runtime:transition("arm")
+      apply_live_edit()
+    end)
+    return
+  end
+  local phrase=checked_source(current_song,current_instrument,target_index,current_edit,output_policy)
+  assert(ownership.status(phrase)=="owned", "Live Edit output lost its ownership seal")
+  record("live_edit_stage_"..stage,edits[stage].label)
+  record("live_edit_stage_"..stage.."_phrase_status","owned")
+  record("live_edit_stage_"..stage.."_source_status","exact")
+  record("live_edit_stage_"..stage.."_phrase_name",phrase.name)
+  defer(advance_live_edit)
+end
+
+local function on_terminal(result)
+  local completed,error_message=pcall(handle_terminal,result)
+  if not completed then failed_result(error_message) end
 end
 
 local ok,err=pcall(function()
@@ -280,27 +311,27 @@ local ok,err=pcall(function()
     "Need phrase slots for Generate staging and backup")
   local existing,read_error=store.read(song)
   assert(existing,read_error)
-  local done_initial=false
-  local started,reason=writer.generate(instrument_index,function(result)
-    record("generate_writer_status",type(result)=="table" and result.message or result)
-    if type(result)=="table" and result.kind=="complete" and
-        (result.status=="committed" or result.status=="approximate") then
-      if done_initial then return end
-      done_initial=true
-      local generated=assert(instrument.phrases[target], "Generate did not append its phrase")
-      local status=ownership.status(generated)
-      assert(status=="owned", "Normal Generate did not create a valid ACID-owned phrase")
-      local restored,saved_policy=store.load(song,instrument,generated)
-      assert(restored and saved_policy==output_policy and pattern_equal(restored,pattern),
-        "Normal Generate source did not persist exactly")
-      record("generate_status","passed")
-      record("generate_phrase_status",status)
-      run_live_edit()
-    elseif type(result)=="table" and result.kind=="complete" then
-      finish_record("FAIL",result.message)
-    end
-  end,pattern,target,{output_policy=output_policy})
-  if not started then error(reason) end
+  runtime=runtime_context.new({
+    writer=writer,
+    capture=function() return nil,"No editor source" end,
+    sink=function(request,done)
+      if request.kind=="create" then return writer.create(request,done) end
+      if request.kind=="regenerate" then return writer.regenerate(request,done) end
+      return false,"Request has no explicit writer operation"
+    end,
+    cancel=function(token,reason)
+      if type(writer.cancel)~="function" then return false end
+      return writer.cancel(token,reason)
+    end,
+  })
+  runtime:attach_document(song)
+  runtime:open_dialog(on_terminal)
+  runtime:bind_new(instrument)
+  local editor,effects=runtime:transition("edit",
+    {source=pattern,output_policy=output_policy,pb_range=pb_range})
+  assert(editor,effects)
+  local accepted,reason=runtime:request_generation("manual")
+  if not accepted then error(reason) end
 end)
 if not ok then
   if output then finish_record("FAIL",tostring(err)) end

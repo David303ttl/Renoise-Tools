@@ -341,6 +341,12 @@ local function capture_removal(song,id,entries,drafts,descriptor)
       not policies.is_integer(descriptor.revision) or descriptor.revision<0 then
     return nil,"Invalid captured ACID draft destination"
   end
+  if descriptor.kind=="new" and descriptor.instrument_name_unique==false then
+    local live,reason=ownership.membership(song,descriptor.instrument,nil)
+    if not live then return nil,reason end
+    -- This capture is session-only; preserve any older ambiguous durable scratch.
+    return {kind="new",token=descriptor.token,revision=descriptor.revision,present=false}
+  end
   local index,phrase_id,name=draft_target(song,descriptor.instrument,descriptor.phrase,entries)
   if not index then return nil,phrase_id end
   if descriptor.kind=="existing" and phrase_id~=id then

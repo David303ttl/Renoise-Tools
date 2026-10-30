@@ -36,6 +36,26 @@ local function prepare(song,id,guard,capture)
   return assert(store.prepare(song,id,seq.new_pattern(5),"play_once",12,guard or yes,capture))
 end
 local song,ins,a,b,other=fresh()
+assert(store.write_draft(song,ins,nil,seq.new_pattern(6),"repeat",0))
+other.name=ins.name
+local session_only=removal(ins,nil)
+session_only.instrument_name_unique=false
+session_only.instrument_index=1
+session_only.instrument_name=ins.name
+local session_candidate=prepare(song,3,function(token,revision)
+  return token==session_only.token and revision==session_only.revision
+end,session_only)
+assert(store.commit(song,session_candidate),"session-only New drafts must not block source creation")
+assert(store.read_entry(song,3))
+assert(store.has_drafts(song),"ambiguous older durable scratch must be preserved")
+other.name="Second"
+assert(store.read_draft(song,ins,nil).length==6,
+  "a session-only commit cannot delete an older durable scratch")
+local detached=removal({name=ins.name,phrases={}},nil)
+detached.instrument_name_unique=false
+assert(not store.prepare(song,4,seq.new_pattern(5),"repeat",0,yes,detached),
+  "session-only capture still requires a live instrument")
+song,ins,a,b,other=fresh()
 local source=seq.new_pattern(7)
 assert(store.write_draft(song,ins,a,source,"repeat",24))
 local expected_draft=table.concat({"DRAFT","1","1","4669727374","repeat","24",

@@ -127,8 +127,8 @@ function M.new(access)
       local output,output_error=planner.plan(editor.source,editor.output_policy,editor.pb_range,limits,profile,
         {pitch_bend_delivery=pitch_bend.delivery_enabled})
       if not output then return nil,output_error end
-      local descriptor,draft_error=access.drafts.capture(state.song,target.instrument,target.phrase,access.draft_options())
-      if not descriptor then return nil,draft_error end
+      local descriptor,draft_guard=access.drafts.capture(state.song,target.instrument,target.phrase,access.draft_options())
+      if not descriptor then return nil,draft_guard end
       local transport=state.song.transport
       if type(renoise.Transport.TIMING_MODEL_LPB)~="number" or
           transport.timing_model~=renoise.Transport.TIMING_MODEL_LPB or type(transport.groove_enabled)~="boolean" then
@@ -142,11 +142,23 @@ function M.new(access)
         planning_inputs=inputs(profile,limits),capabilities=profile,capacities=limits,
         timing_model=transport.timing_model,groove_enabled=transport.groove_enabled}))
       local request=assert(ownership.copy_snapshot(values))
+      -- Capability comparison is keyed by the inspected object; keep that
+      -- immutable inspection result while retaining the copied values guard.
+      request.capabilities=profile
       local record={access=access,values=values,profile=profile,song=state.song,
         instrument=target.instrument,phrase=target.phrase,token=token,draft_capture=descriptor,
+        draft_guard=draft_guard,
         request=setmetatable({request},{__mode="v"}),functions={}}
       for _,key in ipairs(RAW_FIELDS) do request[key]=record[key] end
-      request.is_current=function() return token_current(record) end
+      request.is_current=function()
+        if not token_current(record) then return false end
+        if type(record.draft_guard)=="function" and record.draft_capture then
+          local ok,current=pcall(record.draft_guard,record.draft_capture.token,
+            record.draft_capture.revision)
+          return ok and current==true
+        end
+        return true
+      end
       request.validate_checkpoint=function(self) return checkpoint(record,self or record.request[1],false) end
       request.cleanup_authorized=function(_,supplied_token)
         if not record.access or not rawequal(supplied_token,record.token) then return false end
@@ -158,12 +170,16 @@ function M.new(access)
         end)
         return ok and current==true
       end
-      request.mutate=function(supplied_token,action)
-        if not record.access or not rawequal(supplied_token,record.token) then error("Invalid mutation token",0) end
+      request.mutate=function(self,supplied_token,action)
+        if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) then
+          error("Invalid mutation token",0)
+        end
         return record.access.mutate(supplied_token,action)
       end
-      request.record_blocker=function(supplied_token,evidence)
-        if not record.access or not rawequal(supplied_token,record.token) then return false,"Invalid blocker token" end
+      request.record_blocker=function(self,supplied_token,evidence)
+        if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) then
+          return false,"Invalid blocker token"
+        end
         return record.access.record_blocker(supplied_token,evidence)
       end
       for _,key in ipairs({"is_current","validate_checkpoint","cleanup_authorized","mutate","record_blocker"}) do
@@ -187,7 +203,7 @@ function M.new(access)
   function owner:release()
     for request,record in pairs(records) do
       for _,key in ipairs(RAW_FIELDS) do if key~="token" then rawset(request,key,nil);record[key]=nil end end
-      record.values=nil;record.profile=nil;record.access=nil
+      record.values=nil;record.profile=nil;record.access=nil;record.draft_guard=nil
     end
     access=nil
     records=setmetatable({},{__mode="k"})

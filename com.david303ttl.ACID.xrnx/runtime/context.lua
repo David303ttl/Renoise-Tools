@@ -28,7 +28,7 @@
 --   Capture owns request values; this context passes them through unchanged
 --   and does not synthesize eligibility, frozen values, mutation, blocker, or
 --   independence behavior. The request shape reserves:
---     request.mutate(token, action) -> all action result values
+--     request:mutate(token, action) -> all action result values
 --       Same operation token only. Depth-counted and non-yielding; unwinds on
 --       success or exception, revokes authorization on exception, and
 --       rethrows the original failure. No user callback, idle wait, or render
@@ -36,7 +36,7 @@
 --       Requires writer.is_temporary and captures exact pre-scope recovery
 --       evidence. A failed outer scope records that evidence for explicit
 --       revalidation after settlement and native restoration.
---     request.record_blocker(token, evidence)
+--     request:record_blocker(token, evidence)
 --       Verifies the matching live epoch/job, retains copied scalar/value
 --       evidence and exact recovery references only while that song is
 --       current, and records the evidence before a terminal result.
@@ -50,6 +50,11 @@
 --   calls the sink zero times. The delivery record is installed before the
 --   sink is invoked, so a reentrant request cannot start another generation
 --   before the sink returns.
+--
+--   This is the single scheduler entry for manual and armed Live Edit requests.
+--   While an accepted request is active, a later request replaces one pending
+--   trigger; it is captured and dispatched only after terminal completion.
+--   Disarm drops pending Live Edit but leaves an explicit manual intent queued.
 --
 --   Duplicate completion, completion after rejection, completion followed by
 --   rejection or an invalid return, and thrown starts are diagnosed at most
@@ -196,12 +201,19 @@ function M.new(options)
   local diagnostic_count = 0
   local last_diagnostic = nil
   local diagnosed_context = {}
+  local pending_trigger = nil
+  local flushing = false
+  local last_result = nil
+  local last_commit = nil
+  local last_commit_label = nil
   local mutation_depth, mutation_token = 0, nil
   local mutation_evidence=nil
   local inventory_dirty, reconciliation_pending, mutation_failed = false, false, false
   local native_instrument, native_phrase = nil, nil
   local transitions=require("runtime.transitions").new()
   local editor=nil
+  local editor_dirty=false
+  local preserve_editor
   local editor_target=nil
   local editor_recovery={}
   local observed_target=nil
@@ -249,6 +261,7 @@ function M.new(options)
     local last = last_diagnostic
     return {
       status = status,
+      pending = pending_trigger ~= nil,
       token = record and record.token or nil,
       authorization = record ~= nil and record.current == true and record.settled ~= true,
       blocked = blocked == true or integrity_state.blocked,
@@ -257,6 +270,106 @@ function M.new(options)
       last_diagnostic = last and {code = last.code, message = last.message} or nil,
     }
   end
+
+  local function summary(result)
+    if type(result)~="table" then return nil end
+    return {kind=result.kind,status=result.status,verified=result.verified==true,
+      approximate=result.approximate==true,reason=result.reason,
+      message=result.message,code=result.code,category=result.category}
+  end
+
+  local function target_label(record,phrase)
+    local instrument=record and record.instrument
+    local instrument_name="(unknown instrument)"
+    local phrase_name="(unknown phrase)"
+    pcall(function()
+      if instrument and type(instrument.name)=="string" and instrument.name~="" then
+        instrument_name=instrument.name
+      end
+      if phrase and type(phrase.name)=="string" and phrase.name~="" then
+        phrase_name=phrase.name
+      end
+    end)
+    local index=0
+    if phrase and record then
+      local member,position=ownership.membership(record.song,instrument,phrase)
+      if member and type(position)=="number" then index=position end
+    end
+    return string.format("%s / %02d %s",instrument_name,index,phrase_name)
+  end
+
+  local function host_object(value)
+    if value==nil then return false end
+    local kind=type(value)
+    return kind=="table" or kind=="userdata" or kind=="InstrumentPhrase"
+  end
+
+  local function normalize_result(record,result)
+    local copy={}
+    if type(result)=="table" then
+      for key,value in pairs(result) do copy[key]=value end
+    end
+    copy.token=copy.token==nil and record.token or copy.token
+    copy.epoch=copy.epoch==nil and record.epoch or copy.epoch
+    copy.request=copy.request==nil and (record.request or nil) or copy.request
+    local valid_token=copy.token~=nil and rawequal(copy.token,record.token)
+    local success=copy.kind=="success" and copy.verified==true and valid_token
+    if success and copy.integrity_blocked==true then
+      success=false
+      copy.status="integrity_blocked"
+      copy.reason=copy.reason or copy.message or
+        "Committed output retained recovery material and requires revalidation"
+    elseif success and not host_object(copy.phrase) then
+      success=false
+      copy.status="failed"
+      copy.reason="Writer success did not include its destination phrase"
+    elseif success and type(copy.baseline)~="table" then
+      success=false
+      copy.status="failed"
+      copy.reason="Writer success did not include a verified committed baseline"
+    end
+    if copy.kind=="success" and not success then
+      copy.kind="failure"
+      copy.status=copy.status or "failed"
+      copy.verified=false
+      copy.reason=copy.reason or (valid_token and "Writer returned an unverified success" or
+        "Writer returned a foreign completion token")
+    end
+    if copy.kind==nil then
+      copy.kind="failure"
+      copy.status=copy.status or "failed"
+      copy.verified=false
+      copy.reason=copy.reason or copy.message or "Writer returned no terminal result"
+    end
+    return copy,success
+  end
+
+  local function adopt_success(record,result,destination_current)
+    if not destination_current or not inventory then return false,"No current destination inventory" end
+    if not host_object(result.phrase) then return false,"Committed destination phrase is unavailable" end
+    local request=record.request
+    if not request then return false,"Request values are unavailable" end
+    local phrase=result.phrase
+    if request.kind=="regenerate" then
+      if not rawequal(phrase,request.phrase) then return false,"Returned destination changed" end
+    elseif request.kind~="create" then
+      return false,"Request has no committed destination"
+    end
+    local copied,reason=inventory:adopt(request.instrument,phrase,result.baseline)
+    if not copied then
+      pending_trigger=nil
+      return false,reason or "Cannot adopt committed baseline"
+    end
+    if request.kind=="create" and not rawequal(request.phrase,phrase) then
+      inventory:bind_phrase(request.instrument,phrase)
+      transitions:transition("target",{instrument=request.instrument,phrase=phrase,kind="owned"})
+      editor_target={instrument=request.instrument,phrase=phrase,kind="owned"}
+      observed_target=semantic(inventory:target_state())
+    end
+    editor_dirty=false
+    return true
+  end
+
 
   local function uncertain_start(record, failure)
     local state, inspection_error = inspect_writer(writer)
@@ -331,6 +444,34 @@ function M.new(options)
 
   local context = {}
 
+  local function flush_pending()
+    if flushing or not pending_trigger then return false end
+    if dispatching or (active and not active.settled) then return false end
+    if releasing or (lifecycle and (current_song == nil or not opened)) then
+      pending_trigger=nil
+      return false
+    end
+    if pending_trigger=="live" and not transitions:revision_state().armed then
+      pending_trigger=nil
+      return false
+    end
+    if (blocked or (integrity and integrity:state().blocked)) then
+      pending_trigger=nil
+      return false
+    end
+    local occupied,reason=inspect_writer(writer)
+    if not occupied or occupied.status~="idle" then return false end
+    local trigger=pending_trigger
+    pending_trigger=nil
+    flushing=true
+    local accepted,detail=context:request_generation(trigger)
+    flushing=false
+    if not accepted and detail~=nil then
+      diagnose(nil,"scheduler.dispatch",reason_text(detail,"Unable to dispatch the pending request"))
+    end
+    return accepted,detail
+  end
+
   function context:request_generation(trigger)
     if mutation_depth>0 or mutation_failed then
       return false,"Synchronous mutation is active or requires recovery"
@@ -338,10 +479,12 @@ function M.new(options)
     if releasing or (lifecycle and (current_song == nil or not opened)) then
       return false, "No current document dialog is open"
     end
+    if dispatching then
+      return false, "A generation request is already dispatching"
+    end
     if editor then
       if trigger~="manual" and trigger~="live" then return false,"Invalid generation trigger" end
       if trigger=="live" and not transitions:revision_state().armed then return false,"Live Edit is not armed" end
-      self:transition("request",{trigger=trigger})
       if not editor.valid then return false,editor.reason or "Invalid editor source or settings" end
       local destination=self:target_state()
       if not editor_target or not rawequal(destination.instrument,editor_target.instrument) or
@@ -350,6 +493,20 @@ function M.new(options)
       end
       local eligible,reason=self:musical_eligibility(active and active.token)
       if not eligible then return false,reason end
+      local occupied, inspection_error=inspect_writer(writer)
+      if not occupied then
+        block(nil,"admission.state_unavailable",
+          "Cannot inspect writer occupancy: "..tostring(inspection_error)..
+          "; dispatch is blocked until writer state is safe")
+        return false,blocked_reason
+      end
+      if active and not active.settled or occupied.status~="idle" then
+        if blocked then return false,blocked_reason or "Generation dispatch is blocked" end
+        pending_trigger=trigger
+        preserve_editor(true)
+        return true,"Generation queued for the current writer job"
+      end
+      self:transition("request",{trigger=trigger})
     end
     if integrity and integrity:state().blocked then return false,integrity:state().reason end
     if mutation_failed then return false,"Synchronous mutation failed; recovery must be verified" end
@@ -383,6 +540,8 @@ function M.new(options)
     if occupied.status ~= "idle" then
       return false, "The writer slot is occupied"
     end
+
+    if editor then preserve_editor(true) end
 
     dispatching = true
     local record = {
@@ -424,7 +583,7 @@ function M.new(options)
     if request == nil then
       dispatching = false
       retire(record)
-      return false, capture_reason or "Generation request rejected"
+      return false, reason_text(capture_reason, "Generation request rejected")
     end
     if type(request) ~= "table" then
       dispatching = false
@@ -477,36 +636,64 @@ function M.new(options)
           "Sink completed the request more than once; dispatch is blocked until writer state is safe")
         return false
       end
-      if record.revoked then
-        -- Revoked authorization retires its own bookkeeping without a result
-        -- delivery; writer occupancy remains the writer's to retire.
-        record.settled = true
-        record.current = false
-        record.revoked_completion = true
-        record.request = nil
-        if type(result)=="table" and result.kind=="success" and result.verified==true then
-          inventory_dirty=true;reconciliation_pending=true
-        end
-        if rawequal(active, record) then active = nil end
-        return true
-      end
+      local terminal,success=normalize_result(record,result)
+      local revisions=transitions:revision_state()
+      local destination_current=record.session==session and not record.released and
+        record.revisions~=nil and revisions.target_revision==record.revisions.target_revision
       record.settled = true
       record.current = false
-      record.request = nil
-      if rawequal(active, record) then active = nil end
+      local effects
       if record.revisions then
-        local success=type(result)=="table" and result.kind=="success" and result.verified==true
-        local effects=transitions:transition("completion",{success=success,
-          operation_serial=record.revisions.operation_serial,target_revision=record.revisions.target_revision,
+        effects=transitions:transition("completion",{success=success,
+          operation_serial=record.revisions.operation_serial,
+          target_revision=record.revisions.target_revision,
           edit_revision=record.revisions.edit_revision})
-        if effects.reconcile then inventory_dirty=true;reconciliation_pending=true end
       end
+      local apply_success=effects and effects.apply_success==true or false
+      if success and destination_current then
+        local adopted,adopt_reason=adopt_success(record,terminal,destination_current)
+        if not adopted then
+          diagnose(record,"completion.baseline",adopt_reason)
+          success=false
+          apply_success=false
+          terminal.kind="failure"
+          terminal.status="integrity_blocked"
+          terminal.verified=false
+          terminal.reason=adopt_reason or "Committed baseline could not be adopted"
+        end
+      end
+      if not success and terminal.status=="integrity_blocked" then pending_trigger=nil end
+      local request=record.request
+      if success and destination_current and request and request.draft_capture and
+          type(drafts.compare_and_clear)=="function" then
+        local cleared,clear_error=pcall(drafts.compare_and_clear,request.song,
+          request.draft_capture,request.kind=="create")
+        if not cleared then
+          diagnose(record,"completion.draft_clear",clear_error)
+        end
+      end
+      if success then inventory_dirty=true;reconciliation_pending=true end
+      if effects and effects.reconcile then inventory_dirty=true;reconciliation_pending=true end
+      if not record.revoked or record.blocker_pending then
+        last_result=summary(terminal)
+        if success and apply_success then
+          last_commit=summary(terminal)
+          last_commit_label=target_label(record.request or record,terminal.phrase)
+        end
+      elseif success and destination_current then
+        terminal.stale=true
+      end
+      terminal.apply_success=apply_success
+      terminal.destination_current=destination_current
       local delivery = record.gui_delivery
       record.gui_delivery = nil
-      if delivery then
-        local delivered, failure = pcall(delivery, result)
+      if delivery and (not record.revoked or (success and destination_current) or
+          (record.blocker_pending and not success)) then
+        local delivered, failure = pcall(delivery, terminal)
         if not delivered then diagnose(record, "delivery.gui_failed", failure) end
       end
+      record.request=nil
+      if rawequal(active, record) then active = nil end
       return true
     end
     local done = completion(record)
@@ -551,7 +738,7 @@ function M.new(options)
       end
       record.rejected = true
       retire(record)
-      return false, rejection
+      return false, reason_text(rejection, "Generation request rejected")
     end
 
     if record.settled then
@@ -577,7 +764,7 @@ function M.new(options)
   local function invalidate(reason)
     local record = active
     if not record then return end
-    record.gui_delivery = nil
+    if not record.blocker_pending then record.gui_delivery = nil end
     if record.settled or record.rejected then return end
     record.current = false
     record.revoked = true
@@ -590,8 +777,8 @@ function M.new(options)
     end
   end
 
-  local function preserve_editor()
-    if not editor or not inventory or not current_song then return end
+  preserve_editor=function(force)
+    if (not editor_dirty and not force) or not editor or not inventory or not current_song then return end
     local target=inventory:target_state()
     if not target.instrument then return end
     if not editor_target or not rawequal(target.instrument,editor_target.instrument) or
@@ -621,6 +808,26 @@ function M.new(options)
   end
 
   function context:revision_state() return transitions:revision_state() end
+
+  function context:flush_pending() return flush_pending() end
+
+  function context:generation_state()
+    local revisions=transitions:revision_state()
+    local state,reason=inspect_writer(writer)
+    local busy=state~=nil and state.status=="busy"
+    local status="CLEAN"
+    if pending_trigger or busy or (active and not active.settled) then
+      status=pending_trigger and "DIRTY" or "RENDERING"
+    elseif last_result and last_result.kind=="failure" then
+      status="ERROR"
+    elseif last_commit then
+      status=last_commit.approximate and "APPROXIMATE" or "COMMITTED"
+    end
+    return {armed=revisions.armed,busy=busy,pending=pending_trigger~=nil,
+      status=status,last_result=last_result and summary(last_result) or nil,
+      last_commit=last_commit and summary(last_commit) or nil,
+      last_commit_label=last_commit_label,occupancy_reason=reason}
+  end
 
   function context:editor_state()
     return editor and ownership.copy_snapshot(editor) or nil
@@ -671,6 +878,7 @@ function M.new(options)
     if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
     if not inventory then return nil,"No current document is attached" end
     if kind=="target" or kind=="native_target" then
+      pending_trigger=nil
       local before=inventory:target_state()
       local changed=not rawequal(before.instrument,values.instrument) or not rawequal(before.phrase,values.phrase)
         or (kind=="target" and values.kind=="new")~=(before.kind=="new")
@@ -682,15 +890,23 @@ function M.new(options)
         semantic_changed=not changed and observed_target~=nil and not ownership.compare(observed_target,semantic(target))})
       apply_effects(effects,"Target changed")
       observed_target=semantic(target)
+      if kind=="target" then
+        local read,instrument,phrase=pcall(function()
+          return current_song.selected_instrument,current_song.selected_phrase
+        end)
+        if read then native_instrument,native_phrase=instrument,phrase end
+      end
       return target,effects
     elseif kind=="refresh" then
       local target=inventory:target_state()
       local changed=observed_target~=nil and not ownership.compare(observed_target,semantic(target))
+      if changed then pending_trigger=nil end
       local effects=transitions:transition(kind,{semantic_changed=changed})
       apply_effects(effects,"Target eligibility changed")
       observed_target=semantic(target)
       return target,effects
     elseif kind=="edit" or kind=="programmatic" or kind=="reset" or kind=="recovery" then
+      if kind~="edit" then pending_trigger=nil end
       local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
       if not buffer then return nil,copy_error end
       local changed=not editor or not ownership.compare({source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},buffer)
@@ -703,14 +919,21 @@ function M.new(options)
       apply_effects(effects,"Editor source or settings changed")
       if changed then retain_invalid_editor() end
       editor=buffer
+      if kind=="programmatic" and values.restore==true then editor_dirty=false
+      elseif changed then editor_dirty=true end
       local destination=inventory:target_state()
       editor_target={instrument=destination.instrument,phrase=destination.phrase,kind=destination.kind}
-      if changed then preserve_editor() end
-      if effects.live_intent then effects.accepted,effects.reason=self:request_generation("live") end
+      if changed and not (kind=="programmatic" and values.restore==true) then preserve_editor() end
+      if effects.live_intent then
+        effects.accepted,effects.reason=self:request_generation("live")
+      end
       return self:editor_state(),effects
     end
     local effects=transitions:transition(kind,values)
     apply_effects(effects,"Runtime "..kind)
+    if kind=="disarm" and pending_trigger=="live" then pending_trigger=nil end
+    if kind=="request" or kind=="independence" or kind=="external" or kind=="undo"
+        or kind=="close" or kind=="blocker" then pending_trigger=nil end
     if effects.reconcile then inventory_dirty=true;reconciliation_pending=true end
     if kind=="independence" then
       local proof,reason=self:independence_eligibility()
@@ -727,6 +950,7 @@ function M.new(options)
     inventory_dirty=true
     reconciliation_pending=true
     if mutation_depth==0 then
+      pending_trigger=nil
       apply_effects(transitions:transition("external"),reason or "External native change")
     end
   end
@@ -816,6 +1040,7 @@ function M.new(options)
   function context:close_dialog()
     if not opened then return false end
     opened = false
+    pending_trigger=nil
     transitions:transition("close")
     gui_delivery = nil
     for record in pairs(records) do record.gui_delivery = nil end
@@ -829,6 +1054,7 @@ function M.new(options)
     local song = current_song
     opened = false
     gui_delivery = nil
+    pending_trigger=nil
     invalidate("Document released")
     if detach then
       local ok, failure = pcall(detach, song)
@@ -849,12 +1075,15 @@ function M.new(options)
     current_song = nil
     transitions:release()
     editor,observed_target=nil,nil
+    editor_dirty=false
     editor_target=nil
     editor_recovery={}
     native_instrument,native_phrase=nil,nil
     mutation_depth,mutation_token=0,nil
     mutation_evidence=nil
     inventory_dirty,reconciliation_pending,mutation_failed=false,false,false
+    pending_trigger=nil
+    last_result,last_commit,last_commit_label=nil,nil,nil
     if inventory then inventory:release() end
     inventory = nil
     if integrity then integrity:release() end
@@ -959,6 +1188,7 @@ function M.new(options)
     end
     local recorded,reason=integrity:record(evidence)
     if recorded then
+      record.blocker_pending=true
       transitions:transition("blocker")
       invalidate("Song integrity requires revalidation")
     end

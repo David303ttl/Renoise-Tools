@@ -52,6 +52,95 @@ do
  assert(log.sinks==1,'real armed edit did not use generation entry')
 end
 
+-- Restoring a committed source does not create a dirty draft.
+do
+ local ctx,log,song,instrument,phrase,_,source=fixture()
+ cache.clear(song,instrument,phrase,ctx:draft_options())
+ local restored=values(copy_edit(source,7));restored.restore=true
+ ctx:transition('programmatic',restored)
+ assert(cache.get(song,instrument,phrase,ctx:draft_options())==nil)
+ ctx:bind_new(instrument)
+ assert(cache.get(song,instrument,phrase,ctx:draft_options())==nil,'clean navigation created a draft')
+ assert(log.sinks==0,'restoring source generated music')
+end
+
+-- Armed edits enter the runtime scheduler immediately.
+do
+ local ctx,log,_,_,_,_,source=fixture(true)
+ ctx:transition('arm')
+ local changed=values(copy_edit(source,7))
+ local _,effects=ctx:transition('edit',changed)
+ assert(effects.live_intent and effects.accepted==true and log.sinks==1,
+   'armed edit bypassed the runtime scheduler')
+end
+
+-- Disarming drops only pending Live Edit; manual intent remains queued.
+do
+ local ctx,log,_,_,_,_,source=fixture(true)
+ ctx:transition('arm')
+ ctx:transition('edit',values(copy_edit(source,7)))
+ local live=log.requests[1]
+ ctx:request_generation('manual')
+ assert(ctx:generation_state().pending,'manual intent was not queued')
+ ctx:transition('disarm')
+ ctx:transition('edit',values(copy_edit(source,8)))
+ assert(not live.token:is_current() and log.sinks==1)
+ log.done[1]({kind='failure',status='cancelled',verified=false,reason='cancel',
+   token=live.token,epoch=live.epoch,request=live})
+ ctx:flush_pending()
+ assert(log.sinks==2 and log.requests[2].trigger=='manual',
+   'disarming Live Edit discarded or ran an independent manual request')
+end
+
+-- Verified success adopts the writer baseline; unverified success cannot.
+do
+ local ctx,log,song,instrument,phrase,_,source=fixture()
+ assert(ctx:request_generation('manual'))
+ local request=log.requests[1]
+ log.done[1]({kind='success',status='committed',verified=true,token=request.token,
+   epoch=request.epoch,request=request,phrase=phrase,baseline=request.baseline})
+ assert(ctx:generation_state().last_commit,'verified success was not recorded')
+ assert(ctx:target_state().kind=='owned' and ctx:request_generation('manual'),
+   'adopted baseline did not support the next request')
+ local second=log.requests[2]
+ log.done[2]({kind='success',status='committed',verified=false,token=second.token,
+   epoch=second.epoch,request=second,phrase=phrase,baseline=second.baseline})
+ assert(log.requests[2].token:is_current()==false)
+end
+
+-- A terminal tagged integrity_blocked is never adopted as clean success.
+do
+ local ctx,log,_,_,phrase,_,_=fixture()
+ assert(ctx:request_generation('manual'))
+ local request=log.requests[1]
+ log.done[1]({kind='success',status='committed',verified=true,integrity_blocked=true,
+   token=request.token,epoch=request.epoch,request=request,phrase=phrase,
+   baseline=request.baseline,message='recovery material retained'})
+ local state=ctx:generation_state()
+ assert(state.last_result and state.last_result.kind=='failure' and not state.last_commit,
+   'integrity-blocked success was adopted as a clean commit')
+end
+
+-- Rapid Live Edits keep one latest pending request while the writer is busy.
+do
+ local ctx,log,_,_,_,_,source=fixture(true)
+ ctx:transition('arm')
+ ctx:transition('edit',values(copy_edit(source,7)))
+ assert(log.sinks==1)
+ local first_token=log.requests[1].token
+ ctx:transition('edit',values(copy_edit(source,8)))
+ ctx:transition('edit',values(copy_edit(source,9)))
+ assert(log.sinks==1 and not first_token:is_current(),'newer edits did not supersede the active request')
+ local state=ctx:generation_state()
+ assert(state.pending and state.status=='DIRTY','latest Live Edit was not retained as pending')
+ log.done[1]({kind='failure',status='cancelled',verified=false,reason='test cancel',
+   token=first_token,epoch=log.requests[1].epoch,request=log.requests[1]})
+ ctx:flush_pending()
+ assert(log.sinks==2,'pending Live Edit did not dispatch after terminal completion')
+ assert(log.requests[2].source.pitch_events[1].note==seq.BASE_NOTE+9,
+   'pending dispatch did not capture the latest source')
+end
+
 -- Owned navigation preserves drafts without generating music.
 do
  local ctx,log,song,instrument,phrase,other=fixture()

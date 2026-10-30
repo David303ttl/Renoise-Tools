@@ -52,12 +52,13 @@ assert(instrument.phrase_playback_mode == renoise.Instrument.PHRASES_PLAY_SELECT
 -- The terminal must use ACID's module context; never replace another tool's cached modules.
 local old_path = package.path
 package.path = root .. "/com.david303ttl.ACID.xrnx/?.lua;" .. old_path
-local loaded, writer, sequencer = pcall(function()
-  return require("writers.phrase_writer"), require("model.sequencer")
+local loaded, writer, sequencer, runtime_context, policies = pcall(function()
+  return require("writers.phrase_writer"), require("model.sequencer"),
+    require("runtime.context"), require("model.policies")
 end)
 package.path = old_path
 assert(loaded, writer)
-local writer_provenance = provenance.describe(root, writer.generate, "writers/phrase_writer.lua")
+local writer_provenance = provenance.describe(root, writer.create, "writers/phrase_writer.lua")
 local sequencer_provenance = provenance.describe(root, sequencer.new_pattern, "model/sequencer.lua")
 local source = selected.source
 local pattern = sequencer.new_pattern(source.length)
@@ -132,13 +133,32 @@ if set_index > 0 then
     end
   end
 end
-local target = #instrument.phrases + 1
-local ok, reason = writer.generate(instrument_index, function(result)
+local pb_range = policies.DEFAULT_PB_RANGE
+local runtime = runtime_context.new({
+  writer = writer,
+  capture = function() return nil, "No editor source" end,
+  sink = function(request, done)
+    if request.kind == "create" then return writer.create(request, done) end
+    if request.kind == "regenerate" then return writer.regenerate(request, done) end
+    return false, "Request has no explicit writer operation"
+  end,
+  cancel = function(token, reason)
+    if type(writer.cancel) ~= "function" then return false end
+    return writer.cancel(token, reason)
+  end,
+})
+runtime:attach_document(song)
+runtime:open_dialog(function(result)
   if not output then return end
-  record("writer_status", type(result)=="table" and result.message or result)
-  if type(result)=="table" and result.kind=="complete" and
-      (result.status=="committed" or result.status=="approximate") then
-    local phrase = assert(instrument.phrases[target], "Generated phrase is missing")
+  record("writer_status", type(result) == "table" and result.message or result)
+  if type(result) == "table" and result.kind == "success" then
+    assert(result.verified == true, "Successful writer result was not verified")
+    local phrase = assert(result.phrase, "Writer success did not return its destination phrase")
+    local phrase_index
+    for index, candidate in ipairs(instrument.phrases) do
+      if rawequal(candidate, phrase) then phrase_index = index; break end
+    end
+    assert(phrase_index, "Generated phrase is missing")
     for _, key in ipairs({"name", "number_of_lines", "lpb", "looping", "loop_start", "loop_end"}) do
       record("phrase." .. key, phrase[key])
     end
@@ -148,28 +168,42 @@ local ok, reason = writer.generate(instrument_index, function(result)
         cell.volume_value, cell.panning_value, cell.delay_value,
         cell.effect_number_value, cell.effect_amount_value }, ","))
     end
-    instrument.phrase_program = target
-    record("selected_phrase_program", target)
+    instrument.phrase_program = phrase_index
+    record("selected_phrase_program", phrase_index)
     output:close()
     output = nil
     print("Writer phrase ready; metadata: tmp/acid-articulation/" .. output_name)
     print("Configure the host trigger duration separately, then capture without editing this phrase.")
-  elseif type(result)=="table" and result.kind=="complete" then
+  elseif type(result) == "table" and result.kind == "failure" then
     record("generation_result", "failed; do not capture")
+    if result.reason then record("diagnostic", result.reason) end
     output:close()
     output = nil
   end
-end, pattern, target, {output_policy=output_policy})
-if not ok then
-  -- A synchronous terminal callback may already have finalized the record.
-  if output then
-    record("generation_result", "refused")
-    record("diagnostic", reason)
-    output:close()
-    output = nil
-  end
-  print("Writer did not generate the case: " .. tostring(reason))
+end)
+runtime:bind_new(instrument)
+local editor_ok, editor_error = runtime:transition("edit",
+  {source = pattern, output_policy = output_policy, pb_range = pb_range})
+if not editor_ok then
+  record("generation_result", "refused")
+  record("diagnostic", editor_error)
+  output:close()
+  output = nil
+  print("Writer did not generate the case: " .. tostring(editor_error))
   print("Diagnostic record: tmp/acid-articulation/" .. output_name)
-elseif output then
-  record("generation_result", "pending; wait for writer_status generated before capture")
+else
+  local accepted, reason = runtime:request_generation("manual")
+  if not accepted then
+    -- A synchronous terminal callback may already have finalized the record.
+    if output then
+      record("generation_result", "refused")
+      record("diagnostic", reason)
+      output:close()
+      output = nil
+    end
+    print("Writer did not generate the case: " .. tostring(reason))
+    print("Diagnostic record: tmp/acid-articulation/" .. output_name)
+  elseif output then
+    record("generation_result", "pending; wait for writer_status generated before capture")
+  end
 end

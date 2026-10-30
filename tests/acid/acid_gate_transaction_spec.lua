@@ -17,14 +17,17 @@ local idle,committed=observable(),observable()
 local instrument={phrases={},samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""}}
 local contaminate=false
 local wrong_volume=nil
-local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed}
+local EMPTY_SCRIPT_DIAGNOSTIC="compile error: no script content present."
+local script={paragraphs={},compile_error='',runtime_error='',committed_observable=committed,
+  parameters={},pending_changes=0,editor_visible=true}
+local function make_script()
+  return setmetatable({paragraphs={},compile_error='',runtime_error='',parameters={},
+    pending_changes=0,editor_visible=true},{__index=script})
+end
 function script:commit()
-  local on_idle
-  on_idle=function()
-    idle:remove_notifier(on_idle)
-    committed:fire()
-  end
-  idle:add_notifier(on_idle)
+  self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
+  self.runtime_error=""
+  committed:fire()
 end
 function script:render_to_pattern(_,callback)
   local phrase=instrument.phrases[#instrument.phrases]
@@ -52,23 +55,31 @@ function script:render_to_pattern(_,callback)
   return true
 end
 local properties={'name','number_of_lines','lpb','playback_mode','looping',
-  'loop_start','loop_end','key_tracking','visible_note_columns','visible_effect_columns'}
+  'loop_start','loop_end','key_tracking','base_note','autoseek','visible_note_columns',
+  'visible_effect_columns','instrument_column_visible','volume_column_visible',
+  'panning_column_visible','delay_column_visible','sample_effects_column_visible'}
 function instrument:insert_phrase_at(index)
-  local phrase={name='',number_of_lines=16,visible_note_columns=1,
-    visible_effect_columns=0,looping=false,loop_start=1,loop_end=16,script=script,cells={}}
-  for line=1,257 do
+  local phrase={name='',number_of_lines=16,visible_note_columns=12,
+    visible_effect_columns=8,looping=false,loop_start=1,loop_end=16,lpb=16,shuffle=0,
+    playback_mode=1,key_tracking=1,base_note=48,autoseek=false,
+    instrument_column_visible=true,volume_column_visible=true,
+    panning_column_visible=true,delay_column_visible=true,
+    sample_effects_column_visible=true,mapping=nil,script=make_script(),cells={}}
+  for line=1,512 do
     phrase.cells[line]={note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
   end
   function phrase:line(line) return columns.line(self,line) end
   function phrase:column_is_muted() return false end
+  function phrase:column_name(line) return "column "..tostring(line) end
   function phrase:copy_from(other)
     columns.copy(self,other)
     for _,key in ipairs(properties) do self[key]=other[key] end
     self.cells={}
-    for line,cell in ipairs(other.cells) do
+    for line=1,512 do
+      local original=other.cells[line] or {}
       local copy={}
-      for key,value in pairs(cell) do copy[key]=value end
+      for key,value in pairs(original) do copy[key]=value end
       self.cells[line]=copy
     end
   end
@@ -82,6 +93,7 @@ _G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function()return song end,tool=function()return {app_idle_observable=idle} end}
 local writer=require('writers.phrase_writer')
+local writer_request=dofile('tests/acid/writer_request.lua')
 local seq=require('model.sequencer')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
 local store=require('renoise.pattern_store')
@@ -91,21 +103,27 @@ local function status_message(value)
   return type(value)=='table' and value.message or value
 end
 local function assert_complete(expected_status)
-  assert(type(status)=='table' and status.kind=='complete', 'missing typed terminal result')
+  assert(type(status)=='table' and (status.kind=='success' or status.kind=='failure'),
+    'missing typed terminal result')
   assert(status.status==expected_status,
     'expected '..expected_status..', got '..tostring(status.status)..': '..tostring(status.message))
 end
-local function generate(pattern,pb_range)
-  assert(writer.generate(1,function(value)status=value end,pattern,1,
-    {output_policy='play_once',pb_range=pb_range}))
+local function generate(pattern,pb_range,target)
+  local t0=os.clock()
+  local ok,rejection=writer_request.generate(writer,1,function(value)status=value end,pattern,
+    target or 1,{output_policy='play_once',pb_range=pb_range})
+  local t1=os.clock()
+  assert(ok,(rejection and rejection.message or "").." len="..tostring(pattern and pattern.length).." target="..tostring(target))
   for _=1,6 do idle:fire() end
+  local t2=os.clock()
+  io.write(string.format("[%.3f/%.3f] ",t1-t0,t2-t1));io.flush()
 end
 local pattern=seq.new_pattern(3)
 pattern.pitch_events[1]=pitch(48)
 pattern.pitch_events[2]=pitch(48)
 for i,command in ipairs({'N','T','T'}) do pattern.time_events[i]=command end
 local initial_options={output_policy='play_once',pb_range=12}
-assert(writer.generate(1,function(value)status=value end,pattern,1,initial_options))
+assert(writer_request.generate(writer,1,function(value)status=value end,pattern,1,initial_options))
 initial_options.pb_range=24
 for _=1,6 do idle:fire() end
 assert_complete('committed')
@@ -124,7 +142,7 @@ assert(initial_source and initial_policy=='play_once' and initial_pb_range==12,
 assert(initial_source.pitch_events[1].note==48 and pattern.pitch_events[1].note==48,
   'PB Range is not part of canonical PITCH/TIME source')
 local raw,name=song.tool_data,target.name
-local invalid_started,invalid_result=writer.generate(1,function()end,pattern,1,
+local invalid_started,invalid_result=writer_request.generate(writer,1,function()end,pattern,1,
   {output_policy='play_once',pb_range=4})
 assert(not invalid_started and invalid_result.code=='source.pb_range'
   and invalid_result.category=='source')
@@ -139,7 +157,7 @@ for i,command in ipairs({'N','N','T'}) do pattern.time_events[i]=command end
 pattern.pitch_events[1]=pitch(50)
 generate(pattern)
 store.commit=original_commit
-assert_complete('error')
+assert_complete('failed')
 assert(status_message(status):find('injected persistence failure',1,true),status.message)
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],target))
 assert(song.tool_data==raw and target.name==name and ownership.status(target)=='owned')
@@ -147,7 +165,7 @@ assert(target.cells[1].note_value==48 and target.cells[2].note_value==121)
 assert(target.cells[11].note_value==120)
 contaminate=true
 generate(pattern)
-assert_complete('error')
+assert_complete('failed')
 assert(status_message(status):find('Unexpected delay',1,true),status.message)
 assert(song.tool_data==raw and target.name==name and #instrument.phrases==1)
 contaminate=false
@@ -156,7 +174,7 @@ contaminate=false
 for _,volume in ipairs({0,90,128,255}) do
   wrong_volume=volume
   generate(pattern)
-  assert_complete('error')
+  assert_complete('failed')
   assert(status_message(status):find('Phrase volume mismatch',1,true),status.message)
   assert(song.tool_data==raw and target.name==name and #instrument.phrases==1)
   assert(rawequal(instrument.phrases[1],target) and ownership.status(target)=='owned')
@@ -180,11 +198,11 @@ store.load=function(target_song,target_instrument,phrase)
   local source,policy,pb_range=original_load(target_song,target_instrument,phrase)
   return source,policy,pb_range==12 and 24 or (pb_range==0 and 12 or pb_range)
 end
-assert(writer.generate(1,function(value)status=value end,pattern,1,
+assert(writer_request.generate(writer,1,function(value)status=value end,pattern,1,
   {output_policy='play_once',pb_range=12}))
 for _=1,6 do idle:fire() end
 store.load=original_load
-assert_complete('error')
+assert_complete('failed')
 assert(status_message(status):find('final phrase PB range verification failed',1,true),status.message)
 assert(song.tool_data==raw and target.name==name and #instrument.phrases==1
   and rawequal(instrument.phrases[1],target),
@@ -195,7 +213,7 @@ pattern.pitch_events[1].accent=true
 for _,volume in ipairs({0,89,128}) do
   wrong_volume=volume
   generate(pattern)
-  assert_complete('error')
+  assert_complete('failed')
   assert(status_message(status):find('Phrase volume mismatch',1,true),status.message)
   assert(song.tool_data==raw and target.name==name and #instrument.phrases==1)
   assert(target.cells[1].volume_value==89 and ownership.status(target)=='owned')
@@ -237,6 +255,7 @@ local target_layers={
   {samples={{sample_buffer={has_sample_data=true}}},plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""},plugin_loaded=true,midi_device='MIDI Capture'},
   {samples={},plugin_loaded=false,midi_device=''},
 }
+print('SECTION property')
 for target_index,layers in ipairs(target_layers) do
   instrument.samples=layers.samples
   instrument.plugin_properties={plugin_loaded=layers.plugin_loaded,
@@ -244,17 +263,22 @@ for target_index,layers in ipairs(target_layers) do
     midi_output_routing_index=0}
   instrument.midi_output_properties={device_name=layers.midi_device,
     instrument_type=1,channel=1}
+  local destination=target_index==1 and 1 or #instrument.phrases+1
   for _,length in ipairs(lengths) do
     local candidate=property_pattern(length)
-    generate(candidate)
+    io.write("P",target_index,":",length," ")
+    io.flush()
+    generate(candidate,nil,destination)
     assert(status.status=='committed' or status.status=='approximate',
       string.format('target %d length %d: %s',target_index,length,status.message))
-    assert(ownership.status(target)=='owned')
-    local saved,policy=store.load(song,instrument,target)
+    local destination_phrase=instrument.phrases[destination]
+    assert(ownership.status(destination_phrase)=='owned')
+    local saved,policy=store.load(song,instrument,destination_phrase)
     assert(saved and policy=='play_once' and saved.length==length)
-    assert(target.number_of_lines==length*4)
-    assert(#instrument.phrases==1,'writer left a staging or recovery phrase')
+    assert(destination_phrase.number_of_lines==length*4)
+    assert(#instrument.phrases==destination,'writer left a staging or recovery phrase')
   end
+  if target_index>1 then instrument:delete_phrase_at(destination) end
 end
 local intervals={1,-1,4,-4,12,-12,25,-25}
 local function pitch_at(note,accent,slide)
@@ -262,6 +286,7 @@ local function pitch_at(note,accent,slide)
   if note>48 then return seq.new_pitch(note-48,1,accent,slide) end
   return seq.new_pitch(note-36,0,accent,slide)
 end
+print('SECTION property')
 for target_index,layers in ipairs(target_layers) do
   instrument.samples=layers.samples
   instrument.plugin_properties={plugin_loaded=layers.plugin_loaded,
@@ -269,6 +294,7 @@ for target_index,layers in ipairs(target_layers) do
     midi_output_routing_index=0}
   instrument.midi_output_properties={device_name=layers.midi_device,
     instrument_type=1,channel=1}
+  local destination=target_index==1 and 1 or #instrument.phrases+1
   for _,interval in ipairs(intervals) do
     local candidate=seq.new_pattern(3)
     candidate.pitch_length=2
@@ -276,13 +302,14 @@ for target_index,layers in ipairs(target_layers) do
     candidate.pitch_events[1]=pitch_at(first_note,false,true)
     candidate.pitch_events[2]=pitch_at(first_note+interval,true,false)
     candidate.time_events[1],candidate.time_events[2],candidate.time_events[3]='N','N','T'
-    generate(candidate)
+    generate(candidate,nil,destination)
     assert(status.status=='committed' or status.status=='approximate',
       string.format('target %d interval %+d: %s',target_index,interval,status.message))
-    local saved=assert(store.load(song,instrument,target))
+    local saved=assert(store.load(song,instrument,instrument.phrases[destination]))
     assert(saved.pitch_events[2].note-saved.pitch_events[1].note==interval)
-    assert(#instrument.phrases==1,'extreme interval render left a staging phrase')
+    assert(#instrument.phrases==destination,'extreme interval render left a staging phrase')
   end
+  if target_index>1 then instrument:delete_phrase_at(destination) end
 end
 instrument.samples={{sample_buffer={has_sample_data=true}}}
 instrument.plugin_properties={plugin_loaded=false,alias_instrument_index=0,
@@ -293,16 +320,16 @@ wide_slide.pitch_length=2
 wide_slide.pitch_events[1]=seq.new_pitch(0,-1,false,false)
 wide_slide.pitch_events[2]=seq.new_pitch(12,1,false,true)
 wide_slide.time_events[1],wide_slide.time_events[2]='N','N'
-assert(writer.generate(1,function(value)status=value end,wide_slide,1,
+assert(writer_request.generate(writer,1,function(value)status=value end,wide_slide,1,
   {output_policy='repeat'}))
 for _=1,6 do idle:fire() end
 assert(status.status=='approximate',status.message)
 assert(target.cells[9].effect_number_string=='0G' and target.cells[9].effect_amount_value==255,
   'FF instant transition should retain the target pitch when normal glide duration cannot fit')
 local previous_name,previous_raw=target.name,song.tool_data
-local invalid_started,invalid_result=writer.generate(1,function()end,{},1,
+local invalid_started,invalid_result=writer_request.generate(writer,1,function()end,{},1,
   {output_policy='play_once'})
-assert(not invalid_started and invalid_result.kind=='complete'
+assert(not invalid_started and (invalid_result.kind=='success' or invalid_result.kind=='failure')
   and invalid_result.category=='source' and invalid_result.code=='source.invalid')
 assert(rawequal(instrument.phrases[1],target) and target.name==previous_name
   and song.tool_data==previous_raw)
@@ -327,7 +354,7 @@ for index,mutate in ipairs(capability_changes) do
   instrument.midi_output_properties={device_name='Connected Port',instrument_type=1,channel=1}
   instrument.phrase_playback_mode,instrument.phrase_program=1,1
   renoise.Midi={available_output_devices=function()return {'Connected Port'}end}
-  assert(writer.generate(1,function(value)status=value end,wide_slide,1,
+  assert(writer_request.generate(writer,1,function(value)status=value end,wide_slide,1,
     {output_policy='repeat'}))
   mutate()
   for _=1,6 do idle:fire() end

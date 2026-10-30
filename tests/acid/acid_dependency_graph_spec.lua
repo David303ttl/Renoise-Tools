@@ -168,10 +168,20 @@ end
 assert(files:close())
 assert(sources.main and sources["model.articulation"] and sources["writers.gate_writer"], "runtime inventory is incomplete")
 assert(sources["runtime.context"], "runtime context interface is missing")
+assert(not sources["runtime.legacy_writer_adapter"], "obsolete writer adapter remains")
+assert(not sources["model.live_regen"], "competing Live Edit scheduler remains")
+for name, source in pairs(sources) do
+  assert(not source:find("legacy_writer_adapter", 1, true), name .. " imports the obsolete writer adapter")
+  assert(not source:find("model.live_regen", 1, true), name .. " imports the obsolete scheduler")
+end
 validate(sources)
 dofile('tests/bootstrap.lua')('acid')
 local articulation = require("model.articulation")
 local gates = require("writers.gate_writer")
 assert(articulation.apply == nil, "articulation must expose planning only")
 assert(gates.apply == nil and gates.plan == nil and gates.location == nil, "gate writer must expose planned application only")
+local writer = require("writers.phrase_writer")
+assert(writer.generate == nil, "writer must not expose the positional generation API")
+assert(type(writer.create) == "function" and type(writer.regenerate) == "function",
+  "writer must expose explicit create and regenerate operations")
 print("acid_dependency_graph_spec: OK")

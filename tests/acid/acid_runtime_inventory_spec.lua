@@ -121,6 +121,18 @@ do
  assert(#assert(ctx:phrase_choices(other))==1)
  assert(not ctx:draft_options().validate(song,inst,a))
 end
+-- An explicit target choice supersedes native selection already observed at
+-- that instant; a later raw native pair still follows normally.
+do
+ local song,inst,a,b=fixture()
+ song.selected_instrument,song.selected_phrase=inst,a
+ local ctx=runtime(song)
+ song.selected_phrase=b
+ ctx:bind_new(inst)
+ assert(ctx:reconcile().kind=='new')
+ song.selected_phrase=a
+ assert(rawequal(ctx:reconcile().phrase,a))
+end
 print('ACID runtime object inventory and baseline projection passed')
 
 

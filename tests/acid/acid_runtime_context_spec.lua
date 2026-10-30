@@ -77,7 +77,7 @@ do
     record_blocker = true, integrity_state = true, revalidation_status = true,
     revalidate = true, transition = true, revision_state = true, editor_state = true,
     musical_eligibility = true, independence_eligibility = true, editor_recovery = true,
-    validate_checkpoint = true}
+    validate_checkpoint = true, flush_pending = true, generation_state = true}
   for key, value in pairs(ctx) do
     assert(allowed[key], "context exposes private field " .. tostring(key))
     assert(type(value) == "function")
@@ -321,6 +321,15 @@ do
   assert(log.captures == 1 and log.sink_calls == 1)
   assert(log.token:is_current() == false)
   assert(ctx:state().status == "idle" and ctx:state().diagnostic_count == 0)
+end
+
+-- A structured rejection reason is normalized to diagnostic text.
+do
+  local ctx = new_context{sink = function()
+    return false, {message = "structured rejection"}
+  end}
+  local accepted, reason = ctx:request_generation("trigger")
+  assert(accepted == false and reason == "structured rejection")
 end
 
 -- A literal rejection while the writer reports busy is a protocol violation,
