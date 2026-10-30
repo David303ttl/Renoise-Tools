@@ -99,6 +99,10 @@ local function run_cycle(pattern, state)
   return plan, exit
 end
 
+function M.validate_source(pattern)
+  return validate(pattern)
+end
+
 function M.compile_cycle(pattern, state)
   local ok, err = validate(pattern)
   if not ok then return nil, err end

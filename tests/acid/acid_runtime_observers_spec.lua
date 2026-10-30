@@ -69,10 +69,15 @@ function song:is_undo_redoing() return self.undoing end
 local depth=0
 local changes,dirty={},{}
 local runtime={busy=false,temporaries={}}
+runtime.inventory_proof=nil
 function runtime:mutation_state() return {depth=depth} end
 function runtime:mark_dirty(reason) dirty[#dirty+1]=reason end
 function runtime:occupancy_state() return {status=self.busy and "busy" or "idle"} end
 function runtime:is_temporary(owner,phrase) return self.temporaries[phrase]==owner end
+function runtime:matches_mutation_inventory(subject,kind)
+  local proof=self.inventory_proof
+  return proof~=nil and proof.subject==subject and proof.kind==kind
+end
 local observer=require("runtime.observers").new()
 observer:attach(song,runtime,function(kind,object,internal)
   changes[#changes+1]={kind=kind,object=object,internal=internal}
@@ -115,8 +120,10 @@ p1.lpb_observable:fire()
 p1._line_changes:fire()
 p1:column_name_observable(1):fire()
 p1:column_is_muted_observable(12):fire()
-assert(#changes==before_render_events,"busy writer staging phrase content must be filtered")
-assert(#dirty==0,"writer-owned async content must not invalidate its operation")
+p1.name_observable:fire()
+assert(#changes==before_render_events,
+  "busy writer staging phrase content and rename events must be filtered")
+assert(#dirty==0,"writer-owned async content and rename must not invalidate its operation")
 p2._line_changes:fire()
 assert(#changes==before_render_events+1 and changes[#changes].object==p2,
   "content events from non-temporary phrases must remain observable")
@@ -144,18 +151,31 @@ observer:refresh()
 assert(#dirty==2,"coalesced native changes should dirty the runtime once at idle")
 song.selected_phrase_observable:fire()
 assert(changes[#changes].kind=="selection" and changes[#changes].object==song)
+observer:refresh()
+assert(#dirty==2,"selection notifications must not dirty a same-bound generation")
+p2.lpb_observable:fire()
+observer:refresh()
+assert(#dirty==3,"content changes adjacent to selection must still dirty the runtime")
+runtime.inventory_proof={subject=i1,kind="phrase_mappings"}
 i1.phrase_mappings_observable:fire()
 assert(changes[#changes].kind=="inventory" and changes[#changes].object==i1,
-  "mapping list edits must dirty the native inventory")
+  "mapping list edits must report the native inventory change")
+observer:refresh()
+assert(#dirty==3,"an exact writer-owned mapping inventory notification must not dirty")
+runtime.inventory_proof={subject=i1,kind="phrases"}
+i1.phrase_mappings_observable:fire()
+observer:refresh()
+assert(#dirty==4,"an unmatched mapping inventory notification must remain external")
+runtime.inventory_proof=nil
 
 song.undoing=true
 p2.looping_observable:fire()
 assert(changes[#changes].kind=="undo","undo changes must be identified")
 p2._line_changes:fire()
 assert(changes[#changes].kind=="undo","line edits during undo must be identified")
-assert(#dirty==2,"undo notifier callbacks should defer runtime work")
+assert(#dirty==4,"undo notifier callbacks should defer runtime work")
 observer:refresh()
-assert(#dirty==3,"undo changes should be coalesced into one dirty transition")
+assert(#dirty==5,"undo changes should be coalesced into one dirty transition")
 song.undoing=false
 
 local old_count=listener_total()
@@ -201,5 +221,78 @@ observer:attach(song,runtime,function(kind) changes[#changes+1]={kind=kind} end)
 assert(listener_total()==attached_count,"repeated attach must not leak listeners")
 observer:detach()
 assert(listener_total()==0)
+
+-- Delayed native inventory notifications from revoked writer cleanup use the
+-- runtime's captured post-mutation identity proof. A later unrelated list
+-- change must still invalidate a current request through the same observer.
+do
+  local helper=dofile("tests/acid/runtime_phrase_fixture.lua")
+  local context=require("runtime.context")
+  local cleanup_song,cleanup_instrument=helper.fixture("existing")
+  cleanup_song.instruments_observable=observable()
+  cleanup_song.selected_instrument_observable=observable()
+  cleanup_song.selected_phrase_observable=observable()
+  cleanup_instrument.phrase_mappings={}
+  cleanup_instrument.phrases_observable=observable()
+  cleanup_instrument.phrase_mappings_observable=observable()
+  local request_count,first_done,first_request,second_request=0,nil,nil,nil
+  local writer={status="idle",temporary=nil}
+  function writer.state() return writer.status,nil end
+  function writer.is_temporary(_,_,candidate) return rawequal(candidate,writer.temporary) end
+  local runtime_context=context.new({writer=writer,
+    capture=function(_,token) return {token=token} end,
+    sink=function(request,done)
+      request_count=request_count+1
+      if request_count==1 then first_request,first_done=request,done else second_request=request end
+      return true
+    end})
+  runtime_context:attach_document(cleanup_song)
+  runtime_context:open_dialog()
+  assert(runtime_context:bind_new(cleanup_instrument))
+  local source=require("model.sequencer").new_pattern(4)
+  assert(runtime_context:transition("programmatic",{source=source,
+    output_policy="play_once",pb_range=0}))
+  local events=require("runtime.observers").new()
+  events:attach(cleanup_song,runtime_context)
+  assert(runtime_context:request_generation("manual"))
+  local revoked_request=assert(first_request)
+
+  local token=revoked_request.token
+  assert(runtime_context:revoke(token,"superseded by newer editor state"))
+  local staging=dofile("tests/acid/complete_phrase_fixture.lua")(helper.limits)
+  staging.name="ACID staging phrase"
+  cleanup_instrument.phrases[#cleanup_instrument.phrases+1]=staging
+  writer.temporary=staging
+  assert(revoked_request:cleanup_mutate(token,function()
+    for index,candidate in ipairs(cleanup_instrument.phrases) do
+      if rawequal(candidate,staging) then table.remove(cleanup_instrument.phrases,index);return true end
+    end
+    return false
+  end))
+  assert(not require("renoise.phrase_ownership").membership(cleanup_song,cleanup_instrument,staging),
+    "authorized cleanup retained the staging phrase")
+
+  local proof_matches,proof_reason=runtime_context:matches_mutation_inventory(cleanup_instrument,"phrases")
+  assert(proof_matches,"authorized cleanup inventory proof failed: "..tostring(proof_reason))
+  local cleanup_revision=runtime_context:revision_state().operation_serial
+  cleanup_instrument.phrases_observable:fire()
+  events:refresh()
+  assert(runtime_context:revision_state().operation_serial==cleanup_revision,
+    "the delayed cleanup inventory event was attributed as external")
+
+  assert(first_done({kind="failure",status="cancelled"}))
+  assert(runtime_context:request_generation("manual"))
+  local external={name="External phrase"}
+  cleanup_instrument.phrases[#cleanup_instrument.phrases+1]=external
+  cleanup_instrument.phrases_observable:fire()
+  events:refresh()
+  assert(not second_request:is_current(),
+    "an unrelated inventory mismatch did not revoke the current request")
+  table.remove(cleanup_instrument.phrases,#cleanup_instrument.phrases)
+  cleanup_instrument.phrases_observable:fire()
+  events:refresh()
+  events:detach()
+  runtime_context:release_document()
+end
 
 print("ACID runtime native observer lifecycle checks passed")

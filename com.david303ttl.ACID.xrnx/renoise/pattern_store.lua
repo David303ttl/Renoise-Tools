@@ -96,7 +96,7 @@ local function decode_source(item,is_draft,line_number)
     return nil,string.format("ACID source must store exactly %d pitches at line %d",sequencer.MAX_STEPS,line_number)
   end
   for step=1,sequencer.MAX_STEPS do pattern.time_events[step]=item.time:sub(step,step) end
-  local ok,err=interpreter.compile_cycle(pattern)
+  local ok,err=interpreter.validate_source(pattern)
   if not ok then return nil,(is_draft and "Invalid ACID draft source: " or "Invalid ACID source: ")..err end
   return pattern
 end
@@ -138,6 +138,40 @@ local function decode(raw)
   return entries,drafts
 end
 
+local decoded_raw,decoded_entries,decoded_drafts
+
+local function read_decoded(raw)
+  if decoded_entries and decoded_raw==raw then return decoded_entries,decoded_drafts end
+  decoded_raw,decoded_entries,decoded_drafts=nil,nil,nil
+  local entries,drafts=decode(raw)
+  if not entries then return nil,drafts end
+  decoded_raw,decoded_entries,decoded_drafts=raw,entries,drafts
+  return entries,drafts
+end
+
+local function copy_entry(item)
+  if not item then return nil end
+  local pattern,err=sequencer.copy_source(item.pattern)
+  if not pattern then return nil,err end
+  return {pattern=pattern,output_policy=item.output_policy,pb_range=item.pb_range}
+end
+
+local function copy_entries(entries)
+  local result={}
+  for id,item in pairs(entries) do
+    local copy,err=copy_entry(item)
+    if not copy then return nil,err end
+    result[id]=copy
+  end
+  return result
+end
+
+local function copy_map(source)
+  local result={}
+  for key,value in pairs(source) do result[key]=value end
+  return result
+end
+
 local function encode(entries,drafts)
   local lines={MAGIC}
   local ids={}
@@ -149,7 +183,7 @@ local function encode(entries,drafts)
   for _,id in ipairs(ids) do
     local item=entries[id]
     local pattern=item.pattern
-    local ok,err=interpreter.compile_cycle(pattern)
+    local ok,err=interpreter.validate_source(pattern)
     if not ok then return nil,"Invalid ACID source: "..err end
     if not policies.valid_output_policy(item.output_policy) then return nil,"invalid phrase output policy" end
     if not policies.valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
@@ -166,7 +200,7 @@ local function encode(entries,drafts)
       return nil,"invalid ACID draft destination"
     end
     local pattern=item.pattern
-    local ok,err=interpreter.compile_cycle(pattern)
+    local ok,err=interpreter.validate_source(pattern)
     if not ok then return nil,"Invalid ACID draft source: "..err end
     if not policies.valid_output_policy(item.output_policy) then return nil,"invalid ACID draft output policy" end
     if not policies.valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
@@ -179,9 +213,9 @@ end
 function M.read(song)
   local raw,err=raw_data(song)
   if raw==nil and err then return nil,err end
-  local entries,decode_error=decode(raw or "")
+  local entries,decode_error=read_decoded(raw or "")
   if not entries then return nil,decode_error end
-  return entries
+  return copy_entries(entries)
 end
 
 local function draft_key(instrument_index,phrase_id)
@@ -198,7 +232,7 @@ local function draft_target(song,instrument,phrase,entries)
   local ok,name=pcall(function() return instrument.name end)
   if not ok or type(name)~="string" then return nil,"Cannot inspect ACID draft instrument name" end
   if phrase~=nil then
-    local id,identity_error=ownership.validate_live(song,instrument,phrase)
+    local id,identity_error=ownership.validate_identity(song,instrument,phrase)
     if not id then return nil,identity_error end
     if not entries[id] then return nil,"ACID source missing from song data" end
     return index,id,name
@@ -229,7 +263,7 @@ function M.read_draft(song,instrument,phrase,...)
   if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   local raw,read_error=raw_data(song)
   if raw==nil and read_error then return nil,read_error end
-  local entries,drafts=decode(raw or "")
+  local entries,drafts=read_decoded(raw or "")
   if not entries then return nil,drafts end
   local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries)
   if not instrument_index then return nil,phrase_id end
@@ -250,8 +284,9 @@ end
 local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range,remove)
   local previous,read_error=raw_data(song)
   if previous==nil and read_error then return nil,read_error end
-  local entries,drafts=decode(previous or "")
+  local entries,drafts=read_decoded(previous or "")
   if not entries then return nil,drafts end
+  entries,drafts=copy_map(entries),copy_map(drafts)
   local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries)
   if not instrument_index then return nil,phrase_id end
   local key,err=draft_key(instrument_index,phrase_id)
@@ -270,13 +305,15 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
     if not found then return false end
     drafts[key]=nil
   else
-    local valid,validation_error=interpreter.compile_cycle(pattern)
+    local valid,validation_error=interpreter.validate_source(pattern)
     if not valid then return nil,validation_error end
     output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
     pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
     if not policies.valid_output_policy(output_policy) then return nil,"invalid phrase output policy" end
     if not policies.valid_pb_range(pb_range) then return nil,"invalid PB range" end
-    drafts[key]={pattern=pattern,output_policy=output_policy,pb_range=pb_range,
+    local stored_pattern,copy_error=sequencer.copy_source(pattern)
+    if not stored_pattern then return nil,copy_error end
+    drafts[key]={pattern=stored_pattern,output_policy=output_policy,pb_range=pb_range,
       instrument_name=tostring(instrument_name or ""),instrument_index=instrument_index,
       phrase_id=phrase_id}
   end
@@ -290,7 +327,10 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
   if verify_error then
     return nil,"ACID draft write outcome is uncertain; readback failed: "..verify_error
   end
-  if written==next_raw then return true end
+  if written==next_raw then
+    decoded_raw,decoded_entries,decoded_drafts=next_raw,entries,drafts
+    return true
+  end
   if written==previous then
     if not ok then
       return nil,"Could not save ACID draft; stored data is unchanged: "..tostring(write_error)
@@ -313,7 +353,7 @@ end
 function M.has_drafts(song)
   local raw,err=raw_data(song)
   if raw==nil and err then return nil,err end
-  local entries,drafts=decode(raw or "")
+  local entries,drafts=read_decoded(raw or "")
   if not entries then return nil,drafts end
   return next(drafts)~=nil
 end
@@ -543,11 +583,15 @@ end
 
 function M.read_entry(song,id)
   if not valid_id(id) then return nil,"invalid ACID phrase ID" end
-  local entries,err=M.read(song)
+  local raw,read_error=raw_data(song)
+  if raw==nil and read_error then return nil,read_error end
+  local entries,err=read_decoded(raw or "")
   if not entries then return nil,err end
   local entry=entries[id]
   if not entry then return nil,"ACID source missing from song data" end
-  return sequencer.copy_source(entry.pattern),entry.output_policy,entry.pb_range
+  local pattern,copy_error=sequencer.copy_source(entry.pattern)
+  if not pattern then return nil,copy_error end
+  return pattern,entry.output_policy,entry.pb_range
 end
 
 function M.load(song,instrument,phrase,...)

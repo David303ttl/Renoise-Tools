@@ -143,6 +143,13 @@ local line=a.line
 a.line=function()error("removed lines")end
 assert(own.inventory(song)[1][1].phrase==a,"name inventory must not hash phrase cells")
 assert(not store.load(song,first,a))
+local dirty_cell_draft=assert(store.read_draft(song,first,a))
+assert(dirty_cell_draft.length==4,
+  "draft reads must use unique identity without hashing edited phrase cells")
+assert(store.write_draft(song,first,a,dirty_cell_draft,"repeat",0),
+  "draft writes must remain available when native phrase cells are edited")
+assert(store.read_draft(song,first,a).length==4,
+  "draft persistence lost source while native phrase cells were edited")
 a.line=line
 
 assert(store.clear_draft(song,first,a))

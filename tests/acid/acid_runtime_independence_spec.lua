@@ -211,6 +211,26 @@ do
   assert(result.old_id==101 and ownership.id(selected)==result.id)
 end
 
+-- A durably saved draft survives a context restart and follows the selected
+-- object when a later ownership collision requires Make Independent.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  local outgoing=assert(seq.copy_source(source))
+  outgoing.pitch_events[1]=seq.new_pitch(9,0,false,false)
+  assert(ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true}))
+  assert(ctx:transition('edit',{source=outgoing,output_policy='play_once',pb_range=0}))
+  ctx:release_document()
+  local reopened=helper.runtime(song)
+  local restored=assert(reopened:restore_editor_target(instrument,selected))
+  assert(restored.draft and seq.same_source(restored.source,outgoing))
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local changed,result=reopened:make_independent()
+  assert(changed,result)
+  assert(seq.same_source(reopened:editor_state().source,outgoing),
+    'Make Independent lost the draft restored from durable storage')
+  assert(seq.same_source(assert(cache.get(song,instrument,selected,reopened:draft_options())),outgoing))
+end
+
 -- Failure after the ownership name changes rolls both metadata writes back exactly.
 do
   local ctx,song,_,selected,_,_,holders=setup(2)

@@ -326,6 +326,33 @@ local function find_response(responses, id)
   return nil
 end
 
+local function test_socket_callbacks_with_fresh_wrappers()
+  local host,driver=start_driver()
+  local client=new_client()
+  client.peer_address,client.peer_port="127.0.0.1",52123
+  client.local_address,client.local_port="127.0.0.1",51234
+  accept(host,client)
+  local wrapper=new_client()
+  wrapper.peer_address,wrapper.peer_port=client.peer_address,client.peer_port
+  wrapper.local_address,wrapper.local_port=client.local_address,client.local_port
+  send_request(host,wrapper,"wrapped-ping","ping")
+  local weak_wrapper=setmetatable({wrapper},{__mode="v"})
+  wrapper=nil
+  collectgarbage("collect")
+  assert(weak_wrapper[1],"live callback wrapper was not retained")
+  fire_idle(host)
+  assert(find_response(take_responses(client),"wrapped-ping").ok)
+  assert(not weak_wrapper[1].closed and not client.closed,"callback wrapper closed the live connection")
+  local foreign=new_client()
+  foreign.peer_address,foreign.peer_port=client.peer_address,client.peer_port+1
+  foreign.local_address,foreign.local_port=client.local_address,client.local_port
+  send_request(host,foreign,"foreign-ping","ping")
+  assert(foreign.closed and not client.closed,"another connection was accepted as the active client")
+  driver.stop()
+  collectgarbage("collect")
+  assert(not weak_wrapper[1],"stopped connection retained a callback wrapper")
+end
+
 local function test_configuration_and_admission()
   local invalid_configurations = {
     {"", "incomplete"},
@@ -985,7 +1012,15 @@ local function test_shutdown_records_completion_after_server_stop()
   local original_stop = host.server.stop
   function host.server:stop()
     client.is_open = false
+    client.closed = true
     return original_stop(self)
+  end
+  local close_calls=0
+  function client:close()
+    close_calls=close_calls+1
+    assert(self.is_open,"closed a socket already invalidated by server stop")
+    self.is_open=false
+    self.closed=true
   end
   local original_send = client.send
   function client:send(frame)
@@ -1002,6 +1037,7 @@ local function test_shutdown_records_completion_after_server_stop()
   assert_equal(host.unload:count(), 0)
   assert(host.stopped > 0)
   assert(client.closed)
+  assert_equal(close_calls,0)
   assert_equal(host.new_song_calls, 0)
   local marker_path = host.config_path .. "." .. nonce .. ".stopped"
   local marker = assert(io.open(marker_path, "rb"))
@@ -1242,6 +1278,7 @@ local function test_new_document_requires_preceding_release()
   driver.stop()
 end
 test_new_document_requires_preceding_release()
+test_socket_callbacks_with_fresh_wrappers()
 test_snapshot_encodes_optional_native_data_as_explicit_null()
 test_snapshot_captures_read_only_phrase_state_and_raw_song_bytes()
 test_snapshot_uses_values_with_fresh_host_wrappers()

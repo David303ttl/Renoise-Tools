@@ -146,6 +146,12 @@ function M.build(song,instrument_index,pattern,target_index,options)
   function request:cleanup_authorized(supplied)
     return rawequal(supplied,operation_token) and not request.settled
   end
+  function request:cleanup_mutate(supplied,action)
+    if not self:cleanup_authorized(supplied) or type(action)~='function' then
+      error('Cleanup mutation is not authorized',0)
+    end
+    return action()
+  end
   function request:record_blocker(_,evidence)
     request.blocker=evidence
     return true

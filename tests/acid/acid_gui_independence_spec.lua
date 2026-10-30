@@ -78,7 +78,8 @@ assert(ownership.compare(original_before,assert(ownership.snapshot(original))))
 assert(seq.same_source(assert(store.read_entry(song,fresh)),source))
 assert(independent.active==false,"a resolved unique target cannot be rekeyed again")
 assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
-  "resolution replaces the unavailable placeholder with committed source status")
+  "resolution replaces the unavailable placeholder with committed source status: "..
+    tostring(builder.views.acid_source_state.text))
 assert(builder.views.acid_program_key_popup.value==source.pitch_events[1].key+1,
   "the independent phrase projects its cloned source")
 assert(live.value and writes==0,"armed Make Independent never enters the musical writer")

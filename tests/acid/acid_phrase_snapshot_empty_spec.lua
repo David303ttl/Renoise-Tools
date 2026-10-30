@@ -55,6 +55,52 @@ assert(snapshot.lines[1].effects[2].number_value==257 and snapshot.lines[1].effe
 assert(note_reads==7 and effect_reads==2,
   "empty hidden columns read cell fields: "..note_reads.." note, "..effect_reads.." effect")
 
+local limits={max_lines=2,max_note_columns=3,max_effect_columns=2}
+local index=assert(ownership.snapshot_index(snapshot,limits))
+index.empty_lines={[1]=true,[2]=true}
+index.empty_notes={[1]={[1]=true,[2]=true,[3]=true}}
+index.empty_effects={[1]={[1]=true,[2]=true}}
+note_reads,effect_reads=0,0
+assert(ownership.matches_snapshot(phrase,snapshot,limits,index))
+assert(note_reads==7 and effect_reads==2,
+  "native exact match did not skip canonical empty cells")
+local reduced_limits={max_lines=2,max_note_columns=2,max_effect_columns=2}
+local capacity_match=ownership.matches_snapshot(phrase,snapshot,reduced_limits,index)
+assert(capacity_match==false,"native matching must reject capacity changes")
+hidden_note.panning_value=43
+local native_match=ownership.matches_snapshot(phrase,snapshot,limits,index)
+assert(native_match==false,"native exact match missed hidden note data")
+hidden_note.panning_value=42
+local hidden_line={is_empty=false}
+function hidden_line:note_column(column)
+  if column==1 then return cell({is_empty=false,note_value=60,instrument_value=255,
+    volume_value=255,panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0},"note") end
+  return empty_note
+end
+function hidden_line:effect_column() return empty_effect end
+local original_line=phrase.line
+function phrase:line(index) return index==2 and hidden_line or original_line(self,index) end
+native_match=ownership.matches_snapshot(phrase,snapshot,limits,index)
+assert(native_match==false,"native exact match missed data in an inactive line")
+phrase.line=original_line
+
+phrase.script.paragraphs={"return 1"}
+local scripted=assert(ownership.snapshot(phrase,limits))
+local scripted_index=assert(ownership.snapshot_index(scripted,limits))
+phrase.script.paragraphs[1]="return 2"
+native_match=ownership.matches_snapshot(phrase,scripted,limits,scripted_index)
+assert(native_match==false,"native exact match missed phrase script edits")
+phrase.script.paragraphs={}
+
+phrase.mapping={key_tracking=1,base_note=48,loop_start=1,loop_end=2,looping=false,
+  note_range={0,119}}
+local mapped=assert(ownership.snapshot(phrase,limits))
+local mapped_index=assert(ownership.snapshot_index(mapped,limits))
+phrase.mapping.note_range[1]=1
+native_match=ownership.matches_snapshot(phrase,mapped,limits,mapped_index)
+assert(native_match==false,"native exact match missed mapping edits")
+phrase.mapping=nil
+
 local copied=assert(ownership.copy_snapshot(snapshot))
 assert(ownership.compare(snapshot,copied))
 copied.name="changed"

@@ -5,12 +5,12 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 | Check | Result |
 | --- | --- |
 | Full offline runner | PASS: 18 groups; final Lua rerun 67/67; deterministic audio/oracle checks pass |
-| Editor responsiveness | PASS: 32-step/128-line phrase; five edits average 72.18 ms, maximum 92.72 ms; 160 cached reads 1.54 ms with zero snapshots; hidden/inactive cells and fresh-write rejection verified; `interactive-d3dab6b69a6543459a6503a234270886` |
-| Native and keyboard suite | PASS: transport, both inventory scenarios, real ACID shortcut, Escape and native instrument navigation; `interactive-bd635dc407e543e882b360365d0f16d2` |
-| Make Independent round trip | PASS: native identity/source preservation, same-object regeneration, save/reload and reopened regeneration; `interactive-1bbe975d4f5140b3a9999b622ecf80c9` |
-| Draft Recovery | PASS: native recovery copy/discard and preserved drafts; `interactive-3ca8f52c74b64685aed146051a8951f4` |
-| Integrity and column observers | PASS: post-commit adoption blocker, explicit revalidation, fresh commit, idle/busy column metadata notifications and detach; `interactive-55d891085a5c4f60b28e8f5e870037ff` |
-| Deferred test-driver startup | PASS: idle-only socket startup, unload cancellation and three fresh native integrity runs; normal Renoise session preserved |
+| Editor responsiveness | PASS: 30 UI actions below 30 ms; note/octave/command maxima 1.66/1.72/1.92 ms; armed/busy edits 3.89/28.22 ms with latest-note commit; clean edits perform no native cell scans or seal hashes; cold phrase validation 59.48 ms; `interactive-b0e25d94064c43f0a7f4f5f40ae9c6b3` |
+| Native and keyboard suite | PASS: transport, both inventory scenarios, real ACID shortcut, Escape and native instrument navigation; `interactive-8d3b6767f79c4cf5816a609adc228a07` |
+| Make Independent round trip | PASS: native identity/source preservation, same-object regeneration, save/reload and reopened regeneration; `interactive-6506582d68a141a6b0f1a421455bf238` |
+| Draft Recovery | PASS: native recovery copy/discard and preserved drafts; `interactive-03a224e4971d48d6a8e8f39517157337` |
+| Integrity and column observers | PASS: post-commit adoption blocker, explicit revalidation, fresh commit, idle/busy column metadata notifications and detach; `interactive-6b9b6691929a4e07af6588492a43c294` |
+| Test-driver startup | PASS: idle-only startup, unload cancellation, bounded read-only handshake reconnect, local TCP regression and fresh native smoke; `interactive-d07c3207b0014ace897f3fc407640826` |
 | Offline preflight, transport and runner regressions | PASS |
 | Fresh-launch Native smoke | PASS: handshake, document reset, stable inventory, driver shutdown and installation restoration |
 | Selected-PID Native smoke with a concurrent instance | PASS: target startup resumed after deployment; both instances remained open; original installation restored |

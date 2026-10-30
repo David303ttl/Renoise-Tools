@@ -5,7 +5,6 @@ local sequencer=require("model.sequencer")
 local policies=require("model.policies")
 local editor=require("model.editor_state")
 local drafts=require("runtime.draft_cache")
-local store=require("renoise.pattern_store")
 local ownership=require("renoise.phrase_ownership")
 local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
@@ -193,9 +192,38 @@ function M.show()
   end
   local update_live_state
   local update_actions
+  local render
+  local rendered=setmetatable({},{__mode="k"})
+  local function same_render_value(left,right)
+    local left_type,right_type=type(left),type(right)
+    if left_type=="table" or left_type=="userdata" or
+        right_type=="table" or right_type=="userdata" then
+      if rawequal(left,right) then return true end
+    elseif left==right then return true end
+    if type(left)~="table" or type(right)~="table" then return false end
+    local length=#right
+    if #left~=length then return false end
+    for index=1,length do if left[index]~=right[index] then return false end end
+    local keys=0
+    for key in pairs(left) do
+      if type(key)~="number" or key<1 or key>length or key%1~=0 then return false end
+      keys=keys+1
+    end
+    return keys==length
+  end
+  local function retain_render_value(value)
+    if type(value)~="table" then return value end
+    local copy={}
+    for key,item in pairs(value) do copy[key]=item end
+    return copy
+  end
   local function save_draft(kind)
-    runtime:transition(kind or "edit",{source=pattern,output_policy=output_policy,pb_range=pb_range})
-    source_state.text="SOURCE DIRTY: Generate to apply this draft."
+    local transitioned,transition_error=runtime:transition(kind or "edit",{
+      source=pattern,output_policy=output_policy,pb_range=pb_range})
+    if not transitioned then
+      return false,transition_error or "Editor state transition failed"
+    end
+    render(source_state,"text","SOURCE DIRTY: Generate to apply this draft.")
     if not bound_instrument() then return true end
     local state=runtime:editor_state()
     return state and not state.draft_warning,state and state.draft_warning
@@ -219,123 +247,152 @@ function M.show()
       index>pattern.pitch_length and " [inactive]" or "",
       p.accent and " A" or "",p.slide and " S" or "")
   end
+  render=function(view,property,value)
+    if property~="value" and not (rawequal(view,status) and property=="text") then
+      local cache=rendered[view]
+      if cache then
+        local previous=cache[property]
+        if previous~=nil then
+          if same_render_value(previous,value) then return end
+          view[property]=value
+          cache[property]=retain_render_value(value)
+          return
+        end
+      else
+        cache={};rendered[view]=cache
+      end
+    end
+    local current=view[property]
+    local equal=same_render_value(current,value)
+    if not equal then view[property]=value end
+    if property~="value" and not (rawequal(view,status) and property=="text") then
+      local cache=rendered[view]
+      if not cache then cache={};rendered[view]=cache end
+      cache[property]=retain_render_value(value)
+    end
+  end
   update=function()
     updating=true
     local projection=project()
-    view_heading.text=editor_view==1 and "PROGRAM VIEW" or "GRID VIEW"
-    view_hint.text=editor_view==1 and
+    render(view_heading,"text",editor_view==1 and "PROGRAM VIEW" or "GRID VIEW")
+    render(view_hint,"text",editor_view==1 and
       "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
-      "Edit sixteen PITCH positions and TIME steps directly across two pages (01–32)."
-    if program_panel then program_panel.visible=editor_view==1 end
-    if grid_panel then grid_panel.visible=editor_view==2 end
-    pitch_length_popup.value=pattern.pitch_length or sequencer.PAGE_SIZE
-    pitch_length_popup.active=true
-    timing_popup.value=pattern.timing_mode=="triplet" and 2 or 1
-    step_division.text=pattern.timing_mode=="triplet" and
+      "Edit sixteen PITCH positions and TIME steps directly across two pages (01–32).")
+    if program_panel then render(program_panel,"visible",editor_view==1) end
+    if grid_panel then render(grid_panel,"visible",editor_view==2) end
+    render(pitch_length_popup,"value",pattern.pitch_length or sequencer.PAGE_SIZE)
+    render(pitch_length_popup,"active",true)
+    render(timing_popup,"value",pattern.timing_mode=="triplet" and 2 or 1)
+    render(step_division,"text",pattern.timing_mode=="triplet" and
       string.format("1/8 triplet; cycle %d/3 beats",pattern.length) or
-      string.format("1/16 straight; cycle %d/4 beats",pattern.length)
-    playback_popup.value=output_policy=="play_once" and 1 or 2
-    playback_popup.active=true
+      string.format("1/16 straight; cycle %d/4 beats",pattern.length))
+    render(playback_popup,"value",output_policy=="play_once" and 1 or 2)
+    render(playback_popup,"active",true)
     for index,value in ipairs(pb_range_values) do
-      if value==pb_range then pb_range_popup.value=index;break end
+      if value==pb_range then render(pb_range_popup,"value",index);break end
     end
-    pb_range_popup.active=true
-    if undo_button then undo_button.active=history:can_undo() end
-    if redo_button then redo_button.active=history:can_redo() end
-    preview_popup.value=preview_cycle
-    preview_popup.active=true
-    last_step_box.value=pattern.length
-    last_step_box.active=true
-    for page=1,editor.MAX_PAGES do
-      local first=(page-1)*sequencer.PAGE_SIZE+1
-      local last=math.min(page*sequencer.PAGE_SIZE,pattern.length)
-      pitch_page_buttons[page].text=string.format("P %02d-%02d%s",
-        first,page*sequencer.PAGE_SIZE,page==pitch_page and " [*]" or "")
-      time_page_buttons[page].text=string.format("T %02d-%02d%s",
-        first,page*sequencer.PAGE_SIZE,page==time_page and " [*]" or "")
-      time_page_buttons[page].active=first<=pattern.length
+    render(pb_range_popup,"active",true)
+    if undo_button then render(undo_button,"active",history:can_undo()) end
+    if redo_button then render(redo_button,"active",history:can_redo()) end
+    render(preview_popup,"value",preview_cycle)
+    render(preview_popup,"active",true)
+    render(last_step_box,"value",pattern.length)
+    render(last_step_box,"active",true)
+    if editor_view==2 then
+      for page=1,editor.MAX_PAGES do
+        local first=(page-1)*sequencer.PAGE_SIZE+1
+        render(pitch_page_buttons[page],"text",string.format("P %02d-%02d%s",
+          first,page*sequencer.PAGE_SIZE,page==pitch_page and " [*]" or ""))
+        render(time_page_buttons[page],"text",string.format("T %02d-%02d%s",
+          first,page*sequencer.PAGE_SIZE,page==time_page and " [*]" or ""))
+        render(time_page_buttons[page],"active",first<=pattern.length)
+      end
     end
-    for cell=1,sequencer.PAGE_SIZE do
+    if editor_view==2 then for cell=1,sequencer.PAGE_SIZE do
       local i=editor.index_on_page(pitch_page,cell)
       local p=pitch_at(i)
       local b=pitch_cells[cell]
-      b.active=true
-      b.text=view_label(i,p,projection)
-      b.color=i==selected_pitch and colors.selected
-        or (projection.used[i] and colors.used or colors.idle)
+      render(b,"active",true)
+      render(b,"text",view_label(i,p,projection))
+      render(b,"color",i==selected_pitch and colors.selected
+        or (projection.used[i] and colors.used or colors.idle))
       local step=editor.index_on_page(time_page,cell)
       local time=time_cells[cell]
       local time_header=time_headers[cell]
       local preview=preview_cells[cell]
       if step<=pattern.length then
         local cmd=pattern.time_events[step]
-        time.active=true
-        time.value=cmd=="N" and 1 or cmd=="T" and 2 or 3
-        time_header.active=true
-        time_header.text=string.format("STEP %02d",step)
-        time_header.color=projection.error and projection.error.step==step
+        render(time,"active",true)
+        render(time,"value",cmd=="N" and 1 or cmd=="T" and 2 or 3)
+        render(time_header,"active",true)
+        render(time_header,"text",string.format("STEP %02d",step))
+        render(time_header,"color",projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
-          or (cmd=="N" and colors.note or cmd=="T" and colors.tie or colors.rest)
-        preview.text=string.format("%02d %s",step,editor.step_text(projection,step,preview_cycle))
-        preview.color=projection.error and projection.error.step==step
+          or (cmd=="N" and colors.note or cmd=="T" and colors.tie or colors.rest))
+        render(preview,"text",string.format("%02d %s",step,editor.step_text(projection,step,preview_cycle)))
+        render(preview,"color",projection.error and projection.error.step==step
           and colors.warning or (step==selected_step and colors.selected)
-          or colors.idle
+          or colors.idle)
       else
-        time.active=false
-        time.value=3
-        time_header.active=false
-        time_header.text="--"
-        time_header.color=colors.idle
-        preview.text=""
-        preview.color=colors.idle
+        render(time,"active",false)
+        render(time,"value",3)
+        render(time_header,"active",false)
+        render(time_header,"text","--")
+        render(time_header,"color",colors.idle)
+        render(preview,"text","")
+        render(preview,"color",colors.idle)
       end
+    end end
+    if editor_view==2 then
+      render(key_popup,"active",true)
+      render(octave_popup,"active",true)
+      render(accent,"active",true)
+      render(slide,"active",true)
     end
-    key_popup.active=true
-    octave_popup.active=true
-    accent.active=true
-    slide.active=true
     local p=pitch_at(selected_pitch)
     local key,octave=sequencer.pitch_controls(p)
-    key_popup.value=(key or 0)+1
-    octave_popup.value=(octave or 0)+2
-    accent.value=p.accent==true
-    slide.value=p.slide==true
-    if program_pitch_popup then
-      program_pitch_popup.value=selected_pitch
-      program_time_popup.value=selected_step
+    if editor_view==2 then
+      render(key_popup,"value",(key or 0)+1)
+      render(octave_popup,"value",(octave or 0)+2)
+      render(accent,"value",p.accent==true)
+      render(slide,"value",p.slide==true)
+    end
+    if program_pitch_popup and editor_view==1 then
+      render(program_pitch_popup,"value",selected_pitch)
+      render(program_time_popup,"value",selected_step)
       local command=pattern.time_events[selected_step]
-      program_time_command.value=command=="N" and 1 or command=="T" and 2 or 3
-      program_time_command.active=selected_step<=pattern.length
-      program_pitch_summary.text=view_label(selected_pitch,p,projection)
-      program_time_summary.text=string.format("%s  %s",
+      render(program_time_command,"value",command=="N" and 1 or command=="T" and 2 or 3)
+      render(program_time_command,"active",selected_step<=pattern.length)
+      render(program_pitch_summary,"text",view_label(selected_pitch,p,projection))
+      render(program_time_summary,"text",string.format("%s  %s",
         selected_step<=pattern.length and "ACTIVE" or "OUTSIDE LAST STEP",
-        editor.step_text(projection,selected_step,preview_cycle))
-      program_key_popup.value=(key or 0)+1
-      program_octave_popup.value=(octave or 0)+2
-      program_accent.value=p.accent==true
-      program_slide.value=p.slide==true
+        editor.step_text(projection,selected_step,preview_cycle)))
+      render(program_key_popup,"value",(key or 0)+1)
+      render(program_octave_popup,"value",(octave or 0)+2)
+      render(program_accent,"value",p.accent==true)
+      render(program_slide,"value",p.slide==true)
     end
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
-    summary.text=string.format(
+    render(summary,"text",string.format(
       "STEPS %d/32   |   NOTE triggers %d   |   PITCH active %d, stored %d, used %d",
-      pattern.length,projection.note_count,pattern.pitch_length,#pattern.pitch_events,count)
+      pattern.length,projection.note_count,pattern.pitch_length,#pattern.pitch_events,count))
     local pitch_usage=projection.used[selected_pitch] and "USED" or "UNUSED"
-    map_text.text=string.format("TIME %02d Start: %s  |  Repeating: %s  |  PITCH P%02d: %s",
+    render(map_text,"text",string.format("TIME %02d Start: %s  |  Repeating: %s  |  PITCH P%02d: %s",
       selected_step,editor.step_text(projection,selected_step,1),
       editor.step_text(projection,selected_step,2),
-      selected_pitch,pitch_usage)
+      selected_pitch,pitch_usage))
     local plan=projection.plan
     local error_info=projection.error
     if error_info then
-      diagnostic.text="ERROR: "..error_info.message..
+      render(diagnostic,"text","ERROR: "..error_info.message..
         (error_info.step and "  [TIME "..error_info.step.."]" or "")..
-        (error_info.pitch_index and "  [PITCH "..error_info.pitch_index.."]" or "")
-      if diagnostic_jump then diagnostic_jump.active=true end
+        (error_info.pitch_index and "  [PITCH "..error_info.pitch_index.."]" or ""))
+      if diagnostic_jump then render(diagnostic_jump,"active",true) end
     else
-      diagnostic.text=string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
-        plan.note_count,step_division.text)
-      if diagnostic_jump then diagnostic_jump.active=false end
+      render(diagnostic,"text",string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
+        plan.note_count,step_division.text))
+      if diagnostic_jump then render(diagnostic_jump,"active",false) end
     end
     updating=false
   end
@@ -385,17 +442,17 @@ function M.show()
     if not history:record(pattern,output_policy,pb_range) then update();return end
     local saved,save_error=save_draft(request_live==false and "reset" or "edit")
     update()
-    update_live_state()
+    update_live_state(saved==true)
     local state=runtime:generation_state()
     if state.armed and request_live~=false then
       if state.pending or state.busy then
-        status.text=state.pending and "LIVE EDIT RENDERING: applying the latest edit next."
-          or "LIVE EDIT RENDERING: applying edits."
+        render(status,"text",state.pending and "LIVE EDIT RENDERING: applying the latest edit next."
+          or "LIVE EDIT RENDERING: applying edits.")
       end
-      if not saved then status.text=status.text.."\nDRAFT WARNING: "..tostring(save_error) end
+      if not saved then render(status,"text",status.text.."\nDRAFT WARNING: "..tostring(save_error)) end
     else
-      status.text=saved and "Draft saved; Generate applies it, or enable Live Edit for subsequent edits."
-        or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error))
+      render(status,"text",saved and "Draft saved; Generate applies it, or enable Live Edit for subsequent edits."
+        or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error)))
     end
   end
   timing_popup:add_notifier(function(value)
@@ -586,8 +643,10 @@ function M.show()
     local names,targets={},{}
     for _,choice in ipairs(choices) do
       if choice.kind~="new" then
+        local ok,id=pcall(ownership.id,choice.phrase)
+        local identity=ok and id and "ACID" or "foreign"
         names[#names+1]=string.format("%02d: %s (%s)",choice.phrase_index,
-          choice.phrase_name,ownership.status(choice.phrase))
+          choice.phrase_name,identity)
         targets[#targets+1]=choice.phrase
       end
     end
@@ -595,45 +654,48 @@ function M.show()
     targets[#targets+1]=false
     return names,targets
   end
-  local function load_target(index)
+  local function load_target(index,native_selection)
     local instrument=instrument_targets[selected_instrument]
     local target=phrase_targets[index]
-    if target then runtime:bind_phrase(instrument,target)
-    else runtime:bind_new(instrument) end
-    local target_index=destination().phrase_index
+    if target==nil then return end
+    local is_new=target==false
+    local requested_phrase
+    if not is_new then requested_phrase=target end
+    local restored,restore_error=runtime:restore_editor_target(instrument,requested_phrase,
+      native_selection==true)
+    local target_state=restored and restored.target or nil
+    local target_index=target_state and target_state.phrase_index
     local source_available=false
-    if target and target_index then
-      local source,output_policy_or_error,stored_pb_range=
-        store.load(song,instrument,target)
-      if source then
-        source_available=true
-        pattern=source
-        output_policy=output_policy_or_error
-        pb_range=stored_pb_range or policies.DEFAULT_PB_RANGE
-        selected_pitch=1;selected_step=1
-        pitch_page=1;time_page=1
+    if restored and type(restored.source)=="table" then
+      pattern=restored.source
+      output_policy=restored.output_policy
+      pb_range=restored.pb_range or policies.DEFAULT_PB_RANGE
+      source_available=restored.source_available==true
+      selected_pitch=1;selected_step=1
+      pitch_page=1;time_page=1
+      if restored.draft then
+        status.text="Recovered saved draft. Generate or edit the source to apply it."
+      elseif restored.draft_error then
+        status.text="DRAFT RECOVERY ERROR: "..tostring(restored.draft_error)..
+          "; existing phrase output is protected."
+      elseif is_new then
+        status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
+      elseif source_available and target_index then
         status.text=string.format("Restored ACID source for phrase %02d.",target_index)
       else
-        reset_source()
-        status.text="Source unavailable: "..tostring(output_policy_or_error)..
+        status.text="Source unavailable: "..tostring(restored.reason or "No verified source")..
           " | choose a new phrase; existing audio is protected."
       end
+      render(source_state,"text",(restored.draft or is_new) and
+        "SOURCE DIRTY: Generate to apply this draft." or
+        (source_available and "SOURCE COMMITTED" or "SOURCE UNAVAILABLE"))
     else
       reset_source()
-      status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
+      status.text="Source unavailable: "..tostring(restore_error or "Cannot restore editor target")..
+        " | choose a new phrase; existing audio is protected."
+      render(source_state,"text",is_new and "SOURCE DIRTY: Generate to apply this draft." or
+        "SOURCE UNAVAILABLE")
     end
-    local draft,policy,draft_pb_range=drafts.get(song,bound_instrument(),bound_phrase())
-    source_state.text=draft and "SOURCE DIRTY: Generate to apply this draft." or
-      (not bound_phrase() and "SOURCE DIRTY: Generate to apply this draft." or
-        (source_available and "SOURCE COMMITTED" or "SOURCE UNAVAILABLE"))
-    if draft then
-      pattern,output_policy=draft,policy
-      pb_range=draft_pb_range or policies.DEFAULT_PB_RANGE
-      status.text="Recovered saved draft. Generate or edit the source to apply it."
-    elseif policy then
-      status.text="DRAFT RECOVERY ERROR: "..tostring(policy).."; existing phrase output is protected."
-    end
-    runtime:transition("programmatic",{source=pattern,output_policy=output_policy,pb_range=pb_range,restore=true})
     history:reset(pattern,output_policy,pb_range)
     update()
     if update_live_state then update_live_state() end
@@ -651,20 +713,20 @@ function M.show()
     local options
     options,phrase_targets=options_for_instrument()
     loading=true
-    phrase_choice.items=options
+    render(phrase_choice,"items",options)
     local chosen=#options
     local instrument=instrument_targets[n]
     local current_phrase=rawequal(song.selected_instrument,instrument) and
       song.selected_phrase or nil
     if current_phrase then
       for index,phrase in ipairs(phrase_targets) do
-        if rawequal(phrase,current_phrase) and ownership.status(phrase)=="owned" then
+        if rawequal(phrase,current_phrase) then
           chosen=index
           break
         end
       end
     end
-    phrase_choice.value=chosen
+    render(phrase_choice,"value",chosen)
     loading=false
     load_target(chosen)
   end
@@ -685,8 +747,8 @@ function M.show()
     end
     phrase_targets=targets
     loading=true
-    phrase_choice.items=options
-    phrase_choice.value=math.min(chosen,#options)
+    render(phrase_choice,"items",options)
+    render(phrase_choice,"value",math.min(chosen,#options))
     loading=false
   end
   local function refresh_native_choices()
@@ -707,8 +769,8 @@ function M.show()
     instrument_targets=targets
     selected_instrument=chosen
     loading=true
-    instrument_choice.items=names
-    instrument_choice.value=chosen
+    render(instrument_choice,"items",names)
+    render(instrument_choice,"value",chosen)
     loading=false
     refresh_phrase_choices(bound_phrase())
   end
@@ -734,7 +796,7 @@ function M.show()
         if rawequal(instrument,target.instrument) then
           selected_instrument=index
           loading=true
-          if instrument_choice then instrument_choice.value=index end
+          if instrument_choice then render(instrument_choice,"value",index) end
           loading=false
           refresh_phrase_choices(target.phrase)
           break
@@ -748,7 +810,7 @@ function M.show()
     if target.phrase then
       refresh_phrase_choices(target.phrase)
       for choice,phrase in ipairs(phrase_targets) do
-        if rawequal(phrase,target.phrase) then load_target(choice);return true end
+        if rawequal(phrase,target.phrase) then load_target(choice,true);return true end
       end
     end
     status.text="Native destination is unavailable; select the destination again."
@@ -779,20 +841,21 @@ function M.show()
     end
     return message
   end
-  update_live_state=function()
-    if update_actions then update_actions() end
+  update_live_state=function(skip_actions)
+    if update_actions and not skip_actions then update_actions() end
     local state=runtime:generation_state()
     if not state.armed then
-      live_state_view.text="LIVE EDIT DISABLED"
+      render(live_state_view,"text","LIVE EDIT DISABLED")
       return
     end
-    live_state_view.text="LIVE EDIT "..state.status
+    local text="LIVE EDIT "..state.status
     if state.last_commit then
       local commit=state.last_commit
-      live_state_view.text=live_state_view.text.."\nLAST COMMIT: "..
+      text=text.."\nLAST COMMIT: "..
         string.upper(tostring(commit.status or "committed")).." | "..
         tostring(state.last_commit_label or "Verified destination")
     end
+    render(live_state_view,"text",text)
   end
   deliver=function(request,result)
     if type(request)~="table" or not current_session() then return end
@@ -807,12 +870,12 @@ function M.show()
         return
       end
       if not result.phrase then
-        source_state.text="SOURCE UNAVAILABLE"
+        render(source_state,"text","SOURCE UNAVAILABLE")
         status.text=prefix.."ERROR: destination identity could not be verified; select the destination again."
         update_live_state()
         return
       end
-      source_state.text="SOURCE COMMITTED"
+      render(source_state,"text","SOURCE COMMITTED")
     end
     status.text=describe_result(result,prefix)
     update_live_state()
@@ -881,7 +944,7 @@ function M.show()
     if copied then
       refresh_phrase_choices()
       project_runtime_editor()
-      source_state.text="SOURCE DIRTY: Generate to apply this recovered draft."
+      render(source_state,"text","SOURCE DIRTY: Generate to apply this recovered draft.")
       status.text="Draft copied to New. The original recovery entry stays until this revision is generated or discarded."
       if type(reason)=="table" and reason.warning then
         status.text=status.text.."\nDRAFT WARNING: "..tostring(reason.warning)
@@ -906,7 +969,7 @@ function M.show()
       local state=runtime:editor_state()
       local dirty=state and (not sequencer.same_source(state.source,result.source) or
         state.output_policy~=result.output_policy or state.pb_range~=result.pb_range)
-      source_state.text=dirty and "SOURCE DIRTY: Generate to apply this draft." or "SOURCE COMMITTED"
+      render(source_state,"text",dirty and "SOURCE DIRTY: Generate to apply this draft." or "SOURCE COMMITTED")
       status.text="Selected phrase is independent. Its musical content is unchanged."
       if state and state.draft_warning then
         status.text=status.text.."\nDRAFT WARNING: "..tostring(state.draft_warning)
@@ -935,21 +998,22 @@ function M.show()
     end
     if #items==0 then items[1]="No detached drafts" end
     loading=true
-    recovery_choice.items=items
-    recovery_choice.value=chosen
+    render(recovery_choice,"items",items)
+    render(recovery_choice,"value",chosen)
     loading=false
     local entry=selected_recovery()
-    recovery_choice.active=entry~=nil
-    copy_recovery.active=entry~=nil and current_session() and bound_instrument()~=nil
-    discard_recovery.active=entry~=nil and current_session()
-    recovery_detail.text=entry and ("Session only: "..tostring(entry.reason or "Detached draft")) or ""
+    render(recovery_choice,"active",entry~=nil)
+    render(copy_recovery,"active",entry~=nil and current_session() and bound_instrument()~=nil)
+    render(discard_recovery,"active",entry~=nil and current_session())
+    render(recovery_detail,"text",entry and ("Session only: "..tostring(entry.reason or "Detached draft")) or "")
     local eligible,reason=runtime:independence_projection()
-    independent.active=eligible~=nil and current_session()
-    independence_detail.text=eligible and "Resolve this copied-ID collision without changing the music."
+    render(independent,"active",eligible~=nil and current_session())
+    local detail=eligible and "Resolve this copied-ID collision without changing the music."
       or tostring(reason or "Select a colliding phrase to make it independent.")
     local integrity=runtime:integrity_state()
-    revalidate.active=integrity.blocked and current_session()
-    if integrity.blocked then independence_detail.text=integrity.reason or "Recovery consistency requires revalidation." end
+    render(revalidate,"active",integrity.blocked and current_session())
+    if integrity.blocked then detail=integrity.reason or "Recovery consistency requires revalidation." end
+    render(independence_detail,"text",detail)
   end
   program_panel=vb:column{id="acid_program_panel",spacing=5,
     vb:text{text="PROGRAM ENTRY | choose one shared PITCH position and TIME step",font="bold"},

@@ -22,8 +22,12 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local native_view_metatable={__eq=function()
+    error("native ViewBuilder controls do not support equality")
+  end}
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
+    setmetatable(node,native_view_metatable)
     for key,value in pairs(properties or {}) do
       if type(key)=="number" then node.views[#node.views+1]=value
       else node[key]=value end
@@ -173,7 +177,8 @@ package.loaded["writers.phrase_writer"]={
 
 package.loaded["renoise.phrase_ownership"]={
   status=function() return "owned" end,
-  id=function(phrase) return phrase.id end
+  id=function(phrase) if phrase.foreign then return nil end;return phrase.id end,
+  snapshot_index=function()return nil end
 }
 local persisted_drafts={}
 package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
@@ -229,7 +234,20 @@ editor.project=function(...)
   projection_calls=projection_calls+1
   return project(...)
 end
+local runtime_context=require("runtime.context")
+local new_context=runtime_context.new
+local recovery_action_reads=0
+runtime_context.new=function(options)
+  local context=new_context(options)
+  local recovery_entries=context.recovery_entries
+  context.recovery_entries=function(self,...)
+    recovery_action_reads=recovery_action_reads+1
+    return recovery_entries(self,...)
+  end
+  return context
+end
 require("gui").show()
+runtime_context.new=new_context
 assert(dialog and dialog.visible)
 local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
@@ -242,8 +260,35 @@ local function display_snapshot()
     builder.views.acid_program_time_summary.text},"|")
 end
 local initial=display_snapshot()
+local initial_recovery_action_reads=recovery_action_reads
 local initial_projections=projection_calls
 local initial_classifications=classification_calls
+local function button(text)
+  for _,node in ipairs(builder.nodes) do
+    if node.kind=="button" and node.text==text then return node end
+  end
+  error("missing button: "..text)
+end
+local recovery_choice=builder.views.acid_recovery_choice
+local recovery_items=recovery_choice.items
+local recovery_item_writes,recovery_item_reads=0,0
+recovery_choice.items=nil
+setmetatable(recovery_choice,{__index=function(_,key)
+  if key=="items" then recovery_item_reads=recovery_item_reads+1;return recovery_items end
+end,__newindex=function(self,key,value)
+  if key=="items" then recovery_item_writes=recovery_item_writes+1;recovery_items=value
+  else rawset(self,key,value) end
+end})
+local summary_view=builder.views.acid_source_summary
+local summary_text=summary_view.text
+local summary_writes,summary_reads=0,0
+summary_view.text=nil
+setmetatable(summary_view,{__index=function(_,key)
+  if key=="text" then summary_reads=summary_reads+1;return summary_text end
+end,__newindex=function(self,key,value)
+  if key=="text" then summary_writes=summary_writes+1;summary_text=value
+  else rawset(self,key,value) end
+end})
 view:fire(2)
 assert(not program.visible and grid.visible)
 assert(display_snapshot()==initial)
@@ -254,25 +299,47 @@ assert(display_snapshot()==initial)
 assert(render_calls==0)
 assert(projection_calls==initial_projections,"view navigation reuses the validated projection")
 assert(classification_calls==initial_classifications,"view navigation must not rescan native phrase content")
+assert(summary_writes==0,"unchanged summary text is not assigned again")
+local summary_reads_after_snapshots=summary_reads
+assert(recovery_item_reads<=1,
+  "recovery items are read only to seed the rendered-value cache")
+local initial_recovery_item_reads=recovery_item_reads
 for _=1,20 do tool.app_idle_observable:fire() end
 assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
 
 builder.views.acid_program_time_command:fire(3)
 assert(projection_calls==initial_projections+1,"a TIME edit projects once")
-assert(builder.views.acid_grid_time_01.value==3)
+assert(recovery_action_reads==initial_recovery_action_reads,
+  "a successful source edit does not rescan recovery actions")
+assert(summary_reads==summary_reads_after_snapshots and recovery_item_reads==initial_recovery_item_reads,
+  "unchanged read-only text and item controls reuse their cached render values: "..
+    summary_reads.."/"..summary_reads_after_snapshots.."; "..
+    recovery_item_reads.."/"..initial_recovery_item_reads)
+assert(builder.views.acid_grid_time_01.value==1,"hidden Grid controls are left untouched")
 assert(builder.views.acid_preview_summary.text:find("REST",1,true))
 assert(render_calls==0)
+assert(recovery_item_writes==0,"unchanged recovery choices are not reassigned during source edits")
 builder.views.acid_editor_view:fire(2)
-assert(builder.views.acid_grid_time_01.value==3)
+assert(builder.views.acid_grid_time_01.value==3,"Grid controls refresh when the panel becomes visible")
 assert(render_calls==0)
 builder.views.acid_editor_view:fire(1)
 builder.views.acid_program_key_popup:fire(2)
 assert(projection_calls==initial_projections+2,"a PITCH edit projects once")
-assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
+assert(not builder.views.acid_grid_pitch_01.text:find("C#",1,true),"hidden Grid pitch text remains untouched")
 assert(render_calls==0)
+builder.views.acid_program_key_popup.value=8
+builder.views.acid_editor_view:fire(1)
+assert(builder.views.acid_program_key_popup.value==2,
+  "rendering compares the native value after a user change")
 builder.views.acid_editor_view:fire(2)
 assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
 assert(render_calls==0)
+button("Undo"):fire()
+assert(not builder.views.acid_grid_pitch_01.text:find("C#",1,true),
+  "undo restores the visible Grid value")
+button("Redo"):fire()
+assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true),
+  "redo restores the visible Grid value")
 
 local last_step
 local output_popup
@@ -308,12 +375,6 @@ assert(projection_calls==before_settings+3,"the refreshed host projection is reu
 assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("STEPS 32/32",1,true),
   "PB Range changes do not mutate canonical PITCH/TIME source")
 
-local function button(text)
-  for _,node in ipairs(builder.nodes) do
-    if node.kind=="button" and node.text==text then return node end
-  end
-  error("missing button: "..text)
-end
 local timing_popup=builder.views.acid_timing
 timing_popup:fire(2)
 assert(timing_popup.value==2)
@@ -328,6 +389,7 @@ button("Undo"):fire()
 assert(timing_popup.value==2,"Undo restores the previous timing")
 assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: REST",1,true))
+builder.views.acid_editor_view:fire(1)
 assert(builder.views.acid_program_key_popup.value==2)
 assert(output_popup.value==1,"Undo restores the previous output policy")
 assert(pb_range_popup.value==3,"Undo restores the prior PB Range")
@@ -347,7 +409,10 @@ generation_callback(terminal_result(generation_request,"committed","Phrase 01 ge
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual regeneration accepts structural selection changes without altering playback")
 
+local classifications_before_rebind=classification_calls
 phrase_popup:fire(2)
+assert(classification_calls<=classifications_before_rebind+1,
+  "target restoration uses at most one full phrase classification")
 local rebound_projections=projection_calls
 assert(rebound_projections>before_settings+3,"phrase rebinding invalidates the prior projection")
 builder.views.acid_editor_view:fire(1)
@@ -417,6 +482,7 @@ assert(render_calls==3 and projection_calls==armed_projections,
 button("Reset Source"):fire()
 assert(render_calls==3,"resetting an armed source does not request a render")
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(render_calls==4 and generation_request.target_index==4,
   "an edit after arming appends the selected new phrase")
 local appended={id=24,name="Live appended phrase"}
@@ -427,6 +493,7 @@ end)
 generation_callback(terminal_result(generation_request,"committed","Live append committed."))
 assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
 builder.views.acid_program_key_popup:fire(5)
+tool.app_idle_observable:fire()
 assert(render_calls==5 and generation_request.target_index==4,
   "the next edit regenerates the same appended phrase in place")
 generation_callback(terminal_result(generation_request,"committed","Live regeneration committed."))
@@ -452,6 +519,7 @@ phrase_popup:fire(2)
 assert(phrase_popup.value==2 and render_calls==5 and song.selected_phrase==instrument.phrases[2],
   "choosing phrase 02 in Destination stays selected without regenerating")
 builder.views.acid_program_key_popup:fire(5)
+tool.app_idle_observable:fire()
 assert(render_calls==6 and generation_request.target_index==2,
   "an edit after a native phrase switch targets the selected phrase")
 instrument.phrase_program=2
@@ -460,6 +528,7 @@ generation_callback(terminal_result(generation_request,"committed","Native phras
 assert(song.selected_phrase==nil and instrument.phrase_program==2,
   "Live Edit preserves a playback program change made during rendering")
 builder.views.acid_program_key_popup:fire(6)
+tool.app_idle_observable:fire()
 assert(render_calls==7 and generation_request.target_index==2,
   "subsequent PITCH edits keep regenerating the phrase selected in Renoise")
 instrument.phrase_program=1
@@ -478,6 +547,7 @@ assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native
 live_checkbox:fire(true)
 assert(render_calls==7,"rearming Live Edit does not request a render")
 builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
 assert(render_calls==8 and generation_request.target_index==1,
   "an edit after rearming targets the selected phrase 01")
 
@@ -493,6 +563,7 @@ assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_inde
 
 -- Cancelling a live render must not block subsequent native selections.
 builder.views.acid_program_key_popup:fire(7)
+tool.app_idle_observable:fire()
 assert(render_calls==9,"a fresh Live Edit render is running before cancellation")
 live_checkbox:fire(false)
 select_native_phrase(2)

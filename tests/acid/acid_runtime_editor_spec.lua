@@ -23,6 +23,34 @@ local function copy_edit(source,note)
  return copy
 end
 
+-- Runtime admission validates its detached editor buffer without an extra source copy.
+do
+ local ctx,_,_,_,_,_,source=fixture(true)
+ local changed=copy_edit(source,7)
+ local copy_source=seq.copy_source
+ local put=cache.put
+ local persistence_depth=0
+ local validation_copies=0
+ local unpack_values=unpack or table.unpack
+ local function pack_values(...)return {n=select('#',...),...}end
+ seq.copy_source=function(...)
+  if persistence_depth==0 then validation_copies=validation_copies+1 end
+  return copy_source(...)
+ end
+ cache.put=function(...)
+  persistence_depth=persistence_depth+1
+  local result=pack_values(pcall(put,...))
+  persistence_depth=persistence_depth-1
+  if not result[1] then error(result[2],0) end
+  return unpack_values(result,2,result.n)
+ end
+ local called,edited,edit_error=pcall(ctx.transition,ctx,'edit',values(changed))
+ seq.copy_source=copy_source
+ cache.put=put
+ assert(called and edited,edit_error or 'source edit transition failed')
+ assert(validation_copies==0,'edit made a discarded validation copy outside draft persistence')
+end
+
 -- Source values and revision identities remain distinct through A -> B -> A.
 do
  local ctx,log,song,instrument,_,_,source=fixture(true)
@@ -49,6 +77,8 @@ do
  ctx:transition('edit',values(changed))
  assert(log.sinks==0 and ctx:revision_state().edit_revision==revision)
  ctx:transition('edit',values(source))
+ assert(log.sinks==0 and ctx:generation_state().pending,'Live Edit did not queue without rendering in the edit callback')
+ ctx:flush_pending()
  assert(log.sinks==1,'real armed edit did not use generation entry')
 end
 
@@ -70,8 +100,10 @@ do
  ctx:transition('arm')
  local changed=values(copy_edit(source,7))
  local _,effects=ctx:transition('edit',changed)
- assert(effects.live_intent and effects.accepted==true and log.sinks==1,
-   'armed edit bypassed the runtime scheduler')
+ assert(effects.live_intent and effects.accepted==true and log.sinks==0 and ctx:generation_state().pending,
+   'armed edit did not queue without rendering in the editor callback')
+ ctx:flush_pending()
+ assert(log.sinks==1 and log.requests[1].trigger=='live','idle scheduler did not admit the queued Live Edit')
 end
 
 -- Disarming drops only pending Live Edit; manual intent remains queued.
@@ -79,6 +111,7 @@ do
  local ctx,log,_,_,_,_,source=fixture(true)
  ctx:transition('arm')
  ctx:transition('edit',values(copy_edit(source,7)))
+ ctx:flush_pending()
  local live=log.requests[1]
  ctx:request_generation('manual')
  assert(ctx:generation_state().pending,'manual intent was not queued')
@@ -126,6 +159,7 @@ do
  local ctx,log,_,_,_,_,source=fixture(true)
  ctx:transition('arm')
  ctx:transition('edit',values(copy_edit(source,7)))
+ ctx:flush_pending()
  assert(log.sinks==1)
  local first_token=log.requests[1].token
  ctx:transition('edit',values(copy_edit(source,8)))
@@ -160,6 +194,7 @@ do
  assert(log.sinks==1)
  log.done[1]({kind='failed'})
  ctx:transition('arm');ctx:transition('edit',values(copy_edit(source,7)))
+ ctx:flush_pending()
  assert(log.sinks==2)
  local live=log.requests[2].token
  ctx:transition('disarm')
@@ -231,5 +266,37 @@ do
  ctx:bind_phrase(instrument,phrase)
  assert(seq.same_source(ctx:editor_state().source,changed))
  assert(log.sinks==0)
+end
+
+do
+ local song,instrument,phrase,other,source=helper.fixture()
+ song.selected_instrument,song.selected_phrase=instrument,other
+ local writer={status='idle'}
+ function writer:state() return self.status,nil end
+ local temporary
+ function writer.is_temporary(_,candidate_instrument,candidate_phrase)
+  return rawequal(candidate_instrument,instrument) and rawequal(candidate_phrase,temporary)
+ end
+ local requests=0
+ local ctx=context.new{writer=writer,capture=function(trigger,token)return {trigger=trigger,token=token}end,
+  sink=function()requests=requests+1;return true end,cancel=function()return true end}
+ ctx:attach_document(song);ctx:open_dialog();ctx:bind_phrase(instrument,phrase)
+ ctx:transition('programmatic',values(source));ctx:transition('arm')
+ ctx:transition('edit',values(copy_edit(source,7)))
+ assert(ctx:generation_state().pending,'armed edit was not queued')
+ writer.status='busy'
+ song.selected_phrase=phrase
+ ctx:reconcile()
+ assert(ctx:generation_state().pending,'same-target native selection canceled the queued edit')
+ temporary={name='ACID staging phrase'}
+ song.selected_phrase=temporary
+ ctx:reconcile()
+ assert(ctx:generation_state().pending,'writer staging selection canceled the queued edit')
+ song.selected_phrase=phrase
+ temporary=nil
+ writer.status='idle'
+ ctx:reconcile()
+ assert(ctx:generation_state().pending,'restored native selection canceled the queued edit')
+ assert(ctx:flush_pending() and requests==1,'queued latest edit did not dispatch after writer became idle')
 end
 print('ACID runtime editor transitions and guarded generation passed')

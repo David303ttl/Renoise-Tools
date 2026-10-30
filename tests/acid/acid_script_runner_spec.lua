@@ -98,6 +98,16 @@ assert(runner:start())
 assert(runner.phase == "rendering" and results() == 0)
 script.done(nil, 3, 0)
 assert(runner.phase == "done" and results() == 1)
+runner,script,observable,results=fixture()
+local script_ref=setmetatable({script},{__mode="v"})
+assert(runner:start());observable:fire()
+script=nil
+for _=1,3 do collectgarbage("collect") end
+assert(script_ref[1]~=nil,"asynchronous rendering must retain its script wrapper through completion")
+script_ref[1].done(nil,5,0)
+assert(runner.phase=="done" and results()==1)
+for _=1,3 do collectgarbage("collect") end
+assert(script_ref[1]==nil,"finished rendering must release its script wrapper")
 local detached_script = {renders=0}
 local detached_observable = {}
 function detached_observable:add_notifier(fn) self.fn=fn end

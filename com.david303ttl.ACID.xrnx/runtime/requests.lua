@@ -6,6 +6,7 @@ local validator=require("writers.phrase_validator")
 local planner=require("model.output_planner")
 local sequencer=require("model.sequencer")
 local pitch_bend=require("writers.phrase_pitch_bend")
+local policies=require("model.policies")
 local M={}
 local RAW_FIELDS={"song","instrument","phrase","token","draft_capture"}
 local VALUE_FIELDS={"kind","target_kind","trigger","epoch","session","target_revision",
@@ -23,7 +24,8 @@ local function inputs(profile,limits)
   local fields={}
   for _,key in ipairs({"sample","plugin","midi","alias","read_error"}) do fields[key]=profile[key] end
   return {capabilities=fields,capacities=limits,
-    options={pitch_bend_delivery=pitch_bend.delivery_enabled}}
+    options={pitch_bend_delivery=pitch_bend.delivery_enabled,
+      normal_volume=policies.NORMAL_VOLUME,accent_volume=policies.ACCENT_VOLUME}}
 end
 
 local function token_current(record)
@@ -45,7 +47,7 @@ local function verify(record,request,admission)
     if not rawequal(request[key],value) then return false,"Captured request callback changed: "..key end
   end
   if not admission and not token_current(record) then return false,"Request authorization was revoked" end
-  local state=record.access.current(true)
+  local state=record.access.current(true,false)
   if not state or not rawequal(state.song,record.song) or state.epoch~=record.values.epoch or
       state.session~=record.values.session or not state.open then return false,"Request lifetime changed" end
   if not state.target or state.target.kind~=record.values.target_kind or
@@ -58,8 +60,6 @@ local function verify(record,request,admission)
   if blocked then return false,block_reason or "Song integrity requires revalidation" end
   local occupancy=record.access.occupancy(record.token)
   if not occupancy.available then return false,occupancy.reason or "The writer slot is occupied" end
-  local member,membership_error=ownership.membership(record.song,record.instrument,record.phrase)
-  if not member then return false,membership_error end
   local transport=record.song.transport
   if type(renoise.Transport.TIMING_MODEL_LPB)~="number" or transport.timing_model~=record.values.timing_model or
       transport.timing_model~=renoise.Transport.TIMING_MODEL_LPB then return false,"Transport timing model changed" end
@@ -76,20 +76,26 @@ local function verify(record,request,admission)
   if not capabilities.same(record.profile,profile) then return false,"Instrument capabilities changed" end
   local limits=capacities()
   local planning_inputs=inputs(profile,limits)
-  if not ownership.compare(record.values.planning_inputs,planning_inputs) then return false,"Planning inputs changed" end
   if record.values.target_kind=="owned" then
-    local candidate,reason=validator.classify(record.song,record.instrument,record.phrase,profile,limits,
-      {pitch_bend_delivery=pitch_bend.delivery_enabled})
-    if not candidate then return false,reason end
-    local baseline={id=ownership.id(record.phrase),source=candidate.source,settings=candidate.settings,
-      snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
-    if not ownership.compare(record.values.baseline,baseline) then return false,"Committed target baseline changed" end
+    local baseline=state.target.baseline
+    if not baseline or not rawequal(baseline.snapshot,record.baseline_snapshot) or
+        baseline.id~=record.values.id or
+        not ownership.compare(record.values.baseline.planning_inputs,baseline.planning_inputs) or
+        not ownership.compare(record.values.planning_inputs.capacities,planning_inputs.capacities) or
+        planning_inputs.options.pitch_bend_delivery~=record.values.planning_inputs.options.pitch_bend_delivery or
+        policies.NORMAL_VOLUME~=record.values.planning_inputs.options.normal_volume or
+        policies.ACCENT_VOLUME~=record.values.planning_inputs.options.accent_volume then
+      return false,"Committed target baseline changed"
+    end
   elseif record.values.target_kind~="new" or record.phrase~=nil then
     return false,"Request has no explicit writable destination"
+  else
+    if not ownership.compare(record.values.planning_inputs,planning_inputs) then
+      return false,"Planning inputs changed"
+    end
   end
-  local output,reason=planner.plan(record.values.source,record.values.output_policy,record.values.pb_range,
-    limits,profile,{pitch_bend_delivery=pitch_bend.delivery_enabled})
-  if not output then return false,reason end
+  -- Capture planned the frozen source once. The request value guard above and
+  -- fresh target/capability checks make that deterministic output proof reusable.
   local latest=record.access.current()
   if not latest or not rawequal(latest.song,record.song) or latest.epoch~=state.epoch or
       latest.session~=state.session or latest.open~=state.open or latest.target_revision~=state.target_revision or
@@ -124,12 +130,20 @@ function M.new(access)
       if not target or (target.kind~="new" and target.kind~="owned") then
         return nil,target and target.reason or "No explicit writable target"
       end
+      local baseline_snapshot=target.baseline and target.baseline.snapshot
+      if target.kind=="owned" then
+        local identity=baseline_snapshot and validator.retained_baseline_identity(baseline_snapshot)
+        if not identity or not validator.is_retained_baseline_identity(identity,baseline_snapshot) then
+          return nil,"Runtime target did not provide a retained verified baseline"
+        end
+      end
       local profile=capabilities.inspect(target.instrument)
       local limits=capacities()
       local output,output_error=planner.plan(editor.source,editor.output_policy,editor.pb_range,limits,profile,
         {pitch_bend_delivery=pitch_bend.delivery_enabled})
       if not output then return nil,output_error end
-      local descriptor,draft_guard,draft_state=access.drafts.capture(state.song,target.instrument,target.phrase,access.draft_options())
+      local descriptor,draft_guard,draft_state=access.drafts.capture(state.song,target.instrument,target.phrase,
+        access.draft_options(target))
       if not descriptor then
         -- A clean committed source needs no session draft. Those two draft
         -- states grant no removal, while unreadable or dirty drafts reject.
@@ -148,20 +162,23 @@ function M.new(access)
           transport.timing_model~=renoise.Transport.TIMING_MODEL_LPB or type(transport.groove_enabled)~="boolean" then
         return nil,"LPB transport timing and groove state are required"
       end
-      local values=assert(ownership.copy_snapshot({kind=target.kind=="new" and "create" or "regenerate",
+      local values={kind=target.kind=="new" and "create" or "regenerate",
         target_kind=target.kind,trigger=trigger,epoch=state.epoch,session=state.session,
         target_revision=state.target_revision,edit_revision=state.edit_revision,operation_serial=state.operation_serial,
         source=output.source,output_policy=editor.output_policy,pb_range=editor.pb_range,
         id=target.baseline and target.baseline.id,baseline=target.baseline,
         planning_inputs=inputs(profile,limits),capabilities=profile,capacities=limits,
-        timing_model=transport.timing_model,groove_enabled=transport.groove_enabled}))
+        timing_model=transport.timing_model,groove_enabled=transport.groove_enabled}
+      local private_capabilities,capability_error=ownership.copy_snapshot(profile)
+      if not private_capabilities then return nil,capability_error end
+      values.capabilities=private_capabilities
       local request=assert(ownership.copy_snapshot(values))
       -- Capability comparison is keyed by the inspected object; keep that
       -- immutable inspection result while retaining the copied values guard.
       request.capabilities=profile
       local record={access=access,values=values,profile=profile,song=state.song,
         instrument=target.instrument,phrase=target.phrase,token=token,draft_capture=descriptor,
-        draft_guard=draft_guard,
+        draft_guard=draft_guard,baseline_snapshot=baseline_snapshot,
         request=setmetatable({request},{__mode="v"}),functions={}}
       for _,key in ipairs(RAW_FIELDS) do request[key]=record[key] end
       request.is_current=function()
@@ -190,13 +207,20 @@ function M.new(access)
         end
         return record.access.mutate(supplied_token,action)
       end
+      request.cleanup_mutate=function(self,supplied_token,action)
+        if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) or
+            not self:cleanup_authorized(supplied_token) or type(record.access.cleanup_mutate)~="function" then
+          error("Cleanup mutation is not authorized",0)
+        end
+        return record.access.cleanup_mutate(supplied_token,action)
+      end
       request.record_blocker=function(self,supplied_token,evidence)
         if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) then
           return false,"Invalid blocker token"
         end
         return record.access.record_blocker(supplied_token,evidence)
       end
-      for _,key in ipairs({"is_current","validate_checkpoint","cleanup_authorized","mutate","record_blocker"}) do
+      for _,key in ipairs({"is_current","validate_checkpoint","cleanup_authorized","mutate","cleanup_mutate","record_blocker"}) do
         record.functions[key]=request[key]
       end
       records[request]=record
@@ -217,7 +241,7 @@ function M.new(access)
   function owner:release()
     for request,record in pairs(records) do
       for _,key in ipairs(RAW_FIELDS) do if key~="token" then rawset(request,key,nil);record[key]=nil end end
-      record.values=nil;record.profile=nil;record.access=nil;record.draft_guard=nil
+      record.values=nil;record.profile=nil;record.access=nil;record.draft_guard=nil;record.baseline_snapshot=nil
     end
     access=nil
     records=setmetatable({},{__mode="k"})

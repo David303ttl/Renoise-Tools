@@ -337,8 +337,10 @@ try {
     }
     else {
         $startedProcess = Start-Process -FilePath $script:resolvedExe -WindowStyle Normal -PassThru
-        $capturedStartedIdentity = Get-RenoiseProcessIdentity -Id $startedProcess.Id
+        $startedAt = $startedProcess.StartTime.ToUniversalTime()
+        $capturedStartedIdentity = Get-RenoiseProcessIdentity -Id $startedProcess.Id -WaitMilliseconds 5000
         if (-not [string]::Equals($capturedStartedIdentity.Path, $script:resolvedExe, [StringComparison]::OrdinalIgnoreCase)) { throw 'Started Renoise process does not match the verified executable.' }
+        if ($capturedStartedIdentity.StartTimeUtc -ne $startedAt) { throw 'Started Renoise process changed identity before metadata became available.' }
         $startedIdentity = $capturedStartedIdentity
         $driverMayBeLoaded = $true
         $processIdentity = $startedIdentity
@@ -349,10 +351,12 @@ try {
     }
 
     $processCheck = { Assert-RenoiseProcessIdentity -Identity $processIdentity }
-    $client = Connect-RenoiseDriver -Session $session -TimeoutSeconds $StartupTimeoutSeconds -ProcessCheck $processCheck
+    $bootstrap = Invoke-RenoiseDriverBootstrap -Session $session -Identity $processIdentity `
+        -StartupTimeoutSeconds $StartupTimeoutSeconds -CommandTimeoutSeconds $CommandTimeoutSeconds `
+        -ProcessCheck $processCheck
+    $client = $bootstrap.Client
     try {
-        Assert-RenoiseListenerOwner -Client $client -Identity $processIdentity
-        $ping = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'ping' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
+        $ping = $bootstrap.Ping
         $lastExpected = 'Authenticated ping uses protocol version 1 and the current run nonce'
         $lastActual = @{ protocol_version = $ping.protocol_version; nonce_matches = ($ping.session -ceq $session.Nonce) }
         if ($ping.protocol_version -ne 1 -or $ping.session -cne $session.Nonce) { throw [RenoiseRunnerAssertionException]::new('Authenticated handshake reported the wrong protocol or run nonce.') }

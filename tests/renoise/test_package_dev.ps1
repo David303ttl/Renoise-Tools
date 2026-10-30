@@ -98,6 +98,8 @@ function Assert-BootstrapLifecycle {
 local bootstrap_path = assert(arg[1])
 local real_dofile = dofile
 local starts = 0
+local clock = 0
+os.time = function() return clock end
 local driver = {start = function() starts = starts + 1 end}
 local acceptance = {run = function() end}
 local function observable()
@@ -163,7 +165,13 @@ function tool:has_keybinding() return true end
 assert(loadfile(bootstrap_path))()
 assert(starts == 0, "driver started before the first app idle")
 tool.app_idle_observable:fire()
-assert(starts == 1, "driver did not start at first app idle")
+assert(starts == 0, "driver started before the native event loop settled")
+clock = 1
+tool.app_idle_observable:fire()
+assert(starts == 0, "driver started before the startup deadline")
+clock = 2
+tool.app_idle_observable:fire()
+assert(starts == 1, "driver did not start after the startup deadline")
 assert(#tool.app_idle_observable.notifiers == 0, "startup idle notifier was not detached")
 assert(#tool.tool_will_unload_observable.notifiers == 0, "unload notifier remained after startup")
 tool.app_idle_observable:fire()
@@ -455,6 +463,7 @@ try {
     '  end'
     '  local tool = renoise.tool()'
     '  local startup_pending = true'
+    '  local startup_after'
     '  local start_driver, on_tool_unload'
     '  local function remove_startup_notifiers()'
     '    if tool.app_idle_observable:has_notifier(start_driver) then'
@@ -470,6 +479,8 @@ try {
     '  end'
     '  start_driver = function()'
     '    if not startup_pending then return end'
+    '    if not startup_after then startup_after = os.time() + 2; return end'
+    '    if os.time() < startup_after then return end'
     '    startup_pending = false'
     '    remove_startup_notifiers()'
     '    driver.start(tool.bundle_path .. "\\..\\acid-test-session.conf", function()'

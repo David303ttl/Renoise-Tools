@@ -97,7 +97,8 @@ end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
-  id=function(phrase)return phrase.id end
+  id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
+  snapshot_index=function()return nil end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
@@ -273,6 +274,7 @@ builder.views.acid_editor_view:fire(2)
 local go_to_error=button(builder,"Go to source error")
 assert(go_to_error.active,"invalid source exposes diagnostic navigation: "..builder.views.acid_source_diagnostic.text)
 go_to_error:fire()
+builder.views.acid_editor_view:fire(1)
 assert(builder.views.acid_program_time_position.value==3 and
   builder.views.acid_program_pitch_position.value==2,
   "diagnostic navigation selects the failing TIME and PITCH positions")
@@ -300,8 +302,10 @@ assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
 assert(#render_callbacks==0,"arming Live Edit does not write")
 builder.views.acid_program_key_popup:fire(5)
-assert(builder.views.acid_live_edit_state.text:find("RENDERING",1,true),
-  "editing the armed source starts a render")
+assert(builder.views.acid_live_edit_state.text=="LIVE EDIT DIRTY",
+  "editing the armed source leaves a queued edit: "..builder.views.acid_live_edit_state.text)
+assert(#render_callbacks==0,"source editing does not synchronously start the queued render")
+tool.app_idle_observable:fire()
 assert(#render_callbacks==1 and tool.writer_calls[1].options.token,
   "Live Edit passes a cancellation token to the writer")
 assert(tool.writer_calls[1].options.pb_range==12,
@@ -318,6 +322,7 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(status.text=="LIVE EDIT ERROR: temporary render failure",status.text)
 builder.views.acid_program_key_popup:fire(6)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key==5,
   "a source edit immediately retries the armed Live Edit: callbacks="..
     #render_callbacks.." calls="..#tool.writer_calls.." key="..
@@ -348,6 +353,7 @@ assert(builder.views.acid_live_edit_state.text:find("APPROXIMATE",1,true),
 phrase_choice:fire(2)
 assert(#render_callbacks==3,"destination navigation does not write")
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==4,
   "editing a destination with a recovered draft resumes Live Edit")
 assert(tool.writer_calls[4].options.pb_range==48,
@@ -358,12 +364,14 @@ target_popup:fire(2)
 phrase_choice:fire(1)
 assert(#render_callbacks==4,"instrument navigation does not write")
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==5,
   "explicit instrument selection rebinds Live Edit to its selected owned phrase")
 render_callbacks[5](terminal_result(tool.writer_calls[5],"committed","instrument rebound"))
 phrase_choice:fire(3)
 assert(#render_callbacks==5,"new phrase navigation does not write")
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==6 and tool.writer_calls[6].target==3,
   "editing NEW PHRASE starts an append render: "..#render_callbacks.." / "..tostring(tool.writer_calls[#tool.writer_calls].target).." / "..status.text)
 local explicit_append={id=23,name="ACID explicit append"}
@@ -388,6 +396,7 @@ assert(live_checkbox.value and #render_callbacks==7,
 assert(other_instrument.phrases[2]==other_foreign)
 phrase_choice:fire(4)
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==8 and tool.writer_calls[8].target==4,
   "only explicit New selection allows creating a separate phrase")
 local separate_owned={id=24,name="ACID explicit New phrase"}
@@ -398,6 +407,7 @@ end)
 render_callbacks[8](terminal_result(tool.writer_calls[8],"committed","foreign redirected"))
 assert(phrase_choice.value==4,"successful explicit create binds the returned phrase")
 builder.views.acid_program_key_popup:fire(8)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==9 and tool.writer_calls[9].target==4,
   "the next edit regenerates the explicit created phrase")
 render_callbacks[9](terminal_result(tool.writer_calls[9],"committed","separate phrase updated"))
@@ -407,6 +417,7 @@ assert(live_checkbox.value and status.text=="LIVE EDIT COMMITTED: separate phras
 builder.views.acid_program_key_popup:fire(8)
 assert(#render_callbacks==9,"an unchanged PITCH value does not render")
 builder.views.acid_program_key_popup:fire(9)
+tool.app_idle_observable:fire()
 other_instrument.phrases[4].foreign=true
 render_callbacks[10](terminal_result(tool.writer_calls[10],"suspended",
   "target phrase changed during generation"))
@@ -415,6 +426,7 @@ assert(#render_callbacks==10,
 assert(other_instrument.phrases[4]==separate_owned)
 phrase_choice:fire(5)
 builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
   "a fresh edit on explicitly selected New can create after blocked target rejection")
 local safety_append={id=25,name="ACID explicit recovery"}
@@ -425,10 +437,12 @@ end)
 render_callbacks[11](terminal_result(tool.writer_calls[11],"committed","safety append committed"))
 assert(phrase_choice.value==5,"explicit recovery create binds the returned phrase")
 builder.views.acid_program_key_popup:fire(10)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==12 and tool.writer_calls[12].target==5,
   "edits after explicit recovery regenerate the created phrase")
 render_callbacks[12](terminal_result(tool.writer_calls[12],"committed","safety phrase updated"))
 builder.views.acid_program_key_popup:fire(8)
+tool.app_idle_observable:fire()
 render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnostic))
 assert(status.text:find(long_diagnostic,1,true),
   "the bounded details field retains a current request complete diagnostic")
@@ -444,6 +458,7 @@ assert(live_state:find("LIVE EDIT ERROR",1,true) and
 
 local before_reset=#render_callbacks
 builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==before_reset+1,"a source edit starts the held render")
 local held=render_callbacks[#render_callbacks]
 local held_request=tool.writer_calls[#tool.writer_calls]
@@ -454,6 +469,7 @@ held(terminal_result(held_request,"suspended","source reset"))
 assert(#render_callbacks==before_reset+1 and live_checkbox.value,
   "reset discards pending edits without rendering and keeps Live Edit armed")
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==before_reset+2,"the next real edit renders the reset source")
 assert(tool.writer_calls[#tool.writer_calls].pattern.pitch_events[1].key==1)
 

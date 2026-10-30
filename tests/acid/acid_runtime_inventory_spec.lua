@@ -41,9 +41,56 @@ do
  assert(helper.eq_calls()==0,'inventory/drafts must use raw phrase identity')
 end
 
--- Even a newly valid source/output pair cannot replace an established session baseline.
+-- Clean editor edits persist against the retained draft baseline without
+-- streaming the native phrase cells on each keystroke.
 do
  local song,inst,a,_,source=fixture()
+ local ctx=runtime(song)
+ assert(ctx:bind_phrase(inst,a).kind=='owned')
+ local validator=require('writers.phrase_validator')
+ local original_classify,original_against=validator.classify,validator.classify_against
+ local original_matches=ownership.matches_snapshot
+ local full_checks=0
+ validator.classify=function(...)full_checks=full_checks+1;return original_classify(...)end
+ validator.classify_against=function(...)full_checks=full_checks+1;return original_against(...)end
+ ownership.matches_snapshot=function(...)full_checks=full_checks+1;return original_matches(...)end
+ local edited=seq.copy_source(source)
+ edited.pitch_events[1]=seq.new_pitch(3,0,false,false)
+ assert(ctx:transition('edit',{source=edited,output_policy='repeat',pb_range=0}))
+ local later=seq.copy_source(edited)
+ later.pitch_events[1]=seq.new_pitch(6,0,false,false)
+ assert(ctx:transition('edit',{source=later,output_policy='repeat',pb_range=0}))
+ validator.classify,validator.classify_against=original_classify,original_against
+ ownership.matches_snapshot=original_matches
+ assert(full_checks==0,'clean editor persistence streamed a fresh native phrase proof')
+ local stored=assert(store.read_draft(song,inst,a))
+ assert(seq.same_source(stored,later),'cached editor path did not persist the latest source')
+ ctx:release_document()
+
+ local busy='idle'
+ local live=require('runtime.context').new({writer={state=function()return busy,nil end,
+   is_temporary=function()return false end},capture=function()error('edit must not capture')end,
+   sink=function()error('edit must not dispatch synchronously')end})
+ live:attach_document(song);live:open_dialog();assert(live:bind_phrase(inst,a).kind=='owned')
+ full_checks=0
+ validator.classify=function(...)full_checks=full_checks+1;return original_classify(...)end
+ validator.classify_against=function(...)full_checks=full_checks+1;return original_against(...)end
+ ownership.matches_snapshot=function(...)full_checks=full_checks+1;return original_matches(...)end
+ busy='busy'
+ local latest=seq.copy_source(later)
+ latest.pitch_events[1]=seq.new_pitch(9,0,false,false)
+ assert(live:transition('edit',{source=latest,output_policy='repeat',pb_range=0}))
+ validator.classify,validator.classify_against=original_classify,original_against
+ ownership.matches_snapshot=original_matches
+ assert(full_checks==0,'busy editor persistence streamed a fresh native phrase proof')
+ assert(seq.same_source(assert(store.read_draft(song,inst,a)),latest),
+   'busy editor persistence did not save the latest source')
+ live:release_document()
+end
+
+-- Even a newly valid source/output pair cannot replace an established session baseline.
+do
+ local song,inst,a,b,source=fixture()
  local ctx=runtime(song)
  assert(ctx:bind_phrase(inst,a).kind=='owned')
  local changed=seq.copy_source(source);changed.pitch_events[1]=seq.new_pitch(7,0,false,false)
@@ -95,6 +142,25 @@ do
  assert(rawequal(ctx:target_state().instrument,inst))
 end
 
+-- The compact native matcher still reads receiver capabilities afresh.
+do
+ local song,inst,a=fixture()
+ local ctx=runtime(song)
+ assert(ctx:bind_phrase(inst,a).kind=='owned')
+ local original_snapshot,original_status=ownership.snapshot,ownership.status
+ local snapshot_calls,status_calls=0,0
+ ownership.snapshot=function(...)snapshot_calls=snapshot_calls+1;return original_snapshot(...)end
+ ownership.status=function(...)status_calls=status_calls+1;return original_status(...)end
+ local fresh=ctx:target_state()
+ assert(fresh.kind=='owned' and snapshot_calls==0 and status_calls==0,
+  'fresh exact native proof rebuilt a snapshot or repeated its seal hash')
+ ownership.snapshot,ownership.status=original_snapshot,original_status
+ inst.plugin_properties.plugin_loaded=true
+ local changed=ctx:target_state()
+ assert(changed.kind=='unavailable' and changed.baseline==nil,
+  'fresh receiver capability change reused the cached phrase snapshot as authorization')
+end
+
 -- A retained draft validator cannot keep the released document alive or prove it current.
 do
  local song,inst,a=fixture()
@@ -117,10 +183,15 @@ do
  local ctx=runtime(song)
  local validator=require('writers.phrase_validator')
  local classify=validator.classify
+ local classify_against=validator.classify_against
  local calls=0
  validator.classify=function(...)
   calls=calls+1
   return classify(...)
+ end
+ validator.classify_against=function(...)
+  calls=calls+1
+  return classify_against(...)
  end
  local target=ctx:bind_phrase(inst,a)
  assert(target.kind=='owned')
@@ -139,6 +210,49 @@ do
  assert(ctx:target_state().kind=='owned' and calls==after_refresh+1,
   'explicit target checks must remain fresh')
  validator.classify=classify
+ validator.classify_against=classify_against
+ ctx:release_document()
+end
+
+-- Target restoration reuses its fresh committed proof for draft validation and
+-- editor installation without returning the private baseline to the caller.
+do
+ local song,inst,a,b,source=fixture()
+ local ctx=runtime(song)
+ local draft=assert(seq.copy_source(source));draft.pitch_events[1]=seq.new_pitch(3,0,false,false)
+ assert(cache.put(song,inst,a,draft,'repeat',12,ctx:draft_options()))
+ local restored=assert(ctx:restore_editor_target(inst,a))
+ assert(restored.target.kind=='owned' and restored.target.baseline==nil)
+ assert(restored.source_available==true)
+ assert(restored.draft and seq.same_source(restored.source,draft))
+ assert(restored.output_policy=='repeat' and restored.pb_range==12)
+ assert(seq.same_source(ctx:editor_state().source,draft))
+ local original_compare,semantic_compares=ownership.compare,0
+ local validator=require('writers.phrase_validator')
+ local original_classify,original_classify_against=validator.classify,validator.classify_against
+ local proof_calls=0
+ validator.classify=function(...)proof_calls=proof_calls+1;return original_classify(...)end
+ validator.classify_against=function(...)proof_calls=proof_calls+1;return original_classify_against(...)end
+ ownership.compare=function(left,right)
+  if type(left)=='table' and type(right)=='table' and left.kind~=nil and right.kind~=nil and
+      (left.baseline~=nil or right.baseline~=nil) then semantic_compares=semantic_compares+1 end
+  return original_compare(left,right)
+ end
+ assert(ctx:restore_editor_target(inst,a))
+ ownership.compare=original_compare
+ validator.classify,validator.classify_against=original_classify,original_classify_against
+ assert(semantic_compares==0,'identical private target proofs must skip full semantic baseline comparison')
+ assert(proof_calls==1,'same-target restoration must reuse its single fresh target proof')
+ local edited=assert(seq.copy_source(draft));edited.pitch_events[1]=seq.new_pitch(6,0,false,false)
+ assert(ctx:transition('edit',{source=edited,output_policy='repeat',pb_range=12}))
+ proof_calls=0
+ validator.classify=function(...)proof_calls=proof_calls+1;return original_classify(...)end
+ validator.classify_against=function(...)proof_calls=proof_calls+1;return original_classify_against(...)end
+ assert(ctx:restore_editor_target(inst,b))
+ validator.classify,validator.classify_against=original_classify,original_classify_against
+ assert(proof_calls==1,'durably saved editor draft must avoid revalidating the old target on navigation')
+ assert(seq.same_source(cache.get(song,inst,a,ctx:draft_options()),edited),
+  'skipping old-target proof must preserve the already durable draft')
  ctx:release_document()
 end
 

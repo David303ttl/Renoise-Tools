@@ -342,6 +342,15 @@ assert(drafts.get(song,instrument,phrase)==nil,
 assert(store.read_draft(song,instrument,phrase)==nil,
   "cold regenerate retained the durable draft")
 assert(drafts.has(song)==false,"cold regenerate left a draft behind")
+cold_ctx:transition("arm")
+edit(cold_ctx,source(54))
+assert(cold_ctx:generation_state().pending,"post-commit Live Edit was not queued")
+cold_ctx:refresh_inventory()
+assert(cold_ctx:generation_state().pending,
+  "refresh treated the runtime's own adopted baseline as an external target change")
+cold_ctx:transition("disarm")
+cold_ctx:transition("programmatic",{source=cold_source,output_policy="play_once",pb_range=0,restore=true})
+assert(drafts.clear(song,instrument,phrase))
 
 -- While the writer is rendering asynchronously, a newer edit supersedes the
 -- active request and leaves one latest pending intent. The writer remains

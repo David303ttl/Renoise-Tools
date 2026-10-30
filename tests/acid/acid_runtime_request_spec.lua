@@ -8,6 +8,7 @@ local function fixture(new)
  local song,instrument,phrase,other,source=helper.fixture(new and 'new')
  local writer={status='idle'}
  function writer:state()return self.status,self.token end
+ function writer:is_temporary()return false end
  local log={sinks=0}
  local ctx=context.new{writer=writer,capture=function()error('runtime must own editor capture')end,
   sink=function(request,done)log.sinks=log.sinks+1;log.request=request;log.done=done;return true end,
@@ -49,8 +50,28 @@ do
  assert(not log.request:validate_checkpoint(),'public request tampering escaped frozen comparison')
 end
 
+do
+ local _,log=fixture(true)
+ local profile=log.request.capabilities
+ local key,value=next(profile)
+ assert(key~=nil,'request capability profile is empty')
+ profile[key]=type(value)=='boolean' and not value or type(value)=='number' and value+1 or 'changed'
+ assert(not log.request:validate_checkpoint(),'public capability mutation escaped frozen comparison')
+end
+
+do
+ local ctx,log=fixture(true)
+ local policies=require('model.policies')
+ local previous=policies.NORMAL_VOLUME
+ policies.NORMAL_VOLUME=previous==0.7 and 0.6 or 0.7
+ local valid=log.request:validate_checkpoint()
+ policies.NORMAL_VOLUME=previous
+ assert(not valid,'Live request reused a plan after its default volume changed')
+end
+
 local mutations={
  capability=function(ctx,log,writer,song,instrument)instrument.plugin_properties.plugin_loaded=true end,
+ phrase_program=function(ctx,log,writer,song,instrument)instrument.phrase_program=2 end,
  pb_option=function()require('writers.phrase_pitch_bend').delivery_enabled=false end,
  source=function(ctx,log,writer,song,instrument,phrase,other,source)
   local changed=seq.copy_source(source);changed.pitch_events[1]=seq.new_pitch(7,0,false,false)
@@ -75,7 +96,7 @@ local mutations={
  end,
 }
 -- Only destination-specific guards need the full owned-phrase baseline.
-local owned_destination={source=true,replacement=true,collision=true,draft=true,blocker=true}
+local owned_destination={source=true,replacement=true,collision=true,draft=true,blocker=true,phrase_program=true}
 for name,mutate in pairs(mutations)do
  local args={fixture(not owned_destination[name])}
  local ctx,log=args[1],args[2]
@@ -87,11 +108,43 @@ for name,mutate in pairs(mutations)do
 end
 
 do
+ local ctx,log,_,song,instrument,_,_,source=fixture()
+ local request,token=log.request,log.request.token
+ assert(not request:cleanup_authorized(token),'current write token acquired cleanup authority')
+ assert(not pcall(function() request:cleanup_mutate(token,function()return true end) end),
+  'cleanup-only mutation accepted a current write token')
+ assert(ctx:revoke(token,'superseded'))
+ assert(request:cleanup_authorized(token),'revoked current-operation cleanup authority was not retained')
+ local called=false
+ local temporary=helper.phrase(source,103)
+ temporary.id=nil;temporary.name='ACID staging phrase'
+ instrument.phrase_mappings=instrument.phrase_mappings or {}
+ instrument.phrases[#instrument.phrases+1]=temporary
+ assert(request:cleanup_mutate(token,function()
+   called=true
+   for index,phrase in ipairs(instrument.phrases) do
+    if rawequal(phrase,temporary) then table.remove(instrument.phrases,index);return true end
+   end
+   return false
+  end))
+ assert(called,'revoked cleanup did not run inside a mutation scope')
+ assert(not require('renoise.phrase_ownership').membership(song,instrument,temporary),
+  'revoked cleanup left the staged phrase behind')
+ local matched,match_reason=ctx:matches_mutation_inventory(instrument,'phrases')
+ assert(matched,'the delayed phrase inventory notification was not matched to authorized cleanup: '..tostring(match_reason))
+ ctx:release_document()
+ assert(not pcall(function() request:cleanup_mutate(token,function()error('released cleanup ran')end) end),
+  'cleanup mutation accessed a released document')
+end
+
+do
  local ctx,log,_,song,instrument,phrase,other,source=fixture(true)
  assert(log.request.kind=='create' and log.request.target_kind=='new')
  assert(log.request.phrase==nil and log.request.baseline==nil)
  assert(rawequal(log.request.instrument,instrument) and log.request:validate_checkpoint())
  assert(ctx:validate_checkpoint(log.request))
+ assert(not log.request:cleanup_authorized(log.request.token))
+ assert(ctx:revoke(log.request.token,'cancelled'))
  assert(log.request:cleanup_authorized(log.request.token))
  assert(not log.request:cleanup_authorized({}))
  log.request.baseline={id=101}

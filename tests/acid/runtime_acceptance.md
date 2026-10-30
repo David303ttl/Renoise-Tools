@@ -2,15 +2,16 @@
 
 This map links the Step 7 regressions R01–R36 to local assertions. Focused specs
 have been run during implementation; the full repository rerun passes 67 specs
-with no timeout. Native checks completed in Renoise 3.5.4 cover draft
-recovery and Make Independent. Undo/redo and cold-process save/reopen remain
-pending. Mocked host tests do not establish playback, real observer timing,
-undo grouping, or cold-process behavior.
+with no timeout. Native checks completed in Renoise 3.5.4 cover queued Live Edit,
+editor history, draft recovery, Make Independent, song reload and column observers.
+Playback, native song undo grouping and cold-process reopen remain manual checks.
 
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
-unchanged display/idle reads perform no phrase snapshots; source edits average
-72.18 ms on a 32-step/128-line phrase. Hidden/inactive cell preservation and
-external-change rejection remain verified.
+unchanged display/idle reads perform no phrase snapshots; clean source edits perform
+no native cell scans or seal hashes. Five edits average 1.09 ms, maximum 1.17 ms,
+on a 32-step/128-line phrase. Thirty GUI actions meet a 30 ms callback budget;
+queued edits commit the latest source. Hidden/inactive cells and external-change
+rejection remain verified.
 
 | Case | Local evidence | Acceptance limit |
 | --- | --- | --- |

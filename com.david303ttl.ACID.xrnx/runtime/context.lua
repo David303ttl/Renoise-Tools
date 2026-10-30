@@ -208,11 +208,14 @@ function M.new(options)
   local last_commit = nil
   local last_commit_label = nil
   local mutation_depth, mutation_token = 0, nil
+  local mutation_finalizing=false
   local identity_token={}
   local identity_running=false
   local mutation_evidence=nil
   local mutation_group_membership=nil
-  local inventory_dirty, reconciliation_pending, mutation_failed = false, false, false
+  local expected_mutation_inventory=nil
+  local expected_mutation_inventory_reason="missing-proof"
+  local inventory_dirty, external_inventory_dirty, reconciliation_pending, mutation_failed = false, false, false, false
   local compute_musical_eligibility
   local draft_options_for_target
   local cached_independence_projection=nil
@@ -226,6 +229,7 @@ function M.new(options)
   local transitions=require("runtime.transitions").new()
   local editor=nil
   local editor_dirty=false
+  local editor_draft=false
   local preserve_editor
   local editor_target=nil
   local editor_recovery={}
@@ -235,8 +239,44 @@ function M.new(options)
   local store=require("renoise.pattern_store")
   local sequencer=require("model.sequencer")
 
+  local function native_array(object,key)
+    local list=object[key]
+    local count=#list
+    local copy={}
+    for index=1,count do copy[index]=list[index] end
+    return copy
+  end
+
+  local function same_native_array(left,right)
+    if type(left)~="table" or type(right)~="table" or #left~=#right then return false end
+    for index=1,#left do if not rawequal(left[index],right[index]) then return false end end
+    return true
+  end
+
+  local function capture_mutation_inventory()
+    local ok,proof=pcall(function()
+      local instruments=native_array(current_song,"instruments")
+      local by_instrument={}
+      for _,instrument in ipairs(instruments) do
+        by_instrument[#by_instrument+1]={instrument=instrument,
+          phrases=native_array(instrument,"phrases"),
+          phrase_mappings=native_array(instrument,"phrase_mappings")}
+      end
+      return {instruments=instruments,by_instrument=by_instrument}
+    end)
+    expected_mutation_inventory=ok and proof or nil
+    expected_mutation_inventory_reason=ok and "captured" or
+      ("capture-error: "..tostring(proof):gsub("[%c]"," "):sub(1,160))
+  end
+
   local function semantic(target)
     return {kind=target.kind,reason=target.reason,baseline=target.baseline}
+  end
+
+  local function same_semantic(left,right)
+    if left.kind~=right.kind or left.reason~=right.reason then return false end
+    if rawequal(left.baseline,right.baseline) then return true end
+    return ownership.compare(left.baseline,right.baseline)==true
   end
 
   local function diagnose(record, code, message)
@@ -391,8 +431,11 @@ function M.new(options)
       -- session draft to the destination returned by the committed create so
       -- the queued request can capture it after adoption.
       if pending_trigger then preserve_editor(true) end
+    elseif request.kind=="regenerate" then
+      observed_target=semantic(inventory:target_state())
     end
     editor_dirty=false
+    editor_draft=false
     return true
   end
 
@@ -513,7 +556,7 @@ function M.new(options)
       if trigger~="manual" and trigger~="live" then return false,"Invalid generation trigger" end
       if trigger=="live" and not transitions:revision_state().armed then return false,"Live Edit is not armed" end
       if not editor.valid then return false,editor.reason or "Invalid editor source or settings" end
-      local destination=self:target_state()
+      local destination=inventory:edit_target_state()
       if not editor_target or not rawequal(destination.instrument,editor_target.instrument) or
           not rawequal(destination.phrase,editor_target.phrase) or destination.kind~=editor_target.kind then
         return false,"Editor source has not been loaded for this target"
@@ -568,6 +611,7 @@ function M.new(options)
       return false, "The writer slot is occupied"
     end
 
+    if trigger=="manual" and pending_trigger=="live" then pending_trigger=nil end
     if editor then preserve_editor(editor_target and editor_target.kind=="new") end
 
     dispatching = true
@@ -849,6 +893,7 @@ function M.new(options)
       editor.source,editor.output_policy,editor.pb_range,
       verified_target and draft_options_for_target(target) or context:draft_options())
     editor.draft_warning=not ok and "Cannot preserve session draft" or (not saved and reason or nil)
+    if ok and saved then editor_dirty=false end
   end
 
   local function retain_invalid_editor()
@@ -989,7 +1034,7 @@ function M.new(options)
     local initial,reason=self:independence_eligibility()
     if not initial then return false,reason end
     local carry_draft
-    if editor_dirty and editor and editor.valid and editor_target and
+    if (editor_draft or editor_dirty) and editor and editor.valid and editor_target and
         rawequal(editor_target.instrument,target.instrument) and
         rawequal(editor_target.phrase,target.phrase) then
       local committed,committed_policy,committed_pb=store.read_entry(current_song,initial.id)
@@ -1058,8 +1103,10 @@ function M.new(options)
     local restored,restore_error=self:transition("programmatic",{source=restored_source,
       output_policy=restored_policy,pb_range=restored_pb,restore=true})
     if not restored then return false,restore_error end
+    editor_draft=carry_draft~=nil
     if carry_draft and not draft_persisted then
       editor_dirty=true
+      editor_draft=true
       if editor then editor.draft_warning=draft_warning or "Cannot preserve matching object-local draft" end
     end
     return true,result
@@ -1116,28 +1163,41 @@ function M.new(options)
       token,revision,self:draft_options())
     if not source then return false,output_policy end
     local restored,restore_error=self:transition("programmatic",{source=source,
-      output_policy=output_policy,pb_range=pb_range,restore=true})
+      output_policy=output_policy,pb_range=pb_range,restore=true,draft=true})
     if not restored then return false,restore_error end
     return true,{instrument=instrument,token=token,revision=revision,metadata=metadata,
       warning=metadata and metadata.warning}
   end
 
-  function context:transition(kind,values)
-    values=values or {}
-    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
-    if not inventory then return nil,"No current document is attached" end
-    if kind=="target" or kind=="native_target" then
+  local function transition_target(kind,values,for_restore)
+      values=values or {}
       pending_trigger=nil
-      local before=inventory:target_state()
-      local changed=not rawequal(before.instrument,values.instrument) or not rawequal(before.phrase,values.phrase)
-        or (kind=="target" and values.kind=="new")~=(before.kind=="new")
-      if changed then preserve_editor();retain_invalid_editor() end
+      local before
+      local changed
+      if for_restore then
+        local projection=inventory:target_projection()
+        changed=not rawequal(projection.instrument,values.instrument) or not rawequal(projection.phrase,values.phrase)
+          or (kind=="target" and values.kind=="new")~=(projection.kind=="new")
+        if not changed or editor_dirty then before=inventory:edit_target_state()
+        else before=projection end
+      else
+        before=inventory:target_state()
+        changed=not rawequal(before.instrument,values.instrument) or not rawequal(before.phrase,values.phrase)
+          or (kind=="target" and values.kind=="new")~=(before.kind=="new")
+      end
+      if changed then preserve_editor(false,before);retain_invalid_editor()
+      elseif for_restore then preserve_editor(false,before) end
       local target
-      if kind=="target" and values.kind=="new" then target=inventory:bind_new(values.instrument)
+      if for_restore and not changed then
+        target=before
+      elseif for_restore then
+        if kind=="target" and values.kind=="new" then target=inventory:bind_new_for_restore(values.instrument)
+        else target=inventory:bind_phrase_for_restore(values.instrument,values.phrase) end
+      elseif kind=="target" and values.kind=="new" then target=inventory:bind_new(values.instrument)
       else target=inventory:bind_phrase(values.instrument,values.phrase) end
       cached_independence_projection=nil
       local effects=transitions:transition(kind,{instrument=target.instrument,phrase=target.phrase,kind=target.kind,
-        semantic_changed=not changed and observed_target~=nil and not ownership.compare(observed_target,semantic(target))})
+        semantic_changed=not changed and observed_target~=nil and not same_semantic(observed_target,semantic(target))})
       apply_effects(effects,"Target changed")
       observed_target=semantic(target)
       if kind=="target" then
@@ -1147,11 +1207,104 @@ function M.new(options)
         if read then native_instrument,native_phrase=instrument,phrase end
       end
       return target,effects
+  end
+
+  local function install_editor(values,destination,is_draft)
+      local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
+      if not buffer then return nil,copy_error end
+      local changed=not editor or not ownership.compare({source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},buffer)
+      local policies=require("model.policies")
+      local source_valid,source_error=require("model.sequencer").validate(buffer.source)
+      buffer.valid=source_valid and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
+      buffer.reason=not buffer.valid and (source_error or "Invalid source settings") or nil
+      local eligible=compute_musical_eligibility(context,active and active.token,destination)
+      local effects=transitions:transition("programmatic",{changed=changed,valid=buffer.valid,eligible=eligible~=nil})
+      apply_effects(effects,"Editor source or settings changed")
+      if changed then retain_invalid_editor() end
+      editor=buffer
+      editor_dirty=false
+      editor_draft=is_draft==true
+      editor_target={instrument=destination.instrument,phrase=destination.phrase,kind=destination.kind}
+      observed_target=semantic(destination)
+      return context:editor_state(),effects
+  end
+
+  function context:restore_editor_target(instrument,phrase,native_selection)
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    if not inventory or not current_song then return nil,"No current document is attached" end
+    local kind=native_selection==true and "native_target" or "target"
+    local target,target_effects=transition_target(kind,{instrument=instrument,phrase=phrase,
+      kind=phrase==nil and "new" or "existing"},true)
+    local result={target=inventory:target_projection(),source=nil,output_policy=nil,pb_range=nil,
+      draft=false,draft_error=nil,source_available=false}
+    local policies=require("model.policies")
+    local sequencer=require("model.sequencer")
+    if target.kind=="owned" then
+      local baseline=target.baseline
+      if type(baseline)=="table" and type(baseline.source)=="table" and type(baseline.settings)=="table" then
+        result.source=sequencer.copy_source(baseline.source)
+        result.output_policy=baseline.settings.output_policy
+        result.pb_range=baseline.settings.pb_range
+        result.source_available=result.source~=nil
+      else
+        result.reason="Verified destination source is unavailable"
+      end
+    elseif target.kind=="new" then
+      result.source=sequencer.new_pattern()
+      result.output_policy=policies.DEFAULT_OUTPUT_POLICY
+      result.pb_range=policies.DEFAULT_PB_RANGE
+    else
+      result.reason=target.reason or "Source unavailable"
+      if phrase then
+        local store=require("renoise.pattern_store")
+        local ok,source,policy,pb=pcall(store.load,current_song,instrument,phrase)
+        if ok and source then
+          result.source=source
+          result.output_policy=policy
+          result.pb_range=pb
+          result.source_available=true
+        elseif ok and policy then result.reason=policy end
+      end
+    end
+    if result.source and (target.kind=="owned" or target.kind=="new") then
+      local restored,restore_error,restored_pb,metadata
+      local options=target.kind=="owned" and draft_options_for_target(target) or self:draft_options()
+      restored,restore_error,restored_pb,metadata=drafts.restore(current_song,instrument,phrase,options)
+      if restored then
+        result.source=restored
+        result.output_policy=restore_error
+        result.pb_range=restored_pb
+        result.draft=metadata and metadata.origin~="committed" or false
+      elseif restore_error then
+        result.draft_error=restore_error
+      end
+    end
+    if not result.source then
+      result.source=sequencer.new_pattern()
+      result.output_policy=policies.DEFAULT_OUTPUT_POLICY
+      result.pb_range=policies.DEFAULT_PB_RANGE
+    end
+    local installed,install_effects=install_editor({source=result.source,
+      output_policy=result.output_policy,pb_range=result.pb_range},target,result.draft)
+    if not installed then return nil,install_effects end
+    result.editor=installed
+    result.effects=install_effects
+    result.target_effects=target_effects
+    return result
+  end
+
+  function context:transition(kind,values)
+    values=values or {}
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    if not inventory then return nil,"No current document is attached" end
+    if kind=="target" or kind=="native_target" then
+      return transition_target(kind,values,false)
     elseif kind=="refresh" then
       local target=inventory:target_state()
       inventory_dirty=false
+      external_inventory_dirty=false
       cached_independence_projection=nil
-      local changed=observed_target~=nil and not ownership.compare(observed_target,semantic(target))
+      local changed=observed_target~=nil and not same_semantic(observed_target,semantic(target))
       if changed then pending_trigger=nil end
       local effects=transitions:transition(kind,{semantic_changed=changed})
       apply_effects(effects,"Target eligibility changed")
@@ -1163,21 +1316,26 @@ function M.new(options)
       if not buffer then return nil,copy_error end
       local changed=not editor or not ownership.compare({source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},buffer)
       local policies=require("model.policies")
-      local source,source_error=require("model.sequencer").copy_source(buffer.source)
-      buffer.valid=source~=nil and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
+      local source_valid,source_error=require("model.sequencer").validate(buffer.source)
+      buffer.valid=source_valid and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
       buffer.reason=not buffer.valid and (source_error or "Invalid source settings") or nil
-      local destination=inventory:edit_target_state()
+      local writer_state=inspect_writer(writer)
+      local force_full=external_inventory_dirty and writer_state and writer_state.status=="idle"
+      local destination=inventory:editor_target_state(force_full)
       local eligible=compute_musical_eligibility(self,active and active.token,destination)
       local effects=transitions:transition(kind,{changed=changed,valid=buffer.valid,eligible=eligible~=nil})
       apply_effects(effects,"Editor source or settings changed")
       if changed then retain_invalid_editor() end
       editor=buffer
-      if kind=="programmatic" and values.restore==true then editor_dirty=false
-      elseif changed then editor_dirty=true end
+      if kind=="programmatic" and values.restore==true then
+        editor_dirty=false;editor_draft=values.draft==true
+      elseif changed then editor_dirty=true;editor_draft=true end
       editor_target={instrument=destination.instrument,phrase=destination.phrase,kind=destination.kind}
       if changed and not (kind=="programmatic" and values.restore==true) then preserve_editor(false,destination) end
       if effects.live_intent then
-        effects.accepted,effects.reason=self:request_generation("live")
+        pending_trigger="live"
+        effects.accepted=true
+        effects.reason="Generation queued for the next idle update"
       end
       return self:editor_state(),effects
     end
@@ -1187,7 +1345,7 @@ function M.new(options)
     if kind=="request" or kind=="independence" or kind=="external" or kind=="undo"
         or kind=="close" or kind=="blocker" then pending_trigger=nil end
     if effects.reconcile then
-      inventory_dirty=true;reconciliation_pending=true
+      inventory_dirty=true;external_inventory_dirty=true;reconciliation_pending=true
       invalidate_target_projection()
     end
     if kind=="independence" then
@@ -1198,11 +1356,66 @@ function M.new(options)
   end
 
   function context:mutation_state()
-    return {depth=mutation_depth,dirty=inventory_dirty,pending=reconciliation_pending,failed=mutation_failed}
+    return {depth=mutation_depth+(mutation_finalizing and 1 or 0),dirty=inventory_dirty,
+      pending=reconciliation_pending,failed=mutation_failed}
+  end
+
+  function context:matches_mutation_inventory(subject,inventory_kind)
+    local expected=expected_mutation_inventory
+    if not current_song then return false,"no-current-song" end
+    if not expected then return false,expected_mutation_inventory_reason or "missing-proof" end
+    local matches=false
+    local source_kind
+    local ok=pcall(function()
+      if rawequal(subject,current_song) and inventory_kind=="instruments" then
+        source_kind=true
+        matches=same_native_array(expected.instruments,native_array(current_song,"instruments"))
+        return
+      end
+      local saved
+      for _,candidate in ipairs(expected.by_instrument) do
+        if rawequal(candidate.instrument,subject) then saved=candidate;break end
+      end
+      if not saved then return end
+      if inventory_kind=="phrases" then
+        source_kind=true
+        matches=same_native_array(saved.phrases,native_array(subject,"phrases"))
+      elseif inventory_kind=="phrase_mappings" then
+        source_kind=true
+        matches=same_native_array(saved.phrase_mappings,native_array(subject,"phrase_mappings"))
+      end
+    end)
+    if not ok then
+      expected_mutation_inventory=nil
+      expected_mutation_inventory_reason="read-error"
+      return false,"read-error"
+    end
+    if not source_kind then
+      local captured_count=#expected.instruments
+      local record_count=#expected.by_instrument
+      local expected_index=0
+      for index,candidate in ipairs(expected.instruments) do
+        if rawequal(candidate,subject) then expected_index=index;break end
+      end
+      local member_ok,member_index=pcall(function()
+        local index=ownership.membership(current_song,subject,nil)
+        return index
+      end)
+      return false,string.format("source-kind-mismatch:captured=%d:records=%d:expected_index=%d:membership_index=%s:kind=%s",
+        captured_count,record_count,expected_index,
+        member_ok and tostring(member_index or 0) or "error",tostring(inventory_kind))
+    end
+    if not matches then
+      expected_mutation_inventory=nil
+      expected_mutation_inventory_reason="membership-mismatch"
+      return false,"membership-mismatch"
+    end
+    return true,"matched"
   end
 
   function context:mark_dirty(reason)
     inventory_dirty=true
+    external_inventory_dirty=true
     reconciliation_pending=true
     invalidate_target_projection()
     if mutation_depth==0 then
@@ -1211,12 +1424,21 @@ function M.new(options)
     end
   end
 
-  function context:mutate(token,action)
+  local function run_mutation(token,action,cleanup_only)
     local identity_scope=identity_running and rawequal(token,identity_token)
-    if type(action)~="function" or (not identity_scope and (not active or not active.current or
-        not rawequal(active.token,token))) or not current_song or
+    local operation_scope=active and active.current and rawequal(active.token,token)
+    local cleanup_scope=cleanup_only and active and not active.current and not active.settled and
+      not active.rejected and not active.released and active.epoch==epoch and
+      rawequal(active.token,token) and not releasing
+    local authorized_scope=cleanup_only and cleanup_scope or (not cleanup_only and
+      (identity_scope or operation_scope))
+    if type(action)~="function" or not authorized_scope or not current_song or
         (mutation_depth>0 and not rawequal(mutation_token,token)) then
       error("Mutation requires the current operation token",0)
+    end
+    if cleanup_only then
+      local current,current_error=ownership.is_current(current_song)
+      if not current then error(current_error or "Document is no longer current",0) end
     end
     if mutation_depth==0 then
       if type(writer.is_temporary)~="function" then
@@ -1245,6 +1467,7 @@ function M.new(options)
     if not rawequal(scope_song,current_song) or scope_epoch~=epoch then
       error("Document changed during synchronous mutation",0)
     end
+    if mutation_depth==1 then mutation_finalizing=true end
     mutation_depth=mutation_depth-1
     if not ok then
       mutation_failed=true
@@ -1296,26 +1519,52 @@ function M.new(options)
       if mutation_failed then
         integrity:record(mutation_evidence)
         transitions:transition("blocker")
+      elseif ok then
+        capture_mutation_inventory()
       end
       mutation_evidence=nil
       mutation_group_membership=nil
+      mutation_finalizing=false
     end
     if not ok then error(failure,0) end
     return (unpack or table.unpack)(values,1,values.n)
   end
 
+  function context:mutate(token,action)
+    return run_mutation(token,action,false)
+  end
+
   function context:reconcile()
     if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
     reconciliation_pending=false
+    local function refresh_or_defer()
+      local occupied=inspect_writer(writer)
+      if not occupied or occupied.status~="idle" then
+        reconciliation_pending=true
+        return inventory:target_projection()
+      end
+      return self:refresh_inventory()
+    end
     local ok,instrument,phrase=pcall(function() return current_song.selected_instrument,current_song.selected_phrase end)
     if not ok then return nil,"Cannot inspect native selection" end
     if not rawequal(instrument,native_instrument) or not rawequal(phrase,native_phrase) then
+      local projection=inventory:target_projection()
+      if rawequal(instrument,projection.instrument) and rawequal(phrase,projection.phrase) then
+        native_instrument,native_phrase=instrument,phrase
+        if inventory_dirty then return refresh_or_defer() end
+        return projection
+      end
+      local occupied=inspect_writer(writer)
+      if occupied and occupied.status=="busy" and context:is_temporary(instrument,phrase) then
+        reconciliation_pending=true
+        return projection
+      end
       native_instrument,native_phrase=instrument,phrase
       local target,effects=self:transition("native_target",{instrument=instrument,phrase=phrase,kind="existing"})
       inventory_dirty=false
       return target,effects
     end
-    if inventory_dirty then return self:refresh_inventory() end
+    if inventory_dirty then return refresh_or_defer() end
     return inventory:target_projection()
   end
 
@@ -1359,12 +1608,15 @@ function M.new(options)
     transitions:release()
     editor,observed_target=nil,nil
     editor_dirty=false
+    editor_draft=false
     editor_target=nil
     editor_recovery={}
     native_instrument,native_phrase=nil,nil
     mutation_depth,mutation_token=0,nil
     mutation_evidence=nil
-    inventory_dirty,reconciliation_pending,mutation_failed=false,false,false
+    expected_mutation_inventory=nil
+    expected_mutation_inventory_reason="missing-proof"
+    inventory_dirty,external_inventory_dirty,reconciliation_pending,mutation_failed=false,false,false,false
     cached_independence_projection=nil
     pending_trigger=nil
     last_result,last_commit,last_commit_label=nil,nil,nil
@@ -1398,6 +1650,8 @@ function M.new(options)
     epoch_serial = epoch_serial + 1
     epoch = epoch_serial
     current_song = song
+    expected_mutation_inventory=nil
+    expected_mutation_inventory_reason="missing-proof"
     adoption_blocked_reason=nil
     cached_independence_projection=nil
     local selection_ok,selected_instrument,selected_phrase=pcall(function() return song.selected_instrument,song.selected_phrase end)
@@ -1412,18 +1666,18 @@ function M.new(options)
       return true
     end)
     requests=require("runtime.requests").new({
-      current=function(include_target)
+      current=function(include_target,include_editor)
         local revisions=transitions:revision_state()
         return {song=current_song,epoch=epoch,session=session,open=opened,
           target_revision=revisions.target_revision,edit_revision=revisions.edit_revision,
           operation_serial=revisions.operation_serial,
-          editor=include_target and context:editor_state() or nil,
-          target=include_target and context:target_state() or nil}
+          editor=include_target and include_editor~=false and context:editor_state() or nil,
+          target=include_target and inventory and inventory:edit_target_state() or nil}
       end,
       occupancy=function(token) return context:occupancy_state(token) end,
       revoke=function(token,reason) return context:revoke(token,reason) end,
       cleanup_allowed=function(token)
-        return active~=nil and not active.settled and not active.rejected and not active.released
+        return active~=nil and not active.current and not active.settled and not active.rejected and not active.released
           and active.epoch==epoch and rawequal(active.token,token)
       end,
       blocked=function()
@@ -1432,8 +1686,12 @@ function M.new(options)
         return state.blocked,state.reason
       end,
       drafts=drafts,
-      draft_options=function() return context:draft_options() end,
+      draft_options=function(target)
+        if target then return draft_options_for_target(target) end
+        return context:draft_options()
+      end,
       mutate=function(token,action) return context:mutate(token,action) end,
+      cleanup_mutate=function(token,action) return run_mutation(token,action,true) end,
       record_blocker=function(token,evidence) return context:record_blocker(token,evidence) end,
     })
     opened = false
@@ -1559,6 +1817,7 @@ function M.new(options)
   draft_options_for_target=function(verified_target)
     local verified_baseline=verified_target and verified_target.baseline
     local validation_used=false
+    local validator=require("writers.phrase_validator")
     return {validate=function(song,instrument,phrase)
       if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
       if not inventory then return nil,"No current document is attached" end
@@ -1571,8 +1830,10 @@ function M.new(options)
             not verified_baseline.id then
           return nil,"Fresh target proof does not match the draft destination"
         end
+        local baseline_identity=validator.retained_baseline_identity(verified_baseline.snapshot)
         return {source=verified_baseline.source,settings=verified_baseline.settings,
-          baseline=verified_baseline.snapshot,planning_inputs=verified_baseline.planning_inputs}
+          baseline=verified_baseline.snapshot,planning_inputs=verified_baseline.planning_inputs,
+          baseline_identity=baseline_identity}
       end
       return inventory:draft_options().validate(song,instrument,phrase)
     end}

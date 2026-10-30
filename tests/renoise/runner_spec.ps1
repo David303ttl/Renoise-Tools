@@ -6,6 +6,17 @@ function Reject([scriptblock]$Action, [string]$Pattern) {
     try { & $Action } catch { if ($_.Exception.Message -notmatch $Pattern) { throw }; return }
     throw "Expected rejection: $Pattern"
 }
+$metadataReads = [pscustomobject]@{ Count = 0 }
+$metadataStart = [datetime]::UtcNow
+$metadataPath = (Get-Process -Id $PID).Path
+$delayedIdentity = Get-RenoiseProcessIdentity -Id 123 -WaitMilliseconds 1000 -ReadProcess {
+    param($ProcessId)
+    $metadataReads.Count++
+    [pscustomobject]@{ Id = $ProcessId; Path = $(if ($metadataReads.Count -gt 1) { $metadataPath } else { '' }); StartTime = $metadataStart; SessionId = 1 }
+}
+Assert ($metadataReads.Count -eq 2 -and $delayedIdentity.Path -eq $metadataPath) 'startup identity did not wait for executable metadata'
+Reject { Get-RenoiseProcessIdentity -Id 123 -ReadProcess { [pscustomobject]@{ Path = '' } } } 'Executable path is unavailable'
+Reject { Get-RenoiseProcessIdentity -Id 123 -WaitMilliseconds 1000 -ReadProcess { throw 'process exited' } } 'process exited'
 $keyboardEnvironment = '{"Keyboard":{"ShowShortcut":"^!a","TimeoutSeconds":3}}' | ConvertFrom-Json -AsHashtable
 $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment ([pscustomobject]$keyboardEnvironment)
 Assert ($keyboardConfiguration.ShowShortcut -ceq '^!a' -and $keyboardConfiguration.TimeoutSeconds -eq 3) 'keyboard developer configuration did not load'
@@ -63,6 +74,47 @@ $closedListener.Stop()
 $checkCounter = [pscustomobject]@{ Count = 0 }
 Reject { Connect-RenoiseDriver -Session ([pscustomobject]@{Port=$closedPort}) -TimeoutSeconds 1 -ProcessCheck { $checkCounter.Count++ } } 'Timed out.*loopback listener'
 Assert ($checkCounter.Count -gt 0) 'startup retry did not revalidate the selected Renoise process'
+$bootstrapListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$bootstrapListener.Start()
+$bootstrapNonce = 'bootstrap-test-nonce'
+$bootstrapIdentity = [pscustomobject]@{ Id = 123; StartTimeUtc = [datetime]::UtcNow }
+$bootstrapWorker = [PowerShell]::Create()
+$bootstrapConnections = [pscustomobject]@{ Count = 0 }
+[void]$bootstrapWorker.AddScript({ param($Listener,$ConnectionCounter,$Nonce)
+    $first = $Listener.AcceptTcpClient()
+    $ConnectionCounter.Count++
+    $firstReader = [IO.StreamReader]::new($first.GetStream())
+    [void]$firstReader.ReadLine()
+    $first.Dispose()
+    $second = $Listener.AcceptTcpClient()
+    $ConnectionCounter.Count++
+    $stream = $second.GetStream()
+    $reader = [IO.StreamReader]::new($stream)
+    $request = $reader.ReadLine() | ConvertFrom-Json
+    $response = @{ id = $request.id; ok = $true; result = @{ protocol_version = 1; session = $Nonce } } | ConvertTo-Json -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($response + "`n")
+    $stream.Write($bytes,0,$bytes.Length)
+    $stream.Flush()
+    $second.Dispose()
+}).AddArgument($bootstrapListener).AddArgument($bootstrapConnections).AddArgument($bootstrapNonce)
+$bootstrapPending = $bootstrapWorker.BeginInvoke()
+$bootstrapClient = $null
+try {
+    $bootstrapChecks = [pscustomobject]@{ Count = 0 }
+    $bootstrap = Invoke-RenoiseDriverBootstrap -Session ([pscustomobject]@{ Port = $bootstrapListener.LocalEndpoint.Port; Token = 'bootstrap-token'; Nonce = $bootstrapNonce }) `
+        -Identity $bootstrapIdentity -StartupTimeoutSeconds 5 -CommandTimeoutSeconds 2 `
+        -ProcessCheck { $bootstrapChecks.Count++ } `
+        -CheckIdentity { param($Identity) if ($Identity.Id -ne 123) { throw 'identity changed' } } `
+        -GetListeners { param($Port) [pscustomobject]@{ LocalAddress = '127.0.0.1'; OwningProcess = 123 } }
+    $bootstrapClient = $bootstrap.Client
+    Assert ($bootstrap.Attempts -eq 2 -and $bootstrap.Ping.protocol_version -eq 1 -and $bootstrap.Ping.session -ceq $bootstrapNonce) 'bootstrap did not reconnect after a first-ping EOF'
+    Assert ($bootstrapConnections.Count -eq 2 -and $bootstrapChecks.Count -ge 2) 'bootstrap retry skipped process or connection checks'
+} finally {
+    if ($bootstrapClient) { $bootstrapClient.Dispose() }
+    $bootstrapListener.Stop()
+    $bootstrapWorker.EndInvoke($bootstrapPending)
+    $bootstrapWorker.Dispose()
+}
 $scenarioRoot = Join-Path ([IO.Path]::GetTempPath()) ('runner-scenarios-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $scenarioRoot | Out-Null
 try {

@@ -70,7 +70,7 @@ end
 local function values(record)
   return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record)
 end
-local function proof(song,instrument,phrase,options,previous_baseline)
+local function proof(song,instrument,phrase,options,previous_baseline,previous_identity,previous_snapshot)
   local ok,result,err=pcall(function()
     if options and options.validate then return options.validate(song,instrument,phrase) end
     local profile,profile_error=capabilities.inspect(instrument)
@@ -87,12 +87,25 @@ local function proof(song,instrument,phrase,options,previous_baseline)
   if not id_ok or not policies.is_integer(id) or id<1 then
     return nil,"Cannot inspect draft phrase identity"
   end
+  local identity=result.baseline_identity
+  local identity_ok=validator.is_retained_baseline_identity(identity,result.baseline)
+  if not identity_ok then identity=nil end
   local candidate={id=id,source=result.source,settings=result.settings,
     snapshot=result.baseline,planning_inputs=result.planning_inputs}
   if previous_baseline then
-    local same=ownership.compare(previous_baseline,candidate)
-    if not same then return nil,"Committed draft baseline changed" end
-    return previous_baseline
+    local previous_identity_ok=validator.is_retained_baseline_identity(previous_identity,previous_snapshot)
+    if identity and previous_identity_ok and rawequal(identity,previous_identity) and
+        rawequal(candidate.snapshot,previous_snapshot) then
+      local same=previous_baseline.id==candidate.id and
+        ownership.compare(previous_baseline.source,candidate.source)==true and
+        ownership.compare(previous_baseline.settings,candidate.settings)==true and
+        ownership.compare(previous_baseline.planning_inputs,candidate.planning_inputs)==true
+      if not same then return nil,"Committed draft source or planning inputs changed" end
+      return previous_baseline,nil,identity,candidate.snapshot
+    end
+    local same,difference=ownership.compare(previous_baseline,candidate)
+    if not same then return nil,"Committed draft baseline changed: "..tostring(difference) end
+    return previous_baseline,nil,identity,candidate.snapshot
   end
   local readable,baseline,baseline_error=pcall(function()
     local source,source_error=sequencer.copy_source(result.source)
@@ -111,7 +124,7 @@ local function proof(song,instrument,phrase,options,previous_baseline)
       not policies.valid_pb_range(baseline.settings.pb_range) then
     return nil,baseline_error or "Incomplete verified draft baseline"
   end
-  return baseline
+  return baseline,nil,identity,candidate.snapshot
 end
 local function scratch_baseline(song,instrument)
   local index,err=ownership.membership(song,instrument,nil)
@@ -125,13 +138,20 @@ local function scratch_baseline(song,instrument)
   end)
   return {index=index,name=name,durable=inspected and matches==1}
 end
-local function baseline(song,instrument,phrase,options,previous_baseline)
-  if phrase then return proof(song,instrument,phrase,options,previous_baseline) end
+local function baseline(song,instrument,phrase,options,previous_baseline,previous_identity,previous_snapshot)
+  if phrase then return proof(song,instrument,phrase,options,previous_baseline,previous_identity,previous_snapshot) end
   return scratch_baseline(song,instrument)
 end
 local function matching(phrase,left,right)
   if phrase==nil then return left~=nil and right~=nil end
   return left~=nil and right~=nil and ownership.compare(left,right)==true
+end
+local function retain_identity(previous,identity,snapshot)
+  if identity or not previous or
+      not validator.is_retained_baseline_identity(previous.baseline_identity,previous.verified_snapshot) then
+    return identity,snapshot
+  end
+  return previous.baseline_identity,previous.verified_snapshot
 end
 local function scratch_changed(captured,current)
   return captured.index~=current.index or captured.name~=current.name or not current.durable
@@ -173,8 +193,12 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   local previous=records[phrase or NEW]
   if previous and previous.detached then previous=nil end
   local retained_baseline=previous and previous.baseline
-  local verified,validation_error=baseline(song,instrument,phrase,options,
-    phrase and previous and previous.baseline or nil)
+  local verified,validation_error,verified_identity,verified_snapshot=baseline(song,instrument,phrase,options,
+    phrase and previous and previous.baseline or nil,previous and previous.baseline_identity,
+    previous and previous.verified_snapshot)
+  if phrase~=nil and previous and rawequal(verified,previous.baseline) then
+    verified_identity,verified_snapshot=retain_identity(previous,verified_identity,verified_snapshot)
+  end
   local previous_matches=previous~=nil and verified~=nil and
     (phrase~=nil and rawequal(previous.baseline,verified) or
       matching(phrase,previous.baseline,verified))
@@ -192,13 +216,16 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
     if not saved then return nil,save_error,metadata(previous) end
     previous.persistent=true
     previous.warning=nil
+    previous.baseline_identity=verified_identity
+    previous.verified_snapshot=verified_snapshot
     return true,nil,metadata(previous)
   end
   local revision=next_token()
   local record={pattern=source,output_policy=output_policy,pb_range=pb_range,
     baseline=phrase==nil and retained_baseline or verified,
     labels=labels(instrument,phrase),token=previous and previous.token or next_token(),
-    revision=revision,persistent=false}
+    revision=revision,persistent=false,baseline_identity=verified_identity,
+    verified_snapshot=verified_snapshot}
   records[phrase or NEW]=record
   if not verified then return nil,validation_error,metadata(record) end
   if phrase==nil and scratch_changed(record.baseline,verified) then
@@ -216,18 +243,31 @@ local function resolve(song,instrument,phrase,options)
   if not valid then return nil,target_error,nil,"invalid" end
   local options_valid,options_error=valid_options(options)
   if not options_valid then return nil,options_error,nil,"invalid" end
-  local verified,err=baseline(song,instrument,phrase,options)
   local records=bucket(song,instrument,false)
   local record=records and records[phrase or NEW]
+  local verified,err,verified_identity,verified_snapshot=baseline(song,instrument,phrase,options,
+    phrase and record and not record.detached and record.baseline or nil,
+    record and record.baseline_identity,record and record.verified_snapshot)
   if not verified then
     if record then M.detach(song,instrument,phrase,err) end
     return nil,err,nil,"unverified"
   end
   if record and record.detached then return nil,record.reason,verified,"detached" end
+  if phrase~=nil and record and rawequal(verified,record.baseline) then
+    verified_identity,verified_snapshot=retain_identity(record,verified_identity,verified_snapshot)
+  end
   if record then
-    if not matching(phrase,record.baseline,verified) then
+    if phrase~=nil and rawequal(record.baseline,verified) then
+      record.baseline_identity=verified_identity
+      record.verified_snapshot=verified_snapshot
+    else
+      local matches,difference=matching(phrase,record.baseline,verified)
+      if not matches then
       M.detach(song,instrument,phrase,"Committed draft baseline changed")
       return nil,"Committed draft baseline changed",verified,"detached"
+      end
+      record.baseline_identity=verified_identity
+      record.verified_snapshot=verified_snapshot
     end
     if phrase==nil and scratch_changed(record.baseline,verified) then
       record.persistent=false
@@ -246,7 +286,8 @@ local function resolve(song,instrument,phrase,options)
   local revision=next_token()
   record={pattern=assert(sequencer.copy_source(source)),output_policy=policy,pb_range=pb,
     baseline=verified,labels=labels(instrument,phrase),token=next_token(),revision=revision,
-    persistent=true,recovered=true}
+    persistent=true,recovered=true,baseline_identity=verified_identity,
+    verified_snapshot=verified_snapshot}
   bucket(song,instrument,true)[phrase or NEW]=record
   return record,nil,verified,"session"
 end

@@ -12,6 +12,7 @@ local MAX_PHRASE_ID = 2147483647
 local PINNED_MAX_LINES = 512
 local PINNED_NOTE_COLUMNS = 12
 local PINNED_EFFECT_COLUMNS = 8
+local indexed_snapshots=setmetatable({},{__mode="k"})
 local function hash(phrase)
   local acc=HASH_INITIAL
   local function feed(value)
@@ -366,6 +367,192 @@ function M.snapshot(phrase,limits)
   local ok,result=pcall(capture,phrase,capacities)
   if not ok then return nil,"Cannot inspect complete phrase: "..tostring(result) end
   return result
+end
+
+local function cell_is_default(snapshot,defaults,fields)
+  if type(snapshot)~="table" or type(defaults)~="table" or getmetatable(snapshot)~=nil then return false end
+  for _,key in ipairs(fields) do
+    if rawget(snapshot,key)~=defaults[key] then return false end
+  end
+  return rawget(snapshot,"is_empty")==true
+end
+
+-- Cache which cells in a trusted snapshot are canonical empty cells. Native
+-- matching can then use Renoise's read-only emptiness flags to avoid reading
+-- each field in those cells on every fresh proof.
+function M.snapshot_index(snapshot,limits)
+  local capacities,capacity_error=snapshot_capacities(limits)
+  if not capacities then return nil,capacity_error end
+  if type(snapshot)~="table" or type(snapshot.lines)~="table" or
+      #snapshot.lines~=capacities.max_lines then
+    return nil,"Invalid phrase snapshot for native matching"
+  end
+  local defaults=empty_column_defaults()
+  local index={}
+  local masks={max_lines=capacities.max_lines,note_columns=capacities.note_columns,
+    effect_columns=capacities.effect_columns,empty_lines={},expected_empty_lines={},
+    empty_notes={},empty_effects={}}
+  for line_index=1,capacities.max_lines do
+    local line=snapshot.lines[line_index]
+    if type(line)~="table" or type(line.notes)~="table" or type(line.effects)~="table" or
+        #line.notes~=capacities.note_columns or #line.effects~=capacities.effect_columns then
+      return nil,"Invalid phrase snapshot line for native matching"
+    end
+    local empty=defaults~=nil
+    local expected_empty=true
+    masks.empty_notes[line_index]={}
+    masks.empty_effects[line_index]={}
+    for column=1,capacities.note_columns do
+      local is_empty=defaults~=nil and cell_is_default(line.notes[column],defaults.note,note_fields)
+      masks.empty_notes[line_index][column]=is_empty
+      empty=empty and is_empty
+      expected_empty=expected_empty and type(line.notes[column])=="table" and
+        rawget(line.notes[column],"is_empty")==true
+    end
+    for column=1,capacities.effect_columns do
+      local is_empty=defaults~=nil and cell_is_default(line.effects[column],defaults.effect,effect_fields)
+      masks.empty_effects[line_index][column]=is_empty
+      empty=empty and is_empty
+      expected_empty=expected_empty and type(line.effects[column])=="table" and
+        rawget(line.effects[column],"is_empty")==true
+    end
+    masks.empty_lines[line_index]=empty
+    masks.expected_empty_lines[line_index]=expected_empty
+  end
+  indexed_snapshots[index]={snapshot=snapshot,masks=masks}
+  return index
+end
+
+local function matches_field(object,key,expected,kind)
+  if type(expected)~=kind or (kind=="number" and
+      (expected~=expected or expected==math.huge or expected==-math.huge)) then
+    return false
+  end
+  return value(object,key,kind)==expected
+end
+
+local function matches_cell(cell,expected,fields,known_empty)
+  if type(expected)~="table" or getmetatable(expected)~=nil then return false end
+  local empty_ok,is_empty=pcall(function() return cell.is_empty end)
+  if known_empty and empty_ok and type(is_empty)=="boolean" then return is_empty end
+  if empty_ok and type(is_empty)=="boolean" and is_empty~=expected.is_empty then return false end
+  if type(expected.is_empty)~="boolean" then return false end
+  for _,key in ipairs(fields) do
+    if not matches_field(cell,key,rawget(expected,key),"number") then return false end
+  end
+  if not empty_ok or type(is_empty)~="boolean" then
+    return value(cell,"is_empty","boolean")==expected.is_empty
+  end
+  return true
+end
+
+local function matches_snapshot(phrase,snapshot,capacities,index)
+  local retained=indexed_snapshots[index]
+  if type(snapshot)~="table" or getmetatable(snapshot)~=nil or
+      type(index)~="table" or not retained or not rawequal(retained.snapshot,snapshot) then
+    return false,"Missing trusted phrase snapshot index"
+  end
+  local masks=retained.masks
+  if capacities.max_lines~=masks.max_lines or capacities.note_columns~=masks.note_columns or
+      capacities.effect_columns~=masks.effect_columns then
+    return false,"Native phrase snapshot capacities changed"
+  end
+  if type(snapshot.properties)~="table" or type(snapshot.columns)~="table" or
+      type(snapshot.mapping)~="table" or type(snapshot.script)~="table" or
+      type(snapshot.lines)~="table" or #snapshot.lines~=capacities.max_lines then
+    return false,"Invalid phrase snapshot shape"
+  end
+  if not matches_field(phrase,"name",snapshot.name,"string") then return false,"Phrase name changed" end
+  for _,key in ipairs(numeric_properties) do
+    if not matches_field(phrase,key,snapshot.properties[key],"number") then return false,"Phrase property changed: "..key end
+  end
+  for _,key in ipairs(boolean_properties) do
+    if not matches_field(phrase,key,snapshot.properties[key],"boolean") then return false,"Phrase property changed: "..key end
+  end
+  if capacities.max_lines~=snapshot.properties.number_of_lines then
+    if type(snapshot.properties.number_of_lines)~="number" or
+        snapshot.properties.number_of_lines>capacities.max_lines then
+      return false,"Phrase line capacity changed"
+    end
+  end
+  for column=1,capacities.note_columns do
+    local expected=snapshot.columns[column]
+    local ok,name,muted=pcall(function() return phrase:column_name(column),phrase:column_is_muted(column) end)
+    if not ok or type(expected)~="table" or getmetatable(expected)~=nil or
+        type(expected.name)~="string" or type(expected.muted)~="boolean" or
+        name~=expected.name or muted~=expected.muted then
+      return false,"Phrase column metadata changed"
+    end
+  end
+  local mapping=phrase.mapping
+  if type(snapshot.mapping.present)~="boolean" or snapshot.mapping.present~=(mapping~=nil) then
+    return false,"Phrase mapping changed"
+  end
+  if mapping then
+    for _,key in ipairs({"key_tracking","base_note","loop_start","loop_end"}) do
+      if not matches_field(mapping,key,snapshot.mapping[key],"number") then return false,"Phrase mapping changed" end
+    end
+    if not matches_field(mapping,"looping",snapshot.mapping.looping,"boolean") then return false,"Phrase mapping changed" end
+    local range=snapshot.mapping.note_range
+    if type(range)~="table" or not matches_field(mapping.note_range,1,range[1],"number") or
+        not matches_field(mapping.note_range,2,range[2],"number") then return false,"Phrase mapping changed" end
+  end
+  local script=phrase.script
+  local saved_script=snapshot.script
+  if not matches_field(script,"pending_changes",saved_script.pending_changes,"number") or
+      not matches_field(script,"editor_visible",saved_script.editor_visible,"boolean") then
+    return false,"Phrase script state changed"
+  end
+  local paragraphs=script.paragraphs
+  local paragraphs_ok,paragraph_count=pcall(function()return #paragraphs end)
+  if not paragraphs_ok or paragraph_count~=#saved_script.paragraphs then return false,"Phrase script changed" end
+  for position=1,#paragraphs do
+    if type(saved_script.paragraphs[position])~="string" or paragraphs[position]~=saved_script.paragraphs[position] then
+      return false,"Phrase script changed"
+    end
+  end
+  local parameters=script.parameters
+  local parameters_ok,parameter_count=pcall(function()return #parameters end)
+  if not parameters_ok or parameter_count~=#saved_script.parameters then return false,"Phrase script parameters changed" end
+  for position=1,#parameters do
+    local saved=saved_script.parameters[position]
+    local parameter=parameters[position]
+    if type(saved)~="table" or not matches_field(parameter,"name",saved.name,"string") or
+        not matches_field(parameter,"value",saved.value,"number") then return false,"Phrase script parameters changed" end
+  end
+
+  for line_index=1,capacities.max_lines do
+    local line=phrase:line(line_index)
+    local saved=snapshot.lines[line_index]
+    local line_empty_ok,line_empty=pcall(function() return line.is_empty end)
+    if masks.expected_empty_lines[line_index] and line_empty_ok and
+        type(line_empty)=="boolean" and not line_empty then
+      return false,"Phrase line changed"
+    elseif not masks.expected_empty_lines[line_index] and line_empty_ok and
+        type(line_empty)=="boolean" and line_empty then
+      return false,"Phrase line changed"
+    else
+      if not (masks.empty_lines[line_index] and line_empty_ok and line_empty==true) then
+        for column=1,capacities.note_columns do
+          if not matches_cell(line:note_column(column),saved.notes[column],note_fields,
+              masks.empty_notes[line_index][column]) then return false,"Phrase note cell changed" end
+        end
+        for column=1,capacities.effect_columns do
+          if not matches_cell(line:effect_column(column),saved.effects[column],effect_fields,
+              masks.empty_effects[line_index][column]) then return false,"Phrase effect cell changed" end
+        end
+      end
+    end
+  end
+  return true
+end
+
+function M.matches_snapshot(phrase,snapshot,limits,index)
+  local capacities,capacity_error=snapshot_capacities(limits)
+  if not capacities then return nil,capacity_error end
+  local ok,matches,reason=pcall(matches_snapshot,phrase,snapshot,capacities,index)
+  if not ok then return nil,"Cannot compare native phrase to its verified snapshot" end
+  return matches,reason
 end
 
 local function copy_value(input,active)

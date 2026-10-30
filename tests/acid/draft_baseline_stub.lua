@@ -19,5 +19,47 @@ local function validate(song,instrument,phrase)
   return {source=source,settings={output_policy=policy,pb_range=pb},
     baseline={content=phrase.baseline_revision or 0},planning_inputs={}}
 end
-require("writers.phrase_validator").classify=validate
+local validator=require("writers.phrase_validator")
+local retained=setmetatable({},{__mode="k"})
+local retained_proofs=setmetatable({},{__mode="k"})
+local function retained_record(reference)
+  return retained[reference] or retained_proofs[reference]
+end
+function validator.retained_baseline(snapshot)
+  local entry=retained_record(snapshot)
+  if not entry then
+    local sealed,err=ownership.copy_snapshot(snapshot)
+    if not sealed then return nil,err end
+    entry={snapshot=sealed,index={},identity={}}
+    retained[snapshot]=entry
+    retained[sealed]=entry
+  end
+  local reference=snapshot
+  if retained[snapshot] then
+    reference={}
+    retained_proofs[reference]=entry
+  end
+  return entry.snapshot,entry.index,entry.identity,reference
+end
+function validator.retained_baseline_identity(snapshot)
+  local entry=retained_record(snapshot)
+  return entry and entry.identity
+end
+function validator.is_retained_baseline_identity(identity,snapshot)
+  local entry=retained_record(snapshot)
+  return entry~=nil and rawequal(identity,entry.identity)
+end
+function validator.classify_against(song,instrument,phrase,capabilities,capacities,options,snapshot,index)
+  local entry=retained_record(snapshot)
+  if not entry or not rawequal(entry.index,index) then
+    return nil,"Phrase snapshot is not a retained verified baseline","unavailable"
+  end
+  local candidate,err=validate(song,instrument,phrase)
+  if not candidate then return nil,err,"unavailable" end
+  local same=ownership.compare(entry.snapshot,candidate.baseline)
+  if not same then return nil,"Phrase differs from its verified baseline","unavailable" end
+  candidate.baseline=entry.snapshot
+  return candidate
+end
+validator.classify=validate
 return validate

@@ -57,7 +57,7 @@ function Get-RenoiseSessionConfig {
 function Connect-RenoiseDriver {
     param(
         [Parameter(Mandatory)][pscustomobject]$Session,
-        [Parameter(Mandatory)][int]$TimeoutSeconds,
+        [Parameter(Mandatory)][double]$TimeoutSeconds,
         [Parameter(Mandatory)][scriptblock]$ProcessCheck
     )
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
@@ -82,13 +82,74 @@ function Connect-RenoiseDriver {
     throw "Timed out after $TimeoutSeconds seconds waiting for the Renoise loopback listener."
 }
 
+function Test-RenoiseTransportFailure {
+    param([Exception]$Exception)
+    $current=$Exception
+    while ($current) {
+        if ($current -is [IO.IOException] -or $current -is [Net.Sockets.SocketException]) { return $true }
+        $current=$current.InnerException
+    }
+    return $false
+}
+
+function Invoke-RenoiseDriverBootstrap {
+    param(
+        [Parameter(Mandatory)][pscustomobject]$Session,
+        [Parameter(Mandatory)][pscustomobject]$Identity,
+        [Parameter(Mandatory)][int]$StartupTimeoutSeconds,
+        [Parameter(Mandatory)][int]$CommandTimeoutSeconds,
+        [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [scriptblock]$GetListeners = { param($Port) Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction Stop },
+        [scriptblock]$CheckIdentity = { param($Value) Assert-RenoiseProcessIdentity -Identity $Value },
+        [ValidateRange(1,3)][int]$MaximumAttempts = 3
+    )
+    $deadline=[DateTimeOffset]::UtcNow.AddSeconds($StartupTimeoutSeconds)
+    $lastTransportFailure=$null
+    for ($attempt=1; $attempt -le $MaximumAttempts -and [DateTimeOffset]::UtcNow -lt $deadline; $attempt++) {
+        & $ProcessCheck
+        $remaining=($deadline-[DateTimeOffset]::UtcNow).TotalSeconds
+        if ($remaining -le 0) { break }
+        $client=Connect-RenoiseDriver -Session $Session -TimeoutSeconds $remaining -ProcessCheck $ProcessCheck
+        try {
+            Assert-RenoiseListenerOwner -Client $client -Identity $Identity -GetListeners $GetListeners -CheckIdentity $CheckIdentity
+        }
+        catch {
+            $client.Dispose()
+            throw
+        }
+        $pingTimeout=[Math]::Min($CommandTimeoutSeconds,($deadline-[DateTimeOffset]::UtcNow).TotalSeconds)
+        if ($pingTimeout -le 0) { $client.Dispose();break }
+        try {
+            $ping=Invoke-RenoiseDriverRequest -Client $client -Session $Session -Operation 'ping' -Arguments @{} -TimeoutSeconds $pingTimeout -ProcessCheck $ProcessCheck
+        }
+        catch {
+            $failure=$_.Exception
+            $client.Dispose()
+            if (-not (Test-RenoiseTransportFailure -Exception $failure)) { throw }
+            $lastTransportFailure=$failure
+            if ($attempt -ge $MaximumAttempts -or [DateTimeOffset]::UtcNow -ge $deadline) { break }
+            continue
+        }
+        try {
+            Assert-RenoiseListenerOwner -Client $client -Identity $Identity -GetListeners $GetListeners -CheckIdentity $CheckIdentity
+        }
+        catch {
+            $client.Dispose()
+            throw
+        }
+        return [pscustomobject]@{Client=$client;Ping=$ping;Attempts=$attempt}
+    }
+    if ($lastTransportFailure) { throw $lastTransportFailure }
+    throw "Timed out after $StartupTimeoutSeconds seconds completing the Renoise authenticated startup ping."
+}
+
 function Invoke-RenoiseDriverRequest {
     param(
         [Parameter(Mandatory)][Net.Sockets.TcpClient]$Client,
         [Parameter(Mandatory)][pscustomobject]$Session,
         [Parameter(Mandatory)][string]$Operation,
         [Parameter(Mandatory)][hashtable]$Arguments,
-        [Parameter(Mandatory)][int]$TimeoutSeconds,
+        [Parameter(Mandatory)][double]$TimeoutSeconds,
         [Parameter(Mandatory)][scriptblock]$ProcessCheck
     )
     & $ProcessCheck
@@ -102,11 +163,13 @@ function Invoke-RenoiseDriverRequest {
     $responseBytes = [Collections.Generic.List[byte]]::new()
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         & $ProcessCheck
-        if ($Client.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead) -and $Client.Client.Available -eq 0) { throw 'Renoise closed the transport before returning a terminal response.' }
+        if ($Client.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead) -and $Client.Client.Available -eq 0) {
+            throw [IO.EndOfStreamException]::new('Renoise closed the transport before returning a terminal response.')
+        }
         if (-not $stream.DataAvailable) { Start-Sleep -Milliseconds 50; continue }
         $buffer = [byte[]]::new(4096)
         $read = $stream.Read($buffer, 0, $buffer.Length)
-        if ($read -le 0) { throw 'Renoise closed the transport before returning a terminal response.' }
+        if ($read -le 0) { throw [IO.EndOfStreamException]::new('Renoise closed the transport before returning a terminal response.') }
         for ($index = 0; $index -lt $read; $index++) {
             if ($buffer[$index] -eq 10) {
                 $line = [Text.UTF8Encoding]::new($false, $true).GetString($responseBytes.ToArray()).TrimEnd("`r")
@@ -134,11 +197,22 @@ function Invoke-RenoiseDriverRequest {
 }
 
 function Get-RenoiseProcessIdentity {
-    param([Parameter(Mandatory)][int]$Id)
-    $process = Get-Process -Id $Id -ErrorAction Stop
-    $path = [IO.Path]::GetFullPath($process.Path)
-    $start = $process.StartTime.ToUniversalTime()
-    [pscustomobject]@{ Id = $process.Id; Path = $path; StartTimeUtc = $start; SessionId = $process.SessionId }
+    param(
+        [Parameter(Mandatory)][int]$Id,
+        [ValidateRange(0,10000)][int]$WaitMilliseconds = 0,
+        [scriptblock]$ReadProcess = { param($ProcessId) Get-Process -Id $ProcessId -ErrorAction Stop }
+    )
+    $deadline = [DateTimeOffset]::UtcNow.AddMilliseconds($WaitMilliseconds)
+    do {
+        $process = & $ReadProcess $Id
+        if (-not [string]::IsNullOrWhiteSpace($process.Path)) {
+            $path = [IO.Path]::GetFullPath($process.Path)
+            $start = $process.StartTime.ToUniversalTime()
+            return [pscustomobject]@{ Id = $process.Id; Path = $path; StartTimeUtc = $start; SessionId = $process.SessionId }
+        }
+        if ([DateTimeOffset]::UtcNow -ge $deadline) { throw "Executable path is unavailable for process $Id." }
+        Start-Sleep -Milliseconds 25
+    } while ($true)
 }
 
 function Assert-RenoiseProcessIdentity {
@@ -928,7 +1002,7 @@ function Invoke-AcidNativeScenario {
     }
 }
 
-Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidKeyboardConfiguration, Find-AutoHotkeyV2Executable, Invoke-AcidKeyboardHelper, Wait-AcidObservedState, Invoke-AcidKeyboardJourney, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
+Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverBootstrap, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidKeyboardConfiguration, Find-AutoHotkeyV2Executable, Invoke-AcidKeyboardHelper, Wait-AcidObservedState, Invoke-AcidKeyboardJourney, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
 
 function Get-DirectoryHash {
     param([Parameter(Mandatory)][string]$Path)

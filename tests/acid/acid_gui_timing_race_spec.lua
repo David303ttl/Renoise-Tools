@@ -96,7 +96,8 @@ end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
-  id=function(phrase)return phrase.id end
+  id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
+  snapshot_index=function()return nil end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
@@ -240,6 +241,7 @@ live_checkbox:fire(true)
 local before_live_edit=#tool.writer_calls
 assert(before_live_edit==2,"arming Live Edit does not write")
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 local first=tool.writer_calls[#tool.writer_calls]
 assert(first.pattern.timing_mode=="triplet" and first.options.token:is_current(),
   "Live Edit starts with the current triplet snapshot")
@@ -247,6 +249,7 @@ timing:fire(1)
 assert(not first.options.token:is_current(),
   "changing timing invalidates the pending Live Edit render")
 render_callbacks[#render_callbacks](terminal_result(first,"suspended","invalidated"))
+tool.app_idle_observable:fire()
 local second=tool.writer_calls[#tool.writer_calls]
 assert(second~=first and second.pattern.timing_mode=="straight" and second.options.token:is_current(),
   "Live Edit queues the newest timing after the stale render settles")
@@ -301,6 +304,7 @@ assert(reopened_live)
 reopened_live:fire(true)
 local before_append=#tool.writer_calls
 builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(#tool.writer_calls==before_append+1,"an edit requests the armed append")
 local append=tool.writer_calls[#tool.writer_calls]
 local append_callback=render_callbacks[#render_callbacks]
@@ -318,6 +322,7 @@ assert(#tool.writer_calls==before_append+1,
   "foreign selection never redirects its source to append")
 phrase_choice:fire(3)
 builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
 local explicit_new=tool.writer_calls[#tool.writer_calls]
 assert(explicit_new~=append and explicit_new.instrument_index==2 and explicit_new.target==3 and
   explicit_new.pattern.timing_mode=="triplet" and explicit_new.options.token:is_current(),

@@ -7,6 +7,7 @@ local M = {}
 function M.new(script, options, callbacks)
   local runner = {phase="queued"}
   local observer, on_commit
+  local render_started=false
   local function detach()
     if observer and on_commit then
       pcall(function() observer:remove_notifier(on_commit) end)
@@ -22,9 +23,11 @@ function M.new(script, options, callbacks)
   end
   function runner:detach()
     detach()
-    script = nil
     if self.phase == "queued" or self.phase == "committing" then
       self.phase = "cancelled"
+      script = nil
+    elseif not render_started then
+      script = nil
     end
   end
   function runner:cancel()
@@ -48,12 +51,12 @@ function M.new(script, options, callbacks)
           return
         end
         native_invoked = true
+        render_started=true
         local started, start_error = script:render_to_pattern(options, finish)
         if started == false then
           finish("Phrase rendering could not start: " .. tostring(start_error or "unknown error"))
         end
       end)
-      script = nil
       if not ok then
         if native_invoked and self.phase == "rendering" then
           -- A thrown native call does not establish that rendering stopped.

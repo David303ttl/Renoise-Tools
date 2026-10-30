@@ -6,7 +6,15 @@ local ownership=require("renoise.phrase_ownership")
 local planner=require("model.output_planner")
 local policies=require("model.policies")
 local store=require("renoise.pattern_store")
+local verified_baselines=setmetatable({},{__mode="k"})
+local retained_proofs=setmetatable({},{__mode="k"})
+local baseline_identities=setmetatable({},{__mode="kv"})
+local identity_baselines=setmetatable({},{__mode="kv"})
 local EMPTY, OFF = 121, 120
+
+local function retained_record(reference)
+  return verified_baselines[reference] or retained_proofs[reference]
+end
 
 local function verify_fields(cell,has_note,line,column,delay,midi)
   if (cell.delay_value or 0)~=(delay or 0) or (cell.instrument_value or 255)~=(midi and midi.instrument_value or 255)
@@ -294,7 +302,34 @@ local function expected_output(snapshot,output)
   return true
 end
 
-local function compatibility(phrase,committed,capabilities,capacities,options)
+local function compatibility_inputs(capabilities,capacities,options)
+  local profile,limits={},{}
+  for _,key in ipairs({"sample","plugin","midi","alias","read_error"}) do
+    profile[key]=capabilities and capabilities[key]
+  end
+  for _,key in ipairs({"max_lines","max_note_columns","max_effect_columns","play_pattern","key_tracking_none"}) do
+    limits[key]=capacities[key]
+  end
+  return ownership.copy_snapshot({capabilities=profile,capacities=limits,
+    options={pitch_bend_delivery=options and options.pitch_bend_delivery,
+      normal_volume=options and options.normal_volume,accent_volume=options and options.accent_volume}})
+end
+
+local function cache_compatibility(retained,candidate)
+  local cached=ownership.copy_snapshot({source=candidate.source,settings=candidate.settings,
+    planning_inputs=candidate.planning_inputs})
+  if cached then retained.compatibility=cached end
+end
+
+local function same_compatibility_inputs(retained,source,policy,pb_range,inputs)
+  local cached=retained and retained.compatibility
+  if not cached or type(cached.settings)~="table" or cached.settings.output_policy~=policy or
+      cached.settings.pb_range~=pb_range then return false end
+  return ownership.compare(cached.source,source)==true and
+    ownership.compare(cached.planning_inputs,inputs)==true
+end
+
+local function compatibility(phrase,committed,capabilities,capacities,options,verified_snapshot,verified_index)
   if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
     return nil,"Invalid compatibility options"
   end
@@ -305,10 +340,34 @@ local function compatibility(phrase,committed,capabilities,capacities,options)
   if type(committed)~="table" or
       not policies.valid_output_policy(committed.output_policy) or
       type(committed.pb_range)~="number" then return nil,"Invalid committed source settings" end
-  local baseline,snapshot_error=ownership.snapshot(phrase,capacities)
-  if not baseline then return nil,snapshot_error end
-  local status=ownership.status(phrase)
-  if status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
+  local baseline
+  if verified_snapshot then
+    local retained=retained_record(verified_snapshot)
+    if not retained then
+      return nil,"Phrase snapshot is not a retained verified baseline"
+    end
+    if not rawequal(verified_index,retained.index) then
+      return nil,"Phrase snapshot index is not a retained verified index"
+    end
+    local same,snapshot_error=ownership.matches_snapshot(phrase,retained.snapshot,capacities,retained.index)
+    if not same then return nil,snapshot_error or "Phrase differs from its verified baseline" end
+    baseline=retained.snapshot
+  else
+    local snapshot_error
+    baseline,snapshot_error=ownership.snapshot(phrase,capacities)
+    if not baseline then return nil,snapshot_error end
+    local status=ownership.status(phrase)
+    if status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
+  end
+  local inputs,input_error=compatibility_inputs(capabilities,capacities,options)
+  if not inputs then return nil,input_error end
+  local retained=verified_snapshot and retained_record(verified_snapshot)
+  if retained and same_compatibility_inputs(retained,committed.pattern,
+      committed.output_policy,committed.pb_range,inputs) then
+    return {kind="owned",baseline=baseline,source=committed.pattern,
+      settings={output_policy=committed.output_policy,pb_range=committed.pb_range},
+      planning_inputs=inputs}
+  end
   local output,planning_error=planner.plan(committed.pattern,committed.output_policy,
     committed.pb_range,capacities,capabilities,options)
   if not output then return nil,planning_error end
@@ -316,16 +375,6 @@ local function compatibility(phrase,committed,capabilities,capacities,options)
   if not safe then return nil,preflight_error end
   local matches,output_error=expected_output(baseline,output)
   if not matches then return nil,output_error end
-  local profile,limits={},{}
-  for _,key in ipairs({"sample","plugin","midi","alias","read_error"}) do
-    profile[key]=capabilities and capabilities[key]
-  end
-  for _,key in ipairs({"max_lines","max_note_columns","max_effect_columns","play_pattern","key_tracking_none"}) do
-    limits[key]=capacities[key]
-  end
-  local inputs,input_error=ownership.copy_snapshot({capabilities=profile,capacities=limits,
-    options={pitch_bend_delivery=options and options.pitch_bend_delivery}})
-  if not inputs then return nil,input_error end
   return {kind="owned",baseline=baseline,output=output,source=output.source,settings=output.settings,
     planning_inputs=inputs}
 end
@@ -337,8 +386,7 @@ function M.compatibility(phrase,committed,capabilities,capacities,options,...)
   return protected(compatibility,phrase,committed,capabilities,capacities,options)
 end
 
-function M.classify(song,instrument,phrase,capabilities,capacities,options,...)
-  if select("#",...)>0 then return nil,"Ownership exclusions are not supported","unavailable" end
+local function classify(song,instrument,phrase,capabilities,capacities,options,verified_snapshot,verified_index)
   if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
     return nil,"Invalid classification options","unavailable"
   end
@@ -347,16 +395,86 @@ function M.classify(song,instrument,phrase,capabilities,capacities,options,...)
   end
   local member,membership_error=ownership.membership(song,instrument,phrase)
   if not member or phrase==nil then return nil,membership_error or "An existing phrase is required","unavailable" end
-  local readable,id=pcall(ownership.id,phrase)
+  local readable,id
+  if verified_snapshot then
+    readable,id=pcall(ownership.validate_identity,song,instrument,phrase)
+  else
+    readable,id=pcall(ownership.id,phrase)
+  end
   if not readable then return nil,"Cannot inspect phrase identity","unavailable" end
   if not id then return nil,"Phrase has no recognized ACID identity","foreign" end
-  local ok,source,policy,pb_range=pcall(store.load,song,instrument,phrase)
+  local ok,source,policy,pb_range
+  if verified_snapshot then
+    ok,source,policy,pb_range=pcall(store.read_entry,song,id)
+  else
+    ok,source,policy,pb_range=pcall(store.load,song,instrument,phrase)
+  end
   if not ok then return nil,"Cannot read committed source: "..tostring(source),"unavailable" end
   if not source then return nil,policy,"unavailable" end
-  local candidate,err=M.compatibility(phrase,{pattern=source,output_policy=policy,pb_range=pb_range},
-    capabilities,capacities,options)
+  local candidate,err=protected(compatibility,phrase,
+    {pattern=source,output_policy=policy,pb_range=pb_range},capabilities,capacities,options,
+    verified_snapshot,verified_index)
   if not candidate then return nil,err,"unavailable" end
+  if not verified_snapshot then
+    local sealed,copy_error=ownership.copy_snapshot(candidate.baseline)
+    if not sealed then return nil,copy_error,"unavailable" end
+    local index,index_error=ownership.snapshot_index(sealed,capacities)
+    if not index then return nil,index_error,"unavailable" end
+    local identity={}
+    local retained={snapshot=sealed,index=index,identity=identity}
+    verified_baselines[candidate.baseline]=retained
+    baseline_identities[sealed]=identity
+    identity_baselines[identity]=sealed
+    cache_compatibility(retained,candidate)
+  elseif candidate.output then
+    local retained=retained_record(verified_snapshot)
+    if retained then cache_compatibility(retained,candidate) end
+  end
   return candidate
+end
+
+function M.classify(song,instrument,phrase,capabilities,capacities,options,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported","unavailable" end
+  return classify(song,instrument,phrase,capabilities,capacities,options)
+end
+
+-- Internal fresh revalidation against an inventory-owned, previously verified
+-- baseline. The native phrase is read field by field before the cached snapshot
+-- is reused; this avoids building a duplicate tree for unchanged targets.
+function M.classify_against(song,instrument,phrase,capabilities,capacities,options,snapshot,index)
+  local retained=retained_record(snapshot)
+  if not retained then
+    return nil,"Phrase snapshot is not a retained verified baseline","unavailable"
+  end
+  if not rawequal(index,retained.index) then
+    return nil,"Phrase snapshot index is not a retained verified index","unavailable"
+  end
+  return classify(song,instrument,phrase,capabilities,capacities,options,snapshot,index)
+end
+
+-- Runtime inventory retains a small opaque reference alongside the sealed
+-- snapshot; the reference keeps this registry entry alive without pinning the
+-- public classifier snapshot.
+function M.retained_baseline(snapshot)
+  local retained=verified_baselines[snapshot]
+  local reference=snapshot
+  if retained then
+    reference={}
+    retained_proofs[reference]=retained
+  else
+    retained=retained_proofs[reference]
+  end
+  if not retained then return nil,"Phrase snapshot is not a retained verified baseline" end
+  return retained.snapshot,retained.index,retained.identity,reference
+end
+
+function M.retained_baseline_identity(snapshot)
+  return baseline_identities[snapshot]
+end
+
+function M.is_retained_baseline_identity(identity,snapshot)
+  return type(identity)=="table" and rawequal(identity_baselines[identity],snapshot) and
+    rawequal(baseline_identities[snapshot],identity)
 end
 
 return M

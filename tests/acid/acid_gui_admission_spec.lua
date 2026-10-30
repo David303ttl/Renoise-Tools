@@ -98,7 +98,8 @@ end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
-  id=function(phrase)return phrase.id end
+  id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
+  snapshot_index=function()return nil end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
@@ -190,9 +191,18 @@ end
 local context_module=require("runtime.context")
 local original_new=context_module.new
 local contexts,admissions={},{}
+local fail_next_edit_transition=false
 context_module.new=function(options)
   local context=original_new(options)
   contexts[#contexts+1]=context
+  local transition=context.transition
+  function context:transition(kind,values)
+    if fail_next_edit_transition and (kind=="edit" or kind=="reset") then
+      fail_next_edit_transition=false
+      return nil,"Injected editor transition failure"
+    end
+    return transition(self,kind,values)
+  end
   local request=context.request_generation
   function context:request_generation(trigger)
     local accepted,reason=request(self,trigger)
@@ -239,6 +249,9 @@ assert(#admissions==1 and manual.options.token:is_current(),
   "an in-flight no-op edit neither enqueues nor revokes the admitted request")
 complete(1)
 builder.views.acid_program_key_popup:fire(2)
+assert(#tool.writer_calls==1 and #admissions==1,
+  "armed edit must persist and queue before the idle admission")
+tool.app_idle_observable:fire()
 assert(#tool.writer_calls==2 and #admissions==2 and admissions[2].trigger=="live",
   "armed real edits must enter the same runtime admission")
 assert(rawequal(admissions[1].context,admissions[2].context),"manual and live share one runtime authority")
@@ -258,6 +271,16 @@ local target_before=popup(builder,360).value
 complete(2)
 assert(builder.views.acid_source_state.text==state_before and popup(builder,360).value==target_before,
   "old-session completion must not update reopened widgets or destination")
+
+fail_next_edit_transition=true
+builder.views.acid_program_key_popup:fire(3)
+local status_view
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="multiline_textfield" then status_view=node end
+end
+assert(not fail_next_edit_transition and status_view and
+  status_view.text:find("DRAFT SAVE ERROR: session recovery only: Injected editor transition failure",1,true),
+  "a failed editor transition must not report a saved draft")
 
 local context=contexts[#contexts]
 local original=instrument.phrases[1]

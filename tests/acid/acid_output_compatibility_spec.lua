@@ -41,6 +41,84 @@ local candidate=assert(classify())
 assert(candidate.kind=='owned' and seq.same_source(candidate.source,source))
 assert(validator.preflight(candidate.baseline,planned))
 assert(ownership.compare(candidate.baseline,assert(ownership.snapshot(phrase))))
+local detached_candidate=assert(ownership.copy_snapshot(candidate.baseline))
+local detached_index=assert(ownership.snapshot_index(detached_candidate,capacities))
+local untrusted,_,untrusted_kind=validator.classify_against(song,instrument,phrase,sample,
+ capacities,options,detached_candidate,detached_index)
+assert(not untrusted and untrusted_kind=='unavailable',"detached snapshots cannot authorize fast revalidation")
+local sealed_snapshot,sealed_index=validator.retained_baseline(candidate.baseline)
+local baseline_identity=validator.retained_baseline_identity(sealed_snapshot)
+assert(validator.is_retained_baseline_identity(baseline_identity,sealed_snapshot))
+assert(not validator.is_retained_baseline_identity({},sealed_snapshot) and
+ not validator.is_retained_baseline_identity(baseline_identity,detached_candidate),
+ "baseline identity tokens must match validator-retained snapshots")
+
+local function retained_proof_lifetime()
+ local proof_phrase=phrase_fixture();apply(proof_phrase,planned)
+ local proof_instrument={name='retained proof',phrases={proof_phrase}}
+ local proof_song={instruments={proof_instrument},tool_data=''}
+ assert(store.save(proof_song,1,source,'play_once',0))
+ local public_candidate=assert(validator.classify(proof_song,proof_instrument,proof_phrase,
+  sample,capacities,options))
+ local sealed,index,identity,proof_reference=validator.retained_baseline(public_candidate.baseline)
+ assert(proof_reference and type(proof_reference)=='table')
+ local weak=setmetatable({public_candidate.baseline,sealed,identity},{__mode='v'})
+ return weak,proof_reference,index,proof_song,proof_instrument,proof_phrase
+end
+local retained_weak,proof_reference,proof_index,proof_song,proof_instrument,proof_phrase=
+ retained_proof_lifetime()
+for _=1,3 do collectgarbage('collect') end
+assert(retained_weak[1]==nil and retained_weak[2]~=nil,
+ "inventory proof references must release the duplicate public phrase snapshot")
+local proof_result=assert(validator.classify_against(proof_song,proof_instrument,proof_phrase,
+ sample,capacities,options,proof_reference,proof_index))
+assert(rawequal(proof_result.baseline,retained_weak[2]),
+ "opaque proof reference did not retain its sealed phrase baseline")
+proof_result=nil
+proof_reference=nil
+proof_index=nil
+for _=1,3 do collectgarbage('collect') end
+assert(retained_weak[2]==nil and retained_weak[3]==nil,
+ "sealed phrase baselines and identities must collect after their proof reference is released")
+
+local original_plan,plan_calls=planner.plan,0
+planner.plan=function(...)
+ plan_calls=plan_calls+1
+ return original_plan(...)
+end
+assert(validator.classify_against(song,instrument,phrase,sample,capacities,options,
+ candidate.baseline,sealed_index))
+assert(plan_calls==0,"unchanged committed inputs must reuse the retained compatibility proof")
+local plugin_profile={sample=false,plugin=true,midi=false,alias=false,read_error=false}
+assert(validator.classify_against(song,instrument,phrase,plugin_profile,capacities,options,
+ candidate.baseline,sealed_index))
+assert(plan_calls==1,"changed receiver capabilities must rebuild compatibility proof")
+assert(validator.classify_against(song,instrument,phrase,sample,capacities,
+ {pitch_bend_delivery=false},candidate.baseline,sealed_index))
+assert(plan_calls==2,"changed planning options must rebuild compatibility proof")
+assert(validator.classify_against(song,instrument,phrase,sample,capacities,
+ {pitch_bend_delivery=true,normal_volume=0.5},candidate.baseline,sealed_index))
+assert(plan_calls==3,"changed renderer options must rebuild compatibility proof")
+local changed_source=assert(seq.copy_source(source))
+changed_source.pitch_events[1]=seq.new_pitch(2,0,false,false)
+assert(store.save(song,1,changed_source,'play_once',0))
+assert(not validator.classify_against(song,instrument,phrase,sample,capacities,options,
+ candidate.baseline,sealed_index))
+assert(plan_calls==4,"changed committed source must rebuild and reject incompatible output")
+assert(store.save(song,1,source,'repeat',0))
+local changed_policy=validator.classify_against(song,instrument,phrase,sample,capacities,options,
+ candidate.baseline,sealed_index)
+assert(not changed_policy,"changed committed settings cannot reuse old compatibility proof")
+assert(plan_calls==5,"changed committed settings must rebuild compatibility proof")
+assert(store.save(song,1,source,'play_once',0))
+planner.plan=original_plan
+local retained_lpb=candidate.baseline.properties.lpb
+candidate.baseline.properties.lpb=retained_lpb+1
+local retained_proof=assert(validator.classify_against(song,instrument,phrase,sample,
+ capacities,options,candidate.baseline,sealed_index))
+assert(retained_proof.baseline.properties.lpb==retained_lpb,
+ "mutating a returned baseline cannot mutate retained verification evidence")
+candidate.baseline.properties.lpb=retained_lpb
 local before=song.tool_data
 local draft=assert(seq.copy_source(source));draft.pitch_events[1]=seq.new_pitch(2,0,false,false)
 assert(store.write_draft(song,instrument,phrase,draft,'repeat',12))
@@ -179,6 +257,20 @@ options.pitch_bend_delivery=false;capacities.max_lines=500;sample.sample=false
 assert(frozen.planning_inputs.options.pitch_bend_delivery==true and frozen.planning_inputs.capacities.max_lines==512
  and frozen.planning_inputs.capabilities.sample==true)
 options.pitch_bend_delivery=true;capacities.max_lines=512;sample.sample=true
+local function unreferenced_proof()
+ local gc_phrase=phrase_fixture();apply(gc_phrase,planned)
+ local gc_instrument={name='collectable proof',phrases={gc_phrase}}
+ local gc_song={instruments={gc_instrument},tool_data=''}
+ assert(store.save(gc_song,1,source,'play_once',0))
+ local gc_candidate=assert(validator.classify(gc_song,gc_instrument,gc_phrase,sample,capacities,options))
+ local sealed=assert(validator.retained_baseline(gc_candidate.baseline))
+ local identity=assert(validator.retained_baseline_identity(sealed))
+ return setmetatable({sealed,identity},{__mode='v'})
+end
+local weak_proof=unreferenced_proof()
+for _=1,3 do collectgarbage('collect') end
+assert(weak_proof[1]==nil and weak_proof[2]==nil,
+ 'opaque baseline identities and sealed snapshots must not retain each other after context release')
 print('ACID committed output compatibility and field preflight checks passed')
 
 

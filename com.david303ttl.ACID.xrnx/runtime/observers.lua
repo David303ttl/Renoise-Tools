@@ -54,7 +54,7 @@ function M.new()
     return checked and temporary==true
   end
 
-  local function add(records,source,kind,object,list,current_generation,temporary_instrument)
+  local function add(records,source,kind,object,list,current_generation,temporary_instrument,inventory_kind)
     if source==nil then return end
     local add_notifier=read(source,"add_notifier")
     local remove_notifier=read(source,"remove_notifier")
@@ -64,24 +64,31 @@ function M.new()
       local subject=slot.object
       if subject==nil or generation~=current_generation or song==nil then return end
       if kind=="content" and is_render_temporary(temporary_instrument,subject) then return end
+      if kind=="rename" and temporary_instrument and is_render_temporary(temporary_instrument,subject) then return end
       local change_kind=classify_undo(song) and "undo" or kind
       local internal=false
       if runtime and type(runtime.mutation_state)=="function" then
         local ok,state=pcall(runtime.mutation_state,runtime)
         internal=ok and type(state)=="table" and state.depth>0
       end
-      if not internal then
+      local own_inventory=false
+      if not internal and change_kind=="inventory" and inventory_kind and runtime and
+          type(runtime.matches_mutation_inventory)=="function" then
+        local ok,result=pcall(runtime.matches_mutation_inventory,runtime,subject,inventory_kind)
+        own_inventory=ok and result==true
+      end
+      if not internal and change_kind~="selection" and not own_inventory then
         pending_external=true
         pending_undo=pending_undo or change_kind=="undo"
       end
-      if on_change then pcall(on_change,change_kind,subject,internal) end
+      if on_change then pcall(on_change,change_kind,subject,internal,inventory_kind) end
     end
     local ok=pcall(function() source:add_notifier(handler) end)
     if ok then records[#records+1]={source=source,handler=handler,slot=slot,list=list==true} end
   end
 
   local function add_phrase(records,instrument,phrase,current_generation)
-    add(records,read(phrase,"name_observable"),"rename",phrase,false,current_generation)
+    add(records,read(phrase,"name_observable"),"rename",phrase,false,current_generation,instrument)
     for _,property in ipairs(PHRASE_PROPERTIES) do
       add(records,read(phrase,property.."_observable"),"content",phrase,false,current_generation,instrument)
     end
@@ -112,7 +119,7 @@ function M.new()
           pending_external=true
           pending_undo=pending_undo or change_kind=="undo"
         end
-        if on_change then pcall(on_change,change_kind,subject,internal) end
+        if on_change then pcall(on_change,change_kind,subject,internal,nil) end
       end
       local ok=pcall(function() phrase:add_line_notifier(handler) end)
       if ok then
@@ -130,8 +137,8 @@ function M.new()
 
   local function add_instrument(records,instrument,current_generation)
     add(records,read(instrument,"name_observable"),"rename",instrument,false,current_generation)
-    add(records,read(instrument,"phrases_observable"),"inventory",instrument,true,current_generation)
-  add(records,read(instrument,"phrase_mappings_observable"),"inventory",instrument,true,current_generation)
+    add(records,read(instrument,"phrases_observable"),"inventory",instrument,true,current_generation,nil,"phrases")
+    add(records,read(instrument,"phrase_mappings_observable"),"inventory",instrument,true,current_generation,nil,"phrase_mappings")
     local phrases=read(instrument,"phrases")
     pcall(function()
       for _,phrase in ipairs(phrases) do add_phrase(records,instrument,phrase,current_generation) end
@@ -153,7 +160,7 @@ function M.new()
     generation=generation+1
     song,runtime,on_change=current_song,current_runtime,callback
     local current_generation=generation
-    add(root_records,read(song,"instruments_observable"),"inventory",song,true,current_generation)
+    add(root_records,read(song,"instruments_observable"),"inventory",song,true,current_generation,nil,"instruments")
     add(root_records,read(song,"selected_instrument_observable"),"selection",song,false,current_generation)
     add(root_records,read(song,"selected_phrase_observable"),"selection",song,false,current_generation)
     add_nested(song,current_generation)
@@ -172,7 +179,7 @@ function M.new()
     local current_generation=generation
     -- Root callbacks are rebuilt too so every listener shares the active token.
     remove(root_records)
-    add(root_records,read(song,"instruments_observable"),"inventory",song,true,current_generation)
+    add(root_records,read(song,"instruments_observable"),"inventory",song,true,current_generation,nil,"instruments")
     add(root_records,read(song,"selected_instrument_observable"),"selection",song,false,current_generation)
     add(root_records,read(song,"selected_phrase_observable"),"selection",song,false,current_generation)
     add_nested(song,current_generation)

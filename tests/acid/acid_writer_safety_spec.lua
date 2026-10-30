@@ -291,6 +291,19 @@ local function create_owned(note,capacity)
   return host_instrument,calls[1].phrase,song
 end
 
+local function create_owned_rests()
+  local host_instrument
+  song,host_instrument=new_host()
+  local pattern=sequencer.new_pattern(2)
+  pattern.time_events[1],pattern.time_events[2]="R","R"
+  local request=build(pattern,1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  assert(#calls==1 and calls[1].kind=="success",calls[1] and calls[1].message or "rest phrase create failed")
+  return host_instrument,calls[1].phrase,song
+end
+
 local function snapshot(phrase)
   return assert(ownership.snapshot(phrase))
 end
@@ -302,6 +315,14 @@ end
 
 local function reseal(phrase)
   phrase.name=assert(ownership.make_name(phrase,assert(ownership.id(phrase))))
+end
+
+local function hide_volume_column(phrase)
+  phrase.volume_column_visible=false
+  phrase.panning_column_visible=true
+  phrase.base_note=43
+  phrase.autoseek=true
+  reseal(phrase)
 end
 
 -- Rejection is false with no callback, no host mutation and no occupied slot.
@@ -469,6 +490,54 @@ do
   local saved=assert(store.load(song,host_instrument,phrase))
   assert(saved.pitch_events[1].note==56)
   assert(type(calls[1].baseline)=="table" and calls[1].baseline.id==ownership.id(phrase))
+end
+
+-- Regeneration expands only visibility required by its output, and rollback
+-- restores the original visibility exactly after a failed source commit.
+do
+  local host_instrument,phrase=create_owned_rests()
+  hide_volume_column(phrase)
+  assert(phrase.volume_column_visible==false,"rest baseline unexpectedly exposes the volume column")
+  local before=snapshot(phrase)
+  local accented=source(56)
+  accented.pitch_events[1].accent=true
+  local request=build(accented,1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  assert(#calls==1 and calls[1].kind=="success",calls[1] and calls[1].message)
+  assert(phrase.volume_column_visible==true,
+    "generated accent output lost its required volume column visibility")
+  assert(phrase.panning_column_visible==before.properties.panning_column_visible and
+      phrase.base_note==before.properties.base_note and phrase.autoseek==before.properties.autoseek,
+    "visibility expansion changed unrelated destination metadata")
+  assert(#host_instrument.phrases==1 and rawequal(host_instrument.phrases[1],phrase))
+end
+
+do
+  local host_instrument,phrase=create_owned_rests()
+  hide_volume_column(phrase)
+  assert(phrase.volume_column_visible==false,"rest baseline unexpectedly exposes the volume column")
+  local before=snapshot(phrase)
+  local raw=song.tool_data
+  local original_commit=store.commit
+  store.commit=function(target_song,candidate)
+    assert(original_commit(target_song,candidate))
+    error("injected persistence failure after visibility expansion",0)
+  end
+  local accented=source(56)
+  accented.pitch_events[1].accent=true
+  local request=build(accented,1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  store.commit=original_commit
+  assert(#calls==1 and calls[1].kind=="failure",calls[1] and calls[1].message)
+  assert(calls[1].status=="failed" and calls[1].integrity_blocked==false)
+  assert_same_snapshot(snapshot(phrase),before,
+    "failed commit did not restore visibility and metadata exactly")
+  assert(song.tool_data==raw and #host_instrument.phrases==1 and
+      rawequal(host_instrument.phrases[1],phrase))
 end
 
 -- A source commit that writes and then throws restores the exact phrase,

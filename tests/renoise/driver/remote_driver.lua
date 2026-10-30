@@ -51,7 +51,20 @@ end
 
 local function safe_close(client)
   if not client then return end
-  pcall(function() client:close() end)
+  pcall(function() if client.is_open then client:close() end end)
+end
+
+local function same_connection(left,right)
+  if rawequal(left,right) then return true end
+  if not left or not right then return false end
+  local ok,same=pcall(function()
+    return left.is_open and right.is_open and
+      type(left.peer_address)=="string" and type(left.peer_port)=="number" and
+      type(left.local_address)=="string" and type(left.local_port)=="number" and
+      left.peer_address==right.peer_address and left.peer_port==right.peer_port and
+      left.local_address==right.local_address and left.local_port==right.local_port
+  end)
+  return ok and same==true
 end
 
 local function join_path(base, relative)
@@ -196,6 +209,7 @@ local function retire_client(current, client)
   current.buffers[client] = nil
   clear_client_work(current, client)
   safe_close(client)
+  current.client_wrappers[client]=nil
 end
 
 local function queue_response(current, client, id, ok, result, err, options)
@@ -1340,6 +1354,7 @@ cleanup = function(current)
   safe_close(current.candidate and current.candidate.client)
   safe_close(current.active_client)
   current.server = nil
+  current.callbacks = nil
   current.tool = nil
   current.candidate = nil
   current.active_client = nil
@@ -1360,6 +1375,7 @@ cleanup = function(current)
   current.completed = {}
   current.used_ids = {}
   current.buffers = {}
+  current.client_wrappers = {}
   current.transition = nil
   current.document_ready = false
   current.document_transition_uncertain = false
@@ -1431,6 +1447,7 @@ function driver.start(configuration_path, gui_state_reader, acceptance_runner)
     candidate = nil,
     active_client = nil,
     buffers = {},
+    client_wrappers = {},
     command_queue = new_queue(),
     outgoing = new_queue(),
     commands = {},
@@ -1456,10 +1473,19 @@ function driver.start(configuration_path, gui_state_reader, acceptance_runner)
         return
       end
       current.candidate = {client = client, deadline = now() + LIMITS.auth_timeout_seconds}
+      current.client_wrappers[client]={[client]=true}
       current.buffers[client] = ""
     end,
     socket_message = function(client, message)
       if current.stopped then return end
+      local connected=current.active_client or (current.candidate and current.candidate.client)
+      if connected and same_connection(connected,client) then
+        -- Keep callback wrappers alive until their native connection closes.
+        local wrappers=current.client_wrappers[connected]
+        if not wrappers then wrappers={};current.client_wrappers[connected]=wrappers end
+        wrappers[client]=true
+        client=connected
+      end
       local ok, callback_error = pcall(receive_message, current, client, message)
       if not ok then
         set_error(current, "socket request callback raised an error")
@@ -1470,6 +1496,7 @@ function driver.start(configuration_path, gui_state_reader, acceptance_runner)
     end
   }
 
+  current.callbacks = callbacks
   local run_ok, run_error = pcall(function() server:run(callbacks) end)
   if not run_ok then
     pcall(function() server:stop() end)

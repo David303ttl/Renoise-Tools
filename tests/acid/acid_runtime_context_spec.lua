@@ -71,8 +71,10 @@ do
   local allowed = {request_generation = true, revoke = true, state = true,
     attach_document = true, open_dialog = true, close_dialog = true,
     release_document = true, lifetime_state = true, bind_new = true, bind_phrase = true,
+    restore_editor_target = true,
     target_state = true, target_projection = true, refresh_inventory = true, instrument_choices = true,
     phrase_choices = true, draft_options = true, mutate = true, mark_dirty = true,
+    matches_mutation_inventory = true,
     reconcile = true, mutation_state = true, occupancy_state = true,
     record_blocker = true, integrity_state = true, revalidation_status = true,
     revalidate = true, transition = true, revision_state = true, editor_state = true,
@@ -813,6 +815,74 @@ do
   assert(state.last_diagnostic.code == "delivery.sink_failed_after_completion")
 end
 
--- A rejected request followed by a newer accepted request cannot have the old
--- completion clear the newer record or its block history.
+-- The mutation inventory accepts exact native arrays and clears its proof on
+-- identity/order mismatch, malformed inventory, or document lifecycle changes.
+do
+  local fixture=dofile("tests/acid/runtime_phrase_fixture.lua")
+  local song,instrument,first,second,source=fixture.fixture()
+  local equal_mapping={__eq=function()return true end}
+  local first_mapping=setmetatable({phrase=first},equal_mapping)
+  local second_mapping=setmetatable({phrase=second},equal_mapping)
+  instrument.phrase_mappings={first_mapping,second_mapping}
+  local other_instrument=fixture.instrument({})
+  other_instrument.phrase_mappings={}
+  song.instruments={instrument,other_instrument}
+
+  local done
+  local writer={state=function()return "idle",nil end,
+    is_temporary=function()return false end}
+  local ctx=context.new{writer=writer,
+    capture=function(_,token)return {token=token}end,
+    sink=function(_,completion)done=completion;return true end}
+  ctx:attach_document(song)
+  ctx:open_dialog()
+  assert(ctx:request_generation("manual"))
+  local token=ctx:state().token
+  assert(ctx:mutate(token,function()return true end))
+
+  local matched,reason=ctx:matches_mutation_inventory(song,"instruments")
+  assert(matched,"an exact native instrument identity/order match was rejected: "..tostring(reason))
+  assert(ctx:matches_mutation_inventory(instrument,"phrases"),
+    "an exact native phrase identity/order match was rejected")
+  assert(ctx:matches_mutation_inventory(instrument,"phrase_mappings"),
+    "an exact native mapping identity/order match was rejected")
+
+  local phrases=instrument.phrases
+  instrument.phrases={second,first}
+  assert(not ctx:matches_mutation_inventory(instrument,"phrases"),
+    "phrase reorder matched the authorized inventory")
+  instrument.phrases=phrases
+  assert(not ctx:matches_mutation_inventory(instrument,"phrases"),
+    "a mismatched inventory proof was not cleared")
+
+  assert(ctx:mutate(token,function()return true end))
+  local mappings=instrument.phrase_mappings
+  instrument.phrase_mappings={second_mapping,first_mapping}
+  assert(not ctx:matches_mutation_inventory(instrument,"phrase_mappings"),
+    "mapping reorder matched the authorized inventory")
+  instrument.phrase_mappings=mappings
+  assert(not ctx:matches_mutation_inventory(instrument,"phrase_mappings"),
+    "a mismatched mapping proof was not cleared")
+
+  assert(ctx:mutate(token,function()return true end))
+  phrases=instrument.phrases
+  instrument.phrases=nil
+  assert(not ctx:matches_mutation_inventory(instrument,"phrases"),
+    "a malformed phrase inventory matched")
+  instrument.phrases=phrases
+  assert(not ctx:matches_mutation_inventory(instrument,"phrases"),
+    "a malformed inventory proof was not cleared")
+
+  assert(ctx:mutate(token,function()return true end))
+  local other_song=fixture.fixture()
+  assert(ctx:attach_document(other_song))
+  assert(not ctx:matches_mutation_inventory(song,"instruments"),
+    "document replacement retained the outgoing inventory proof")
+  ctx:open_dialog()
+  assert(ctx:release_document())
+  assert(not ctx:matches_mutation_inventory(other_song,"instruments"),
+    "document release retained its inventory proof")
+  if done then done({kind="failure",status="cancelled"}) end
+end
+
 print("ACID runtime generation delivery boundary checks passed")

@@ -327,6 +327,16 @@ local function mutate_host(job, action)
   return true, unpack_packed(values)
 end
 
+local function mutate_cleanup(job,action)
+  if job.released or type(job.request)~="table" or type(job.request.cleanup_mutate)~="function" then
+    return nil,"Cleanup mutation is unavailable"
+  end
+  local ok,values=pcall(function() return pack(job.request:cleanup_mutate(job.token,action)) end)
+  if not ok then return nil,tostring(values) end
+  if values.n==0 then return true end
+  return true,unpack_packed(values)
+end
+
 local function cleanup_authorized(job)
   if job.released or type(job.request) ~= "table" or
       type(job.request.cleanup_authorized) ~= "function" then
@@ -400,8 +410,8 @@ local function remove_phrase(job, phrase)
   -- Cancellation can revoke commit authorization while narrowly scoped cleanup
   -- of this job's own objects remains permitted.
   if cleanup_authorized(job) then
-    local cleaned, result = pcall(action)
-    if cleaned and result == true then
+    local cleaned,result=mutate_cleanup(job,action)
+    if cleaned and result==true then
       forget_temporary(phrase)
       return true
     end
@@ -923,10 +933,24 @@ local function snapshots_equal(left, right)
   return same == true, difference
 end
 
-local function restore_preserved_metadata(destination, before)
+local function preserved_property(properties,key,required_visibility)
+  local value=properties[key]
+  if required_visibility and (key=="visible_note_columns" or key=="visible_effect_columns") then
+    local required=required_visibility[key]
+    if type(required)=="number" then return math.max(value,required) end
+  elseif required_visibility and required_visibility[key]==true and
+      (key=="instrument_column_visible" or key=="volume_column_visible" or
+        key=="panning_column_visible" or key=="delay_column_visible" or
+        key=="sample_effects_column_visible") then
+    return true
+  end
+  return value
+end
+
+local function restore_preserved_metadata(destination, before, required_visibility)
   local properties = before.properties
   for _, key in ipairs(PRESERVED_PROPERTIES) do
-    destination[key] = properties[key]
+    destination[key] = preserved_property(properties,key,required_visibility)
   end
   for column = 1, #before.columns do
     local metadata = before.columns[column]
@@ -946,11 +970,12 @@ local function restore_preserved_metadata(destination, before)
   return true
 end
 
--- Generated layout and cells change intentionally; mapping, script and column
--- metadata belong to the original destination and must be preserved exactly.
-local function verify_preserved_snapshot(snapshot, before)
+-- Generated layout and cells change intentionally. Preserve destination settings
+-- while allowing visibility to expand for the generated output.
+local function verify_preserved_snapshot(snapshot, before, required_visibility)
   for _, key in ipairs(PRESERVED_PROPERTIES) do
-    if snapshot.properties[key] ~= before.properties[key] then
+    local expected=preserved_property(before.properties,key,required_visibility)
+    if snapshot.properties[key] ~= expected then
       return nil, "Destination property changed: " .. key
     end
   end
@@ -1209,9 +1234,9 @@ local function commit_destination(job)
         if job.replace then
           destination:copy_from(job.phrase)
           -- Preflight proves the destination exposes the required output;
-          -- preserve its exact visibility, base settings, column metadata and
-          -- mapping instead of silently adopting the staging phrase's values.
-          local preserved, preserve_error = restore_preserved_metadata(destination, destination_before)
+          -- keep its settings and metadata while retaining required visibility.
+          local preserved, preserve_error = restore_preserved_metadata(destination, destination_before,
+            job.required_visibility)
           if not preserved then error(preserve_error, 0) end
         end
         local name, name_error = ownership.make_name(destination, job.id)
@@ -1230,7 +1255,7 @@ local function commit_destination(job)
       destination_written = written_snapshot
       if job.replace then
         local preserved, preservation_error = verify_preserved_snapshot(written_snapshot,
-          destination_before)
+          destination_before,job.required_visibility)
         if not preserved then
           rollback(false, "Destination preservation failed: " .. tostring(preservation_error))
           return result
