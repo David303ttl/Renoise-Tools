@@ -229,3 +229,26 @@ The Keyboard suite was not selected in this T0.7 execution; the prior Keyboard
 acceptance is recorded above. The Native suite ran without a keyboard mapping or
 AutoHotkey. Playback, undo/redo and other visual or audible checks remain
 MANUAL under their ACID guides and are not claimed by this harness run.
+
+## Lua compatibility and runner reporting verification (2026-10-30)
+
+Environment: Windows, PowerShell 7, Lua 5.1.5 and Lua 5.4.6. Both interpreters
+passed `scripts/run_offline_tests.ps1 -LuaCommand <interpreter>` with exit 0
+against source commit `584e5cfc7bcdf81d2a8dc43d3526fd915bbd3e80` plus the
+uncommitted runner reporting changes. Each run passed all 53 Lua specs and all
+six offline check groups: interpreter policy, Lua specs, host preflight, runner,
+development package and release package. The runner checks included scenario
+status aggregation; development-package checks used the selected interpreter.
+Logs are retained under ignored `tmp/offline-lua51.log` and
+`tmp/offline-lua54.log`.
+
+The first Lua 5.4 attempt passed the Lua specs and development-package checks,
+but preflight, runner and release-package cleanup failed while resolving the
+environment's short temporary-directory path. Both successful full runs set
+process-local `TEMP` and `TMP` to the resolved repository directory
+`tmp/offline-verification` before invoking the script. No scripts were changed
+for this environment workaround.
+
+These were offline checks using mocks, local transport and generated packages.
+Renoise Native or Keyboard acceptance was not rerun; playback, undo/redo and
+visual or audible behavior remain unverified by these runs.

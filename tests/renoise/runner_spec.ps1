@@ -459,4 +459,90 @@ Assert ($reportLine.Count -eq 1) 'runner failed to emit a report'
 $runReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($runReport.status -eq 'ERROR' -and $runReport.error -match 'TestEnvironment.Keyboard.ShowShortcut') 'missing shortcut did not fail clearly'
 Assert ($runReport.keyboard.negative_cases[0].name -eq 'missing_mapping' -and $runReport.keyboard.negative_cases[0].input_sent -eq $false) 'missing mapping guard did not report a no-input negative case'
-Write-Output 'PASS runner transport, ownership, keyboard configuration and installation lifecycle'
+# Execute reporting branches from the real runner without launching Renoise or deploying files.
+$runnerTokens = $null
+$runnerErrors = $null
+$runnerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'scripts/run_interactive_tests.ps1'), [ref]$runnerTokens, [ref]$runnerErrors)
+Assert ($runnerErrors.Count -eq 0) 'interactive runner did not parse'
+$assertionClass = $runnerAst.Find({ param($node) $node -is [Management.Automation.Language.TypeDefinitionAst] -and $node.Name -eq 'RenoiseRunnerAssertionException' }, $true)
+Assert ($null -ne $assertionClass) 'runner assertion exception type was not defined'
+Invoke-Expression $assertionClass.Extent.Text
+$reportingTry = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.TryStatementAst] -and
+    @($node.CatchClauses | Where-Object { $_.Body.Extent.Text -match '\$failureMessage = \$_\.Exception\.Message' }).Count -gt 0
+}, $true)
+$failureHandler = $reportingTry.CatchClauses[0].Extent.Text
+$inventoryGuard = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text -match '^if \(-not \$snapshotBeforeEpochMatches -or \$reportedInstrumentCount'
+}, $true)
+Assert ($null -ne $inventoryGuard) 'native inventory assertion branch was not found'
+$restorationTry = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.TryStatementAst] -and
+    $node.Body.Extent.Text -match 'Get-RenoiseRestorationOperation' -and
+    $node.CatchClauses.Count -gt 0
+}, $true)
+$restorationHandler = $restorationTry.CatchClauses[0].Extent.Text
+function Invoke-RunnerFailureReport {
+    param([string]$Action, [switch]$RestorationFailure)
+    $report = @{ status = 'ERROR'; error = $null; scenarios = @(); keyboard = $null; scenario_order_acceptance = @{ status = 'RUNNING' } }
+    $VerifyScenarioOrder = $true
+    $Scenario = 'transport'; $activeSuite = $Suite = 'Native'
+    $lastExpected = 'consistent inventory'; $lastActual = @{ instrument_count = 2 }; $lastDiff = @{ instrument_count_matches_inventory = $false }
+    $snapshotBeforeEpochMatches = $true
+    $reportedInstrumentCount = 2; $actualInstrumentCount = 1
+    $reportedPhraseCount = $actualPhraseCount = 0; $selectionMatchesInventory = $true
+    . ([scriptblock]::Create("try { $Action } $failureHandler"))
+    if ($RestorationFailure) {
+        $backupToolPath = $localBackupToolPath = $sessionBackupPath = $localBackupSessionPath = $fixturesBackupPath = $localBackupFixturesPath = $null
+        . ([scriptblock]::Create("try { throw 'injected restoration failure' } $restorationHandler"))
+    }
+    return $report
+}
+$inventoryReport = Invoke-RunnerFailureReport -Action $inventoryGuard.Extent.Text
+Assert ($inventoryReport.status -ceq 'FAIL' -and $inventoryReport.scenarios[0].status -ceq 'FAIL') 'wrong native inventory was not reported as FAIL'
+Assert ($inventoryReport.scenarios[0].diff.instrument_count_matches_inventory -eq $false) 'native inventory failure lost its observed diff'
+foreach ($operationalAction in @("throw 'injected transport failure'", "throw [IO.InvalidDataException]::new('invalid transport envelope')")) {
+    $operationalReport = Invoke-RunnerFailureReport -Action $operationalAction
+    Assert ($operationalReport.status -ceq 'ERROR' -and $operationalReport.scenarios[0].status -ceq 'ERROR') 'operational failure was classified as an assertion failure'
+    Assert ($operationalReport.scenario_order_acceptance.status -ceq 'ERROR' -and $operationalReport.scenario_order_acceptance.error -ceq $operationalReport.error) 'scenario-order acceptance lost its error evidence'
+}
+$restorationReport = Invoke-RunnerFailureReport -Action $inventoryGuard.Extent.Text -RestorationFailure
+Assert ($restorationReport.status -ceq 'ERROR' -and $restorationReport.scenarios.Count -eq 2) 'restoration failure did not upgrade the run to ERROR with separate evidence'
+Assert ($restorationReport.scenarios[0].status -ceq 'FAIL' -and $restorationReport.scenarios[0].diff.instrument_count_matches_inventory -eq $false) 'restoration failure replaced the original assertion failure'
+Assert ($restorationReport.scenarios[1].name -ceq 'runner-cleanup' -and $restorationReport.scenarios[1].status -ceq 'ERROR') 'restoration failure omitted its cleanup error'
+Assert ($restorationReport.error -match 'inventory' -and $restorationReport.error -match 'injected restoration failure') 'restoration failure discarded the original failure reason'
+$orderGuard = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and $node.Extent.Text -match '^if \(\$VerifyScenarioOrder -and \$result.status'
+}, $true)
+Assert ($null -ne $orderGuard) 'scenario-order verification branch was not found'
+$result = Invoke-ScenarioCase -Scenario $passScenario -Driver $transportErrorDriver -AllowMissingArtifacts
+$VerifyScenarioOrder = $true
+$scenarioOrderComparison = $idleSettlementEvidence = $null
+$scenarioOrderComparisons = [Collections.Generic.List[object]]::new()
+$scenarioOrderIdleSettlements = [Collections.Generic.List[object]]::new()
+$scenarioArtifactDirectory = Join-Path $repoRoot ('tmp/missing-order-artifacts-' + [guid]::NewGuid().ToString('N'))
+$sendScenarioRequest = { throw 'order verification must not request diagnostics after a scenario error' }
+. ([scriptblock]::Create($orderGuard.Extent.Text))
+Assert ($result.status -ceq 'ERROR' -and $result.observation.failure_reason -ceq 'scenario error: driver transport failed') 'order verification replaced the original scenario ERROR with a missing-snapshot FAIL'
+Assert ($null -eq $idleSettlementEvidence -and $null -eq $scenarioOrderComparison -and $scenarioOrderComparisons.Count -eq 0 -and $scenarioOrderIdleSettlements.Count -eq 0) 'order verification produced settlement or comparison evidence after a scenario error'
+$aggregateStart = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$report.scenarios' -and $node.Right.Extent.Text -ceq '@($scenarioResults)'
+}, $true)
+Assert ($null -ne $aggregateStart) 'scenario aggregation branch was not found'
+$aggregateStatements = @($aggregateStart.Parent.Statements)
+$aggregateIndex = [array]::IndexOf($aggregateStatements, $aggregateStart)
+$aggregateText = [Collections.Generic.List[string]]::new()
+for ($index = $aggregateIndex; $index -lt $aggregateStatements.Count; $index++) {
+    if ($aggregateStatements[$index].Extent.Text -match '^\$safeToRestore = Stop-RenoiseDriver') { break }
+    $aggregateText.Add($aggregateStatements[$index].Extent.Text)
+}
+foreach ($statusCase in @('PASS', 'FAIL', 'ERROR', 'MANUAL', 'SKIP', 'UNKNOWN', 'RUNNING', 'pass', $null)) {
+    $report = @{ status = 'ERROR'; error = $null }
+    $VerifyScenarioOrder = $false
+    $scenarioResults = @([pscustomobject]@{ name = 'test'; status = $statusCase; actual = 'observed result' })
+    . ([scriptblock]::Create(($aggregateText -join "`n")))
+    if ($statusCase -ceq 'PASS') { Assert ($report.status -ceq 'PASS') 'passing scenario did not pass aggregate reporting' }
+    else { Assert ($report.status -cne 'PASS') "scenario status $statusCase was silently promoted to PASS" }
+    if ($statusCase -ceq 'ERROR' -or $statusCase -ceq 'UNKNOWN') { Assert ($report.status -ceq 'ERROR') "scenario status $statusCase lost ERROR classification" }
+}
+Write-Output 'PASS runner transport, ownership, keyboard configuration, reporting and installation lifecycle'

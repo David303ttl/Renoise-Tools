@@ -16,6 +16,10 @@ param(
     [switch]$AllowKeyboardFocusActivation
 )
 
+class RenoiseRunnerAssertionException : System.Exception {
+    RenoiseRunnerAssertionException([string]$message) : base($message) {}
+}
+
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -346,17 +350,17 @@ try {
         $ping = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'ping' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         $lastExpected = 'Authenticated ping uses protocol version 1 and the current run nonce'
         $lastActual = @{ protocol_version = $ping.protocol_version; nonce_matches = ($ping.session -ceq $session.Nonce) }
-        if ($ping.protocol_version -ne 1 -or $ping.session -cne $session.Nonce) { throw 'Authenticated handshake reported the wrong protocol or run nonce.' }
+        if ($ping.protocol_version -ne 1 -or $ping.session -cne $session.Nonce) { throw [RenoiseRunnerAssertionException]::new('Authenticated handshake reported the wrong protocol or run nonce.') }
         Add-Trace -Operation 'driver.ping' -Status 'PASS' -Details @{ protocol_version = $ping.protocol_version; authenticated = $true }
         $capabilities = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'capabilities' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         $requiredOperations = @('song.snapshot')
         if ($Suite -in @('Keyboard','All')) { $requiredOperations += @('gui.state','song.prepare_instrument_navigation') }
-        if ($capabilities.protocol_version -ne 1 -or @($requiredOperations | Where-Object { $_ -notin @($capabilities.operations) }).Count -gt 0) { throw 'Renoise driver capabilities are incomplete.' }
+        if ($capabilities.protocol_version -ne 1 -or @($requiredOperations | Where-Object { $_ -notin @($capabilities.operations) }).Count -gt 0) { throw [RenoiseRunnerAssertionException]::new('Renoise driver capabilities are incomplete.') }
         $runtimeVersion = Get-VersionTriplet -Value ([string]$capabilities.renoise_version)
         $runtimeApiVersion = [string]$capabilities.api_version
         $manifestApiVersion = [string]$toolVersion.RenoiseScriptingTool.ApiVersion
-        if ($runtimeApiVersion -cne $manifestApiVersion) { throw "Renoise API $runtimeApiVersion does not match ACID manifest API $manifestApiVersion." }
-        if ($runtimeVersion -ne $exeVersionTriplet) { throw "Connected Renoise runtime $runtimeVersion does not match selected executable $exeVersionTriplet." }
+        if ($runtimeApiVersion -cne $manifestApiVersion) { throw [RenoiseRunnerAssertionException]::new("Renoise API $runtimeApiVersion does not match ACID manifest API $manifestApiVersion.") }
+        if ($runtimeVersion -ne $exeVersionTriplet) { throw [RenoiseRunnerAssertionException]::new("Connected Renoise runtime $runtimeVersion does not match selected executable $exeVersionTriplet.") }
         $report.host.renoise_runtime_version = [string]$capabilities.renoise_version
         $report.host.api_version = $runtimeApiVersion
         Add-Trace -Operation 'driver.capabilities' -Status 'PASS' -Details @{ operation_count = @($capabilities.operations).Count }
@@ -365,7 +369,7 @@ try {
         $lastActual = $before
         $lastExpected = 'Ready document and no other pending commands before reset'
         if (-not $before.document_ready -or $before.pending_commands -ne 0 -or $before.queued_commands -ne 0 -or $before.document_transition_uncertain) {
-            throw 'Renoise host is not in a settled, ready document state; no document reset was attempted.'
+            throw [RenoiseRunnerAssertionException]::new('Renoise host is not in a settled, ready document state; no document reset was attempted.')
         }
         Write-Information 'Creating a new empty Renoise document. If Renoise shows a dirty-song prompt, handle it yourself; the runner will not choose Save or Discard.' -InformationAction Continue
         $resetTimeoutMs = [Math]::Min(120000, $CommandTimeoutSeconds * 1000)
@@ -377,7 +381,7 @@ try {
         $reset = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.new' -Arguments @{ timeout_ms = $resetTimeoutMs } -TimeoutSeconds $resetResponseTimeout -ProcessCheck $processCheck
         $lastActual = @{ starting_epoch = $before.document_epoch; observed_epoch = $reset.document_epoch; terminal_response = $true; operation = $reset.operation }
         $lastDiff = @{ terminal_response_received = $true; operation_matches = ($reset.operation -ceq 'document.new'); epoch_advanced = ($reset.document_epoch -gt $before.document_epoch) }
-        if ($reset.operation -cne 'document.new' -or $reset.document_epoch -le $before.document_epoch) { throw 'New-document command did not return an advanced observed document epoch.' }
+        if ($reset.operation -cne 'document.new' -or $reset.document_epoch -le $before.document_epoch) { throw [RenoiseRunnerAssertionException]::new('New-document command did not return an advanced observed document epoch.') }
         Add-Trace -Operation 'document.new' -Status 'PASS' -Details @{ previous_epoch = $before.document_epoch; observed_epoch = $reset.document_epoch }
         $snapshotBefore = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         $snapshotBeforeEpochMatches = $snapshotBefore.document_epoch -eq $reset.document_epoch
@@ -398,7 +402,7 @@ try {
         }
         $lastDiff = $inventoryDiff
         if (-not $snapshotBeforeEpochMatches -or $reportedInstrumentCount -ne $actualInstrumentCount -or $reportedPhraseCount -ne $actualPhraseCount -or $actualPhraseCount -ne 0 -or -not $selectionMatchesInventory) {
-            throw 'New document snapshot epoch or inventory did not match the observed reset state.'
+            throw [RenoiseRunnerAssertionException]::new('New document snapshot epoch or inventory did not match the observed reset state.')
         }
         $snapshotBeforeJson = $snapshotBefore | ConvertTo-Json -Depth 20 -Compress
         $snapshotBeforeJson | Set-Content -LiteralPath (Join-Path $artifactRoot 'snapshot-before.json') -Encoding utf8NoBOM
@@ -427,7 +431,7 @@ try {
         $lastExpected = 'New document release/new epoch observed; consistent instrument inventory, zero phrases, stable snapshots, and zero pending commands'
         if (-not $snapshotBeforeEpochMatches -or -not $snapshotAfterEpochMatches -or $snapshotBeforeHash -cne $snapshotAfterHash -or $after.document_epoch -ne $reset.document_epoch -or
             $after.pending_commands -ne 0 -or $after.queued_commands -ne 0 -or $after.document_transition_uncertain) {
-            throw 'Reset document snapshot or diagnostics did not match the expected settled state.'
+            throw [RenoiseRunnerAssertionException]::new('Reset document snapshot or diagnostics did not match the expected settled state.')
         }
         $report.document_epoch = $after.document_epoch
         Add-Trace -Operation 'song.snapshot' -Status 'PASS' -Details @{ sha256 = $snapshotAfterHash; document_epoch = $after.document_epoch }
@@ -478,7 +482,7 @@ try {
             $shaText = (@($result.observation.snapshot_sha256) -join ',')
             $scenarioOrderComparison = $null
             $idleSettlementEvidence = $null
-            if ($VerifyScenarioOrder) {
+            if ($VerifyScenarioOrder -and $result.status -ceq 'PASS') {
                 $postLoadDiagnostics = & $sendScenarioRequest 'diagnostics' @{}
                 $settlement = $postLoadDiagnostics.native_inventory_settlement
                 $settlementPassed = $null -ne $settlement -and
@@ -572,8 +576,9 @@ try {
             $lastDiff = $scenarioDiff
             $actualSummary = "epochs=$epochText; snapshot_sha256=$shaText"
             if ($VerifyScenarioOrder) {
+                if ($result.status -cne 'PASS') { $scenarioOrderPassed = $false }
                 $orderMatchText = if ($null -ne $scenarioOrderComparison) { [string]$scenarioOrderComparison.matches } else { 'baseline' }
-                $actualSummary += "; phase=$scenarioPhase; idle_cycles=$($idleSettlementEvidence.matching_idle_cycles); order_match=$orderMatchText"
+                $actualSummary += "; phase=$scenarioPhase; idle_cycles=$(if ($idleSettlementEvidence) { $idleSettlementEvidence.matching_idle_cycles } else { 'unavailable' }); order_match=$orderMatchText"
             }
             if ($result.status -ne 'PASS' -and $result.observation.failure_reason) { $actualSummary += "; reason=$($result.observation.failure_reason)" }
             $scenarioExpected = "scenario $($catalogScenario.name) golden assertions hold; expects=$($result.expects); $(@($catalogScenario.assertions).Count) assertions"
@@ -647,9 +652,9 @@ try {
             $scenarioResults.Add([pscustomobject]@{ name = 'keyboard'; suite = 'Keyboard'; status = 'PASS'; expected = 'Configured ACID shortcut opens the dialog; native instrument navigation changes the selected index in song readback'; actual = "shortcut=$($journey.shortcut); navigation=$($journey.navigation); selected=$($journey.selected_instrument_before)->$($journey.selected_instrument_after)"; diff = $null })
         }
         $report.scenarios = @($scenarioResults)
-        $failedScenarios = @($scenarioResults | Where-Object { $_.status -in @('FAIL', 'ERROR', 'SKIP') })
-        $scenarioErrors = @($scenarioResults | Where-Object { $_.status -eq 'ERROR' })
-        $scenarioSkips = @($scenarioResults | Where-Object { $_.status -eq 'SKIP' })
+        $failedScenarios = @($scenarioResults | Where-Object { $_.status -cne 'PASS' })
+        $scenarioErrors = @($scenarioResults | Where-Object { $_.status -cnotin @('PASS', 'FAIL', 'SKIP', 'MANUAL') })
+        $scenarioSkips = @($scenarioResults | Where-Object { $_.status -cin @('SKIP', 'MANUAL') })
         $orderAcceptanceFailed = $false
         if ($VerifyScenarioOrder) { $orderAcceptanceFailed = $report.scenario_order_acceptance.status -cne 'PASS' }
         if ($failedScenarios.Count -eq 0 -and -not $orderAcceptanceFailed) { $report.status = 'PASS' }
@@ -698,17 +703,18 @@ try {
 }
 catch {
     $failureMessage = $_.Exception.Message
-    $report.status = 'ERROR'
+    $failureStatus = if ($_.Exception -is [RenoiseRunnerAssertionException]) { 'FAIL' } else { 'ERROR' }
+    $report.status = $failureStatus
     $report.error = $failureMessage
     if ($VerifyScenarioOrder -and $report.scenario_order_acceptance -is [Collections.IDictionary]) {
-        $report.scenario_order_acceptance['status'] = 'ERROR'
+        $report.scenario_order_acceptance['status'] = $failureStatus
         $report.scenario_order_acceptance['error'] = $failureMessage
     }
     if ($report.keyboard -and $report.keyboard.status -eq 'RUNNING') { $report.keyboard.status = 'ERROR' }
     $failureScenario = [pscustomobject]@{
         name = if ($Scenario) { $Scenario } else { 'all' }
         suite = $activeSuite
-        status = 'ERROR'
+        status = $failureStatus
         expected = $lastExpected
         actual = if ($null -ne $lastActual) { $lastActual } else { $failureMessage }
         diff = if ($null -ne $lastDiff) { $lastDiff } else { @{ error = $failureMessage } }
@@ -722,7 +728,7 @@ catch {
         actual = $failureMessage
         diff = @{ cleanup_error = $failureMessage }
     }) }
-    Add-Trace -Operation 'runner' -Status 'ERROR' -Details @{ message = $failureMessage }
+    Add-Trace -Operation 'runner' -Status $failureStatus -Details @{ message = $failureMessage }
 }
 finally {
     if ($deploymentStarted -and -not $driverMayBeLoaded) {
@@ -774,8 +780,8 @@ finally {
         . ([scriptblock]::Create((Get-RenoiseRestorationOperation)))
     }
       catch {
-        if ($report.status -eq 'PASS') { $report.status = 'ERROR' }
-        if (-not $report.error) { $report.error = "ACID installation restoration failed: $($_.Exception.Message)" }
+        $report.status = 'ERROR'
+        $report.error = (@($report.error, "ACID installation restoration failed: $($_.Exception.Message)") | Where-Object { $_ }) -join '; '
         $report.scenarios = @($report.scenarios) + @([pscustomobject]@{
             name = 'runner-cleanup'
             suite = $Suite
@@ -796,7 +802,7 @@ finally {
       }
     }
     elseif ($deploymentStarted) {
-        if ($report.status -eq 'PASS') { $report.status = 'ERROR' }
+        $report.status = 'ERROR'
         $retainedMessage = 'Temporary install was retained because the development driver/process did not reach a verified clean shutdown.'
         if ($report.error) { $report.error = "$($report.error) $retainedMessage" } else { $report.error = $retainedMessage }
         $report.scenarios = @($report.scenarios) + @([pscustomobject]@{
