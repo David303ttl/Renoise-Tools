@@ -1,5 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Runtime generation delivery boundary.
+-- Attached contexts with an installed editor use runtime-owned frozen capture,
+-- transition revisions, eligibility, mutation scopes and integrity evidence.
+-- The injected capture remains the delivery-conformance seam until an editor
+-- is installed. GUI authority cutover uses the same public context methods.
 --
 -- context.new(options) -> context
 --   options.writer  read-only occupancy source. writer.state() returns a
@@ -169,6 +173,9 @@ function M.new(options)
   local sink = options.sink
   local issue_token = options.issue_token
   local current_song = nil
+  local inventory = nil
+  local requests = nil
+  local integrity = nil
   local epoch = 0
   local session = 0
   local opened = false
@@ -186,6 +193,19 @@ function M.new(options)
   local diagnostic_count = 0
   local last_diagnostic = nil
   local diagnosed_context = {}
+  local mutation_depth, mutation_token = 0, nil
+  local inventory_dirty, reconciliation_pending, mutation_failed = false, false, false
+  local native_instrument, native_phrase = nil, nil
+  local transitions=require("runtime.transitions").new()
+  local editor=nil
+  local editor_target=nil
+  local editor_recovery={}
+  local observed_target=nil
+  local ownership=require("renoise.phrase_ownership")
+
+  local function semantic(target)
+    return {kind=target.kind,reason=target.reason,baseline=target.baseline}
+  end
 
   local function diagnose(record, code, message)
     local seen = record and record.diagnosed or diagnosed_context
@@ -213,10 +233,11 @@ function M.new(options)
   end
 
   local function context_state()
+    local integrity_state=integrity and integrity:state() or {blocked=false}
     local record = active
     if record and record.settled then record = nil end
     local status = "idle"
-    if blocked then
+    if blocked or integrity_state.blocked then
       status = "blocked"
     elseif record and not record.settled then
       status = "pending"
@@ -226,8 +247,8 @@ function M.new(options)
       status = status,
       token = record and record.token or nil,
       authorization = record ~= nil and record.current == true and record.settled ~= true,
-      blocked = blocked == true,
-      blocked_reason = blocked_reason,
+      blocked = blocked == true or integrity_state.blocked,
+      blocked_reason = integrity_state.reason or blocked_reason,
       diagnostic_count = diagnostic_count,
       last_diagnostic = last and {code = last.code, message = last.message} or nil,
     }
@@ -307,9 +328,27 @@ function M.new(options)
   local context = {}
 
   function context:request_generation(trigger)
+    if mutation_depth>0 or mutation_failed then
+      return false,"Synchronous mutation is active or requires recovery"
+    end
     if releasing or (lifecycle and (current_song == nil or not opened)) then
       return false, "No current document dialog is open"
     end
+    if editor then
+      if trigger~="manual" and trigger~="live" then return false,"Invalid generation trigger" end
+      if trigger=="live" and not transitions:revision_state().armed then return false,"Live Edit is not armed" end
+      self:transition("request",{trigger=trigger})
+      if not editor.valid then return false,editor.reason or "Invalid editor source or settings" end
+      local destination=self:target_state()
+      if not editor_target or not rawequal(destination.instrument,editor_target.instrument) or
+          not rawequal(destination.phrase,editor_target.phrase) or destination.kind~=editor_target.kind then
+        return false,"Editor source has not been loaded for this target"
+      end
+      local eligible,reason=self:musical_eligibility(active and active.token)
+      if not eligible then return false,reason end
+    end
+    if integrity and integrity:state().blocked then return false,integrity:state().reason end
+    if mutation_failed then return false,"Synchronous mutation failed; recovery must be verified" end
     if dispatching then
       return false, "A generation request is already dispatching"
     end
@@ -350,6 +389,8 @@ function M.new(options)
       diagnosed = {},
       epoch = epoch,
       session = session,
+      trigger = trigger,
+      revisions = editor and transitions:revision_state() or nil,
       gui_delivery = gui_delivery,
     }
     records[record] = true
@@ -368,7 +409,9 @@ function M.new(options)
     local token = issued_token
     record.token = token
 
-    local captured, request, capture_reason = pcall(capture, trigger, token)
+    local capture_action=capture
+    if editor then capture_action=function(kind,operation_token) return requests:capture(kind,operation_token) end end
+    local captured, request, capture_reason = pcall(capture_action, trigger, token)
     if not captured then
       dispatching = false
       retire(record)
@@ -410,6 +453,15 @@ function M.new(options)
     record.current = true
     record.request = request
     active = record
+    if editor then
+      local valid,validation_error=requests:validate_checkpoint(request)
+      if not valid then
+        record.rejected=true
+        retire(record)
+        dispatching=false
+        return false,validation_error
+      end
+    end
     record.finish = function(result)
       if record.rejected then
         block(record, "delivery.completion_after_rejection",
@@ -428,6 +480,9 @@ function M.new(options)
         record.current = false
         record.revoked_completion = true
         record.request = nil
+        if type(result)=="table" and result.kind=="success" and result.verified==true then
+          inventory_dirty=true;reconciliation_pending=true
+        end
         if rawequal(active, record) then active = nil end
         return true
       end
@@ -435,6 +490,13 @@ function M.new(options)
       record.current = false
       record.request = nil
       if rawequal(active, record) then active = nil end
+      if record.revisions then
+        local success=type(result)=="table" and result.kind=="success" and result.verified==true
+        local effects=transitions:transition("completion",{success=success,
+          operation_serial=record.revisions.operation_serial,target_revision=record.revisions.target_revision,
+          edit_revision=record.revisions.edit_revision})
+        if effects.reconcile then inventory_dirty=true;reconciliation_pending=true end
+      end
       local delivery = record.gui_delivery
       record.gui_delivery = nil
       if delivery then
@@ -524,9 +586,216 @@ function M.new(options)
     end
   end
 
+  local function preserve_editor()
+    if not editor or not inventory or not current_song then return end
+    local target=inventory:target_state()
+    if not target.instrument then return end
+    if not editor_target or not rawequal(target.instrument,editor_target.instrument) or
+        not rawequal(target.phrase,editor_target.phrase) then return end
+    local ok,saved,reason=pcall(drafts.put,current_song,target.instrument,target.phrase,
+      editor.source,editor.output_policy,editor.pb_range,context:draft_options())
+    editor.draft_warning=not ok and "Cannot preserve session draft" or (not saved and reason or nil)
+  end
+
+  local function retain_invalid_editor()
+    if editor and not editor.valid then
+      local copy=ownership.copy_snapshot(editor)
+      if copy then editor_recovery[#editor_recovery+1]=copy end
+    end
+  end
+
+  local function apply_effects(effects,reason)
+    if effects.revoke=="all" or (effects.revoke=="live" and active and active.trigger=="live") then
+      invalidate(reason or "Runtime state changed")
+    end
+    if effects.detach_draft and inventory and current_song then
+      local target=inventory:target_state()
+      if target.instrument and drafts.detach then
+        pcall(drafts.detach,current_song,target.instrument,target.phrase,reason or "Target eligibility changed")
+      end
+    end
+  end
+
+  function context:revision_state() return transitions:revision_state() end
+
+  function context:editor_state()
+    return editor and ownership.copy_snapshot(editor) or nil
+  end
+
+  function context:editor_recovery()
+    return ownership.copy_snapshot(editor_recovery)
+  end
+
+  function context:musical_eligibility(token)
+    if not current_song or not opened then return nil,"No current document dialog is open" end
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    local blocked_state=self:integrity_state()
+    if blocked_state.blocked then return nil,blocked_state.reason end
+    local occupancy=self:occupancy_state(token)
+    if not occupancy.available then return nil,occupancy.reason end
+    if active and not active.settled and not rawequal(active.token,token) then return nil,"An accepted operation has not settled" end
+    local ok,undo=pcall(function()
+      if type(current_song.is_undo_redoing)~="function" then error("Undo state is unavailable") end
+      local undo=current_song:is_undo_redoing()
+      assert(type(undo)=="boolean","Undo state is unavailable")
+      return undo
+    end)
+    if not ok or undo then return nil,"Native undo or redo is processing or unavailable" end
+    local target=self:target_state()
+    if target.kind~="new" and target.kind~="owned" then return nil,target.reason or "Target is not writable" end
+    return target
+  end
+
+  function context:independence_eligibility()
+    if not current_song or not opened then return nil,"No current document dialog is open" end
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    local state=self:integrity_state()
+    if state.blocked then return nil,state.reason end
+    if not self:occupancy_state().available or (active and not active.settled) then return nil,"The writer has not settled" end
+    local ok,undo=pcall(function()
+      if type(current_song.is_undo_redoing)~="function" then error("Undo state is unavailable") end
+      local undo=current_song:is_undo_redoing()
+      assert(type(undo)=="boolean","Undo state is unavailable")
+      return undo
+    end)
+    if not ok or undo then return nil,"Native undo or redo is processing or unavailable" end
+    return require("runtime.eligibility").independence(current_song,self:target_state())
+  end
+
+  function context:transition(kind,values)
+    values=values or {}
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    if not inventory then return nil,"No current document is attached" end
+    if kind=="target" or kind=="native_target" then
+      local before=inventory:target_state()
+      local changed=not rawequal(before.instrument,values.instrument) or not rawequal(before.phrase,values.phrase)
+        or (kind=="target" and values.kind=="new")~=(before.kind=="new")
+      if changed then preserve_editor();retain_invalid_editor() end
+      local target
+      if kind=="target" and values.kind=="new" then target=inventory:bind_new(values.instrument)
+      else target=inventory:bind_phrase(values.instrument,values.phrase) end
+      local effects=transitions:transition(kind,{instrument=target.instrument,phrase=target.phrase,kind=target.kind,
+        semantic_changed=not changed and observed_target~=nil and not ownership.compare(observed_target,semantic(target))})
+      apply_effects(effects,"Target changed")
+      observed_target=semantic(target)
+      return target,effects
+    elseif kind=="refresh" then
+      local target=inventory:target_state()
+      local changed=observed_target~=nil and not ownership.compare(observed_target,semantic(target))
+      local effects=transitions:transition(kind,{semantic_changed=changed})
+      apply_effects(effects,"Target eligibility changed")
+      observed_target=semantic(target)
+      return target,effects
+    elseif kind=="edit" or kind=="programmatic" or kind=="reset" or kind=="recovery" then
+      local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
+      if not buffer then return nil,copy_error end
+      local changed=not editor or not ownership.compare({source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},buffer)
+      local policies=require("model.policies")
+      local source,source_error=require("model.sequencer").copy_source(buffer.source)
+      buffer.valid=source~=nil and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
+      buffer.reason=not buffer.valid and (source_error or "Invalid source settings") or nil
+      local eligible=self:musical_eligibility(active and active.token)
+      local effects=transitions:transition(kind,{changed=changed,valid=buffer.valid,eligible=eligible~=nil})
+      apply_effects(effects,"Editor source or settings changed")
+      if changed then retain_invalid_editor() end
+      editor=buffer
+      local destination=inventory:target_state()
+      editor_target={instrument=destination.instrument,phrase=destination.phrase,kind=destination.kind}
+      if changed then preserve_editor() end
+      if effects.live_intent then effects.accepted,effects.reason=self:request_generation("live") end
+      return self:editor_state(),effects
+    end
+    local effects=transitions:transition(kind,values)
+    apply_effects(effects,"Runtime "..kind)
+    if effects.reconcile then inventory_dirty=true;reconciliation_pending=true end
+    if kind=="independence" then
+      local proof,reason=self:independence_eligibility()
+      return proof,reason
+    end
+    return effects
+  end
+
+  function context:mutation_state()
+    return {depth=mutation_depth,dirty=inventory_dirty,pending=reconciliation_pending,failed=mutation_failed}
+  end
+
+  function context:mark_dirty(reason)
+    inventory_dirty=true
+    reconciliation_pending=true
+    if mutation_depth==0 then
+      apply_effects(transitions:transition("external"),reason or "External native change")
+    end
+  end
+
+  function context:mutate(token,action)
+    if type(action)~="function" or not active or not active.current or
+        not rawequal(active.token,token) or not current_song or
+        (mutation_depth>0 and not rawequal(mutation_token,token)) then
+      error("Mutation requires the current operation token",0)
+    end
+    mutation_depth=mutation_depth+1
+    mutation_token=token
+    local scope_song,scope_epoch=current_song,epoch
+    local values
+    local function packed(...) return {n=select("#",...),...} end
+    local ok,failure=pcall(function() values=packed(action()) end)
+    if not rawequal(scope_song,current_song) or scope_epoch~=epoch then
+      error("Document changed during synchronous mutation",0)
+    end
+    mutation_depth=mutation_depth-1
+    if not ok then
+      mutation_failed=true
+      transitions:transition("external")
+      invalidate("Synchronous mutation failed")
+    end
+    if mutation_depth==0 then
+      mutation_token=nil
+      inventory_dirty=true
+      reconciliation_pending=true
+      if ok and not mutation_failed then
+        local neutral,reason=pcall(function()
+          local ownership=require("renoise.phrase_ownership")
+          for _,instrument in ipairs(current_song.instruments) do
+            for _,phrase in ipairs(instrument.phrases) do
+              if writer.is_temporary then
+                local temporary=writer.is_temporary(current_song,instrument,phrase)
+                assert(type(temporary)=="boolean","Invalid temporary registry result")
+                assert(not temporary or not ownership.id(phrase),"Writer temporary retains an ownership identity")
+              end
+            end
+          end
+          native_instrument=current_song.selected_instrument
+          native_phrase=current_song.selected_phrase
+        end)
+        if not neutral then
+          mutation_failed=true
+          transitions:transition("external")
+          invalidate("Temporary neutrality could not be verified")
+          ok,failure=false,reason
+        end
+      end
+    end
+    if not ok then error(failure,0) end
+    return (unpack or table.unpack)(values,1,values.n)
+  end
+
+  function context:reconcile()
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    reconciliation_pending=false
+    inventory_dirty=false
+    local ok,instrument,phrase=pcall(function() return current_song.selected_instrument,current_song.selected_phrase end)
+    if not ok then return nil,"Cannot inspect native selection" end
+    if not rawequal(instrument,native_instrument) or not rawequal(phrase,native_phrase) then
+      native_instrument,native_phrase=instrument,phrase
+      return self:transition("native_target",{instrument=instrument,phrase=phrase,kind="existing"})
+    end
+    return self:refresh_inventory()
+  end
+
   function context:close_dialog()
     if not opened then return false end
     opened = false
+    transitions:transition("close")
     gui_delivery = nil
     for record in pairs(records) do record.gui_delivery = nil end
     invalidate("Dialog closed")
@@ -545,15 +814,31 @@ function M.new(options)
       if not ok then diagnose(nil, "lifetime.detach_failed", failure) end
     end
     local warning
+    if #editor_recovery>0 or (editor and not editor.valid) then
+      warning="Invalid ACID editor buffers are session-only and were released"
+    end
     if drafts and type(drafts.release) == "function" then
       local ok, _, message = pcall(drafts.release, song)
-      if ok then warning = message
+      if ok then warning = message or warning
       else
         warning = "Session-only ACID draft release failed"
         diagnose(nil, "lifetime.drafts_failed", warning)
       end
     end
     current_song = nil
+    transitions:release()
+    editor,observed_target=nil,nil
+    editor_target=nil
+    editor_recovery={}
+    native_instrument,native_phrase=nil,nil
+    mutation_depth,mutation_token=0,nil
+    inventory_dirty,reconciliation_pending,mutation_failed=false,false,false
+    if inventory then inventory:release() end
+    inventory = nil
+    if integrity then integrity:release() end
+    integrity = nil
+    if requests then requests:release() end
+    requests = nil
     for record in pairs(records) do
       record.request = nil
       record.gui_delivery = nil
@@ -575,6 +860,42 @@ function M.new(options)
     epoch_serial = epoch_serial + 1
     epoch = epoch_serial
     current_song = song
+    local selection_ok,selected_instrument,selected_phrase=pcall(function() return song.selected_instrument,song.selected_phrase end)
+    if selection_ok then native_instrument,native_phrase=selected_instrument,selected_phrase end
+    inventory = require("runtime.inventory").new(song,writer)
+    integrity = require("runtime.integrity").new(song,drafts,function()
+      local state,reason=inspect_writer(writer)
+      if not state then return false,reason end
+      if state.status~="idle" then return false,"The writer slot is occupied" end
+      if dispatching or (active and not active.settled) then return false,"An accepted operation has not settled" end
+      if mutation_depth>0 then return false,"Synchronous mutation is active" end
+      return true
+    end)
+    requests=require("runtime.requests").new({
+      current=function(include_target)
+        local revisions=transitions:revision_state()
+        return {song=current_song,epoch=epoch,session=session,open=opened,
+          target_revision=revisions.target_revision,edit_revision=revisions.edit_revision,
+          operation_serial=revisions.operation_serial,
+          editor=include_target and context:editor_state() or nil,
+          target=include_target and context:target_state() or nil}
+      end,
+      occupancy=function(token) return context:occupancy_state(token) end,
+      revoke=function(token,reason) return context:revoke(token,reason) end,
+      cleanup_allowed=function(token)
+        return active~=nil and not active.settled and not active.rejected and not active.released
+          and active.epoch==epoch and rawequal(active.token,token)
+      end,
+      blocked=function()
+        if mutation_depth>0 or mutation_failed then return true,"Synchronous mutation is active or requires recovery" end
+        local state=context:integrity_state()
+        return state.blocked,state.reason
+      end,
+      drafts=drafts,
+      draft_options=function() return context:draft_options() end,
+      mutate=function(token,action) return context:mutate(token,action) end,
+      record_blocker=function(token,evidence) return context:record_blocker(token,evidence) end,
+    })
     opened = false
     gui_delivery = nil
     return epoch
@@ -593,6 +914,90 @@ function M.new(options)
   function context:lifetime_state()
     return {epoch = epoch, session = session, open = opened,
       song_attached = current_song ~= nil}
+  end
+
+  function context:occupancy_state(token)
+    local state,reason=inspect_writer(writer)
+    if not state then return {status="unavailable",available=false,reason=reason} end
+    local own=state.status=="busy" and token~=nil and rawequal(state.token,token)
+    return {status=state.status,own=own,available=state.status=="idle" or own,
+      reason=state.status~="idle" and not own and "The writer slot is occupied" or nil}
+  end
+
+  function context:validate_checkpoint(request)
+    if not requests then return false,"No current request runtime is attached" end
+    return requests:validate_checkpoint(request)
+  end
+
+  function context:record_blocker(token,evidence)
+    local record=active
+    if not integrity or not record or record.settled or record.rejected or
+        record.released or record.epoch~=epoch or not rawequal(record.token,token) then
+      return false,"Recovery evidence does not belong to the current operation"
+    end
+    local recorded,reason=integrity:record(evidence)
+    if recorded then
+      transitions:transition("blocker")
+      invalidate("Song integrity requires revalidation")
+    end
+    return recorded,reason
+  end
+
+  function context:integrity_state()
+    if not integrity then return {blocked=false,serial=0,recovery={}} end
+    return integrity:state()
+  end
+
+  function context:revalidation_status()
+    if not integrity then return {verified=false,blocked=false,reason="No current document is attached"} end
+    return integrity:status()
+  end
+
+  function context:revalidate(proof)
+    if not integrity then return false,"No current document is attached" end
+    local cleared,reason=integrity:clear(proof)
+    if cleared then mutation_failed=false end
+    return cleared,reason
+  end
+
+  function context:bind_new(instrument)
+    if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
+    if not inventory then return {kind="unavailable",reason="No current document is attached"} end
+    return self:transition("target",{instrument=instrument,kind="new"})
+  end
+
+  function context:bind_phrase(instrument,phrase)
+    if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
+    if not inventory then return {kind="unavailable",reason="No current document is attached"} end
+    return self:transition("target",{instrument=instrument,phrase=phrase,kind="existing"})
+  end
+
+  function context:target_state()
+    if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
+    if not inventory then return {kind="unavailable",reason="No current document is attached"} end
+    return inventory:target_state()
+  end
+
+  function context:refresh_inventory() return self:transition("refresh") end
+
+  function context:instrument_choices()
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    if not inventory then return nil,"No current document is attached" end
+    return inventory:instrument_choices()
+  end
+
+  function context:phrase_choices(instrument)
+    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    if not inventory then return nil,"No current document is attached" end
+    return inventory:phrase_choices(instrument)
+  end
+
+  function context:draft_options()
+    return {validate=function(song,instrument,phrase)
+      if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+      if not inventory then return nil,"No current document is attached" end
+      return inventory:draft_options().validate(song,instrument,phrase)
+    end}
   end
 
   function context:state()

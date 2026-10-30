@@ -283,7 +283,8 @@ function M.capture(song,instrument,phrase,options)
   end
   captures[descriptor]=captured
   return descriptor,function(token,revision)
-    return token==captured.token and revision==captured.revision and current_capture(song,captured)
+    return captured.song~=nil and token==captured.token and revision==captured.revision and
+      current_capture(captured.song,captured)
   end
 end
 
@@ -378,6 +379,14 @@ end
 function M.release(song)
   local warning=M.has_volatile(song) and "Session-only ACID drafts were released" or nil
   sessions[song]=nil
+  for descriptor,captured in pairs(captures) do
+    if rawequal(captured.song,song) then
+      rawset(descriptor,"instrument",nil)
+      rawset(descriptor,"phrase",nil)
+      captured.song,captured.instrument,captured.phrase=nil,nil,nil
+      captures[descriptor]=nil
+    end
+  end
   return true,warning
 end
 

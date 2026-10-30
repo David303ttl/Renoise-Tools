@@ -66,9 +66,34 @@ local groups=assert(own.inventory(song))
 assert(#groups[1]==2)
 rejected(first,a)
 assert(store.read_entry(song,1).length==4,"narrow collision read is source-only")
-assert(own.validate_live(song,first,a,{[collision]=true})==1)
-assert(store.load(song,first,a,{[collision]=true}).length==4)
-assert(not own.validate_live(song,first,a,{[a]=true}),"excluded target is not an owner")
+local validator=require('writers.phrase_validator')
+local exclusion_calls={
+ function(value)return own.inventory(song,value)end,
+ function(value)return own.validate_identity(song,first,a,value)end,
+ function(value)return own.validate_live(song,first,a,value)end,
+ function(value)return store.load(song,first,a,value)end,
+ function(value)return store.read_draft(song,first,a,value)end,
+ function(value)return store.write_draft(song,first,a,source,'repeat',0,value)end,
+ function(value)return store.clear_draft(song,first,a,value)end,
+ function(value)return validator.classify(song,first,a,{}, {}, {},value)end,
+ function(value)return validator.compatibility(a,{}, {}, {}, {},value)end,
+ function(value)return validator.classify(song,first,a,{}, {}, {excluded=value})end,
+ function(value)return validator.compatibility(a,{}, {}, {}, {excluded=value})end,
+}
+local before_exclusions=song.tool_data
+for _,value in ipairs({{[collision]=true},{[a]=true},{},{token={}},false})do
+ for index,call in ipairs(exclusion_calls)do
+  local result,reason=call(value)
+  assert(not result and reason=='Ownership exclusions are not supported',index..': '..tostring(reason))
+  assert(song.tool_data==before_exclusions,'exclusion attempt wrote persistence')
+ end
+end
+-- Explicit nil surplus arguments must also reject under Lua 5.1.
+for index=1,9 do
+ local result,reason=exclusion_calls[index](nil)
+ assert(not result and reason=='Ownership exclusions are not supported')
+end
+assert(#assert(own.inventory(song))[1]==2,'all holders remain in ownership inventory')
 second.phrases[2]=nil
 
 local raw=song.tool_data

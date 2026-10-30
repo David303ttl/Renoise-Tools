@@ -275,6 +275,9 @@ local function compatibility(phrase,committed,capabilities,capacities,options)
   if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
     return nil,"Invalid compatibility options"
   end
+  if options and rawget(options,"excluded")~=nil then
+    return nil,"Ownership exclusions are not supported"
+  end
   if type(capacities)~="table" or getmetatable(capacities)~=nil then return nil,"Invalid native capacities" end
   if type(committed)~="table" or
       not policies.valid_output_policy(committed.output_policy) or
@@ -306,20 +309,25 @@ end
 
 -- Complete compatibility authorizes only the saved source/output association.
 -- verify() checks an intermediate renderer payload; it is not ownership permission.
-function M.compatibility(phrase,committed,capabilities,capacities,options)
+function M.compatibility(phrase,committed,capabilities,capacities,options,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   return protected(compatibility,phrase,committed,capabilities,capacities,options)
 end
 
-function M.classify(song,instrument,phrase,capabilities,capacities,options)
+function M.classify(song,instrument,phrase,capabilities,capacities,options,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported","unavailable" end
   if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
     return nil,"Invalid classification options","unavailable"
+  end
+  if options and rawget(options,"excluded")~=nil then
+    return nil,"Ownership exclusions are not supported","unavailable"
   end
   local member,membership_error=ownership.membership(song,instrument,phrase)
   if not member or phrase==nil then return nil,membership_error or "An existing phrase is required","unavailable" end
   local readable,id=pcall(ownership.id,phrase)
   if not readable then return nil,"Cannot inspect phrase identity","unavailable" end
   if not id then return nil,"Phrase has no recognized ACID identity","foreign" end
-  local ok,source,policy,pb_range=pcall(store.load,song,instrument,phrase,options and options.excluded)
+  local ok,source,policy,pb_range=pcall(store.load,song,instrument,phrase)
   if not ok then return nil,"Cannot read committed source: "..tostring(source),"unavailable" end
   if not source then return nil,policy,"unavailable" end
   local candidate,err=M.compatibility(phrase,{pattern=source,output_policy=policy,pb_range=pb_range},

@@ -192,13 +192,13 @@ local function draft_key(instrument_index,phrase_id)
   return tostring(instrument_index)..":"..tostring(phrase_id)
 end
 
-local function draft_target(song,instrument,phrase,entries,excluded)
+local function draft_target(song,instrument,phrase,entries)
   local index,err=ownership.membership(song,instrument,phrase)
   if not index then return nil,err end
   local ok,name=pcall(function() return instrument.name end)
   if not ok or type(name)~="string" then return nil,"Cannot inspect ACID draft instrument name" end
   if phrase~=nil then
-    local id,identity_error=ownership.validate_live(song,instrument,phrase,excluded)
+    local id,identity_error=ownership.validate_live(song,instrument,phrase)
     if not id then return nil,identity_error end
     if not entries[id] then return nil,"ACID source missing from song data" end
     return index,id,name
@@ -225,12 +225,13 @@ local function saved_phrase_draft(drafts,id)
   return item,key
 end
 
-function M.read_draft(song,instrument,phrase,excluded)
+function M.read_draft(song,instrument,phrase,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   local raw,read_error=raw_data(song)
   if raw==nil and read_error then return nil,read_error end
   local entries,drafts=decode(raw or "")
   if not entries then return nil,drafts end
-  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries,excluded)
+  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries)
   if not instrument_index then return nil,phrase_id end
   local key,err=draft_key(instrument_index,phrase_id)
   if not key then return nil,err end
@@ -246,12 +247,12 @@ function M.read_draft(song,instrument,phrase,excluded)
     item and item.pb_range or nil
 end
 
-local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range,remove,excluded)
+local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range,remove)
   local previous,read_error=raw_data(song)
   if previous==nil and read_error then return nil,read_error end
   local entries,drafts=decode(previous or "")
   if not entries then return nil,drafts end
-  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries,excluded)
+  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries)
   if not instrument_index then return nil,phrase_id end
   local key,err=draft_key(instrument_index,phrase_id)
   if not key then return nil,err end
@@ -299,12 +300,14 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
   return nil,"ACID draft write outcome is uncertain; stored data differs from both the previous and requested values"
 end
 
-function M.write_draft(song,instrument,phrase,pattern,output_policy,pb_range,excluded)
-  return write_draft(song,instrument,phrase,pattern,output_policy,pb_range,false,excluded)
+function M.write_draft(song,instrument,phrase,pattern,output_policy,pb_range,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
+  return write_draft(song,instrument,phrase,pattern,output_policy,pb_range,false)
 end
 
-function M.clear_draft(song,instrument,phrase,excluded)
-  return write_draft(song,instrument,phrase,nil,nil,nil,true,excluded)
+function M.clear_draft(song,instrument,phrase,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
+  return write_draft(song,instrument,phrase,nil,nil,nil,true)
 end
 
 function M.has_drafts(song)
@@ -526,8 +529,9 @@ function M.read_entry(song,id)
   return sequencer.copy_source(entry.pattern),entry.output_policy,entry.pb_range
 end
 
-function M.load(song,instrument,phrase,excluded)
-  local id,err=ownership.validate_live(song,instrument,phrase,excluded)
+function M.load(song,instrument,phrase,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
+  local id,err=ownership.validate_live(song,instrument,phrase)
   if not id then return nil,err end
   return M.read_entry(song,id)
 end

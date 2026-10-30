@@ -118,21 +118,20 @@ function M.membership(song,instrument,phrase)
   return instrument_index,phrase_index
 end
 
-function M.inventory(song,excluded)
+function M.inventory(song,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   local current,current_error=M.is_current(song)
   if not current then return nil,current_error end
   local ok,result=pcall(function()
     local groups={}
     for instrument_index,instrument in ipairs(song.instruments) do
       for phrase_index,phrase in ipairs(instrument.phrases) do
-        if not excluded or not excluded[phrase] then
-          local id=M.id(phrase)
-          if id then
-            local group=groups[id] or {}
-            groups[id]=group
-            group[#group+1]={instrument=instrument,phrase=phrase,
-              instrument_index=instrument_index,phrase_index=phrase_index}
-          end
+        local id=M.id(phrase)
+        if id then
+          local group=groups[id] or {}
+          groups[id]=group
+          group[#group+1]={instrument=instrument,phrase=phrase,
+            instrument_index=instrument_index,phrase_index=phrase_index}
         end
       end
     end
@@ -142,11 +141,12 @@ function M.inventory(song,excluded)
   return result
 end
 
-function M.validate_identity(song,instrument,phrase,excluded)
+function M.validate_identity(song,instrument,phrase,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   if phrase==nil then return nil,"An existing ACID phrase is required" end
   local instrument_index,phrase_index=M.membership(song,instrument,phrase)
   if not instrument_index then return nil,phrase_index end
-  local groups,err=M.inventory(song,excluded)
+  local groups,err=M.inventory(song)
   if not groups then return nil,err end
   local inspected,id=pcall(M.id,phrase)
   if not inspected then return nil,"Cannot inspect ACID phrase identity" end
@@ -157,8 +157,9 @@ function M.validate_identity(song,instrument,phrase,excluded)
   return id,instrument_index,phrase_index
 end
 
-function M.validate_live(song,instrument,phrase,excluded)
-  local id,instrument_index,phrase_index=M.validate_identity(song,instrument,phrase,excluded)
+function M.validate_live(song,instrument,phrase,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
+  local id,instrument_index,phrase_index=M.validate_identity(song,instrument,phrase)
   if not id then return nil,instrument_index end
   local ok,status=pcall(M.status,phrase)
   if not ok or status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end

@@ -624,9 +624,9 @@ Blockers: none. Native lifecycle, undo and musical acceptance remain Step 8.
 
 ## Step 2 — Centralize runtime state, transitions, and operation guards
 
-**Status:** 2.1–2.2 complete; 2.3–2.9 remain pending. Native tests develop alongside runtime changes. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
+**Status:** 2.1–2.7 complete; 2.8–2.9 remain pending. Native tests develop alongside runtime changes. Gate 1A is complete. This sequence hardens runtime contracts and cuts over existing state authority; it does not claim writer/native acceptance.
 
-**Execution order:** 2.1–2.2 (complete) -> 2.3–2.9 in order. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
+**Execution order:** 2.1–2.7 (complete) -> 2.8–2.9 in order. Develop and run focused tests alongside each change. Test-harness completion is not a prerequisite for runtime implementation or using released tools. Each **Complete when** check is a prerequisite for the next substep. Add focused tests with the owning behavior; failures return to that substep and invalidate affected downstream evidence. Do not begin Step 3 before Gate 2 passes. Use behavior-based module/test names, never these planning labels.
 
 ### 2.1 — Freeze ownership, interfaces, and the cutover boundary
 
@@ -1015,6 +1015,28 @@ dependency closures across document switches.
 
 **Complete when:** tests cover all four classes, cross-instrument duplicates, missing/corrupt/incompatible source, inaccessible fields, reorder, removal/replacement, explicit New and two distinct identical-content phrase mocks with content-based `__eq`. Reopen a saved fixture with fresh object wrappers: valid persisted phrase/source/output becomes Owned with reconstructed baselines; a missing record, changed content or collision remains blocked without write or fallback-to-New. Object-keyed draft and temporary lookup tests use raw identity.
 
+**Implemented (2026-10-30):** `runtime.inventory` owns object targets and copied
+session baselines behind `runtime.context`. `bind_new`, `bind_phrase`,
+`target_state`, `refresh_inventory`, `instrument_choices`, `phrase_choices`
+and `draft_options` provide the read-only seams for later GUI cutover. New uses
+a private sentinel; membership and temporary lookups preserve raw identity.
+Classification inspects live capabilities and API capacities before using the
+existing independent source/output validator. A changed verified baseline
+blocks refresh/rebind; only a fresh document epoch reconstructs a new proof.
+Release clears inventory references and baseline storage.
+
+| Completion evidence | Focused verification | Result |
+| --- | --- | --- |
+| Four classes, copied proof, reorder/removal/replacement, explicit New, content-equal distinct objects and raw draft/temporary lookup | `tests/acid/acid_runtime_inventory_spec.lua` | Pass, local mocks |
+| Fresh saved wrappers reconstruct Owned; missing/corrupt/incompatible records, changed hidden content and cross-instrument collisions block without writes | `acid_runtime_inventory_spec.lua` | Pass, local mocks |
+| Independent second-pass review and Lua 5.1 inventory/lifetime/dependency checks | Runtime inventory, lifetime and dependency graph specs | Pass |
+| Regression suites | PowerShell 7 runner: 52 ACID specs on Lua 5.4; 55 repository specs on Lua 5.1 | Pass |
+| Release package and diff hygiene | ACID archive: 29 entries, root manifest/entry point, private inventory source matches checkout, no SDK/tests/docs; `git diff --check` | Pass |
+
+Native Renoise checks were not performed. GUI cutover remains 2.8; native
+observer integration and cold-process save/reopen/regenerate remain Steps 6/8.
+Gate 2 and writer/native acceptance remain open.
+
 ### 2.4 — Remove ownership exclusions and define synchronous temporary neutrality
 
 Ownership inventory always counts **every live phrase**. Remove `excluded` arguments/options from `phrase_ownership`, `pattern_store`, `phrase_validator` and their production/test callers; reject an attempted exclusion argument/option with a concrete error rather than silently ignoring it. Lua 5.1 ignores surplus fixed arguments, so use explicit argument-count validation on affected public entry points and test positional as well as `options.excluded` attempts. Ordinary classification/durable draft access has no transaction exception. Keep strict stored bytes, parsing and existing collision guards unchanged.
@@ -1069,6 +1091,61 @@ Use existing `draft_cache.capture/is_current` for the exact session draft token/
 Capacity availability is rechecked against current membership before each insertion; it is not frozen free-slot count and does not turn reorder into target change. Persisted source-map concurrency and draft removal use the existing guarded store candidate rather than a second runtime transaction implementation.
 
 **Complete when:** mutation-after-capture, changed capability/PB option, changed source/hidden fields, same-index replacement, collisions, undo state, blocker, stale session/edit/operation, own-slot versus other-slot and draft-revision tests fail closed. New has no implicit existing-phrase baseline; invalid requests invoke the sink zero times.
+
+**Implementation evidence for 2.4–2.7 (2026-10-30):** The context exposes
+`mutate`, `mark_dirty`, `reconcile` and `mutation_state`. Only a matching live
+operation enters a synchronous scope. Outermost exit verifies neutral temporary
+identities, records the native object pair and coalesces reconciliation. Failed
+scopes revoke authorization and block classification/admission until explicit
+verified recovery. This uses fake writer operations; production writer scope
+integration remains Step 3.
+
+`runtime.integrity` retains copied pre/committed evidence and exact recovery
+objects. `record_blocker`, `integrity_state`, `occupancy_state`,
+`revalidation_status` and explicit `revalidate` keep song blockers separate
+from protocol diagnostics and writer-owned occupancy. Revalidation reruns
+read-only checks against the exact proof version. Missing destination evidence
+remains blocked; create-recovery evidence integration belongs to Step 3.
+
+`runtime.transitions` and the context's `transition`, `revision_state`,
+`editor_state` and `editor_recovery` own the transition table. Actual editor
+changes preserve drafts and may request Live Edit; guarded loads and arming
+never request music. Invalid buffers stay inspectable in session recovery.
+`musical_eligibility` and `independence_eligibility` are separate read-only
+predicates; the latter validates every holder without resolving any identity.
+
+`runtime.requests` supplies frozen capture when an editor is installed;
+the existing injected capture remains the isolated boundary-conformance seam.
+Requests carry `mutate`, `record_blocker`, `is_current`, `validate_checkpoint`
+and separate same-song `cleanup_authorized` hooks. Private canonical copies
+detect public-request mutation. Checkpoints verify raw target identity,
+membership, unique ownership, source/content/planning proof, LPB/groove,
+undo state, exact draft revision and own-token occupancy. A failed checkpoint
+permanently revokes that request. Release scrubs requests, draft descriptors
+and retained guard closures. Cleanup hooks establish job lifetime only;
+Step 3 must still check its exact private objects before mutation/deletion.
+
+| Completion evidence | Focused verification | Result |
+| --- | --- | --- |
+| Positional exclusions including explicit nil and forged/stale options rejected; every ID holder counted | `tests/acid/acid_live_identity_spec.lua` | Pass, local mocks |
+| Nested neutral scopes, callbacks/throws/lifecycle unwind, no classification in scope, external invalidation | `tests/acid/acid_runtime_mutation_spec.lua` | Pass, fake writer |
+| Blocker persistence, recovery absence, stale proofs, exact draft guard, missing callback and cross-song occupancy | `tests/acid/acid_runtime_integrity_spec.lua` | Pass, local mocks |
+| Every transition row, A → B → A, copied/invalid recovery buffers, arming/manual isolation, group eligibility, zero navigation/load requests | `tests/acid/acid_runtime_transitions_spec.lua`, `acid_runtime_editor_spec.lua` | Pass, local mocks |
+| Frozen mutation, source/content/capability/options/timing/undo changes, slot ownership, stale revisions, explicit New and release scrubbing | `tests/acid/acid_runtime_request_spec.lua` | Pass, local mocks |
+| Full regression suites | PowerShell 7: 60 repository specs on Lua 5.1; 57 ACID-selection specs on Lua 5.4 | Pass; final editor-isolation changes also verified by focused reruns |
+| Package and hygiene | ACID archive: 33 runtime entries, root manifest/entry point, private sources match checkout, no SDK/tests/docs; `git diff --check` | Pass |
+
+Implementation and tests were delegated and independently reviewed a second
+time; findings were corrected and affected checks rerun. Native Renoise checks
+were not performed. GUI authority cutover remains 2.8, Gate 2 remains open,
+and production writer/observer/native acceptance remains in its owning later
+steps. No manifest or persisted storage format changed.
+
+Second-pass corrections cover failed-checkpoint resurrection (request and
+writer token are both revoked), explicit nil fields on New requests, host
+changes during validation, retained draft-descriptor/guard release, and editor
+binding during navigation. An outgoing editor buffer cannot overwrite another
+target's draft or authorize generation before that target's source is loaded.
 
 ### 2.8 — Cut over current GUI state authority without adding a second pipeline
 

@@ -70,7 +70,14 @@ do
   local ctx = new_context{}
   local allowed = {request_generation = true, revoke = true, state = true,
     attach_document = true, open_dialog = true, close_dialog = true,
-    release_document = true, lifetime_state = true}
+    release_document = true, lifetime_state = true, bind_new = true, bind_phrase = true,
+    target_state = true, refresh_inventory = true, instrument_choices = true,
+    phrase_choices = true, draft_options = true, mutate = true, mark_dirty = true,
+    reconcile = true, mutation_state = true, occupancy_state = true,
+    record_blocker = true, integrity_state = true, revalidation_status = true,
+    revalidate = true, transition = true, revision_state = true, editor_state = true,
+    musical_eligibility = true, independence_eligibility = true, editor_recovery = true,
+    validate_checkpoint = true}
   for key, value in pairs(ctx) do
     assert(allowed[key], "context exposes private field " .. tostring(key))
     assert(type(value) == "function")
