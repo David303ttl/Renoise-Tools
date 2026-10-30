@@ -736,9 +736,11 @@ tool use.
    virtual desktops may remain in use. Use `-RenoiseExe` or `-ToolsDirectory`
    when automatic discovery does not match the developer's installation.
 3. Preflight checks the executable/version, selected PID and writable temporary
-   directory. Native runs do not require an active desktop. Keyboard runs need
-   an interactive Renoise window; the helper activates the selected process and
-   verifies focus automatically. Do not require a dedicated account, VM,
+   directory. Native runs do not require an active desktop. Nonintrusive Keyboard
+   runs require an existing `-RenoiseProcessId <pid>` whose Renoise window already
+   owns foreground focus; the helper verifies focus before sending input.
+   Only `-AllowKeyboardFocusActivation` permits activation in a dedicated
+   interactive Windows session. Do not require a dedicated account, VM,
    registry profile equality, manual spike, screenshots or environment-bound
    trace evidence.
 4. Temporarily replace ACID only with `-Install`, preserving a verified backup.
