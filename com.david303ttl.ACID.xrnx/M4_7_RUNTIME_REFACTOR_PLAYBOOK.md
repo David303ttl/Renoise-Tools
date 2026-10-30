@@ -821,44 +821,90 @@ writer cases remain with their owning steps. Fixture construction and snapshots
 do not use the production writer to derive expected output. Second-pass review
 and corrected boundary regressions passed; see the
 [fixture verification record](../tests/renoise/host_verification.md#native-fixture-and-isolation-verification-2026-10-30).
+
 #### T0.6 — Targeted keyboard E2E
 
-- [ ] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`; verify target
-  window and focus only while sending input. Do not rewrite developer keymaps.
-- [ ] Open ACID through a configured genuine shortcut; verify dialog visibility,
-  focus and native instrument selection/navigation through observable readback.
-- [ ] Reject missing mappings, wrong PID, stolen focus and GUI timeouts without
-  typing into another window. Do not use fixed delays or coordinates as assertions.
-- [ ] Keep Native and Keyboard independently selectable. Add later editing journeys
-  with their owning features; do not bypass GUI handlers with test-only actions.
+- [ ] Add an AutoHotkey v2 helper under `tests/renoise/keyboard/`. Before each
+  input sequence, verify the explicitly selected Renoise PID and foreground
+  window. Abort the sequence if focus moves elsewhere; perform these checks only
+  for keyboard input, not for Native API runs.
+- [ ] Read the shortcut from developer configuration and fail with a clear
+  diagnostic when it is missing. Do not rewrite the developer's keymap. If a
+  binding is needed, register the genuine `Global:ACID:Show` action through the
+  existing `show_tool` handler; do not add a test-only production action.
+- [ ] Open ACID through that mapped shortcut. Wait for API-visible dialog state,
+  then exercise one native instrument selection/navigation path and confirm it
+  through readback. Use API inspection for structural assertions; do not call
+  `gui.show()` directly or use fixed delays or screen coordinates as assertions.
+- [ ] Cover a missing mapping, wrong PID, stolen focus and GUI timeout. Each case
+  must return a failure without sending keys to another window. Keep Native and
+  Keyboard independently selectable, and add editing/regeneration journeys only
+  with their owning interface work; route them through real GUI handlers.
+
+**Complete when:** the configured shortcut opens ACID in the intended Renoise
+window, dialog and selection behavior are confirmed through observable state, and
+the four negative cases fail safely. Native tests remain runnable without a
+keyboard mapping or AutoHotkey.
 
 #### T0.7 — Verification integration and failure classification
 
 - [x] Pass offline preflight, transport, runner, Lua and package-exclusion checks.
 - [x] Document portable commands and separate offline, Native, Keyboard and manual
   checks in the existing test/development guides.
-- [ ] Include relevant harness specs in normal test discovery without adding a
-  second mock framework or requiring Renoise for offline tests.
-- [ ] Run a repeatable host smoke covering ping/capabilities, new document,
-  independent snapshot, fixture load, reset and keyboard shortcut/focus; include
-  a repeated scenario and a deliberate failure/timeout.
-- [ ] Verify PASS, FAIL, ERROR, SKIP and MANUAL classification: missing required
-  assertions or skipped requested coverage must not produce a green suite.
+- [ ] Put relevant Lua harness specs in the existing test discovery and runner
+  safety/package specs in the existing PowerShell checks. Keep offline checks
+  runnable without Renoise; do not add a second mock framework or make keyboard
+  tooling a prerequisite for Native tests.
+- [ ] Run the Native host smoke through authenticated ping/capabilities, observed
+  new-document completion, read-only inventory snapshot, fixture load and reset.
+  Repeat a scenario and run a deliberate assertion failure or timeout to verify
+  isolation and nonzero failure reporting. Run keyboard shortcut/focus checks
+  when the Keyboard suite is selected; preserve independent suite selection.
+- [ ] Record exact commands, host/API and tool versions, scenario results and
+  relevant report paths in the existing Renoise test guides. Keep environment
+  details portable and distinguish automated results from manual observations.
+- [ ] Apply these result classes consistently: PASS means every requested
+  postcondition was independently asserted; FAIL means an assertion found a
+  contract violation; ERROR means runner, host or transport failure; SKIP means
+  optional coverage was unavailable; MANUAL means the check was not automated.
+  A requested suite with missing assertions or skipped required coverage cannot
+  report green.
+
+**Complete when:** applicable offline specs and package/runner checks are in
+normal discovery and pass; the Native smoke, repeat and deliberate failure produce
+the expected readback and exit status; and reports distinguish automated,
+skipped and manual coverage. This verifies the harness, not unimplemented ACID
+behavior.
 
 #### T0.8 — Coverage handoff and closeout
 
-- [ ] Check dependency/package boundaries; remove unused test hooks and duplicate
-  fixtures. Preserve production interfaces, manifest/API versions and wire formats.
-- [ ] Add a compact case-to-test table with owning step, Step 8 A–E acceptance
-  case, Native/Keyboard/Manual status and independent assertion.
-- [ ] Map document/session lifetime, selection, inventory and release/reload to
-  Steps 2.2–2.9; create/regenerate/rollback and occupancy to Step 3; explicit copy
-  resolution to Step 4; drafts/scheduling/persistence to Step 5; notifications and
-  late callbacks to Step 6. Add cases with the owning implementation.
-- [ ] Execute applicable automated and manual Step 8 checks, including native
-  undo/redo, save/reload and audible/visual checks; mocks do not establish these.
-- [ ] Close T0 only when its remaining checks pass; list unexecuted coverage
-  explicitly. T0 completion does not certify unimplemented writer behavior.
+- [ ] Review dependency and package boundaries. Test infrastructure must stay out
+  of ACID runtime imports and release bundles. Remove unused test hooks and
+  duplicate fixtures; preserve production interfaces, manifest/API versions and
+  wire formats. Keep repository documentation free of machine-specific paths.
+- [ ] Maintain a compact case-to-test table in the existing Renoise test guide.
+  For each case, record the owning M4.7 step, relevant Step 8 A–E acceptance
+  contract, Native/Keyboard/Manual method, independent assertion and current
+  status. Add cases with the behavior that owns them; do not duplicate future
+  feature tests in the harness foundation.
+- [ ] Hand off coverage to its owning step: document/session lifetime, selection,
+  inventory and release/reload to Steps 2.2–2.9; create/regenerate/rollback and
+  occupancy to Step 3; explicit copy resolution to Step 4; drafts, scheduling and
+  persistence to Step 5; notifications and late callbacks to Step 6. No mock or
+  harness result substitutes for a native assertion of host behavior.
+- [ ] Run only Step 8 cases whose owning behavior is implemented. Record native
+  undo/redo and save/reload results, plus visual/audible checks as Manual where
+  automation cannot establish them. Keep unimplemented cases assigned to their
+  owning steps with status pending; do not report them as passed or block
+  unrelated runtime development on their absence.
+- [ ] Close the harness handoff when its applicable checks pass and every
+  unexecuted behavior has an explicit owner and status. Keep Step 8 open until its
+  applicable native, keyboard and manual acceptance checks pass; T0 completion
+  does not certify unimplemented writer behavior.
+
+**Complete when:** package/dependency review passes, current coverage has an
+independent assertion and owner, applicable harness and host checks have recorded
+results, and remaining behavior acceptance is explicitly tracked under Steps 2–8.
 
 T0 tracks test implementation and coverage. Its unfinished items do not block
 running available suites, normal tool use or runtime development. Requested

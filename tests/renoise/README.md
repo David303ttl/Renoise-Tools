@@ -145,7 +145,9 @@ sets `source_path` on each loaded scenario.
 Run just the transport checks with `-Scenario transport`, transport plus one
 catalog scenario with `-Scenario <name>`, or leave `-Scenario` empty to run
 transport plus every catalog scenario in sorted name order. Unknown names fail
-with the available scenario names. The default suite is `Native`.
+with the available scenario names. The transport-only run skips native catalog
+validation and builds/deploys the driver without native fixtures. The default
+suite is `Native`.
 
 The staged fixtures directory is deployed beside the tool as
 `<Tools>/fixtures`. If that path already exists, it is first copied to a
@@ -153,9 +155,12 @@ hash-verified run artifact and moved to a same-volume restore location, using
 the same verified backup/restore flow as the tool directory. Restoration removes
 the deployed fixtures only when their directory hash still matches the staged
 hash, then restores any moved-aside original. Each scenario resets the document,
-loads its fixture, and resumes only after the native inventory settles. Its two
+loads its fixture, and resumes after the native inventory matches on two
+consecutive application-idle callbacks. The wait response records the number of
+matching idle callbacks and whether settlement was observed. Its two
 canonical snapshot JSON files are written under
-`tmp/interactive-<run-id>/scenario-<name>/`; the run report records epochs,
+`tmp/interactive-<run-id>/scenario-<name>/`; order acceptance writes phase-prefixed
+scenario directories. The run report records epochs,
 snapshot SHA-256 values and any diff.
 
 A scenario passes only when the document was settled before and after the run,
@@ -170,6 +175,17 @@ ID/source/settings bytes without claiming that either phrase is owned or safe
 to regenerate. After all scenarios the runner
 performs a final document reset and diagnostics settle check so the host is left
 on a clean document.
+
+Run the scenario-order acceptance check with
+`./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -VerifyScenarioOrder`.
+It captures each catalog scenario individually in sorted order, then executes
+the catalog in reverse order in the same Renoise process and driver session. It
+compares canonical snapshot values by scenario after removing only the top-level
+`document_epoch`; all other snapshot fields must match. The report and separate
+scenario artifact directories record each run and the driver's post-load idle
+settlement observation. At least two distinct catalog scenarios are required;
+a smaller catalog fails before any document is changed. This check requires a
+disposable song, like other interactive runs.
 
 The `shutdown` response confirms acceptance. The driver then stops its listener,
 detaches callbacks and writes a per-run completion file beside the session config.

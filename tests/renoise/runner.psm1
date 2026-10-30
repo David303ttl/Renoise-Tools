@@ -274,6 +274,30 @@ function Get-AcidScenarioCatalog {
     return ,$scenarios.ToArray()
 }
 
+function Get-AcidInteractiveScenarioSelection {
+    param(
+        [string]$Scenario,
+        [Parameter(Mandatory)][string]$Directory
+    )
+    if ($Scenario -ceq 'transport') { return }
+    if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
+        throw "Native scenario catalog 'tests/renoise/acid/scenarios' is missing; the fixture set is required for the interactive suite."
+    }
+    $catalog = Get-AcidScenarioCatalog -Directory $Directory
+    if ($catalog.Count -eq 0 -and -not $Scenario) {
+        throw 'Native scenario catalog is empty; a Native run cannot pass without a registered scenario.'
+    }
+    if ($Scenario) {
+        $selected = @($catalog | Where-Object { $_.name -ceq $Scenario })
+        if ($selected.Count -eq 0) {
+            $names = @($catalog | ForEach-Object { [string]$_.name })
+            throw "Scenario '$Scenario' is not registered. Available: $((@('transport') + $names) -join ', ')"
+        }
+        return $selected
+    }
+    return @($catalog | Sort-Object { $_.name })
+}
+
 function Assert-AcidScenarioFixtures {
     param([Parameter(Mandatory)][string]$Directory, [Parameter(Mandatory)][object[]]$Scenarios)
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
@@ -645,15 +669,42 @@ function Invoke-AcidNativeScenario {
     }
 }
 
-Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidScenarioCatalog, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
+Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
 
 function Get-DirectoryHash {
     param([Parameter(Mandatory)][string]$Path)
     $root = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
-    $records = @(Get-ChildItem -LiteralPath $root -File -Recurse -Force | Sort-Object { $_.FullName.Substring($root.Length) } | ForEach-Object {
-        [pscustomobject]@{ Path = $_.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/'); Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+    Assert-DirectoryHasNoReparsePoints -Path $root
+    $records = @(Get-ChildItem -LiteralPath $root -Recurse -Force | Sort-Object { $_.FullName.Substring($root.Length) } | ForEach-Object {
+        $relativePath = $_.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
+        if ($_.PSIsContainer) {
+            [pscustomobject]@{ Path = $relativePath; Kind = 'directory' }
+        } else {
+            [pscustomobject]@{ Path = $relativePath; Kind = 'file'; Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() }
+        }
     })
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes(($records | ConvertTo-Json -Compress)))).ToLowerInvariant()
+}
+
+function Assert-DirectoryHasNoReparsePoints {
+    param([Parameter(Mandatory)][string]$Path)
+    $root = [IO.Path]::GetFullPath($Path)
+    $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+    if (-not $rootItem.PSIsContainer -or ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Directory contains a reparse point or is not a plain directory; refusing recursive removal.'
+    }
+
+    $pending = [Collections.Generic.Stack[string]]::new()
+    $pending.Push($root)
+    while ($pending.Count -gt 0) {
+        $current = $pending.Pop()
+        foreach ($item in @(Get-ChildItem -LiteralPath $current -Force -ErrorAction Stop)) {
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw 'Directory contains a reparse point; refusing recursive removal.'
+            }
+            if ($item.PSIsContainer) { $pending.Push($item.FullName) }
+        }
+    }
 }
 
 
@@ -740,6 +791,7 @@ function Get-RenoiseRestorationOperation {
             if (-not $installedDirectoryHash -or (Get-DirectoryHash -Path $installedToolPath) -cne $installedDirectoryHash) {
                 throw 'Installed ACID files changed during the run; keeping the current directory and restoration backup untouched.'
             }
+            Assert-DirectoryHasNoReparsePoints -Path $installedToolPath
             Remove-Item -LiteralPath $installedToolPath -Recurse -Force
         }
         if ($localBackupToolPath -and (Test-Path -LiteralPath $localBackupToolPath)) {
@@ -760,6 +812,7 @@ function Get-RenoiseRestorationOperation {
             if (-not $installedFixturesHash -or (Get-DirectoryHash -Path $installedFixturesPath) -cne $installedFixturesHash) {
                 throw 'Installed ACID fixtures changed during the run; keeping the current directory and restoration backup untouched.'
             }
+            Assert-DirectoryHasNoReparsePoints -Path $installedFixturesPath
             Remove-Item -LiteralPath $installedFixturesPath -Recurse -Force
         }
         if ($localBackupFixturesPath -and (Test-Path -LiteralPath $localBackupFixturesPath)) {
@@ -775,12 +828,13 @@ function Get-RenoiseRestorationOperation {
                 ($stageFixturesExists -and (-not $deploymentStageFixturesHash -or (Get-DirectoryHash -Path $deploymentStageFixturesPath) -cne $deploymentStageFixturesHash))) {
                 throw 'Staged ACID files changed; preserving the staging directory for recovery.'
             }
+            Assert-DirectoryHasNoReparsePoints -Path $deploymentStageRoot
             Remove-Item -LiteralPath $deploymentStageRoot -Recurse -Force
         }
         if ($installedToolPath) { Add-Trace -Operation 'install.restore' -Status 'PASS' -Details @{ original_installation_restored = $true } }
     }
 }
-Export-ModuleMember -Function Get-DirectoryHash, Assert-RenoiseListenerOwner, Get-RenoiseDeploymentOperation, Get-RenoiseRestorationOperation
+Export-ModuleMember -Function Get-DirectoryHash, Assert-DirectoryHasNoReparsePoints, Assert-RenoiseListenerOwner, Get-RenoiseDeploymentOperation, Get-RenoiseRestorationOperation
 
 function Stop-RenoiseDriver {
     param([Net.Sockets.TcpClient]$Client, [pscustomobject]$Session, [string]$SessionPath,

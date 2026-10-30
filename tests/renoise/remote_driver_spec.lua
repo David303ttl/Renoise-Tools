@@ -484,7 +484,26 @@ local function test_snapshot_waits_and_document_transitions()
     timeout_ms = 1000
   })
   fire_idle(host)
-  assert(find_response(take_responses(client), "wait-inventory").ok)
+  assert_equal(#take_responses(client), 0, "inventory wait completed before a post-load idle observation")
+  local phrase = host.song.instruments[1].phrases[1]
+  host.song.instruments[1].phrases = {}
+  fire_idle(host)
+  assert_equal(#take_responses(client), 0, "inventory mismatch did not reset idle settlement")
+  host.song.instruments[1].phrases = {phrase}
+  fire_idle(host)
+  assert_equal(#take_responses(client), 0, "inventory wait accepted one matching idle observation")
+  fire_idle(host)
+  local inventory_response = find_response(take_responses(client), "wait-inventory")
+  assert(inventory_response and inventory_response.ok, "inventory wait did not settle after consecutive idle observations")
+  assert_equal(inventory_response.result.matching_idle_cycles, 2)
+  assert_equal(inventory_response.result.idle_settlement_observed, true)
+  send_request(host, client, "inventory-diagnostics", "diagnostics")
+  fire_idle(host)
+  local inventory_diagnostics = find_response(take_responses(client), "inventory-diagnostics")
+  assert(inventory_diagnostics and inventory_diagnostics.ok)
+  assert_equal(inventory_diagnostics.result.native_inventory_settlement.document_epoch, 1)
+  assert_equal(inventory_diagnostics.result.native_inventory_settlement.matching_idle_cycles, 2)
+  assert_equal(inventory_diagnostics.result.native_inventory_settlement.idle_settlement_observed, true)
 
   send_request(host, client, "duplicate", "ping")
   send_request(host, client, "duplicate", "ping")

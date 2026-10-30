@@ -12,6 +12,7 @@ local LIMITS = {
   max_timeout_ms = 120000,
   default_timeout_ms = 30000,
   default_wait_timeout_ms = 10000,
+  native_inventory_settlement_idle_cycles = 2,
   auth_timeout_seconds = 5,
   max_response_bytes = 262144,
   max_snapshot_phrases = 512
@@ -685,12 +686,29 @@ local function evaluate_condition(current, record)
       phrase_index = phrase_index
     }
   elseif spec.condition == "native_inventory_matches" then
-    if not current.document_ready or not current.current_song then return false, {condition = spec.condition, document_ready = false} end
+    if not current.document_ready or not current.current_song then
+      record.matching_idle_cycles = 0
+      return false, {
+        condition = spec.condition,
+        document_ready = false,
+        matching_idle_cycles = 0,
+        idle_settlement_observed = false
+      }
+    end
     local instrument_count, phrase_count = count_inventory(current.current_song)
-    return instrument_count == args.instrument_count and phrase_count == args.phrase_count, {
+    local inventory_matches = instrument_count == args.instrument_count and phrase_count == args.phrase_count
+    if inventory_matches then
+      record.matching_idle_cycles = (record.matching_idle_cycles or 0) + 1
+    else
+      record.matching_idle_cycles = 0
+    end
+    local idle_settlement_observed = record.matching_idle_cycles >= LIMITS.native_inventory_settlement_idle_cycles
+    return idle_settlement_observed, {
       condition = spec.condition,
       instrument_count = instrument_count,
-      phrase_count = phrase_count
+      phrase_count = phrase_count,
+      matching_idle_cycles = record.matching_idle_cycles,
+      idle_settlement_observed = idle_settlement_observed
     }
   elseif spec.condition == "observed_operation_settled" then
     local completion = current.completed[args.command_id]
@@ -762,6 +780,7 @@ local function on_document_release(current)
   current.document_epoch = old_epoch + 1
   current.document_ready = false
   current.current_song = nil
+  current.last_native_inventory_settlement = nil
   if current.transition and current.transition.expected_epoch == old_epoch then
     current.transition.release_seen = true
   end
@@ -779,6 +798,9 @@ local function on_new_document(current)
   if was_ready and not rawequal(current.current_song, song) then
     current.document_epoch = current.document_epoch + 1
     cancel_document_scoped_commands(current, current.document_epoch - 1)
+  end
+  if not was_ready or not rawequal(current.current_song, song) then
+    current.last_native_inventory_settlement = nil
   end
   current.current_song = song
   current.document_ready = true
@@ -801,6 +823,7 @@ local function make_diagnostics(current, request)
     queued_responses = queue_depth(current.outgoing),
     authenticated = current.active_client ~= nil,
     document_transition_uncertain = current.document_transition_uncertain,
+    native_inventory_settlement = current.last_native_inventory_settlement or current.json.null,
     last_error = current.last_error or current.json.null
   }
 end
@@ -1149,6 +1172,15 @@ local function evaluate_pending(current)
           set_error(current, "wait condition inspection failed")
           finish_error(current, record, "host_error", "condition inspection failed")
         elseif matched then
+          if record.wait_spec.condition == "native_inventory_matches" then
+            current.last_native_inventory_settlement = {
+              document_epoch = current.document_epoch,
+              instrument_count = result.instrument_count,
+              phrase_count = result.phrase_count,
+              matching_idle_cycles = result.matching_idle_cycles,
+              idle_settlement_observed = result.idle_settlement_observed
+            }
+          end
           finish_record(current, record, true, result)
         end
       end
@@ -1319,6 +1351,7 @@ function driver.start(configuration_path)
     document_ready = false,
     document_transition_uncertain = false,
     current_song = nil,
+    last_native_inventory_settlement = nil,
     candidate = nil,
     active_client = nil,
     buffers = {},

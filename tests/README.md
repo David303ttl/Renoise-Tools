@@ -15,6 +15,16 @@ If Lua is installed under a different command name, pass it explicitly:
 ./scripts/run_tests.ps1 -LuaCommand lua5.1
 ```
 
+The development package integration suite runs on Windows and requires Lua
+5.1. Install instructions are in the
+[development setup guide](../docs/DEVELOPMENT.md#required-tools). After
+extracting a Lua 5.1.x Windows build, run:
+
+```powershell
+$lua51 = Join-Path $env:LOCALAPPDATA 'Programs/Lua51/lua5.1.exe'
+./tests/renoise/test_package_dev.ps1 -LuaCommand $lua51
+```
+
 A single spec can also be run directly from the repository root, for example:
 
 ```sh

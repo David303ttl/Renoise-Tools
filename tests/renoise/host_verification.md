@@ -109,7 +109,8 @@ note-value diff expected 49 / actual 48. Final readbacks are stable, no undo/red
 history is available, selection stays 1/1, and pending/queued commands are zero.
 The final run resets to a clean document at epoch 6. Snapshot values from both
 scenarios and both successful runs match exactly after excluding only the
-lifecycle epoch, establishing order/repeat independence. Snapshot SHA-256 values
+lifecycle epoch. Since these runs use the same sorted catalog order, they
+establish repeatability but do not establish order independence. Snapshot SHA-256 values
 for the final run are `872950796fb3028bfbd0abdc22089d3c2855c5cf2c2bf09bcdd38411c304c317`
 (inventory, epoch 3) and
 `cdd1a68bf904ffd9cdd84f96e652be29b5e59e0b596533666178e1c02ee4d1c7`
@@ -133,3 +134,26 @@ no fixtures, driver, SDK or documentation.
 This closes native fixture/isolation coverage only. Keyboard routing, writer
 identity/transactions, actual undo/redo consistency and musical playback remain
 with their later owning steps; full M4 acceptance remains open.
+
+## Scenario-order acceptance follow-up (2026-10-30)
+
+The same-driver scenario-order acceptance passed on Renoise 3.5.4 / API 6.2:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -VerifyScenarioOrder -StartupTimeoutSeconds 45
+```
+
+Run `7ab2827bc12c4629819c6137473eeade` passed against source commit
+`0e8a971ba7445361c1dd997a1eaa86ac34651ef6`; its report is retained at
+`tmp/interactive-7ab2827bc12c4629819c6137473eeade/report.json`. The two
+scenarios ran individually, then in reverse order. Each scenario's two
+canonical snapshots matched between both runs after excluding only the
+top-level `document_epoch`. All four fixture loads recorded two consecutive
+matching idle cycles at the loaded document epoch. Driver shutdown and original
+installation restoration passed. The report records the repository HEAD; the
+run included the uncommitted harness changes described here.
+
+The first fresh-process attempt (`b4a57973e3b4438493e8051dcf4b0914`) crashed
+before scenario execution; the runner stopped only its launched process and
+restored the original installation. The clean retry above completed the full
+acceptance. Both reports remain under ignored `tmp/` artifacts.

@@ -11,7 +11,8 @@ param(
     [ValidateRange(5,600)][int]$StartupTimeoutSeconds = 90,
     [ValidateRange(1,300)][int]$CommandTimeoutSeconds = 30,
     [switch]$ApproveDisposableSong,
-    [switch]$Install
+    [switch]$Install,
+    [switch]$VerifyScenarioOrder
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,9 +78,11 @@ $report = [ordered]@{
     elapsed_ms = 0
     operation_trace = @()
     scenarios = @()
+    scenario_order_acceptance = $null
     error = $null
 }
 $clock = [Diagnostics.Stopwatch]::StartNew()
+$transportOnly = $Scenario -ceq 'transport'
 
 function Add-Trace {
     param([string]$Operation, [string]$Status, [object]$Details = $null)
@@ -89,6 +92,19 @@ function Add-Trace {
         elapsed_ms = $script:clock.ElapsedMilliseconds
         details = $Details
     }
+}
+
+function Read-ScenarioOrderSnapshot {
+    param([Parameter(Mandatory)][string]$Path)
+    $snapshot = Get-Content -LiteralPath $Path -Raw -Encoding utf8 | ConvertFrom-Json -AsHashtable -Depth 64
+    if ($snapshot -isnot [Collections.IDictionary] -or -not $snapshot.Contains('document_epoch')) {
+        throw "Scenario snapshot lacks top-level document_epoch metadata: $Path"
+    }
+    $epoch = $snapshot['document_epoch']
+    [void]$snapshot.Remove('document_epoch')
+    $canonical = ConvertTo-AcidCanonicalJson $snapshot
+    $sha256 = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($canonical))).ToLowerInvariant()
+    return [pscustomobject]@{ DocumentEpoch = $epoch; Canonical = $canonical; Sha256 = $sha256 }
 }
 
 function Set-UserOnlyFileAcl {
@@ -149,6 +165,12 @@ try {
         Add-Trace -Operation 'suite.keyboard' -Status 'SKIP' -Details @{ reason = 'Keyboard input adapter and journeys are not implemented.' }
         throw 'Required Keyboard suite skipped.'
     }
+    if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
+        throw '-VerifyScenarioOrder requires -Suite Native.'
+    }
+    if ($VerifyScenarioOrder -and $Scenario) {
+        throw '-VerifyScenarioOrder runs the complete scenario catalog; omit -Scenario.'
+    }
     if ($env:OS -ne 'Windows_NT') { throw 'This runner currently supports Windows. Release tools run in Renoise independently of this script.' }
     $lastExpected = 'RenoiseProcessId is zero or identifies the exact developer-owned process'
     if ($RenoiseProcessId -lt 0) { throw 'RenoiseProcessId must be a positive process ID.' }
@@ -158,25 +180,24 @@ try {
     Import-Module (Join-Path $repoRoot 'tests/renoise/runner.psm1') -Force
     Import-Module (Join-Path $repoRoot 'tests/renoise/host_preflight.psm1') -Force
     $scenarioDirectory = Join-Path $repoRoot 'tests/renoise/acid/scenarios'
-    if (-not (Test-Path -LiteralPath $scenarioDirectory -PathType Container)) {
-        throw "Native scenario catalog 'tests/renoise/acid/scenarios' is missing; the fixture set is required for the interactive suite."
-    }
-    $scenarioCatalog = Get-AcidScenarioCatalog -Directory $scenarioDirectory
-    if ($scenarioCatalog.Count -eq 0 -and $Scenario -cne 'transport') {
-        throw 'Native scenario catalog is empty; a Native run cannot pass without a registered scenario.'
-    }
-    $catalogNames = @($scenarioCatalog | ForEach-Object { [string]$_.name })
-    $selectedCatalogScenarios = @()
-    if ($Scenario) {
-        if ($Scenario -cne 'transport') {
-            $selectedCatalogScenarios = @($scenarioCatalog | Where-Object { $_.name -ceq $Scenario })
-            if ($selectedCatalogScenarios.Count -eq 0) {
-                throw "Scenario '$Scenario' is not registered. Available: $((@('transport') + $catalogNames) -join ', ')"
-            }
+    $selectedCatalogScenarios = @(Get-AcidInteractiveScenarioSelection -Scenario $Scenario -Directory $scenarioDirectory)
+    if ($VerifyScenarioOrder) {
+        if ($selectedCatalogScenarios.Count -lt 2) {
+            throw "-VerifyScenarioOrder requires at least two distinct catalog scenarios to reverse; found $($selectedCatalogScenarios.Count)."
         }
-    }
-    else {
-        $selectedCatalogScenarios = @($scenarioCatalog | Sort-Object { $_.name })
+        $scenarioNames = @($selectedCatalogScenarios | ForEach-Object { [string]$_.name })
+        $reverseScenarioNames = [string[]]@($scenarioNames)
+        [Array]::Reverse($reverseScenarioNames)
+        $report.scenario_order_acceptance = [ordered]@{
+            status = 'RUNNING'
+            scenario_count = $selectedCatalogScenarios.Count
+            individual_order = $scenarioNames
+            reverse_order = @($reverseScenarioNames)
+            comparison = 'canonical snapshot values match after excluding only top-level document_epoch'
+            excluded_snapshot_fields = @('document_epoch')
+            comparisons = @()
+            idle_settlements = @()
+        }
     }
     $lastExpected = 'Requested scenario is registered for the selected suite'
     $environment = Import-RenoiseTestEnvironment -Path $TestEnvironment
@@ -207,16 +228,26 @@ try {
         process_id = $RenoiseProcessId
     }
 
-    & (Join-Path $repoRoot 'scripts/package_dev.ps1') -Tool ACID -OutputDirectory $devOutputName | Out-Null
+    if ($transportOnly) {
+        & (Join-Path $repoRoot 'scripts/package_dev.ps1') -Tool ACID -OutputDirectory $devOutputName -TransportOnly | Out-Null
+    }
+    else {
+        & (Join-Path $repoRoot 'scripts/package_dev.ps1') -Tool ACID -OutputDirectory $devOutputName | Out-Null
+    }
     Add-Trace -Operation 'bundle.build' -Status 'PASS' -Details @{ output = $devOutputName }
     $devToolPath = Join-Path $devOutput $devToolName
     $sessionSourcePath = Join-Path $devOutput $sessionName
-    $fixturesSourcePath = Join-Path $devOutput 'fixtures'
-    if (-not (Test-Path -LiteralPath $fixturesSourcePath -PathType Container)) {
-        throw 'Development bundle did not stage the native fixtures directory.'
+    if ($transportOnly) {
+        $fixturesSourcePath = $null
     }
-    $stagedFixtureCount = Assert-AcidScenarioFixtures -Directory $fixturesSourcePath -Scenarios $selectedCatalogScenarios
-    Add-Trace -Operation 'fixture.preflight' -Status 'PASS' -Details @{ selected_scenarios = @($selectedCatalogScenarios | ForEach-Object { $_.name }); staged_fixture_count = $stagedFixtureCount }
+    else {
+        $fixturesSourcePath = Join-Path $devOutput 'fixtures'
+        if (-not (Test-Path -LiteralPath $fixturesSourcePath -PathType Container)) {
+            throw 'Development bundle did not stage the native fixtures directory.'
+        }
+        $stagedFixtureCount = Assert-AcidScenarioFixtures -Directory $fixturesSourcePath -Scenarios $selectedCatalogScenarios
+        Add-Trace -Operation 'fixture.preflight' -Status 'PASS' -Details @{ selected_scenarios = @($selectedCatalogScenarios | ForEach-Object { $_.name }); staged_fixture_count = $stagedFixtureCount }
+    }
     $session = Get-RenoiseSessionConfig -Path $sessionSourcePath
 
     $appData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
@@ -225,7 +256,7 @@ try {
     $toolsPath = if ($ToolsDirectory) { [IO.Path]::GetFullPath($ToolsDirectory) } else { Join-Path $appData "Renoise/V$renoiseVersion/Scripts/Tools" }
     $installedToolPath = Join-Path $toolsPath $devToolName
     $sessionTargetPath = Join-Path $toolsPath $sessionName
-    $installedFixturesPath = Join-Path $toolsPath 'fixtures'
+    $installedFixturesPath = if ($transportOnly) { $null } else { Join-Path $toolsPath 'fixtures' }
     $lastExpected = 'Explicit install consent and a verified restoration path are present'
     if (-not $Install) { throw "ACID installation is required to load this development bundle. Re-run with -Install to authorize a restorable temporary installation under '$toolsPath'." }
     if (Test-Path -LiteralPath $installedToolPath) {
@@ -239,7 +270,7 @@ try {
         $sessionPrecheck = Get-Item -LiteralPath $sessionTargetPath -Force
         if ($sessionPrecheck.PSIsContainer -or ($sessionPrecheck.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing session sidecar path is not a plain file; refusing replacement.' }
     }
-    if (Test-Path -LiteralPath $installedFixturesPath) {
+    if ($installedFixturesPath -and (Test-Path -LiteralPath $installedFixturesPath)) {
         $fixturesPrecheck = Get-Item -LiteralPath $installedFixturesPath -Force
         if (-not $fixturesPrecheck.PSIsContainer -or ($fixturesPrecheck.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing ACID fixtures path is not a plain directory; refusing replacement.' }
     }
@@ -370,30 +401,169 @@ try {
             Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation $Operation -Arguments $Arguments -TimeoutSeconds $timeoutSeconds -ProcessCheck $processCheck
         }
         $resetTimeoutSeconds = [Math]::Min(120, $CommandTimeoutSeconds)
-        foreach ($catalogScenario in @($selectedCatalogScenarios)) {
-            $scenarioArtifactDirectory = Join-Path $artifactRoot ('scenario-' + $catalogScenario.name)
+        $scenarioExecutionPlan = [Collections.Generic.List[object]]::new()
+        if ($VerifyScenarioOrder) {
+            foreach ($catalogScenario in @($selectedCatalogScenarios)) {
+                $scenarioExecutionPlan.Add([pscustomobject]@{ scenario = $catalogScenario; phase = 'individual' })
+            }
+            for ($index = $selectedCatalogScenarios.Count - 1; $index -ge 0; $index--) {
+                $scenarioExecutionPlan.Add([pscustomobject]@{ scenario = $selectedCatalogScenarios[$index]; phase = 'reverse' })
+            }
+        }
+        else {
+            foreach ($catalogScenario in @($selectedCatalogScenarios)) {
+                $scenarioExecutionPlan.Add([pscustomobject]@{ scenario = $catalogScenario; phase = 'catalog' })
+            }
+        }
+        $scenarioOrderBaselines = @{}
+        $scenarioOrderComparisons = [Collections.Generic.List[object]]::new()
+        $scenarioOrderIdleSettlements = [Collections.Generic.List[object]]::new()
+        $scenarioOrderPassed = $true
+        foreach ($scenarioExecution in $scenarioExecutionPlan) {
+            $catalogScenario = $scenarioExecution.scenario
+            $scenarioPhase = $scenarioExecution.phase
+            $artifactName = if ($VerifyScenarioOrder) { 'scenario-' + $scenarioPhase + '-' + $catalogScenario.name } else { 'scenario-' + $catalogScenario.name }
+            $scenarioArtifactDirectory = Join-Path $artifactRoot $artifactName
             New-Item -ItemType Directory -Path $scenarioArtifactDirectory -Force | Out-Null
-            $lastExpected = "scenario $($catalogScenario.name) golden assertions hold; expects=$($catalogScenario.expects); $(@($catalogScenario.assertions).Count) assertions"
+            $phaseLabel = if ($VerifyScenarioOrder) { " ($scenarioPhase)" } else { '' }
+            $lastExpected = "scenario $($catalogScenario.name)$phaseLabel golden assertions hold; expects=$($catalogScenario.expects); $(@($catalogScenario.assertions).Count) assertions"
             $lastActual = $null
             $lastDiff = $null
             $result = Invoke-AcidNativeScenario -Scenario $catalogScenario -SendRequest $sendScenarioRequest -ArtifactDirectory $scenarioArtifactDirectory -ResetTimeoutSeconds $resetTimeoutSeconds -CommandTimeoutSeconds $CommandTimeoutSeconds
             $epochText = "$($result.observation.document_epoch_reset)->$($result.observation.document_epoch_loaded)"
             $shaText = (@($result.observation.snapshot_sha256) -join ',')
-            $lastActual = @{ status = $result.status; epochs = $epochText; snapshot_sha256 = @($result.observation.snapshot_sha256); failure_reason = $result.observation.failure_reason }
+            $scenarioOrderComparison = $null
+            $idleSettlementEvidence = $null
+            if ($VerifyScenarioOrder) {
+                $postLoadDiagnostics = & $sendScenarioRequest 'diagnostics' @{}
+                $settlement = $postLoadDiagnostics.native_inventory_settlement
+                $settlementPassed = $null -ne $settlement -and
+                    $settlement.idle_settlement_observed -is [bool] -and $settlement.idle_settlement_observed -and
+                    ($settlement.matching_idle_cycles -is [int] -or $settlement.matching_idle_cycles -is [long]) -and
+                    $settlement.matching_idle_cycles -ge 2 -and
+                    $settlement.document_epoch -eq $result.observation.document_epoch_loaded
+                $idleSettlementEvidence = [ordered]@{
+                    observed = [bool]$settlementPassed
+                    document_epoch = if ($settlement) { $settlement.document_epoch } else { $null }
+                    matching_idle_cycles = if ($settlement) { $settlement.matching_idle_cycles } else { $null }
+                    idle_settlement_observed = if ($settlement) { $settlement.idle_settlement_observed } else { $false }
+                    instrument_count = if ($settlement) { $settlement.instrument_count } else { $null }
+                    phrase_count = if ($settlement) { $settlement.phrase_count } else { $null }
+                }
+                $result.observation.post_load_idle_settlement = $idleSettlementEvidence
+                $scenarioOrderIdleSettlements.Add([pscustomobject]@{
+                    scenario = $catalogScenario.name
+                    phase = $scenarioPhase
+                    evidence = $idleSettlementEvidence
+                })
+                if (-not $settlementPassed) {
+                    $scenarioOrderPassed = $false
+                    $result.status = 'FAIL'
+                    $result.observation.failure_reason = 'post-load idle settlement was not observed for the loaded document epoch'
+                }
+
+                $snapshot1Path = Join-Path $scenarioArtifactDirectory ($catalogScenario.name + '-snapshot-1.json')
+                $snapshot2Path = Join-Path $scenarioArtifactDirectory ($catalogScenario.name + '-snapshot-2.json')
+                if ((Test-Path -LiteralPath $snapshot1Path -PathType Leaf) -and (Test-Path -LiteralPath $snapshot2Path -PathType Leaf)) {
+                    $snapshot1 = Read-ScenarioOrderSnapshot -Path $snapshot1Path
+                    $snapshot2 = Read-ScenarioOrderSnapshot -Path $snapshot2Path
+                    $normalizedSnapshot1Path = Join-Path $scenarioArtifactDirectory ($catalogScenario.name + '-snapshot-1-without-epoch.json')
+                    $normalizedSnapshot2Path = Join-Path $scenarioArtifactDirectory ($catalogScenario.name + '-snapshot-2-without-epoch.json')
+                    [IO.File]::WriteAllText($normalizedSnapshot1Path, $snapshot1.Canonical, [Text.UTF8Encoding]::new($false))
+                    [IO.File]::WriteAllText($normalizedSnapshot2Path, $snapshot2.Canonical, [Text.UTF8Encoding]::new($false))
+                    if ($snapshot1.Canonical -cne $snapshot2.Canonical) {
+                        $result.status = 'FAIL'
+                        $result.observation.failure_reason = 'normalized snapshots differed within one scenario execution'
+                        $scenarioOrderPassed = $false
+                    }
+                    if ($scenarioPhase -ceq 'individual') {
+                        $scenarioOrderBaselines[[string]$catalogScenario.name] = [pscustomobject]@{
+                            Snapshot1 = $snapshot1
+                            Snapshot2 = $snapshot2
+                        }
+                    }
+                    else {
+                        $baseline = $scenarioOrderBaselines[[string]$catalogScenario.name]
+                        $comparisonMatches = $false
+                        if ($null -ne $baseline) {
+                            $comparisonMatches = $baseline.Snapshot1.Canonical -ceq $snapshot1.Canonical -and
+                                $baseline.Snapshot2.Canonical -ceq $snapshot2.Canonical
+                        }
+                        $scenarioOrderComparison = [ordered]@{
+                            scenario = $catalogScenario.name
+                            individual_epoch = if ($baseline) { $baseline.Snapshot1.DocumentEpoch } else { $null }
+                            reverse_epoch = $snapshot1.DocumentEpoch
+                            individual_snapshot_1_sha256 = if ($baseline) { $baseline.Snapshot1.Sha256 } else { $null }
+                            reverse_snapshot_1_sha256 = $snapshot1.Sha256
+                            individual_snapshot_2_sha256 = if ($baseline) { $baseline.Snapshot2.Sha256 } else { $null }
+                            reverse_snapshot_2_sha256 = $snapshot2.Sha256
+                            excluded_snapshot_fields = @('document_epoch')
+                            matches = $comparisonMatches
+                        }
+                        $scenarioOrderComparisons.Add($scenarioOrderComparison)
+                        if (-not $scenarioOrderComparison.matches) {
+                            $result.status = 'FAIL'
+                            $result.observation.failure_reason = 'canonical snapshots differed between individual and reverse catalog execution'
+                            $scenarioOrderPassed = $false
+                        }
+                    }
+                }
+                else {
+                    $result.status = 'FAIL'
+                    $result.observation.failure_reason = 'scenario snapshots were not written for order comparison'
+                    $scenarioOrderPassed = $false
+                }
+                if ($result.status -ne 'PASS') { $scenarioOrderPassed = $false }
+            }
+            $lastActual = @{
+                status = $result.status
+                phase = $scenarioPhase
+                epochs = $epochText
+                snapshot_sha256 = @($result.observation.snapshot_sha256)
+                post_load_idle_settlement = $idleSettlementEvidence
+                order_comparison = $scenarioOrderComparison
+                failure_reason = $result.observation.failure_reason
+            }
             $scenarioDiff = Get-AcidScenarioReportDiff -Result $result
             $lastDiff = $scenarioDiff
             $actualSummary = "epochs=$epochText; snapshot_sha256=$shaText"
+            if ($VerifyScenarioOrder) {
+                $orderMatchText = if ($null -ne $scenarioOrderComparison) { [string]$scenarioOrderComparison.matches } else { 'baseline' }
+                $actualSummary += "; phase=$scenarioPhase; idle_cycles=$($idleSettlementEvidence.matching_idle_cycles); order_match=$orderMatchText"
+            }
             if ($result.status -ne 'PASS' -and $result.observation.failure_reason) { $actualSummary += "; reason=$($result.observation.failure_reason)" }
             $scenarioExpected = "scenario $($catalogScenario.name) golden assertions hold; expects=$($result.expects); $(@($catalogScenario.assertions).Count) assertions"
-            $scenarioResults.Add([pscustomobject]@{
+            $scenarioResult = [ordered]@{
                 name = $catalogScenario.name
                 suite = 'Native'
                 status = $result.status
                 expected = $scenarioExpected
                 actual = $actualSummary
                 diff = $scenarioDiff
-            })
-            Add-Trace -Operation "scenario.$($catalogScenario.name)" -Status $result.status -Details @{ epochs = $epochText; snapshot_sha256 = @($result.observation.snapshot_sha256); failure_reason = $result.observation.failure_reason }
+            }
+            if ($VerifyScenarioOrder) { $scenarioResult.order_phase = $scenarioPhase }
+            $scenarioResults.Add([pscustomobject]$scenarioResult)
+            $traceName = if ($VerifyScenarioOrder) { "scenario.$scenarioPhase.$($catalogScenario.name)" } else { "scenario.$($catalogScenario.name)" }
+            $traceDetails = @{
+                epochs = $epochText
+                snapshot_sha256 = @($result.observation.snapshot_sha256)
+                failure_reason = $result.observation.failure_reason
+            }
+            if ($VerifyScenarioOrder) {
+                $traceDetails.phase = $scenarioPhase
+                $traceDetails.post_load_idle_settlement = $idleSettlementEvidence
+                $traceDetails.order_comparison = $scenarioOrderComparison
+            }
+            Add-Trace -Operation $traceName -Status $result.status -Details $traceDetails
+        }
+        if ($VerifyScenarioOrder) {
+            $expectedComparisonCount = $selectedCatalogScenarios.Count
+            $expectedIdleSettlementCount = $selectedCatalogScenarios.Count * 2
+            $report.scenario_order_acceptance.status = if ($scenarioOrderPassed -and
+                $scenarioOrderComparisons.Count -eq $expectedComparisonCount -and
+                $scenarioOrderIdleSettlements.Count -eq $expectedIdleSettlementCount) { 'PASS' } else { 'FAIL' }
+            $report.scenario_order_acceptance.comparisons = @($scenarioOrderComparisons)
+            $report.scenario_order_acceptance.idle_settlements = @($scenarioOrderIdleSettlements)
         }
         $lastExpected = 'Scenario run leaves a settled new document with drained queues'
         $lastActual = @{ terminal_response = $false }
@@ -420,10 +590,14 @@ try {
         }
         $report.scenarios = @($scenarioResults)
         $failedScenarios = @($scenarioResults | Where-Object { $_.status -ne 'PASS' })
-        if ($failedScenarios.Count -eq 0) { $report.status = 'PASS' }
+        $orderAcceptanceFailed = $false
+        if ($VerifyScenarioOrder) { $orderAcceptanceFailed = $report.scenario_order_acceptance.status -cne 'PASS' }
+        if ($failedScenarios.Count -eq 0 -and -not $orderAcceptanceFailed) { $report.status = 'PASS' }
         else {
             $report.status = 'FAIL'
-            $report.error = 'Scenario failures: ' + (@($failedScenarios | ForEach-Object { "$($_.name): $($_.actual)" }) -join '; ')
+            $failureDetails = @($failedScenarios | ForEach-Object { "$($_.name): $($_.actual)" })
+            if ($orderAcceptanceFailed) { $failureDetails += "scenario-order acceptance: $($report.scenario_order_acceptance.status)" }
+            $report.error = 'Scenario failures: ' + ($failureDetails -join '; ')
         }
         $safeToRestore = Stop-RenoiseDriver -Client $client -Session $session -SessionPath $sessionTargetPath -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
         Add-Trace -Operation 'driver.shutdown' -Status 'PASS' -Details @{ renoise_left_open = [bool]$selectedIdentity }
@@ -464,6 +638,10 @@ catch {
         $failureMessage = $_.Exception.Message
         $report.status = 'ERROR'
         $report.error = $failureMessage
+        if ($VerifyScenarioOrder -and $report.scenario_order_acceptance -is [Collections.IDictionary]) {
+            $report.scenario_order_acceptance['status'] = 'ERROR'
+            $report.scenario_order_acceptance['error'] = $failureMessage
+        }
         $failureScenario = [pscustomobject]@{
             name = if ($Scenario) { $Scenario } else { 'all' }
             suite = if ($Suite -eq 'All') { 'Native' } else { $Suite }

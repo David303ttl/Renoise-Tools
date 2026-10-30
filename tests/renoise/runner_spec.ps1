@@ -64,6 +64,10 @@ try {
     [IO.File]::WriteAllText((Join-Path $scenarioRoot 'alpha.xrns'), 'fixture')
     $catalog = Get-AcidScenarioCatalog -Directory $scenarioRoot
     Assert ($catalog.Count -eq 1 -and $catalog[0].fixture -ceq 'alpha.xrns') 'scenario catalog failed to load stable fixture definition'
+    $selection = @(Get-AcidInteractiveScenarioSelection -Scenario 'fixture-a' -Directory $scenarioRoot)
+    Assert ($selection.Count -eq 1 -and $selection[0].name -ceq 'fixture-a') 'interactive scenario selection did not resolve a registered scenario'
+    $defaultSelection = @(Get-AcidInteractiveScenarioSelection -Directory $scenarioRoot)
+    Assert ($defaultSelection.Count -eq 1 -and $defaultSelection[0].name -ceq 'fixture-a') 'default interactive scenario selection returned a nested catalog array'
     Assert ((Assert-AcidScenarioFixtures -Directory $scenarioRoot -Scenarios $catalog) -eq 1) 'catalog selection did not resolve its staged fixture'
     $snapshot = @{ instrument_count = 1; instruments = @(@{ phrases = @(@{ properties = @{ name = 'Independent phrase' } }) }); tool_data_hex = $null }
     $comparison = Compare-AcidScenarioSnapshot -Scenario $catalog[0] -Snapshot $snapshot
@@ -83,6 +87,19 @@ try {
     Assert (-not $missing.Found) 'missing snapshot field was treated as present'
 } finally {
     Remove-Item -LiteralPath $scenarioRoot -Recurse -Force
+}
+$missingCatalogPath = Join-Path ([IO.Path]::GetTempPath()) ('runner-missing-catalog-' + [guid]::NewGuid().ToString('N'))
+$transportSelection = @(Get-AcidInteractiveScenarioSelection -Scenario 'transport' -Directory $missingCatalogPath)
+Assert ($transportSelection.Count -eq 0) 'transport-only selection required the native scenario directory'
+$malformedCatalogRoot = Join-Path ([IO.Path]::GetTempPath()) ('runner-malformed-catalog-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory $malformedCatalogRoot | Out-Null
+try {
+    [IO.File]::WriteAllText((Join-Path $malformedCatalogRoot 'broken.json'), '{', [Text.UTF8Encoding]::new($false))
+    $transportSelection = @(Get-AcidInteractiveScenarioSelection -Scenario 'transport' -Directory $malformedCatalogRoot)
+    Assert ($transportSelection.Count -eq 0) 'transport-only selection parsed the malformed native catalog'
+    Reject { Get-AcidInteractiveScenarioSelection -Scenario 'broken' -Directory $malformedCatalogRoot } '.+'
+} finally {
+    Remove-Item -LiteralPath $malformedCatalogRoot -Recurse -Force
 }
  $fixturePreflightRoot = Join-Path ([IO.Path]::GetTempPath()) ('runner-fixtures-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $fixturePreflightRoot | Out-Null
@@ -315,7 +332,24 @@ New-Item -ItemType Directory $root | Out-Null
 function Add-Trace { param($Operation,$Status,$Details) }
 function Set-UserOnlyFileAcl { param($Path) }
 try {
- foreach ($case in @('unchanged','changed','partial','failed-launch','bad-backup')) {
+    $hashRoot = Join-Path $root 'hash-inventory'
+    New-Item -ItemType Directory $hashRoot | Out-Null
+    Set-Content (Join-Path $hashRoot 'file.txt') 'contents'
+    $hashBeforeEmptyDirectory = Get-DirectoryHash -Path $hashRoot
+    New-Item -ItemType Directory (Join-Path $hashRoot 'empty') | Out-Null
+    Assert ((Get-DirectoryHash -Path $hashRoot) -cne $hashBeforeEmptyDirectory) 'directory hash ignored an added empty directory'
+
+    if ($IsWindows) {
+        $reparseRoot = Join-Path $root 'reparse-check'
+        $reparseTarget = Join-Path $root 'reparse-target'
+        New-Item -ItemType Directory $reparseRoot, $reparseTarget | Out-Null
+        $junctionPath = Join-Path $reparseRoot 'linked'
+        New-Item -ItemType Junction -Path $junctionPath -Target $reparseTarget | Out-Null
+        Reject { Assert-DirectoryHasNoReparsePoints -Path $reparseRoot } 'reparse point'
+        [IO.Directory]::Delete($junctionPath, $false)
+    }
+
+ foreach ($case in @('unchanged','changed','changed-empty-directory','changed-empty-fixtures','reparse','partial','failed-launch','bad-backup')) {
     $toolsPath = Join-Path $root $case
     $artifactRoot = Join-Path $toolsPath 'artifacts'
     New-Item -ItemType Directory $artifactRoot -Force | Out-Null
@@ -328,8 +362,17 @@ try {
     Set-Content (Join-Path $installedToolPath 'main.lua') 'developer edits'
     $originalHash=Get-DirectoryHash $installedToolPath
     $sessionTargetPath=Join-Path $toolsPath $sessionName; Set-Content $sessionTargetPath 'original'
+    $installedFixturesPath=Join-Path $toolsPath 'fixtures'
+    $fixturesSourcePath=$null
+    if ($case -eq 'changed-empty-fixtures') {
+        $fixturesSourcePath=Join-Path $toolsPath 'fixture-source'; New-Item -ItemType Directory $fixturesSourcePath | Out-Null
+        Set-Content (Join-Path $fixturesSourcePath 'fixture.xrns') 'development fixture'
+        New-Item -ItemType Directory $installedFixturesPath | Out-Null
+        Set-Content (Join-Path $installedFixturesPath 'fixture.xrns') 'original fixture'
+    }
     $localBackupToolPath=$localBackupSessionPath=$null
-    $toolDeployed=$sessionDeployed=$false
+    $localBackupFixturesPath=$null
+    $toolDeployed=$sessionDeployed=$fixturesDeployed=$false
     if ($case -eq 'bad-backup') {
         function Copy-Item {
             param($LiteralPath,$Destination,[switch]$Recurse)
@@ -354,10 +397,37 @@ try {
         continue
     }
     Assert ((Get-DirectoryHash $backupToolPath) -eq $originalHash) 'backup not verified'
-    if ($case -eq 'changed') {
-        Set-Content (Join-Path $installedToolPath 'main.lua') 'changed during run'
+    if ($case -eq 'reparse') {
+        $reparseTarget = Join-Path $toolsPath 'external-target'
+        New-Item -ItemType Directory $reparseTarget | Out-Null
+        Set-Content -LiteralPath (Join-Path $reparseTarget 'preserve.txt') 'external data'
+        $junctionPath = Join-Path $installedToolPath 'linked'
+        New-Item -ItemType Junction -Path $junctionPath -Target $reparseTarget | Out-Null
+        try {
+            Reject { . ([scriptblock]::Create((Get-RenoiseRestorationOperation))) } 'reparse point'
+            Assert (Test-Path -LiteralPath $junctionPath) 'restoration removed the deployed junction'
+            Assert (Test-Path -LiteralPath $localBackupToolPath -PathType Container) 'reparse-point rejection lost the restoration backup'
+            Assert ((Get-Content -LiteralPath (Join-Path $reparseTarget 'preserve.txt')) -ceq 'external data') 'restoration changed the junction target'
+        } finally {
+            [IO.Directory]::Delete($junctionPath, $false)
+        }
+    } elseif ($case -eq 'changed-empty-fixtures') {
+        $addedEmptyFixtureDirectory = Join-Path $installedFixturesPath 'empty-added-during-run'
+        New-Item -ItemType Directory $addedEmptyFixtureDirectory | Out-Null
+        Reject { . ([scriptblock]::Create((Get-RenoiseRestorationOperation))) } 'Installed ACID fixtures changed'
+        Assert (Test-Path -LiteralPath $addedEmptyFixtureDirectory -PathType Container) 'restoration removed an added empty fixture directory'
+        Assert (Test-Path -LiteralPath $localBackupFixturesPath -PathType Container) 'changed fixtures lost their restoration backup'
+    } elseif ($case -in @('changed','changed-empty-directory')) {
+        if ($case -eq 'changed') {
+            Set-Content (Join-Path $installedToolPath 'main.lua') 'changed during run'
+        } else {
+            New-Item -ItemType Directory (Join-Path $installedToolPath 'empty-added-during-run') | Out-Null
+        }
         Reject { . ([scriptblock]::Create((Get-RenoiseRestorationOperation))) } 'changed during'
         Assert (Test-Path $localBackupToolPath) 'changed installation lost backup'
+        if ($case -eq 'changed-empty-directory') {
+            Assert (Test-Path (Join-Path $installedToolPath 'empty-added-during-run') -PathType Container) 'restoration removed an added empty directory'
+        }
     } else {
         . ([scriptblock]::Create((Get-RenoiseRestorationOperation)))
         Assert ((Get-DirectoryHash $installedToolPath) -eq $originalHash) "restoration failed: $case"

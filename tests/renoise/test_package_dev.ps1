@@ -57,10 +57,12 @@ function Get-EntryHash {
 }
 
 function Invoke-PackageDev {
-  param([string] $FixtureRoot, [string] $OutputPath)
+  param([string] $FixtureRoot, [string] $OutputPath, [switch] $TransportOnly)
   $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
   $script = Join-Path $FixtureRoot 'scripts/package_dev.ps1'
-  $output = @(& $pwsh -NoProfile -File $script -Tool ACID -OutputDirectory $OutputPath 2>&1)
+  $arguments = @('-NoProfile', '-File', $script, '-Tool', 'ACID', '-OutputDirectory', $OutputPath)
+  if ($TransportOnly) { $arguments += '-TransportOnly' }
+  $output = @(& $pwsh @arguments 2>&1)
   $exitCode = $LASTEXITCODE
   return [pscustomobject]@{ ExitCode = $exitCode; Output = ($output | Out-String) }
 }
@@ -439,6 +441,19 @@ try {
     Assert-ChildFailure -Result $invalidResult -Context ("Invalid fixture inventory: " + $fixtureCase)
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $invalidFixtureRepo $invalidOutput))) 'Invalid fixture inventory left a development output behind.'
   }
+
+  $transportOnlyRepo = New-FixtureRepository -Root (Join-Path $testRoot 'transport-only-repo')
+  Remove-Item -LiteralPath (Join-Path $transportOnlyRepo 'tests/renoise/acid/fixtures') -Recurse -Force
+  $transportScenarioDirectory = Join-Path $transportOnlyRepo 'tests/renoise/acid/scenarios'
+  [System.IO.File]::WriteAllText((Join-Path $transportScenarioDirectory 'broken.json'), '{', [System.Text.UTF8Encoding]::new($false))
+  $transportOutputRelative = 'tmp/transport-only-output'
+  $transportOutput = Join-Path $transportOnlyRepo $transportOutputRelative
+  $transportResult = Invoke-PackageDev -FixtureRoot $transportOnlyRepo -OutputPath $transportOutputRelative -TransportOnly
+  if ($transportResult.ExitCode -ne 0) { throw "Transport-only development bundle build required native fixtures:$([string][char]10)$($transportResult.Output)" }
+  Assert-True (Test-Path -LiteralPath (Join-Path $transportOutput $sourceToolName) -PathType Container) 'Transport-only development tool folder is missing.'
+  Assert-True (Test-Path -LiteralPath (Join-Path $transportOutput 'acid-test-session.conf') -PathType Leaf) 'Transport-only development session file is missing.'
+  Assert-True (-not (Test-Path -LiteralPath (Join-Path $transportOutput 'fixtures'))) 'Transport-only development bundle staged native fixtures.'
+
   $duplicateDriverRepo = New-FixtureRepository -Root (Join-Path $testRoot 'duplicate-driver-repo')
   $duplicateDirectory = Join-Path $duplicateDriverRepo 'tests/renoise/driver/duplicate'
   New-Item -ItemType Directory -Path $duplicateDirectory | Out-Null

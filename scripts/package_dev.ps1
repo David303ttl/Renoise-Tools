@@ -8,6 +8,9 @@ Builds an isolated ACID development bundle from the normal release package.
 The destination must be a new repository-relative path directly below tmp/.
 Build staging and the protected session file also remain below that ignored
 repository directory.
+
+.PARAMETER TransportOnly
+Build the driver bundle without discovering or staging native fixture assets.
 #>
 [CmdletBinding()]
 param(
@@ -16,7 +19,9 @@ param(
   [string] $Tool,
 
   [Parameter(Mandatory)]
-  [string] $OutputDirectory
+  [string] $OutputDirectory,
+
+  [switch] $TransportOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -313,7 +318,7 @@ if ($driverFiles.Count -ne 2 -or
 Assert-NoReparsePoint -Path $driverDirectory
 Assert-NoReparsePoint -Path $driverSource
 Assert-NoReparsePoint -Path $codecSource
-$sourceFixtures = Get-SourceFixtures -Root $fixtureDirectory
+$sourceFixtures = if ($TransportOnly) { $null } else { Get-SourceFixtures -Root $fixtureDirectory }
 
 if (-not $outputFullPath.StartsWith($repoTempPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
   throw "OutputDirectory '$OutputDirectory' resolves outside repository tmp/."
@@ -344,18 +349,20 @@ try {
   $releaseDirectory = Join-Path $workPath 'release'
   $stageParent = Join-Path $workPath 'stage'
   $stagedToolPath = Join-Path $stageParent $toolDirectoryName
-  $stagedFixturesPath = Join-Path $stageParent 'fixtures'
   New-Item -ItemType Directory -Path $stageParent | Out-Null
-  New-Item -ItemType Directory -Path $stagedFixturesPath | Out-Null
-  foreach ($fixtureName in $sourceFixtures.Keys) {
-    Copy-Item -LiteralPath (Join-Path $fixtureDirectory $fixtureName) -Destination (Join-Path $stagedFixturesPath $fixtureName)
-  }
-  $stagedFixtureFiles = @(Get-ChildItem -LiteralPath $stagedFixturesPath -Force)
-  if ($stagedFixtureFiles.Count -ne $sourceFixtures.Count) { throw 'Staged native fixture count differs from its source inventory.' }
-  foreach ($fixture in $stagedFixtureFiles) {
-    if ($fixture.PSIsContainer -or -not $sourceFixtures.ContainsKey($fixture.Name)) { throw "Staged fixture directory contains unexpected item '$($fixture.Name)'." }
-    $fixtureHash = (Get-FileHash -LiteralPath $fixture.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($fixtureHash -cne $sourceFixtures[$fixture.Name]) { throw "Staged fixture '$($fixture.Name)' differs from its source hash." }
+  if (-not $TransportOnly) {
+    $stagedFixturesPath = Join-Path $stageParent 'fixtures'
+    New-Item -ItemType Directory -Path $stagedFixturesPath | Out-Null
+    foreach ($fixtureName in $sourceFixtures.Keys) {
+      Copy-Item -LiteralPath (Join-Path $fixtureDirectory $fixtureName) -Destination (Join-Path $stagedFixturesPath $fixtureName)
+    }
+    $stagedFixtureFiles = @(Get-ChildItem -LiteralPath $stagedFixturesPath -Force)
+    if ($stagedFixtureFiles.Count -ne $sourceFixtures.Count) { throw 'Staged native fixture count differs from its source inventory.' }
+    foreach ($fixture in $stagedFixtureFiles) {
+      if ($fixture.PSIsContainer -or -not $sourceFixtures.ContainsKey($fixture.Name)) { throw "Staged fixture directory contains unexpected item '$($fixture.Name)'." }
+      $fixtureHash = (Get-FileHash -LiteralPath $fixture.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($fixtureHash -cne $sourceFixtures[$fixture.Name]) { throw "Staged fixture '$($fixture.Name)' differs from its source hash." }
+    }
   }
 
   & $packageScript -Tool $Tool -OutputDirectory $releaseDirectory | Out-Null
@@ -467,11 +474,13 @@ try {
       throw "ACID source file '$relative' changed while the development bundle was being built."
     }
   }
-  $sourceFixturesAfter = Get-SourceFixtures -Root $fixtureDirectory
-  if ($sourceFixturesAfter.Count -ne $sourceFixtures.Count) { throw 'The native fixture inventory changed while the development bundle was being built.' }
-  foreach ($fixtureName in $sourceFixtures.Keys) {
-    if (-not $sourceFixturesAfter.ContainsKey($fixtureName) -or $sourceFixturesAfter[$fixtureName] -cne $sourceFixtures[$fixtureName]) {
-      throw "Native fixture '$fixtureName' changed while the development bundle was being built."
+  if (-not $TransportOnly) {
+    $sourceFixturesAfter = Get-SourceFixtures -Root $fixtureDirectory
+    if ($sourceFixturesAfter.Count -ne $sourceFixtures.Count) { throw 'The native fixture inventory changed while the development bundle was being built.' }
+    foreach ($fixtureName in $sourceFixtures.Keys) {
+      if (-not $sourceFixturesAfter.ContainsKey($fixtureName) -or $sourceFixturesAfter[$fixtureName] -cne $sourceFixtures[$fixtureName]) {
+        throw "Native fixture '$fixtureName' changed while the development bundle was being built."
+      }
     }
   }
 
@@ -479,11 +488,13 @@ try {
   $outputCreated = $true
   Assert-NoReparsePoint -Path $outputFullPath
   Move-Item -LiteralPath $stagedToolPath -Destination (Join-Path $outputFullPath $toolDirectoryName)
-  Move-Item -LiteralPath $stagedFixturesPath -Destination (Join-Path $outputFullPath 'fixtures')
+  if (-not $TransportOnly) {
+    Move-Item -LiteralPath $stagedFixturesPath -Destination (Join-Path $outputFullPath 'fixtures')
+  }
   Move-Item -LiteralPath $sessionTempPath -Destination $sessionPath
 
   Write-Output "Development ACID bundle: $(Join-Path $relativeOutputPath $toolDirectoryName)"
-  Write-Output "Native test fixtures: $(Join-Path $relativeOutputPath 'fixtures')"
+  if (-not $TransportOnly) { Write-Output "Native test fixtures: $(Join-Path $relativeOutputPath 'fixtures')" }
   Write-Output "Protected test session: $(Join-Path $relativeOutputPath 'acid-test-session.conf')"
   Write-Output "Loopback port: $port"
 }

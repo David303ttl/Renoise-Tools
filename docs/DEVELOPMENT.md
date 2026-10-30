@@ -3,6 +3,43 @@
 ARP and ACID target Renoise 3.5 / scripting API 6.2. The existing frozen
 DigitaktSampleChain tool retains its API 6.1 manifest.
 
+## Required tools
+
+Repository PowerShell scripts require PowerShell 7 (`pwsh`). On Windows, install
+it with WinGet:
+
+```powershell
+winget install --id Microsoft.PowerShell --source winget
+```
+
+Open a new terminal and check `$PSVersionTable.PSVersion` reports version 7 or
+later. Microsoft also documents [other PowerShell installation methods](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows).
+
+The standalone Lua specs use a Lua 5.1-compatible interpreter. The development
+package suite, `tests/renoise/test_package_dev.ps1`, requires Lua 5.1 to check the
+generated entrypoint with the target language version. Download the latest
+Lua 5.1.x Windows x64 executable package from
+[LuaBinaries](https://luabinaries.sourceforge.net/download.html) and extract it
+to a user-local directory such as `$env:LOCALAPPDATA\Programs\Lua51`. Keep the
+executable and accompanying runtime DLLs together. Lua's
+[download page](https://www.lua.org/download.html) links to LuaBinaries for
+precompiled binaries. LuaBinaries is a third-party distribution; verify the
+package checksum when one is provided.
+
+Pass the executable path to the test scripts without changing `PATH`:
+
+```powershell
+$lua51 = Join-Path $env:LOCALAPPDATA 'Programs/Lua51/lua5.1.exe'
+& $lua51 -v
+./scripts/run_tests.ps1 -LuaCommand $lua51
+./tests/renoise/test_package_dev.ps1 -LuaCommand $lua51
+```
+
+The development package suite uses Windows ACLs and therefore runs on Windows.
+Native integration checks require a Windows installation of Renoise. ARP and
+ACID target Renoise 3.5 / API 6.2; get Renoise from its
+[downloads page](https://renoise.com/downloads).
+
 ## Install the API reference
 
 Use PowerShell 7 (`pwsh`) for all repository scripts. From the repository root:
