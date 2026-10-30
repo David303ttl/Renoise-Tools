@@ -175,6 +175,8 @@ local function new_host(capacity)
     if insert_calls==2 then inserted_backup_phrase=phrase end
     if insert_calls==2 and backup_insert_behavior=="throw_after_insert" then
       error("injected backup insertion failure after mutation",0)
+    elseif insert_calls==1 and backup_insert_behavior=="throw_after_stage_insert" then
+      error("injected staging insertion failure after mutation",0)
     elseif insert_calls==2 and backup_insert_behavior=="nil_after_insert" then
       return nil
     elseif insert_calls==2 and backup_insert_behavior=="ambiguous_extra" then
@@ -183,6 +185,14 @@ local function new_host(capacity)
     elseif insert_calls==2 and backup_insert_behavior=="ambiguous_reorder" then
       self.phrases={phrase,self.phrases[2],self.phrases[1]}
       return nil
+    elseif insert_calls==2 and backup_insert_behavior=="return_existing_backup" then
+      return self.phrases[1]
+    elseif insert_calls==1 and backup_insert_behavior=="return_existing_stage" then
+      return self.phrases[1]
+    elseif insert_calls==2 and backup_insert_behavior=="return_foreign_backup" then
+      return {}
+    elseif insert_calls==1 and backup_insert_behavior=="return_foreign_stage" then
+      return {}
     end
     return phrase
   end
@@ -311,6 +321,78 @@ end
 local function assert_same_snapshot(actual,expected,label)
   local same,difference=ownership.compare(actual,expected)
   assert(same,label..": "..tostring(difference))
+end
+
+do
+  local host_instrument,phrase=create_owned(48)
+  local before=snapshot(phrase)
+  insert_calls=0
+  backup_insert_behavior="throw_after_stage_insert"
+  local request=build(source(56),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  backup_insert_behavior=nil
+  assert(#calls==1 and calls[1].kind=="failure")
+  assert(calls[1].integrity_blocked~=true,calls[1].message)
+  assert(rawequal(host_instrument.phrases[1],phrase))
+  assert_same_snapshot(snapshot(phrase),before,"failed staging insertion changed destination")
+  assert(#host_instrument.phrases==1,
+    "uniquely identified phrase from a thrown staging insertion was not cleaned")
+end
+
+-- A non-nil insertion result is trusted only when it is the unique inventory
+-- addition. A mismatched result is never used as a phrase mutation target.
+do
+  local host_instrument,phrase=create_owned(48)
+  local before=snapshot(phrase)
+  insert_calls=0
+  backup_insert_behavior="return_existing_backup"
+  local request=build(source(56),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  backup_insert_behavior=nil
+  assert(#calls==1 and calls[1].kind=="failure")
+  assert(calls[1].integrity_blocked==true,calls[1].message)
+  assert(rawequal(host_instrument.phrases[1],phrase))
+  assert_same_snapshot(snapshot(phrase),before,"mismatched backup insertion changed destination")
+  assert(#host_instrument.phrases==2,"mismatched backup result was cleaned as if it were the insertion")
+end
+
+do
+  local host_instrument,phrase=create_owned(48)
+  local before=snapshot(phrase)
+  insert_calls=0
+  backup_insert_behavior="return_existing_stage"
+  local request=build(source(56),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  backup_insert_behavior=nil
+  assert(#calls==1 and calls[1].kind=="failure")
+  assert(calls[1].integrity_blocked==true,calls[1].message)
+  assert(rawequal(host_instrument.phrases[1],phrase))
+  assert_same_snapshot(snapshot(phrase),before,"mismatched staging insertion changed destination")
+  assert(#host_instrument.phrases==2,"mismatched staging result was cleaned as if it were the insertion")
+end
+
+for _,behavior in ipairs({"return_foreign_backup","return_foreign_stage"}) do
+  local host_instrument,phrase=create_owned(48)
+  local before=snapshot(phrase)
+  insert_calls=0
+  backup_insert_behavior=behavior
+  local request=build(source(56),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  backup_insert_behavior=nil
+  assert(#calls==1 and calls[1].kind=="failure")
+  assert(calls[1].integrity_blocked==true,calls[1].message)
+  assert(rawequal(host_instrument.phrases[1],phrase))
+  assert_same_snapshot(snapshot(phrase),before,"foreign insertion result changed destination")
+  assert(#host_instrument.phrases==2,
+    "foreign insertion result was used to clean or mutate an inventory phrase")
 end
 
 local function reseal(phrase)
@@ -829,6 +911,31 @@ do
   assert(stage.name==writer.PHRASE_NAME)
   assert(song.tool_data=="","released render committed source data")
   assert(release_candidate_calls==1,"late callback scrubbed a released candidate again")
+end
+
+-- A released writer tombstone retains the native script wrapper only; the old
+-- song graph becomes collectible before the deferred callback arrives.
+do
+  new_host()
+  render_mode="defer"
+  local request=build(source(48),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  local stage=instrument.phrases[1]
+  local refs=setmetatable({song=song,instrument=instrument,stage=stage,script=stage.script},{__mode="v"})
+  writer.release()
+  local queued=table.remove(render_queue,1)
+  request,stage,instrument,song=nil,nil,nil,nil
+  for _=1,3 do collectgarbage("collect") end
+  assert(refs.script~=nil,"pending native render lost its script wrapper")
+  assert(refs.song==nil and refs.instrument==nil and refs.stage==nil,
+    "released render retained the old song object graph")
+  queued.callback(nil,0,0)
+  queued=nil
+  for _=1,3 do collectgarbage("collect") end
+  assert(refs.script==nil,"settled render retained its script wrapper")
+  assert(#calls==0 and writer.state()=="idle")
+  render_mode="sync"
 end
 
 -- Bounded checkpoints use the validated workspace capacities rather than the

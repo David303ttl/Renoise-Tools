@@ -108,6 +108,20 @@ script_ref[1].done(nil,5,0)
 assert(runner.phase=="done" and results()==1)
 for _=1,3 do collectgarbage("collect") end
 assert(script_ref[1]==nil,"finished rendering must release its script wrapper")
+runner,script,observable,results=fixture()
+script_ref=setmetatable({script},{__mode="v"})
+assert(runner:start());observable:fire()
+local native_callback=script.done
+runner:detach()
+script=nil
+for _=1,3 do collectgarbage("collect") end
+assert(script_ref[1]~=nil,
+  "document release must retain the native render receiver until its callback")
+native_callback(nil,5,0)
+native_callback=nil
+for _=1,3 do collectgarbage("collect") end
+assert(script_ref[1]==nil,
+  "late completion must release the retained native render receiver")
 local detached_script = {renders=0}
 local detached_observable = {}
 function detached_observable:add_notifier(fn) self.fn=fn end

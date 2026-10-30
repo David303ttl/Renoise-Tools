@@ -64,7 +64,11 @@ local properties={'name','number_of_lines','lpb','shuffle','playback_mode','loop
   'visible_effect_columns','instrument_column_visible','volume_column_visible',
   'panning_column_visible','delay_column_visible','sample_effects_column_visible'}
 function instrument:insert_phrase_at(index)
-  if forced_insert then return forced_insert end
+  if forced_insert then
+    table.insert(self.phrases,index,forced_insert)
+    insertions[#insertions+1]=forced_insert
+    return forced_insert
+  end
   local phrase={name='',number_of_lines=16,lpb=16,shuffle=0,playback_mode=1,
     key_tracking=1,base_note=48,autoseek=false,visible_note_columns=1,
     visible_effect_columns=0,looping=false,loop_start=1,loop_end=16,
@@ -386,6 +390,7 @@ assert(#instrument.phrases==1)
 -- a later valid record for the queried song.
 local original_song_lookup=renoise.song
 local shadow_phrase=instrument:insert_phrase_at(#instrument.phrases+1)
+table.remove(instrument.phrases,#instrument.phrases)
 local shadow_song={instruments={instrument},transport={timing_model=2}}
 local shadow_token_a,shadow_token_b={current=true},{current=true}
 function shadow_token_a:is_current() return true end
@@ -399,6 +404,7 @@ local shadow_first_render=last_render
 assert(shadow_first_render,'first shadow render did not start')
 shadow_first_render('shadow first cancellation',0,0)
 assert(writer.state()=='idle','first shadow cancellation did not settle')
+table.remove(instrument.phrases,#instrument.phrases)
 renoise.song=function() return shadow_song end
 assert(generate(#instrument.phrases+1,{output_policy='play_once',token=shadow_token_b}))
 assert(writer.cancel(shadow_token_b)==true)

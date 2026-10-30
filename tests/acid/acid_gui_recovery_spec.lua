@@ -42,7 +42,7 @@ local tool={app_new_document_observable=observable(),app_release_document_observ
   app_idle_observable=observable(),writer_calls={}}
 
 local phrase_one={id=11,name="Owned one"}
-local phrase_two={id=12,name="Owned two"}
+local phrase_two={id=12,name="ACID 0.1 #12 [v3:00000000]",invalid_seal=true}
 local instrument={name="Target",phrases={phrase_one,phrase_two},phrase_program=1,
   name_observable=observable(),phrases_observable=observable(),
   samples={},sample_modulation_sets={},sample_device_chains={}}
@@ -96,7 +96,10 @@ end,
   end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.phrase_ownership"]={
-  status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
+  status=function(phrase)
+    if phrase.foreign then return "foreign" end
+    return phrase.invalid_seal and "modified" or "owned"
+  end,
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end
 }
@@ -226,6 +229,12 @@ end
 
 local builder,dialog=open_gui()
 local phrase_choice=popup(builder,360)
+assert(phrase_choice.items[2]:find("%(tagged%)$") and
+  not phrase_choice.items[2]:find("%(ACID%)"),
+  "a recognized ID with an invalid seal is labeled tagged, not verified ownership: "..
+    tostring(phrase_choice.items[2]))
+phrase_two.name="Owned two"
+phrase_two.invalid_seal=nil
 assert(pb_range_popup(builder).value==2,"the selected phrase restores its stored PB Range")
 builder.views.acid_program_key_popup:fire(2)
 phrase_choice:fire(2)

@@ -644,7 +644,7 @@ function M.show()
     for _,choice in ipairs(choices) do
       if choice.kind~="new" then
         local ok,id=pcall(ownership.id,choice.phrase)
-        local identity=ok and id and "ACID" or "foreign"
+        local identity=ok and id and "tagged" or "foreign"
         names[#names+1]=string.format("%02d: %s (%s)",choice.phrase_index,
           choice.phrase_name,identity)
         targets[#targets+1]=choice.phrase

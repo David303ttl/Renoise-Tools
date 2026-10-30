@@ -125,7 +125,8 @@ function Invoke-RenoiseDriverBootstrap {
         catch {
             $failure=$_.Exception
             $client.Dispose()
-            if (-not (Test-RenoiseTransportFailure -Exception $failure)) { throw }
+            if (-not (Test-RenoiseTransportFailure -Exception $failure) -and
+                $failure -isnot [TimeoutException]) { throw }
             $lastTransportFailure=$failure
             if ($attempt -ge $MaximumAttempts -or [DateTimeOffset]::UtcNow -ge $deadline) { break }
             continue
@@ -193,7 +194,7 @@ function Invoke-RenoiseDriverRequest {
             if ($responseBytes.Count -gt 262144) { throw 'Renoise response exceeded the protocol size limit.' }
         }
     }
-    throw "Timed out after $TimeoutSeconds seconds waiting for terminal response to '$Operation'."
+    throw [TimeoutException]::new("Timed out after $TimeoutSeconds seconds waiting for terminal response to '$Operation'.")
 }
 
 function Get-RenoiseProcessIdentity {

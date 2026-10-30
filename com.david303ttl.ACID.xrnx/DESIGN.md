@@ -112,10 +112,11 @@ waiting for commitment. During rendering it only reports a pending-render
 diagnostic and keeps the writer occupied.
 
 Renoise exposes no render-cancel operation. Cancellation invalidates commit
-authorization; an in-flight render retains the writer slot until its callback
-arrives. A missing callback therefore blocks new writes and requires restarting
-Renoise. Document release and tool unload detach observers and host references
-without treating an unfinished render as complete.
+authorization; an in-flight render retains the writer slot and the exact script
+wrapper used to start it until its callback arrives. Other job host references
+are released when the document closes. A missing callback therefore blocks new
+writes and requires restarting Renoise. Document release and tool unload detach
+observers without treating an unfinished render as complete.
 
 `renoise/pattern_store.lua` stores the current WIP `ACID-PITCH-TIME-1` source
 records and separate phrase output policy and PB Range in song-scoped tool data.

@@ -444,7 +444,37 @@ local function cleanup_temporaries(job)
       failed(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
     end
   end
+  for _, phrase in ipairs(job.untracked_insertion_phrases or {}) do
+    failed(phrase, "staging", M.RECOVERY_STAGING_NAME,
+      "staging insertion identity was ambiguous")
+  end
   return recovery, #errors > 0 and table.concat(errors, " and ") or nil
+end
+
+local function inserted_identity(before, after, returned)
+  local addition = inventory_addition(before, after)
+  if addition == nil or returned == nil or not rawequal(addition, returned) then
+    return nil, addition
+  end
+  local occurrences = 0
+  for _, phrase in ipairs(after) do
+    if rawequal(phrase, returned) then occurrences = occurrences + 1 end
+  end
+  if occurrences ~= 1 then return nil, addition end
+  return addition
+end
+
+local function new_inventory_members(before, after)
+  local added = {}
+  if type(before) ~= "table" or type(after) ~= "table" then return added end
+  for _, phrase in ipairs(after) do
+    local existed = false
+    for _, original in ipairs(before) do
+      if rawequal(original, phrase) then existed = true; break end
+    end
+    if not existed then added[#added + 1] = phrase end
+  end
+  return added
 end
 
 local function forget_job_temporaries(job)
@@ -1176,34 +1206,36 @@ local function commit_destination(job)
         local inserted, inserted_or_error = pcall(function()
           return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
         end)
-        if not inserted or inserted_or_error == nil then
-          local after = phrase_inventory(job.instrument)
-          local addition = inventory_addition(job.backup_inventory_before, after)
-          if addition then
-            backup = addition
-            remember_temporary(job, backup, "backup")
-            job.backup = backup
-          elseif not same_inventory(job.backup_inventory_before, after) then
-            job.untracked_insertion_phrases = {}
-            if type(after) == "table" then
-              for _, phrase in ipairs(after) do
-                local existed = false
-                for _, original in ipairs(job.backup_inventory_before) do
-                  if rawequal(original, phrase) then existed = true; break end
-                end
-                if not existed then
-                  job.untracked_insertion_phrases[#job.untracked_insertion_phrases + 1] = phrase
-                  remember_temporary(job, phrase, "backup")
-                end
-              end
-            end
-            job.keep_recovery = true
-          end
+        local after = phrase_inventory(job.instrument)
+        local identity, addition = inserted_identity(job.backup_inventory_before, after,
+          inserted and inserted_or_error or nil)
+        local insertion_failed = not inserted or inserted_or_error == nil
+        if not identity and insertion_failed then
+          identity = inventory_addition(job.backup_inventory_before, after)
+        end
+        if insertion_failed and identity then
+          backup = identity
+          remember_temporary(job, backup, "backup")
+          job.backup = backup
           rollback(false, "Could not insert destination backup: " ..
             tostring(inserted and "no phrase returned" or inserted_or_error))
           return result
         end
-        backup = inserted_or_error
+        if not identity then
+          local additions = new_inventory_members(job.backup_inventory_before, after)
+          if #additions > 0 then
+            job.untracked_insertion_phrases = additions
+            for _, phrase in ipairs(additions) do remember_temporary(job, phrase, "backup") end
+            job.keep_recovery = true
+          elseif not same_inventory(job.backup_inventory_before, after) then
+            job.keep_recovery = true
+          end
+          rollback(false, "Could not insert destination backup: " ..
+            tostring(inserted and "returned phrase did not match the single inventory addition"
+              or inserted_or_error))
+          return result
+        end
+        backup = identity
         remember_temporary(job, backup, "backup")
         job.backup = backup
         local backed_up, backup_error = pcall(function()
@@ -1527,10 +1559,34 @@ local function stage(job)
     if #job.instrument.phrases + (job.replace and 2 or 1) > capacity then
       error("Not enough phrase slots for staging and rollback backup", 0)
     end
-    local phrase = job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
+    local before = phrase_inventory(job.instrument)
+    if not before then error("Cannot inspect phrase inventory before staging insertion", 0) end
+    local inserted, returned = pcall(function()
+      return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
+    end)
+    local after = phrase_inventory(job.instrument)
+    local phrase, addition = inserted_identity(before, after, inserted and returned or nil)
+    local insertion_failed = not inserted or returned == nil
+    if not phrase and insertion_failed then
+      phrase = inventory_addition(before, after)
+    end
+    if not phrase then
+      local additions = new_inventory_members(before, after)
+      if #additions > 0 then
+        job.untracked_insertion_phrases = additions
+        for _, candidate in ipairs(additions) do remember_temporary(job, candidate, "staging") end
+        job.keep_recovery = true
+      elseif not same_inventory(before, after) then
+        job.keep_recovery = true
+      end
+      error("Staging insertion did not return the single new inventory member", 0)
+    end
     job.phrase = phrase
     job.temporary = true
     remember_temporary(job, phrase, "staging")
+    if insertion_failed then
+      error("Staging insertion failed: " .. tostring(inserted and "no phrase returned" or returned), 0)
+    end
     phrase.name = M.PHRASE_NAME
     phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
     local visibility = job.required_visibility

@@ -115,6 +115,45 @@ try {
     $bootstrapWorker.EndInvoke($bootstrapPending)
     $bootstrapWorker.Dispose()
 }
+$timeoutBootstrapListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$timeoutBootstrapListener.Start()
+$timeoutBootstrapWorker = [PowerShell]::Create()
+$timeoutBootstrapState = [pscustomobject]@{ Connections = 0; FirstClosed = $false }
+[void]$timeoutBootstrapWorker.AddScript({ param($Listener,$State,$Nonce)
+    $first = $Listener.AcceptTcpClient()
+    $State.Connections++
+    $firstReader = [IO.StreamReader]::new($first.GetStream())
+    [void]$firstReader.ReadLine()
+    Start-Sleep -Milliseconds 1300
+    $State.FirstClosed = $first.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead) -and $first.Client.Available -eq 0
+    $first.Dispose()
+    $second = $Listener.AcceptTcpClient()
+    $State.Connections++
+    $stream = $second.GetStream()
+    $reader = [IO.StreamReader]::new($stream)
+    $request = $reader.ReadLine() | ConvertFrom-Json
+    $response = @{ id = $request.id; ok = $true; result = @{ protocol_version = 1; session = $Nonce } } | ConvertTo-Json -Compress
+    $bytes = [Text.Encoding]::UTF8.GetBytes($response + "`n")
+    $stream.Write($bytes,0,$bytes.Length)
+    $stream.Flush()
+    $second.Dispose()
+}).AddArgument($timeoutBootstrapListener).AddArgument($timeoutBootstrapState).AddArgument($bootstrapNonce)
+$timeoutBootstrapPending = $timeoutBootstrapWorker.BeginInvoke()
+$timeoutBootstrapClient = $null
+try {
+    $timeoutBootstrap = Invoke-RenoiseDriverBootstrap -Session ([pscustomobject]@{ Port = $timeoutBootstrapListener.LocalEndpoint.Port; Token = 'bootstrap-token'; Nonce = $bootstrapNonce }) `
+        -Identity $bootstrapIdentity -StartupTimeoutSeconds 6 -CommandTimeoutSeconds 1 `
+        -ProcessCheck {} -CheckIdentity { param($Identity) } `
+        -GetListeners { param($Port) [pscustomobject]@{ LocalAddress = '127.0.0.1'; OwningProcess = 123 } }
+    $timeoutBootstrapClient = $timeoutBootstrap.Client
+    Assert ($timeoutBootstrap.Attempts -eq 2 -and $timeoutBootstrap.Ping.session -ceq $bootstrapNonce) 'bootstrap did not retry a stalled first ping within its startup budget'
+    Assert ($timeoutBootstrapState.Connections -eq 2 -and $timeoutBootstrapState.FirstClosed) 'bootstrap did not dispose the timed-out ping connection before retrying'
+} finally {
+    if ($timeoutBootstrapClient) { $timeoutBootstrapClient.Dispose() }
+    $timeoutBootstrapListener.Stop()
+    $timeoutBootstrapWorker.EndInvoke($timeoutBootstrapPending)
+    $timeoutBootstrapWorker.Dispose()
+}
 $scenarioRoot = Join-Path ([IO.Path]::GetTempPath()) ('runner-scenarios-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $scenarioRoot | Out-Null
 try {
