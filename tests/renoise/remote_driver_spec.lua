@@ -944,7 +944,7 @@ local function test_fixed_native_acceptance_command()
   local host, driver = start_driver({
     acceptance_runner = function(case_name, done)
       assert(case_name == "make-independent" or case_name == "reopen-independent" or
-        case_name == "integrity-observers" or case_name == "editor-responsiveness",
+        case_name == "integrity-observers" or case_name == "writer-recovery" or case_name == "editor-responsiveness",
         "fixed native acceptance case was not allowlisted")
       completion = done
       return true
@@ -991,6 +991,15 @@ local function test_fixed_native_acceptance_command()
   local integrity = find_response(take_responses(client), "acceptance-integrity-observers")
   assert(integrity and integrity.ok)
   assert_equal(integrity.result.status, "PASS")
+  send_request(host, client, "acceptance-writer-recovery", "acid.acceptance.run", {case = "writer-recovery"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-writer-recovery"), nil)
+  assert(completion, "writer recovery acceptance runner was not called")
+  assert(completion({status = "PASS", case = "writer-recovery"}))
+  fire_idle(host)
+  local recovery = find_response(take_responses(client), "acceptance-writer-recovery")
+  assert(recovery and recovery.ok)
+  assert_equal(recovery.result.status, "PASS")
   send_request(host, client, "acceptance-editor-responsiveness", "acid.acceptance.run", {case = "editor-responsiveness"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-editor-responsiveness"), nil,

@@ -240,4 +240,46 @@ do
  local valid,current=owner:status()
  assert(valid.verified and owner:clear(current))
 end
+-- Writer clearance failures retain the evidence and proof for an in-session retry.
+for _,mode in ipairs({'false','throw'}) do
+ local ctx,log,writer,_,instrument,phrase,baseline=fixture()
+ assert(ctx:record_blocker(log.token,evidence(instrument,phrase,baseline)))
+ log.done({kind='failed'})
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and proof)
+ writer.clear_integrity_blocker=function()
+  if mode=='throw' then error('injected clear failure') end
+  return false
+ end
+ assert(not ctx:revalidate(proof))
+ assert(ctx:integrity_state().blocked and ctx:revalidation_status().verified)
+ assert(not ctx:request_generation('manual'))
+ writer.clear_integrity_blocker=function() return true end
+ assert(ctx:revalidate(proof))
+ assert(not ctx:integrity_state().blocked)
+end
+
+-- Contradictory success cannot adopt a baseline, clear a captured draft or dispatch.
+do
+ local song,instrument,phrase=helper.fixture()
+ local cache=require('runtime.draft_cache')
+ local seq=require('model.sequencer')
+ local request,done
+ local ctx=context.new{writer={state=function() return 'idle' end},drafts=cache,
+  capture=function() return nil,'editor required' end,
+  sink=function(value,callback) request,done=value,callback;return true end}
+ ctx:attach_document(song);ctx:open_dialog()
+ local baseline=assert(ctx:bind_phrase(instrument,phrase).baseline)
+ assert(ctx:transition('edit',{source=seq.new_pattern(5),output_policy='play_once',pb_range=0}))
+ assert(ctx:request_generation('manual'))
+ assert(request.kind=='regenerate' and request.draft_capture)
+ local draft=request.draft_capture
+ local before=song.tool_data
+ done({kind='success',verified=true,integrity_blocked=true,phrase=phrase,baseline=baseline,
+  token=request.token,epoch=request.epoch})
+ assert(ctx:integrity_state().blocked)
+ assert(cache.is_current(song,draft))
+ assert(song.tool_data==before)
+ assert(not ctx:request_generation('manual'))
+end
 print('ACID runtime integrity blocker and read-only revalidation passed')

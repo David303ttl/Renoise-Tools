@@ -380,7 +380,7 @@ local function valid_args_for_operation(current, request)
     return object_has_only_keys(args, {case = true}, {"case"}) and
       (args.case == "make-independent" or args.case == "draft-recovery" or
         args.case == "reopen-independent" or args.case == "api-probe" or
-        args.case == "integrity-observers" or args.case == "editor-responsiveness")
+        args.case == "integrity-observers" or args.case == "writer-recovery" or args.case == "editor-responsiveness")
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end

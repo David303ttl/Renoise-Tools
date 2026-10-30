@@ -1343,6 +1343,9 @@ All spec paths below are relative to `tests/acid/`. Results use Lua 5.1 and mock
 | Unreadable preflight inventory/identity, uncertain staging/backup insertion, no modification of unidentified additions | `acid_writer_safety_spec.lua`: getter faults, mismatched returns and ambiguous/unreadable insertion inventories |
 | Exact-object replacement, preserved fields, guarded rollback, source/draft/store failures | `acid_writer_safety_spec.lua`: backup verification, destination/store faults and external-change rollback; `acid_gate_transaction_spec.lua`; `acid_phrase_spec.lua` |
 | Cleanup failure, committed blocked result with baseline, persistent blocker despite rejected/throwing/missing hook | `acid_writer_safety_spec.lua`: recovery and blocker-hook faults; `acid_runtime_writer_integration_spec.lua`: runtime fallback and explicit revalidation |
+| Post-mutation exception after create preserves promoted identity, source and baseline | `acid_writer_safety_spec.lua`: post-commit exception, committed blocker evidence and exact destination/source preservation |
+| Exceptional facade getters reject without escaping | `acid_writer_safety_spec.lua`: create/regenerate admission with throwing kind/token/epoch getters |
+| Contradictory success fails closed; blocker clearance remains retryable | `acid_runtime_integrity_spec.lua`: captured regenerate draft survives contradictory success; false/throwing clear hook retains proof and evidence |
 | One completion, cancel during native rendering, release and late/duplicate callbacks | `acid_writer_safety_spec.lua`; `acid_script_runner_spec.lua`; `acid_phrase_spec.lua` |
 | Script-wrapper retention, released/completed host-reference collection, candidate retirement | `acid_writer_safety_spec.lua`: weak-reference, completed-regeneration collection and candidate-release assertions; `acid_script_runner_spec.lua` |
 | Compile/clear waits bounded at 500 idle opportunities; render threshold diagnostic only; settled/fresh diagnostics | `acid_writer_safety_spec.lua`: exact threshold assertions; `acid_phrase_spec.lua`: released callback settlement |
@@ -1361,6 +1364,23 @@ The 500-callback compile/clear limit is a conservative failure policy, not a dur
 | `./scripts/package.ps1` and ACID archive inspection | Pass: 34 source-identical entries, root `main.lua`/`manifest.xml`, private module directories, no SDK/tests/docs/harness |
 | `git diff --check` and fresh independent code review | Pass |
 | Renoise-native manual checks | Not run for these changes; undo/redo, save/reopen, native ordering and playback remain Gate 8 |
+
+Follow-up verification on 2026-10-31: the full offline runner passes all 18
+groups, including 67/67 Lua specs (54.35s). The final Lua rerun passes 67/67
+(58.02s); runner, development package and release/archive checks also pass.
+The ACID selection independently passes 64/64 (61.46s). Native exceptional
+writer recovery, integrity observers/order, Make Independent save/reload,
+Draft Recovery, editor responsiveness and Native/Keyboard suites pass.
+Report IDs, intermediate failed attempts and restoration evidence are recorded in
+[host verification](../tests/renoise/host_verification.md#exceptional-writer-recovery-verification-2026-10-31).
+`git diff --check` passes. Audible playback and native song undo/redo grouping
+remain separate manual Step 8 requirements.
+
+The exceptional recovery follow-up preserves committed create identity and source when the
+mutation wrapper throws after committing, rejects contradictory success at runtime, and
+retains verified evidence until writer blocker clearance succeeds. Facade admission also
+contains exceptional request getters. The focused native case also verifies these faults on real Renoise phrases;
+this does not establish acoustic playback or native undo grouping.
 
 ## Step 4 — Implement explicit Make Independent
 

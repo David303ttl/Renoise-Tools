@@ -8,10 +8,16 @@ Playback, native song undo grouping and cold-process reopen remain manual checks
 
 Gate 3 direct writer acceptance is closed on 2026-10-31. The requirement-to-spec
 matrix and command results are in the playbook's Gate 3 direct acceptance table.
-The final ACID selection passes 64/64 specs (62.70s), and the repository passes
-67/67 (50.39s), with no timeout. Host preflight, runner lifecycle, development
-packaging, release packaging and archive identity checks pass. No new native
-manual checks were performed; Gates 4–8 remain independent acceptance.
+The exceptional recovery follow-up passes all 18 offline groups, including 67/67
+repository Lua specs (54.35s), plus a final 67/67 rerun (58.02s). The ACID
+selection independently passes 64/64 (61.46s). Final runner, development package,
+release package and source/archive identity checks pass. Native exceptional
+writer recovery exercises all four fault paths on real phrases; integrity
+observers/order, Make Independent save/reload, Draft Recovery, editor and
+Native/Keyboard checks also pass. See the [dated host evidence](../renoise/host_verification.md#exceptional-writer-recovery-verification-2026-10-31)
+for passing report IDs and intermediate failures. Acoustic playback and native
+song undo/redo grouping remain manual Step 8 acceptance; Gates 4-8 retain their
+independent acceptance requirements.
 
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform

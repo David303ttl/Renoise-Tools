@@ -376,7 +376,11 @@ function M.new(options)
     copy.request=copy.request==nil and (record.request or nil) or copy.request
     local valid_token=copy.token~=nil and rawequal(copy.token,record.token)
     local success=copy.kind=="success" and copy.verified==true and valid_token
-    if success and not host_object(copy.phrase) then
+    if copy.kind=="success" and copy.integrity_blocked==true then
+      success=false
+      copy.status="integrity_blocked"
+      copy.reason="Writer success included contradictory integrity evidence"
+    elseif success and not host_object(copy.phrase) then
       success=false
       copy.status="failed"
       copy.reason="Writer success did not include its destination phrase"
@@ -1785,15 +1789,16 @@ function M.new(options)
   function context:revalidate(proof)
     if not integrity then return false,"No current document is attached" end
     if adoption_blocked_reason then return false,adoption_blocked_reason end
-    local cleared,reason=integrity:clear(proof)
-    if cleared then
+    local cleared,reason=integrity:clear(proof,function()
       if type(writer.clear_integrity_blocker)=="function" then
         local writer_cleared,writer_error=pcall(writer.clear_integrity_blocker,current_song)
         if not writer_cleared or writer_error==false then
-          adoption_blocked_reason="Writer integrity blocker could not be cleared after revalidation"
-          return false,adoption_blocked_reason
+          return false,"Writer integrity blocker could not be cleared after revalidation"
         end
       end
+      return true
+    end)
+    if cleared then
       mutation_failed=false;adoption_blocked_reason=nil
       invalidate_target_projection()
     end

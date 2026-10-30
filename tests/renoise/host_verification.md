@@ -321,3 +321,44 @@ undo history do not establish writer persistence or undo behavior. No new
 save/reload, playback, visual or audible acceptance was performed. Add those
 scenarios with their owning behavior instead of simulating future writer passes
 in the harness.
+
+## Exceptional writer recovery verification (2026-10-31)
+
+Verified the working tree based on `09489f8` using PowerShell 7, Lua 5.1 and
+Renoise 3.5.4 / API 6.2. Reports and logs below remain under ignored `tmp/`.
+
+| Check | Result / artifact |
+| --- | --- |
+| Full offline runner | PASS: all 18 groups, including 67/67 Lua specs (54.35s); `recovery-offline.log` |
+| Final Lua suite after driver allowlist regression | PASS: 67/67 (58.02s), child-process exit 0; `recovery-final-lua-exit.log` |
+| Final runner / development package checks | PASS; `recovery-final-runner.log`, `recovery-final-dev-package.log` |
+| ACID release archive | PASS: 34 source-identical runtime entries, root manifest/main, private modules and no development files; `recovery-release-package.log` |
+| Native integrity observers and scenario order | PASS; `interactive-f683c8ef245b426ba3658770633c22c3/report.json` |
+| Native Make Independent and saved-song reload/regenerate | PASS; `interactive-ce843446f483440ea1d3f121667c45cd/report.json` |
+| Native Draft Recovery | PASS; `interactive-c399593edf884c498d7d0a2bb58562cf/report.json` |
+| Native exceptional writer recovery | PASS; `interactive-328d088a08404f40bbb07b225aebd340/report.json` |
+| Native editor responsiveness | PASS; `interactive-a12bcb00312141ef921345af08cb143a/report.json` |
+| Native and Keyboard suites | PASS; `interactive-606ac3a51fff4ff39405b76e9bf9d55b/report.json` |
+| Working-tree whitespace | PASS: `git diff --check` |
+
+The `writer-recovery` acceptance case injects a mutation-wrapper exception after
+native create commits and checks exact destination identity/name, committed source
+bytes and committed blocker evidence. It then uses a real runtime regenerate
+request and native phrase commit, injects contradictory success, checks that the
+captured draft survives and another request is denied, and injects false/throwing
+writer clearance hooks before retrying the same verified proof successfully.
+Both facades also reject exceptional request getters. Driver shutdown and original
+installation restoration passed in all final native runs.
+
+Earlier attempts remain recorded: `interactive-eacb4b7139f848dc91cbf11980e8d03b`
+failed the startup ping; `interactive-4a4120d633a14d55b62c6115ca1ed070` lost the
+startup transport. Both restored the original installation. The first focused
+case, `interactive-5680de8cc7214105b47a17d6e571da7a`, exhausted its recursive
+one-shot idle wait before regenerate completed. Replacing that wait with one
+persistent idle notifier produced the passing focused run above. These attempts
+are not passing evidence.
+
+These runs establish the listed native recovery, persistence and UI behavior.
+Synthetic audio controls do not establish acoustic acceptance. Audible playback
+and native song undo/redo grouping remain separate manual Step 8 acceptance;
+this follow-up does not close those broader requirements.

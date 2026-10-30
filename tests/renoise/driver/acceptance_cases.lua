@@ -566,6 +566,126 @@ local function run_integrity_observers(done)
   return true
 end
 
+local function run_writer_recovery(done)
+  local song=renoise.song()
+  local instrument_index=song.selected_instrument_index
+  local instrument=song.instruments[instrument_index]
+  local writer=require("writers.phrase_writer")
+  local sequence=require("model.sequencer")
+  local ownership=require("renoise.phrase_ownership")
+  local store=require("renoise.pattern_store")
+  local drafts=require("runtime.draft_cache")
+  local factory=dofile(renoise.tool().bundle_path.."/__dev/writer_request.lua")
+  local context,original_clear
+  local finished=false
+  local pending_idle
+  local function finish(ok,reason)
+    if finished then return end
+    finished=true
+    if pending_idle then pcall(function() renoise.tool().app_idle_observable:remove_notifier(pending_idle) end) end
+    if original_clear then writer.clear_integrity_blocker=original_clear end
+    if context then context:release_document() end
+    done({status=ok and "PASS" or "FAIL",case="writer-recovery",reason=reason,
+      promoted_identity_preserved=ok,committed_source_preserved=ok,
+      contradictory_success_blocked=ok,captured_draft_preserved=ok,
+      failed_clear_retryable=ok,exceptional_getters_rejected=ok})
+  end
+  local function check(action)
+    local ok,reason=pcall(action)
+    if not ok then finish(false,tostring(reason)) end
+  end
+  for _,operation in ipairs({writer.create,writer.regenerate}) do
+    for _,field in ipairs({"kind","token","epoch"}) do
+      local request=setmetatable({}, {__index=function(_,key)
+        if key==field then error("Injected admission getter failure",0) end
+      end})
+      local ok,accepted,rejection=pcall(operation,request,function() finish(false,"Rejected request completed") end)
+      if not ok or accepted or not rejection or rejection.kind~="failure" then
+        finish(false,"Exceptional facade getter escaped rejection");return true
+      end
+    end
+  end
+  song.transport.lpb=16
+  song.transport.groove_enabled=false
+  local source=sequence.new_pattern(4)
+  source.pitch_events[1]=sequence.new_pitch(4,0,true,false)
+  source.time_events[1]="N"
+  local request,reason=factory.build(song,instrument_index,source,#instrument.phrases+1)
+  if not request then finish(false,describe_failure(reason));return true end
+  local mutate=request.mutate
+  local destination,name,stored
+  function request:mutate(token,action)
+    local result=mutate(self,token,action)
+    if type(result)=="table" and result.committed then
+      destination=instrument.phrases[#instrument.phrases]
+      name,stored=destination.name,song.tool_data
+      error("Injected exception after native source commit",0)
+    end
+    return result
+  end
+  local accepted,rejection=writer.create(request,function(result)
+    on_next_idle(function() check(function()
+      assert(result.kind=="failure" and result.status=="integrity_blocked" and result.committed)
+      assert(result.phrase==nil and request.blocker and request.blocker.committed)
+      assert(rawequal(instrument.phrases[#instrument.phrases],destination) and destination.name==name)
+      assert(song.tool_data==stored and ownership.id(destination))
+      assert(sequence.same_source(assert(store.read_entry(song,ownership.id(destination))),source))
+      local captured,terminal
+      context=require("runtime.context").new({writer=writer,drafts=drafts,cancel=writer.cancel,
+        capture=function() return nil,"Attached editor owns capture" end,
+        sink=function(value,completion)
+          captured=value
+          return writer.regenerate(value,function(value_result)
+            value_result.integrity_blocked=true
+            completion(value_result)
+          end)
+        end})
+      context:attach_document(song)
+      context:open_dialog(function(value) terminal=value end)
+      assert(context:bind_phrase(instrument,destination).kind=="owned")
+      source.pitch_events[1]=sequence.new_pitch(5,0,true,false)
+      assert(context:transition("edit",{source=source,output_policy="play_once",pb_range=0}))
+      assert(context:request_generation("manual"))
+      local waits=0
+      local function inspect()
+        if finished then return end
+        if not terminal then
+          waits=waits+1
+          if waits>6000 then finish(false,"Native regenerate did not complete; writer="..tostring(writer.state()));return end
+          return
+        end
+        renoise.tool().app_idle_observable:remove_notifier(inspect)
+        pending_idle=nil
+        check(function()
+          assert(terminal.kind=="failure" and terminal.status=="integrity_blocked")
+          assert(context:integrity_state().blocked and not context:request_generation("manual"))
+          assert(captured.draft_capture and drafts.is_current(song,captured.draft_capture))
+          local status,proof=context:revalidation_status()
+          assert(status.verified and proof,status.reason)
+          original_clear=writer.clear_integrity_blocker
+          for _,mode in ipairs({"false","throw"}) do
+            writer.clear_integrity_blocker=function()
+              if mode=="throw" then error("Injected writer clearance failure",0) end
+              return false
+            end
+            assert(not context:revalidate(proof))
+            assert(context:integrity_state().blocked and context:revalidation_status().verified)
+            assert(not context:request_generation("manual"))
+          end
+          writer.clear_integrity_blocker=original_clear
+          assert(context:revalidate(proof))
+          assert(not context:integrity_state().blocked)
+          finish(true)
+        end)
+      end
+      pending_idle=inspect
+      renoise.tool().app_idle_observable:add_notifier(inspect)
+    end) end)
+  end)
+  if not accepted then finish(false,describe_failure(rejection)) end
+  return true
+end
+
 local function run_editor_responsiveness(done)
   local song=renoise.song()
   local unpack_values=unpack or table.unpack
@@ -2275,6 +2395,7 @@ function M.run(case_name, done)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name == "make-independent" then return run_make_independent(done) end
   if case_name == "draft-recovery" then return run_draft_recovery(done) end
+  if case_name == "writer-recovery" then return run_writer_recovery(done) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
   if case_name == "editor-responsiveness" then return run_editor_responsiveness(done) end
   if case_name == "reopen-independent" then

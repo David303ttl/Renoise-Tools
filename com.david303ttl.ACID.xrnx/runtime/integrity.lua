@@ -202,10 +202,14 @@ function M.new(song,drafts,idle)
     return result,proof
   end
 
-  function owner:clear(proof)
+  function owner:clear(proof,before_clear)
     if proofs[proof]~=serial then return false,"Revalidation proof is stale or unknown" end
     local ok,verified,reason=pcall(verify)
     if not ok or not verified then return false,reason or "Cannot inspect recovery consistency" end
+    if before_clear then
+      local cleared,message=before_clear()
+      if not cleared then return false,message end
+    end
     entries={}
     serial=serial+1
     proofs=setmetatable({},{__mode="k"})

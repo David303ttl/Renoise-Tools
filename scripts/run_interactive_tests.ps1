@@ -160,7 +160,7 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','editor-responsiveness')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }

@@ -55,8 +55,8 @@ end
 local function failure(request, code, category, message, status)
   message = tostring(message or "Phrase generation failed")
   return {
-    kind = "failure", status = status or "failed", token = request and request.token or nil,
-    epoch = request and request.epoch or nil, request = request, phrase = nil,
+    kind = "failure", status = status or "failed", token = type(request) == "table" and rawget(request, "token") or nil,
+    epoch = type(request) == "table" and rawget(request, "epoch") or nil, request = request, phrase = nil,
     verified = false, reason = message, code = code, category = category,
     message = message, diagnostics = { message },
   }
@@ -524,6 +524,9 @@ local function settle(job, result)
 end
 
 local function failure_suffix(job)
+  if job.committed_baseline then
+    return "; phrase output and source were committed; revalidate integrity before retrying"
+  end
   if job.swapped or job.keep_recovery then
     return "; phrase output or recovery state may have changed; inspect the destination before retrying"
   end
@@ -533,7 +536,7 @@ end
 local function record_blocker(job, reason, recovery)
   if job.blocker_recorded then return true end
   if job.released then return false end
-  local committed = job.cleanup_warning ~= nil and job.committed_baseline ~= nil
+  local committed = job.committed_baseline ~= nil
   local evidence = {
     operation = job.replace and "regenerate" or "create",
     instrument = job.instrument, phrase = job.target_phrase or job.phrase,
@@ -605,7 +608,8 @@ local function terminal_failure(job, status, code, category, reason, extra)
     verified = false, reason = reason, code = code, category = category,
     message = message, diagnostics = diagnostics,
     target = { instrument_index = job.instrument_index, phrase_index = job.target_index },
-    counts = extra.counts, recovery = recovery, integrity_blocked = status == "integrity_blocked",
+    committed = job.committed_baseline ~= nil, baseline = job.committed_baseline,
+    counts = extra.counts, recovery = recovery or extra.recovery, integrity_blocked = status == "integrity_blocked",
   }
   settle(job, result)
 end
@@ -1352,7 +1356,7 @@ local function collect_recovery(job)
     for _, item in ipairs(source) do append_recovery(evidence, item) end
   end
   for _, item in ipairs({ { job.backup, "backup", M.RECOVERY_BACKUP_NAME },
-      { job.phrase, "staging", M.RECOVERY_STAGING_NAME } }) do
+      { not (job.committed_baseline and not job.replace) and job.phrase or nil, "staging", M.RECOVERY_STAGING_NAME } }) do
     local phrase = item[1]
     if phrase and not job.released then
       if not has_recovery_phrase(evidence, phrase) then
@@ -1723,18 +1727,26 @@ local function start(request, done, kind)
   return true
 end
 
-function M.create(request, done)
-  if type(request) == "table" and request.kind ~= "create" then
-    return false, failure(request, "source.request_kind", "source", "Request kind does not match create")
+local function admit(request, done, kind)
+  local ok, accepted, rejection = pcall(function()
+    if type(request) == "table" and request.kind ~= kind then
+      return false, failure(request, "source.request_kind", "source", "Request kind does not match " .. kind)
+    end
+    return start(request, done, kind)
+  end)
+  if not ok then
+    return false, failure(request, "safety.preflight", "safety",
+      "Cannot inspect the phrase request safely: " .. tostring(accepted))
   end
-  return start(request, done, "create")
+  return accepted, rejection
+end
+
+function M.create(request, done)
+  return admit(request, done, "create")
 end
 
 function M.regenerate(request, done)
-  if type(request) == "table" and request.kind ~= "regenerate" then
-    return false, failure(request, "source.request_kind", "source", "Request kind does not match regenerate")
-  end
-  return start(request, done, "regenerate")
+  return admit(request, done, "regenerate")
 end
 
 -- Cancellation invalidates commit authorization. Returning true only reports a

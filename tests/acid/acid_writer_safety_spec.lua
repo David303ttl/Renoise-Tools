@@ -1361,4 +1361,38 @@ for _, mode in ipairs({ "false", "throw", "missing" }) do
     writer.diagnostic().code=="transaction.blocker_recording")
 end
 
+-- Post-mutation exceptions preserve the promoted destination and committed source.
+do
+  new_host()
+  local request=build(source(48),1)
+  local mutate=request.mutate
+  local committed_name,committed_store,committed_phrase
+  function request:mutate(token,action)
+    local result=mutate(self,token,action)
+    if type(result)~="table" or not result.committed then return result end
+    committed_phrase=instrument.phrases[1]
+    committed_name,committed_store=committed_phrase.name,song.tool_data
+    error("injected post-mutation invariant failure",0)
+  end
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  assert(#calls==1 and calls[1].status=="integrity_blocked" and calls[1].committed)
+  assert(#instrument.phrases==1 and instrument.phrases[1].name~=writer.RECOVERY_STAGING_NAME)
+  assert(song.tool_data~="" and request.blocker.committed)
+  assert(rawequal(instrument.phrases[1],committed_phrase) and committed_phrase.name==committed_name)
+  assert(song.tool_data==committed_store)
+  assert(request.blocker.committed_baseline and calls[1].baseline==request.blocker.committed_baseline)
+end
+
+for _,operation in ipairs({writer.create,writer.regenerate}) do
+  for _,field in ipairs({"kind","token","epoch"}) do
+    local request=setmetatable({}, {__index=function(_,key)
+      if key==field then error("injected getter failure",0) end
+    end})
+    local ok,accepted,rejection=pcall(operation,request,function() error("unexpected callback") end)
+    assert(ok and not accepted and rejection.kind=="failure")
+  end
+end
+
 print("ACID writer safety checks passed (mocked Renoise; native playback unverified)")

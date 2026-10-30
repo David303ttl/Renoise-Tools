@@ -345,3 +345,17 @@ both modes verify focus before sending each input sequence.
 and temporary-directory readiness; add `-RenoiseProcessId <pid>` to check a target.
 No host acceptance is inferred from offline mocks. Record actual native results
 when those tests run, and keep unexecuted checks visibly pending.
+
+### Exceptional writer recovery
+
+Run all four exceptional admission/recovery regressions on real native phrases:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase writer-recovery -StartupTimeoutSeconds 120 -CommandTimeoutSeconds 90
+```
+
+The fixed case checks post-commit identity/source preservation, contradictory
+success with a captured draft, retryable blocker clearance and exceptional facade
+getters. It uses injected failures in the disposable host and restores its hooks.
+See the [verification record](host_verification.md#exceptional-writer-recovery-verification-2026-10-31)
+for actual results and the separate manual playback/undo acceptance limit.
