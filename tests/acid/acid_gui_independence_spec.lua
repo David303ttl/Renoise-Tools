@@ -34,6 +34,7 @@ end})
 local function observable()
   local handlers,history={},{}
   return {add_notifier=function(_,fn)handlers[fn]=true;history[#history+1]=fn end,
+    has_notifier=function(_,fn)return handlers[fn]==true end,
     remove_notifier=function(_,fn)handlers[fn]=nil end,
     fire_stale=function()
       local pending={};for _,fn in ipairs(history)do pending[#pending+1]=fn end
@@ -48,8 +49,9 @@ song.selected_phrase_observable=observable()
 song.instruments_observable=observable()
 instrument.name_observable=observable()
 instrument.phrases_observable=observable()
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable()}
+  app_idle_observable=observable(),tool_will_unload_observable=observable()}
 local builder={views={},nodes={}}
 setmetatable(builder,{__index=function(_,kind)return function(_,properties)
   local node={kind=kind,children={},notifiers={}}
@@ -159,6 +161,7 @@ assert(writes==1 and last_writer_request.kind=="regenerate" and
   "a new armed source edit regenerates only the exact independent phrase")
 local blocked_duplicate=fixture.phrase(source,fresh)
 instrument.phrases[#instrument.phrases+1]=blocked_duplicate
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
 instrument.phrases_observable:fire()
 tool.app_idle_observable:fire()
 assert(independent.active,"a new copied-ID collision offers resolution")

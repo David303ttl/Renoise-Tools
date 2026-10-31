@@ -187,6 +187,8 @@ function M.new(options)
   local integrity = nil
   local detached_integrity = nil
   local adoption_blocked_reason = nil
+  local observer_error = nil
+  local context = {}
   local epoch = 0
   local session = 0
   local opened = false
@@ -313,11 +315,7 @@ function M.new(options)
   end
 
   local function context_state()
-    local integrity_state=integrity and integrity:state() or {blocked=false}
-    if adoption_blocked_reason then
-      integrity_state.blocked=true
-      integrity_state.reason=integrity_state.reason or adoption_blocked_reason
-    end
+    local integrity_state=context:integrity_state()
     local record = active
     if record and record.settled then record = nil end
     local status = "idle"
@@ -555,8 +553,6 @@ function M.new(options)
     return false, blocked_reason
   end
 
-  local context = {}
-
   local function flush_pending()
     if flushing or not pending_trigger then return false end
     if dispatching or (active and not active.settled) then return false end
@@ -586,6 +582,7 @@ function M.new(options)
   end
 
   function context:request_generation(trigger)
+    if observer_error then return false,observer_error end
     if mutation_depth>0 or mutation_failed then
       return false,"Synchronous mutation is active or requires recovery"
     end
@@ -1636,6 +1633,33 @@ function M.new(options)
     end
   end
 
+  function context:notify_native_change(kind)
+    if kind=="selection" then
+      if not current_song then return false end
+      local ok,instrument,phrase=pcall(function()
+        return current_song.selected_instrument,current_song.selected_phrase
+      end)
+      if not ok then
+        self:mark_dirty("Cannot inspect native selection")
+        return false
+      end
+      if rawequal(instrument,native_instrument) and rawequal(phrase,native_phrase) then return false end
+      local writer_state=inspect_writer(writer)
+      if writer_state and writer_state.status=="busy" and self:is_temporary(instrument,phrase) then return false end
+      self:mark_dirty("Native selection changed")
+      return true
+    end
+    local reason=kind=="undo" and "Native undo or redo change" or "External native change"
+    self:mark_dirty(reason)
+    return true
+  end
+
+  function context:set_observer_error(reason)
+    observer_error=reason
+    invalidate_target_projection()
+    if reason then self:mark_dirty(reason) end
+  end
+
   local function run_mutation(token,action,cleanup_only)
     local identity_scope=identity_running and rawequal(token,identity_token)
     local operation_scope=active and active.current and rawequal(active.token,token)
@@ -1902,6 +1926,7 @@ function M.new(options)
     epoch_serial = epoch_serial + 1
     epoch = epoch_serial
     current_song = song
+    observer_error=nil
     expected_mutation_inventory=nil
     expected_mutation_inventory_reason="missing-proof"
     adoption_blocked_reason=nil
@@ -2003,6 +2028,10 @@ function M.new(options)
 
   function context:integrity_state()
     local state=integrity and integrity:state() or {blocked=false,serial=0,recovery={}}
+    if observer_error then
+      state.blocked=true
+      state.reason=observer_error
+    end
     if mutation_recording_failed_reason then
       state.blocked=true
       state.reason=mutation_recording_failed_reason
@@ -2015,6 +2044,7 @@ function M.new(options)
   end
 
   function context:revalidation_status()
+    if observer_error then return {verified=false,blocked=true,reason=observer_error} end
     if mutation_recording_failed_reason then
       return {verified=false,blocked=true,reason=mutation_recording_failed_reason}
     end
@@ -2029,6 +2059,7 @@ function M.new(options)
   end
 
   function context:revalidate(proof)
+    if observer_error then return false,observer_error end
     if mutation_recording_failed_reason then return false,mutation_recording_failed_reason end
     if not integrity then return false,"No current document is attached" end
     local cleared,reason=integrity:clear(proof,function()

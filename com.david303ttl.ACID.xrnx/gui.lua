@@ -18,12 +18,62 @@ local attached_song
 local dialog_session
 local idle_observable
 local idle_notifier
-local function detach_dialog_watch()
-  native_observers:detach()
-  if idle_observable and idle_notifier then
-    pcall(function() idle_observable:remove_notifier(idle_notifier) end)
+local idle_active=false
+local lifecycle_enabled=true
+local lifecycle_records={}
+local function remove_exact_notifier(observable,handler)
+  local has_ok,has_notifier=pcall(function() return observable:has_notifier(handler) end)
+  if not has_ok then return false,tostring(has_notifier) end
+  if type(has_notifier)~="boolean" then return false,"has_notifier must return a boolean" end
+  if not has_notifier then return true end
+  local removed,remove_error=pcall(function() observable:remove_notifier(handler) end)
+  local checked,is_registered=pcall(function() return observable:has_notifier(handler) end)
+  if not checked then return false,tostring(is_registered) end
+  if type(is_registered)~="boolean" then return false,"has_notifier must return a boolean" end
+  if not is_registered then return true end
+  if not removed then return false,tostring(remove_error) end
+  return false,"notifier remains registered after removal"
+end
+local function remove_lifecycle_watchers(keep_record)
+  local complete=true
+  for index=#lifecycle_records,1,-1 do
+    local record=lifecycle_records[index]
+    if not (keep_record and rawequal(record,keep_record)) then
+      local removed,err=remove_exact_notifier(record.observable,record.handler)
+      if removed then
+        table.remove(lifecycle_records,index)
+      else
+        complete=false
+        record.remove_error=tostring(err)
+      end
+    end
   end
-  idle_observable,idle_notifier=nil,nil
+  return complete
+end
+local function lifecycle_registration_failed(label,reason)
+  lifecycle_enabled=false
+  remove_lifecycle_watchers()
+  error(label.." notifier registration failed: "..tostring(reason))
+end
+local function remove_idle_watch(observable,notifier)
+  if observable==nil and notifier==nil then observable,notifier=idle_observable,idle_notifier end
+  if observable==nil or notifier==nil then return true end
+  local is_current=rawequal(idle_observable,observable) and rawequal(idle_notifier,notifier)
+  if is_current then idle_active=false end
+  local ok,err=remove_exact_notifier(observable,notifier)
+  if not ok then return false,tostring(err) end
+  if is_current and rawequal(idle_observable,observable) and rawequal(idle_notifier,notifier) then
+    idle_observable,idle_notifier=nil,nil
+    idle_active=false
+  end
+  return true
+end
+local function detach_dialog_watch()
+  local observers_removed,observer_error=native_observers:detach()
+  local idle_removed,idle_error=remove_idle_watch()
+  if not observers_removed then return false,observer_error end
+  if not idle_removed then return false,idle_error end
+  return true
 end
 local function stop_live_context()
   if active_runtime then
@@ -35,13 +85,14 @@ local function stop_live_context()
   if checkbox then pcall(function() checkbox.value=false end) end
 end
 local function release_context()
+  if not lifecycle_enabled then return true end
   local song=attached_song or renoise.song()
   if song and drafts.has_volatile(song) then
     renoise.app():show_warning(
       "ACID has drafts that could not be saved with this song. They will be lost when it closes.")
   end
   attached_song=nil
-  detach_dialog_watch()
+  local listeners_removed=detach_dialog_watch()
   if active_runtime then active_runtime:release_document() end
   stop_live_context()
   if dialog then
@@ -52,14 +103,43 @@ local function release_context()
   end
   local recovery_warning=phrase_writer.release()
   if recovery_warning then renoise.app():show_warning(recovery_warning) end
+  return listeners_removed
 end
-if renoise.tool().app_release_document_observable then
-  renoise.tool().app_release_document_observable:add_notifier(release_context)
+local function register_lifecycle(observable,label,handler)
+  if observable==nil then lifecycle_registration_failed(label,"observable is required") end
+  local add_ok,add_notifier=pcall(function() return observable.add_notifier end)
+  local remove_ok,remove_notifier=pcall(function() return observable.remove_notifier end)
+  local has_ok,has_notifier=pcall(function() return observable.has_notifier end)
+  if not add_ok or type(add_notifier)~="function" or not remove_ok or type(remove_notifier)~="function" or
+      not has_ok or type(has_notifier)~="function" then
+    lifecycle_registration_failed(label,"observable must support add_notifier, has_notifier and remove_notifier")
+  end
+  local record={observable=observable,handler=handler}
+  lifecycle_records[#lifecycle_records+1]=record
+  local ok,err=pcall(function() observable:add_notifier(handler) end)
+  if not ok then
+    lifecycle_registration_failed(label,err)
+  end
 end
-if renoise.tool().tool_will_unload_observable then
-  renoise.tool().tool_will_unload_observable:add_notifier(release_context)
+local tool=renoise.tool()
+register_lifecycle(tool.app_release_document_observable,"Document release",release_context)
+register_lifecycle(tool.app_new_document_observable,"New document",release_context)
+local unload_record
+local unload_notifier=function()
+  local released_cleanly=true
+  if lifecycle_enabled then
+    released_cleanly=release_context()
+    lifecycle_enabled=false
+  end
+  local idle_removed=remove_idle_watch()
+  local observers_removed=native_observers:detach()
+  local lifecycle_removed=remove_lifecycle_watchers(unload_record)
+  if released_cleanly and idle_removed and observers_removed and lifecycle_removed then
+    remove_lifecycle_watchers()
+  end
 end
-renoise.tool().app_new_document_observable:add_notifier(release_context)
+register_lifecycle(tool.tool_will_unload_observable,"Tool unload",unload_notifier)
+unload_record=lifecycle_records[#lifecycle_records]
 
 local keys={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B","C+"}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
@@ -69,6 +149,7 @@ local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   warning={0xF2,0x77,0x77}}
 
 function M.show()
+  assert(lifecycle_enabled,"ACID lifecycle observers are unavailable")
   if dialog and dialog.visible then
     if active_runtime and active_runtime:lifetime_state().open and dialog_session==active_runtime:lifetime_state().session then dialog:show();return end
     detach_dialog_watch()
@@ -79,6 +160,8 @@ function M.show()
     stop_live_context()
     dialog=nil
   end
+  local idle_removed,idle_error=remove_idle_watch()
+  assert(idle_removed,"ACID idle notifier removal failed: "..tostring(idle_error))
   local song=renoise.song()
   if not song then renoise.app():show_warning("Open a song first.");return end
   local vb=renoise.ViewBuilder()
@@ -1114,17 +1197,16 @@ function M.show()
   local observed_session=session
   local observed_checkbox=live_checkbox
   idle_observable=renoise.tool().app_idle_observable
+  assert(idle_observable~=nil,"ACID idle observable is required")
+  assert(type(idle_observable.has_notifier)=="function","ACID idle observable must support has_notifier")
   local observed_idle_observable=idle_observable
   local observed_notifier
   local closing=false
   observed_notifier=function()
-    if closing then return end
+    if closing or not lifecycle_enabled or not idle_active then return end
     local function detach_this_watch()
-      pcall(function() observed_idle_observable:remove_notifier(observed_notifier) end)
-    if rawequal(idle_observable,observed_idle_observable) and
-        rawequal(idle_notifier,observed_notifier) then
-        idle_observable,idle_notifier=nil,nil
-      end
+      closing=true
+      remove_idle_watch(observed_idle_observable,observed_notifier)
     end
     if not rawequal(dialog,observed_dialog) or dialog_session~=observed_session then
       detach_this_watch()
@@ -1136,7 +1218,6 @@ function M.show()
       runtime:flush_pending()
       return
     end
-    closing=true
     detach_this_watch()
     native_observers:detach()
     runtime:transition("disarm")
@@ -1147,11 +1228,31 @@ function M.show()
     dialog_session=nil
   end
   idle_notifier=observed_notifier
-  observed_idle_observable:add_notifier(observed_notifier)
+  idle_active=true
+  local idle_registered,idle_error=pcall(function()
+    observed_idle_observable:add_notifier(observed_notifier)
+  end)
+  if not idle_registered then
+    idle_active=false
+    runtime:set_observer_error("Native observer failure: idle notifier registration failed: "..tostring(idle_error))
+    remove_idle_watch()
+    native_observers:detach()
+    runtime:transition("disarm")
+    runtime:close_dialog()
+    if rawequal(dialog,observed_dialog) then dialog=nil end
+    if rawequal(dialog_session,observed_session) then dialog_session=nil end
+    if rawequal(active_live_checkbox,observed_checkbox) then active_live_checkbox=nil end
+    pcall(function() observed_dialog:close() end)
+    pcall(function() observed_checkbox.value=false end)
+    error("ACID idle notifier registration failed: "..tostring(idle_error))
+  end
 end
 
 function M.get_ui_state()
   local visible=dialog and dialog.visible==true or false
-  return {dialog_visible=visible}
+  local observers=native_observers:state()
+  return {dialog_visible=visible,native_observers_attached=observers.attached,
+    native_listener_count=observers.listener_count,native_observer_error=observers.error,
+    idle_listener_attached=idle_active}
 end
 return M

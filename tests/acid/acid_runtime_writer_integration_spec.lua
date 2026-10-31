@@ -18,7 +18,7 @@ local function observable()
     end,
   }
 end
-local idle,committed=observable(),observable()
+local idle=observable()
 
 local instrument
 local render_queue={}
@@ -26,6 +26,7 @@ local render_mode="sync"
 local defer_commit=false
 
 local function make_script()
+  local committed=observable()
   local script={paragraphs={},parameters={},pending_changes=0,editor_visible=true,
     compile_error="",runtime_error="",committed_observable=committed}
   function script:commit()
@@ -124,6 +125,7 @@ local function make_phrase()
 end
 
 instrument={name="Runtime writer integration",phrases={},
+  phrase_mappings={},
   samples={{sample_buffer={has_sample_data=true}}},
   plugin_properties={plugin_loaded=false,alias_instrument_index=0,
     alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},
@@ -404,6 +406,165 @@ assert(store.read_draft(song,instrument,created_second)==nil,
 assert(drafts.has(song)==false,"flushed create left a draft behind")
 assert(cold_ctx:state().pending==false)
 render_mode="sync"
+
+-- Real writer inventory notifications are proven only against the exact
+-- post-scope membership. A delayed stage notification is accepted while an
+-- unrelated phrase inserted during render invalidates the active request.
+do
+  local observer_host=dofile("tests/acid/observer_host_fixture.lua")
+  observer_host.attach(song)
+  local observer_ctx=new_context()
+  local observer_results,observer_delivery=delivered()
+  observer_ctx:attach_document(song)
+  observer_ctx:open_dialog(observer_delivery)
+  local observer=require("runtime.observers").new()
+  local observed={}
+  assert(observer:attach(song,observer_ctx,function(kind,object,internal,inventory_kind)
+    observed[#observed+1]={kind=kind,object=object,internal=internal,inventory_kind=inventory_kind}
+  end))
+
+  local pending_inventory_notifications=0
+  local native_insert,native_delete=instrument.insert_phrase_at,instrument.delete_phrase_at
+  instrument.insert_phrase_at=function(self,index)
+    local inserted=native_insert(self,index)
+    pending_inventory_notifications=pending_inventory_notifications+1
+    return inserted
+  end
+  instrument.delete_phrase_at=function(self,index)
+    native_delete(self,index)
+    pending_inventory_notifications=pending_inventory_notifications+1
+  end
+  local function deliver_inventory_notifications()
+    while pending_inventory_notifications>0 do
+      pending_inventory_notifications=pending_inventory_notifications-1
+      instrument.phrases_observable:fire()
+    end
+  end
+
+  render_mode="defer"
+  observer_ctx:bind_new(instrument)
+  edit(observer_ctx,source(54))
+  assert(observer_ctx:request_generation("manual"))
+  local active=observer_ctx:state().token
+  assert(active and active:is_current())
+  local render=next_render("observer-proven stage insertion")
+  assert(writer.state()=="busy" and pending_inventory_notifications>0)
+  observer_host.attach(song)
+
+  -- The host can deliver the structural notification after the synchronous
+  -- mutation scope. Exact membership proof keeps the request authorized.
+  local proof_matches,proof_reason=observer_ctx:matches_mutation_inventory(instrument,"phrases")
+  assert(proof_matches,proof_reason)
+  deliver_inventory_notifications()
+  assert(active:is_current(),"proven delayed writer inventory revoked its request before idle refresh")
+  local refreshed,refresh_error=observer:refresh();assert(refreshed,tostring(refresh_error)..":"..tostring(observer:state().error))
+  assert(active:is_current(),"proven delayed writer inventory revoked its request at idle reconciliation")
+  local saw_proven_inventory=false
+  for _,event in ipairs(observed) do
+    if event.kind=="inventory" and rawequal(event.object,instrument) and
+        event.inventory_kind=="phrases" and not event.internal then
+      saw_proven_inventory=true
+    end
+  end
+  assert(saw_proven_inventory,"delayed writer inventory was not observed after scope exit")
+
+  -- Add a native phrase without updating the captured mutation inventory. Its
+  -- list callback must invalidate immediately, before terminal delivery.
+  local phrase_count=#instrument.phrases
+  local external=native_insert(instrument,phrase_count+1)
+  observer_host.attach(song)
+  local changed_store=song.tool_data
+  assert(pending_inventory_notifications==0)
+  local mismatch,mismatch_reason=observer_ctx:matches_mutation_inventory(instrument,"phrases")
+  assert(not mismatch and mismatch_reason=="membership-mismatch",
+    "external phrase insertion matched the writer's exact mutation inventory")
+  instrument.phrases_observable:fire()
+  local refreshed,refresh_error=observer:refresh();assert(refreshed,tostring(refresh_error)..":"..tostring(observer:state().error))
+  assert(not active:is_current(),"external membership mismatch retained writer authorization")
+  render.callback(nil,render.count,0)
+  settle_writer("externally changed writer inventory")
+  assert(writer.state()=="idle" and #instrument.phrases==phrase_count and
+    not ownership.id(external) and song.tool_data==changed_store,
+    "invalidated request left unexpected state: writer="..tostring(writer.state())..
+      ", phrases="..#instrument.phrases..", expected="..phrase_count..
+      ", external_id="..tostring(ownership.id(external))..
+      ", store_same="..tostring(song.tool_data==changed_store))
+  assert(rawequal(instrument.phrases[#instrument.phrases],external),
+    "writer cleanup removed the unrelated externally inserted phrase")
+  assert(observer_ctx:integrity_state().blocked or not active:is_current(),
+    "external mutation did not retain a safe invalidated runtime state")
+
+  native_delete(instrument,#instrument.phrases)
+  instrument.insert_phrase_at,instrument.delete_phrase_at=native_insert,native_delete
+  assert(observer:detach())
+  observer_ctx:release_document()
+  render_mode="sync"
+end
+
+-- Regeneration exercises the real backup/copy/name/cleanup mutation scopes.
+do
+  local observer_host=dofile("tests/acid/observer_host_fixture.lua")
+  observer_host.attach(song)
+  local observer_ctx=new_context()
+  local observer_results,observer_delivery=delivered()
+  observer_ctx:attach_document(song)
+  observer_ctx:open_dialog(observer_delivery)
+  local observer=require("runtime.observers").new()
+  local observed={}
+  assert(observer:attach(song,observer_ctx,function(kind,object,internal,inventory_kind)
+    observed[#observed+1]={kind=kind,object=object,internal=internal,inventory_kind=inventory_kind}
+  end))
+
+  local native_insert,native_delete=instrument.insert_phrase_at,instrument.delete_phrase_at
+  instrument.insert_phrase_at=function(self,index)
+    local inserted=native_insert(self,index)
+    self.phrases_observable:fire()
+    return inserted
+  end
+  instrument.delete_phrase_at=function(self,index)
+    native_delete(self,index)
+    self.phrases_observable:fire()
+  end
+  local native_copy=phrase.copy_from
+  phrase.copy_from=function(self,other)
+    native_copy(self,other)
+    self.name_observable:fire()
+    self:fire_line_notifier()
+  end
+
+  observer_ctx:refresh_inventory()
+  observer_ctx:bind_phrase(instrument,phrase)
+  edit(observer_ctx,source(56))
+  dispatch(observer_ctx)
+  drain(observer_results,1,"observed exact-target regeneration")
+  assert_success(observer_results[1],phrase,"observed exact-target regeneration")
+  assert(#instrument.phrases==2 and rawequal(instrument.phrases[1],phrase),
+    "observed regeneration changed destination identity or phrase count")
+  assert(observer_ctx:target_state().kind=="owned" and
+    rawequal(observer_ctx:target_state().phrase,phrase),
+    "internal backup notifications detached the unchanged destination")
+  local list_notifications=0
+  local saw_name,saw_lines=false,false
+  for _,event in ipairs(observed) do
+    if event.kind=="inventory" and event.inventory_kind=="phrases" then
+      list_notifications=list_notifications+1
+      assert(event.internal,"writer phrase-list callback escaped its mutation scope")
+    elseif event.kind=="rename" and rawequal(event.object,phrase) then
+      saw_name=true
+      assert(event.internal,"writer destination rename escaped its mutation scope")
+    elseif event.kind=="content" and rawequal(event.object,phrase) then
+      saw_lines=true
+      assert(event.internal,"writer destination copy escaped its mutation scope")
+    end
+  end
+  assert(list_notifications>=4 and saw_name and saw_lines,
+    "writer regeneration did not exercise insert, copy/name, and cleanup observers")
+  assert(observer:refresh())
+  instrument.insert_phrase_at,instrument.delete_phrase_at=native_insert,native_delete
+  phrase.copy_from=native_copy
+  assert(observer:detach())
+  observer_ctx:release_document()
+end
 
 -- Cancellation before the deferred native render settles and leaves the
 -- scheduler dispatchable for a later create.

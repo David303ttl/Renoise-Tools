@@ -21,6 +21,7 @@ renoise.Transport={TIMING_MODEL_LPB=1}
 local song=renoise.song()
 song.transport={timing_model=1,groove_enabled=false}
 function song:is_undo_redoing() return false end
+dofile("tests/acid/observer_host_fixture.lua").attach(song)
 for _,instrument in ipairs(song.instruments) do
   instrument.plugin_properties={plugin_loaded=false,alias_instrument_index=0,
     alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0}

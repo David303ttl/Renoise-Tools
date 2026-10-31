@@ -4,6 +4,7 @@ local function observable()
   local handlers={}
   return {
     add_notifier=function(_,handler) handlers[handler]=true end,
+    has_notifier=function(_,handler) return handlers[handler]==true end,
     remove_notifier=function(_,handler) handlers[handler]=nil end,
     fire=function(self)
       local pending={}
@@ -39,7 +40,7 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="Owned two"}

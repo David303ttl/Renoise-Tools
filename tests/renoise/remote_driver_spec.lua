@@ -990,6 +990,11 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(take_responses(client), "acceptance-integrity-observers"), nil,
     "integrity observer acceptance returned before its native operation settled")
   assert(completion, "integrity observer acceptance runner was not called")
+  host.release:fire()
+  host.new_document:fire()
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-integrity-observers"), nil,
+    "running lifecycle acceptance must survive its own document change")
   assert(completion({status = "PASS", case = "integrity-observers", post_commit_blocked = true}))
   fire_idle(host)
   local integrity = find_response(take_responses(client), "acceptance-integrity-observers")

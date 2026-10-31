@@ -1,5 +1,55 @@
 # Runtime integration acceptance map
 
+## Gate 6 observer contracts (2026-10-31)
+
+Baseline: `feature/hardening4` at `5cd1d7c`; the staged playbook edit is preserved.
+The reviewed `7d8fb918` baseline differs by the closed-dialog completion fix.
+Pinned API 6.2 definitions and offline docs confirm the following subscriptions.
+
+| Owner | Required protection |
+| --- | --- |
+| `runtime.observers` / song | Instrument inventory; native instrument and phrase selection. |
+| `runtime.observers` / instrument | Name, phrase/mapping inventories, phrase playback mode and program. |
+| `runtime.observers` / phrase | Name, content properties, line changes, all twelve column names/mutes; mapping and script properties when those objects exist. |
+| `gui` | Release, new document, unload; existing dialog idle reconciliation and visibility cleanup. |
+| `runtime.context` | Prompt invalidation, exact mutation membership, target/revision authority, draft retention and reconciliation. |
+| `writers.phrase_writer` | Scoped insert/copy/name/cleanup, render occupancy and terminal settlement. |
+
+Mapping absence is valid; its property listeners are mandatory when present.
+Observable lists do not replace per-object property listeners. API delivery order
+and undo atomicity are unspecified; uncertain external changes invalidate.
+Callbacks never render, re-key, select native objects or adopt copied ownership.
+
+Baseline: all 68 existing specs passed, including the original observer spec;
+the new attachment-failure regression reproduced the missing protection.
+
+| Subgate | Regression evidence | Result |
+| --- | --- | --- |
+| T6.1 | `acid_runtime_observers_spec.lua`: required API/getter/add failures, partial attachment, observable/line add-then-throw, removal/probe/readiness reentry, inert delayed callbacks and safe same/cross-song cleanup retries. `acid_runtime_context_spec.lua`: observer failures block musical/identity admission and Revalidate until full attachment succeeds. | PASS. |
+| T6.2 | `acid_runtime_mutation_spec.lua`: nesting, neutrality and recovery. `acid_runtime_writer_integration_spec.lua`: actual stage/backup insert, destination copy/name/line and cleanup callbacks; exact delayed inventory proof; external membership rejection and exact destination preservation. | Focused PASS. |
+| T6.3 | `acid_runtime_observers_spec.lua`, `acid_runtime_context_spec.lua`, writer integration and GUI views/admission/timing specs: prompt external invalidation, A→B→A, scoped/temporary exemptions, New preservation and deferred GUI reconciliation. | PASS. |
+| T6.4 | `acid_runtime_inventory_spec.lua`: undo restores old phrase/seal with newer committed source; association remains unavailable, detached draft remains recoverable and Revalidate performs no repair. | PASS. |
+| T6.5 | GUI views and runtime lifetime specs: required lifecycle registration/unwind, idle add-before/after-registration failures, remove-then-throw, stale idle delivery after release/reopen and unload cleanup retries. Observer specs distinguish destroyed phrase/mapping sources from live/uncertain removal failures using explicit live-song membership and notifier probes. | PASS. |
+| T6.6 | Production GUI/runtime native matrix: visible column 1 and hidden column 12, names and mutes, idle and busy; four synchronous writer cancellations, preserved external snapshots/store, four idle and four busy reconciliations, fresh commit, close/reopen, saved fixture/new song/reload and zero detached native/idle listeners. | PASS: final rerun `interactive-2359f1f47edb4e1a87c93dd8034e61df/report.json`, Renoise 3.5.4 / API 6.2. |
+
+Native busy-state evidence establishes accepted writer work, not a particular
+native render phase. Musical playback and broader Step 8 acceptance remain open.
+
+Gate 6 CLOSED: required observer, reconciliation, lifecycle and targeted native
+assertions pass. Persistence formats and manifest versions are unchanged.
+
+| Verification | Result |
+| --- | --- |
+| ACID / repository suites | 65/65 and 68/68 PASS, Lua 5.1. Final repository rerun: 68/68 PASS. |
+| Offline checks | 18/18 groups PASS; runner and development-package checks rerun after transport changes. |
+| Release package | PASS: 34 runtime files, root entry points, private modules, no SDK/tests/docs. |
+| Independent second pass | Observer/context, lifecycle, native assertions, dependency/callback inventory and destroyed-source lifetime reviews; findings resolved, focused reruns PASS. |
+| Native / Keyboard catalog | PASS: final rerun `interactive-1b8af5002519441382a08b6c947b1315/report.json`. |
+| Native draft recovery | PASS: `interactive-4394ad15f56d4c3abc875d564115cf43/report.json`. |
+| Native writer recovery | PASS: `interactive-6e4cf6651e9a48edb426f15bdf059777/report.json`. |
+| Native editor responsiveness | PASS: `interactive-c30fdbe86e51483c958744f08f9fcd51/report.json`; existing GUI instance, one lifecycle registration set. |
+| Native Make Independent | PASS: `interactive-03db37e4c78a4f47adbf702f49daf9f5/report.json`. |
+
 ## Gate 5 acceptance (2026-10-31)
 
 Baseline `e469f032a7cf4a2d9f51e242e8dddaab2c76958e`; audited commit `7d8fb918f0dfab6106d265ceb482d7426200e633`.

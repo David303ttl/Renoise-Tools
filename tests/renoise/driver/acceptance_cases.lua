@@ -1456,7 +1456,9 @@ local function run_integrity_observers(done)
   end
   local delivered_result
   local sink_calls=0
-  local observed={idle=0,busy=0}
+  local observed={}
+  local production_context,production_dialog
+  local lifecycle_fixture_path
   local attached,context_or_error=pcall(function()
     local runtime=require("runtime.context").new({
       writer=writer,
@@ -1467,13 +1469,6 @@ local function run_integrity_observers(done)
         if request.kind=="create" then accepted,reason=writer.create(request,completion)
         elseif request.kind=="regenerate" then accepted,reason=writer.regenerate(request,completion)
         else return false,"Unexpected request kind" end
-        if accepted and sink_calls==2 and writer.state()=="busy" then
-          local phrase=observed.phrase
-          local old=phrase:column_is_muted(1)
-          phrase:set_column_is_muted(1,not old)
-          phrase:set_column_is_muted(1,old)
-          observed.active_mutation=true
-        end
         return accepted,reason
       end,
       drafts=require("runtime.draft_cache"),
@@ -1513,6 +1508,9 @@ local function run_integrity_observers(done)
     return true
   end
   local function fail(reason)
+    if production_dialog then pcall(function() production_dialog:close() end) end
+    if production_context then pcall(function() production_context:release_document() end) end
+    if lifecycle_fixture_path then pcall(os.remove,lifecycle_fixture_path);lifecycle_fixture_path=nil end
     pcall(function() context:release_document() end)
     done({status="FAIL",case="integrity-observers",reason=tostring(reason)})
   end
@@ -1530,85 +1528,494 @@ local function run_integrity_observers(done)
     local blocked=context:request_generation("manual")
     if blocked then fail("generation resumed after dialog reopen without revalidation");return end
 
-    local observer=require("runtime.observers").new()
-    observer:attach(song,{
-      occupancy_state=function()
-        local status=writer.state()
-        return {status=status}
-      end,
-      is_temporary=function(_,target_instrument,phrase)
-        return writer.is_temporary(song,target_instrument,phrase)
-      end,
-      mutation_state=function() return {depth=0} end,
-      mark_dirty=function() end
-    },function(kind,phrase,internal)
-      if kind=="content" and rawequal(phrase,observed.phrase) then
-        if writer.state()=="busy" then observed.busy=observed.busy+1
-        else observed.idle=observed.idle+1 end
+    local store_before_revalidation=song.tool_data
+    local recovery_status,recovery_proof=context:revalidation_status()
+    if not recovery_status.verified or not recovery_proof or not context:revalidate(recovery_proof) or
+        song.tool_data~=store_before_revalidation or sink_calls~=1 then
+      fail("read-only revalidation did not clear the verified adoption blocker");return
+    end
+
+    context:release_document()
+    local context_module=require("runtime.context")
+    local original_context_new=context_module.new
+    local original_view_builder=renoise.ViewBuilder
+    local original_app=renoise.app
+    local gui_context,gui_dialog
+    local cancel_calls,last_cancel_token=0,nil
+    local gui_reconcile_calls,generate_calls=0,0
+    local callbacks={}
+    context_module.new=function(options)
+      local original_cancel=options.cancel
+      options.cancel=function(token,reason,...)
+        cancel_calls=cancel_calls+1
+        last_cancel_token=token
+        if type(original_cancel)=="function" then return original_cancel(token,reason,...) end
+        return false
       end
-    end)
-    local phrase=observed.phrase
-    local old_name=phrase:column_name(1)
-    local old_mute=phrase:column_is_muted(1)
-    local changed_name=old_name=="ACID acceptance column" and "ACID acceptance column 2" or "ACID acceptance column"
-    phrase:set_column_name(1,changed_name)
-    phrase:set_column_is_muted(1,not old_mute)
-    phrase:set_column_name(1,old_name)
-    phrase:set_column_is_muted(1,old_mute)
-    if observed.idle<4 then observer:detach();fail("column name/mute changes did not notify during idle editing");return end
-    observer:refresh()
-    phrase:set_column_name(1,changed_name)
-    phrase:set_column_name(1,old_name)
-    if observed.idle<6 then observer:detach();fail("column listeners did not survive observer refresh");return end
-    phrase:set_column_name(1,changed_name)
-    local status,proof=context:revalidation_status()
-    if status.verified or proof then observer:detach();fail("changed committed destination passed revalidation");return end
-    phrase:set_column_name(1,old_name)
-    status,proof=context:revalidation_status()
-    if not status.verified or not context:revalidate(proof) then
-      observer:detach();fail(status.reason or "restored destination did not revalidate");return
+      gui_context=original_context_new(options)
+      local reconcile=gui_context.reconcile
+      gui_context.reconcile=function(self,...)
+        gui_reconcile_calls=gui_reconcile_calls+1
+        return reconcile(self,...)
+      end
+      return gui_context
     end
-    context:bind_new(instrument)
-    source.pitch_events[1]=sequence.new_pitch(5,0,true,false)
-    context:transition("edit",{source=source,output_policy="play_once",pb_range=0})
-    delivered_result=nil
-    local next_accepted,next_error=context:request_generation("manual")
-    if not next_accepted then observer:detach();fail(next_error or "fresh request was rejected after revalidation");return end
-    if not observed.active_mutation or observed.busy<2 then
-      observer:detach();fail("column mute change was not observed while the native writer was busy");return
-    end
-    if writer.state()~="busy" then observer:detach();fail("native writer did not remain active after the observer check");return end
-    local second_waits=0
-    local second_idle=renoise.tool().app_idle_observable
-    local wait_second
-    wait_second=function()
-      if not delivered_result then
-        second_waits=second_waits+1
-        if second_waits>6000 then
-          pcall(function() second_idle:remove_notifier(wait_second) end)
-          observer:detach();fail("native writer did not deliver its second terminal result");return
+    renoise.ViewBuilder=function(...)
+      local builder=original_view_builder(...)
+      return setmetatable({}, {__index=function(_,kind)
+        local constructor=builder[kind]
+        if type(constructor)~="function" then return constructor end
+        return function(_,properties,...)
+          local props=type(properties)=="table" and properties or nil
+          local key=props and (props.id or props.text)
+          if key and type(props.notifier)=="function" then
+            if key=="Generate / Regenerate ACID Phrase" then
+              local notifier=props.notifier
+              callbacks[key]=function(...) generate_calls=generate_calls+1;return notifier(...) end
+            else
+              callbacks[key]=props.notifier
+            end
+          end
+          if kind=="popup" and props and props.width==360 then callbacks.phrase_choice=props.notifier end
+          return constructor(builder,properties,...)
         end
-        return
-      end
-      pcall(function() second_idle:remove_notifier(wait_second) end)
-      local committed=delivered_result
-      local count=observed.idle+observed.busy
-      observer:detach()
-      phrase:set_column_name(1,changed_name)
-      if count~=observed.idle+observed.busy or observer:state().attached then
-        fail("column listeners remained active after detach");return
-      end
-      local passed=type(committed)=="table" and committed.kind=="success" and committed.verified==true and
-        context:integrity_state().blocked==false and sink_calls==2
-      context:release_document()
-      done({status=passed and "PASS" or "FAIL",case="integrity-observers",
-        post_commit_blocked=true,revalidation_required=true,restored_destination_revalidated=true,
-        column_name_idle_notifications=observed.idle,column_mute_busy_notifications=observed.busy,
-        listeners_detached=not observer:state().attached,generation_calls=sink_calls,
-        fresh_commit=committed and committed.status or nil,
-        reason=not passed and "fresh generation did not commit after explicit revalidation" or nil})
+      end})
     end
-    second_idle:add_notifier(wait_second)
+    local gui=require("gui")
+    local function show_gui()
+      renoise.app=function(...)
+        local app=original_app(...)
+        return setmetatable({}, {__index=function(_,key)
+          local member=app[key]
+          if key=="show_custom_dialog" and type(member)=="function" then
+            return function(_,...) gui_dialog=member(app,...);return gui_dialog end
+          end
+          if type(member)=="function" then return function(_,...) return member(app,...) end end
+          return member
+        end})
+      end
+      local opened,reason=pcall(gui.show)
+      renoise.app=original_app
+      return opened,reason
+    end
+    local gui_opened,gui_error=show_gui()
+    context_module.new=original_context_new
+    renoise.ViewBuilder=original_view_builder
+    if not gui_opened then fail("production GUI failed to open: "..tostring(gui_error));return end
+    local generate=callbacks["Generate / Regenerate ACID Phrase"]
+    if not gui_context or not gui_dialog or type(generate)~="function" or type(callbacks.phrase_choice)~="function" then
+      fail("production GUI capture missed its context, dialog, target or Generate callback");return
+    end
+    production_context,production_dialog=gui_context,gui_dialog
+    local phrase=observed.phrase
+    local choices,choices_error=gui_context:phrase_choices(instrument)
+    if not choices then fail(choices_error or "production GUI phrase inventory failed");return end
+    local phrase_choice_index=0
+    local phrase_choice_found=false
+    for _,choice in ipairs(choices) do
+      if choice.kind~="new" then
+        phrase_choice_index=phrase_choice_index+1
+        if rawequal(choice.phrase,phrase) then phrase_choice_found=true;break end
+      end
+    end
+    if not phrase_choice_found then fail("committed phrase was absent from production GUI choices");return end
+    callbacks.phrase_choice(phrase_choice_index)
+    local target=gui_context:target_state()
+    if target.kind~="owned" or not rawequal(target.phrase,phrase) then
+      fail("production GUI did not bind the committed phrase by object identity");return
+    end
+
+    local ownership=require("renoise.phrase_ownership")
+    local function ui_state() return gui.get_ui_state() end
+    local initial_ui_state=ui_state()
+    if not initial_ui_state.native_observers_attached or initial_ui_state.native_listener_count<=0 or
+        not initial_ui_state.idle_listener_attached then
+      fail("production GUI did not attach native and idle observers exactly once");return
+    end
+    local initial_listener_count=initial_ui_state.native_listener_count
+    local NOTE_COLUMN_COUNT=renoise.InstrumentPhrase.MAX_NUMBER_OF_NOTE_COLUMNS
+    local VISIBLE_COLUMN=1
+    local HIDDEN_COLUMN=NOTE_COLUMN_COUNT
+    local IDLE_TIMEOUT=6000
+    local IDLE_RECONCILE_TIMEOUT_SECONDS=30
+    if phrase.visible_note_columns~=VISIBLE_COLUMN then
+      fail("fixture must have one visible note column for hidden-column checks");return
+    end
+    local phrase_count=#instrument.phrases
+    local original_names,original_mutes={},{}
+    for _,column in ipairs({VISIBLE_COLUMN,NOTE_COLUMN_COUNT}) do
+      original_names[column]=phrase:column_name(column)
+      original_mutes[column]=phrase:column_is_muted(column)
+    end
+    local matrix={
+      {kind="name",column=VISIBLE_COLUMN},
+      {kind="mute",column=VISIBLE_COLUMN},
+      {kind="name",column=NOTE_COLUMN_COUNT},
+      {kind="mute",column=NOTE_COLUMN_COUNT},
+    }
+    local matrix_index=0
+    local idle_reconciled_cases,busy_reconciled_cases,busy_cases,canceled_cases,preserved_cases=0,0,0,0,0
+    local function change_column(case,changed)
+      if case.kind=="name" then
+        local value=changed and (original_names[case.column].." ACID edit") or original_names[case.column]
+        phrase:set_column_name(case.column,value)
+        return value
+      end
+      local value=original_mutes[case.column]
+      if changed then value=not value end
+      phrase:set_column_is_muted(case.column,value)
+      return value
+    end
+    local function wait_idle(action)
+      local idle=renoise.tool().app_idle_observable
+      local notifier
+      notifier=function() pcall(function() idle:remove_notifier(notifier) end);action() end
+      idle:add_notifier(notifier)
+    end
+    local finish_matrix
+    local function revalidate_then(action,reconcile_before,reconcile_phase)
+      local function continue()
+        if reconcile_phase=="idle" then
+          idle_reconciled_cases=idle_reconciled_cases+1
+        elseif reconcile_phase=="busy" then
+          busy_reconciled_cases=busy_reconciled_cases+1
+        end
+        local integrity_status,proof=gui_context:revalidation_status()
+        if integrity_status.blocked then
+          if not integrity_status.verified or not proof then
+            finish_matrix(false,integrity_status.reason or "integrity blocker has no verified proof");return
+          end
+          local valid,reason=gui_context:revalidate(proof)
+          if not valid then finish_matrix(false,reason or "read-only revalidation failed");return end
+        end
+        local target_state=gui_context:target_state()
+        if target_state.kind~="owned" or not rawequal(target_state.phrase,phrase) then
+          finish_matrix(false,target_state.reason or "restored target did not classify as the same Owned phrase");return
+        end
+        local eligible,eligibility_error=gui_context:musical_eligibility()
+        if not eligible or not rawequal(eligible.phrase,phrase) then
+          finish_matrix(false,eligibility_error or "restored destination is not eligible for musical writes");return
+        end
+        action()
+      end
+      if not reconcile_before then wait_idle(continue);return end
+      local deadline=os.time()+IDLE_RECONCILE_TIMEOUT_SECONDS
+      local idle=renoise.tool().app_idle_observable
+      local notifier
+      notifier=function()
+        local state=ui_state()
+        local target=gui_context:target_state()
+        if gui_reconcile_calls>reconcile_before and state.idle_listener_attached and
+            target.kind=="owned" and rawequal(target.phrase,phrase) then
+          pcall(function() idle:remove_notifier(notifier) end)
+          continue()
+          return
+        end
+        if os.time()>=deadline then
+          pcall(function() idle:remove_notifier(notifier) end)
+          finish_matrix(false,string.format(
+            "production idle reconciliation timed out (calls=%d baseline=%d idle=%s target=%s)",
+            gui_reconcile_calls,reconcile_before,tostring(state.idle_listener_attached),tostring(target.kind)))
+        end
+      end
+      idle:add_notifier(notifier)
+    end
+    local function run_next_matrix_case()
+      matrix_index=matrix_index+1
+      local case=matrix[matrix_index]
+      if not case then finish_matrix(true);return end
+      if not case.column or
+          (case.column==VISIBLE_COLUMN and phrase.visible_note_columns<VISIBLE_COLUMN) or
+          (case.column==HIDDEN_COLUMN and phrase.visible_note_columns>=HIDDEN_COLUMN) then
+        finish_matrix(false,"native observer case does not match the visible or hidden column setup");return
+      end
+      if writer.state()~="idle" then
+        finish_matrix(false,"writer was not idle at the start of a native observer case");return
+      end
+      local idle_store=renoise.song().tool_data
+      local idle_phrase_count=#instrument.phrases
+      local baseline=ownership.snapshot(phrase)
+      local reconcile_before=gui_reconcile_calls
+      change_column(case,true)
+      local changed_snapshot=ownership.snapshot(phrase)
+      local changed=ownership.compare(baseline,changed_snapshot)
+      if not baseline or not changed_snapshot or changed then
+        finish_matrix(false,"idle native column edit did not change the phrase snapshot");return
+      end
+      local idle_eligible,idle_reason=gui_context:musical_eligibility()
+      if idle_eligible then finish_matrix(false,"idle native edit retained write eligibility");return end
+      change_column(case,false)
+      if renoise.song().tool_data~=idle_store or #instrument.phrases~=idle_phrase_count then
+        finish_matrix(false,"idle native observer changed source storage or phrase inventory");return
+      end
+      revalidate_then(function()
+        local store_before=renoise.song().tool_data
+        local count_before=#instrument.phrases
+        local cancellations_before=cancel_calls
+        local busy_reconcile_before=gui_reconcile_calls
+        generate()
+        local writer_status,writer_token=writer.state()
+        if writer_status~="busy" or writer_token==nil then
+          finish_matrix(false,"production GUI did not start the requested writer operation");return
+        end
+        local retained_value=change_column(case,true)
+        if cancel_calls<=cancellations_before or not rawequal(last_cancel_token,writer_token) then
+          finish_matrix(false,"native column edit did not synchronously cancel the active writer token");return
+        end
+        busy_cases=busy_cases+1
+        canceled_cases=canceled_cases+1
+        if writer.state()~="busy" then finish_matrix(false,"writer occupancy ended before terminal delivery");return end
+        local expected=ownership.snapshot(phrase)
+        local waits=0
+        local idle=renoise.tool().app_idle_observable
+        local terminal
+        terminal=function()
+          if writer.state()=="busy" then
+            waits=waits+1
+            if waits>IDLE_TIMEOUT then
+              pcall(function() idle:remove_notifier(terminal) end)
+              finish_matrix(false,"canceled writer terminal was not delivered")
+            end
+            return
+          end
+          pcall(function() idle:remove_notifier(terminal) end)
+          local actual=ownership.snapshot(phrase)
+          local matches,reason=ownership.compare(expected,actual)
+          local retained=case.kind=="name" and phrase:column_name(case.column)==retained_value or
+            case.kind=="mute" and phrase:column_is_muted(case.column)==retained_value
+          if not matches or not retained or renoise.song().tool_data~=store_before or
+              #instrument.phrases~=count_before or #instrument.phrases~=phrase_count then
+            finish_matrix(false,reason or "canceled writer changed destination, source store or inventory")
+            return
+          end
+          preserved_cases=preserved_cases+1
+          change_column(case,false)
+          revalidate_then(run_next_matrix_case,busy_reconcile_before,"busy")
+        end
+        idle:add_notifier(terminal)
+      end,reconcile_before,"idle")
+    end
+    finish_matrix=function(ok,reason)
+      if not ok then pcall(function() gui_dialog:close() end);fail(reason);return end
+      generate()
+      if writer.state()~="busy" then pcall(function() gui_dialog:close() end);fail("explicit Generate did not start after matrix");return end
+      local waits=0
+      local idle=renoise.tool().app_idle_observable
+      local fresh_terminal
+      fresh_terminal=function()
+        if writer.state()=="busy" then
+          waits=waits+1
+          if waits>IDLE_TIMEOUT then
+            pcall(function() idle:remove_notifier(fresh_terminal) end)
+            pcall(function() gui_dialog:close() end);fail("fresh explicit Generate did not settle")
+          end
+          return
+        end
+        pcall(function() idle:remove_notifier(fresh_terminal) end)
+        local generation=gui_context:generation_state()
+        local passed=generation.status=="COMMITTED" and not gui_context:integrity_state().blocked and
+          #instrument.phrases==phrase_count
+        if not passed then fail("fresh explicit Generate failed after revalidation");return end
+        local original_mark_dirty=gui_context.mark_dirty
+        local dirty_calls=0
+        gui_context.mark_dirty=function(self,...)
+          dirty_calls=dirty_calls+1
+          return original_mark_dirty(self,...)
+        end
+        local original_session=gui_context:lifetime_state().session
+        pcall(function() gui_dialog:close() end)
+        production_dialog=gui_dialog
+        local close_waits=0
+        local closed
+        closed=function()
+          close_waits=close_waits+1
+          if gui_context:lifetime_state().open and close_waits<=IDLE_TIMEOUT then return end
+          pcall(function() idle:remove_notifier(closed) end)
+          if gui_context:lifetime_state().open then
+            gui_context.mark_dirty=original_mark_dirty
+            fail("GUI did not close through idle reconciliation");return
+          end
+          local closed_state=ui_state()
+          if closed_state.native_observers_attached or closed_state.native_listener_count~=0 or
+              closed_state.idle_listener_attached then
+            gui_context.mark_dirty=original_mark_dirty
+            fail(string.format("closed GUI retained observers (attached=%s listeners=%s idle=%s error=%s)",
+              tostring(closed_state.native_observers_attached),tostring(closed_state.native_listener_count),
+              tostring(closed_state.idle_listener_attached),
+              tostring(closed_state.native_observer_error or closed_state.observer_error)));return
+          end
+          local dirty_when_closed=dirty_calls
+          local saved_name=phrase:column_name(VISIBLE_COLUMN)
+          phrase:set_column_name(VISIBLE_COLUMN,saved_name.." closed")
+          local detached_check
+          detached_check=function()
+            pcall(function() idle:remove_notifier(detached_check) end)
+            if dirty_calls~=dirty_when_closed then
+              gui_context.mark_dirty=original_mark_dirty
+              fail("dialog-scoped native observer remained active after close");return
+            end
+            local before_new_dialog=gui_context:lifetime_state().session
+            local reopened,reopen_error=show_gui()
+            if not reopened or not gui_dialog or not gui_context:lifetime_state().open or
+                gui_context:lifetime_state().session<=before_new_dialog then
+              gui_context.mark_dirty=original_mark_dirty
+              fail("production GUI failed to reopen: "..tostring(reopen_error));return
+            end
+            local reopened_state=ui_state()
+            if not reopened_state.native_observers_attached or
+                reopened_state.native_listener_count~=initial_listener_count or
+                not reopened_state.idle_listener_attached then
+              gui_context.mark_dirty=original_mark_dirty
+              fail("reopened GUI did not attach one complete native and idle observer set");return
+            end
+            production_dialog=gui_dialog
+            local dirty_before_reopen_edit=dirty_calls
+            phrase:set_column_name(VISIBLE_COLUMN,saved_name)
+            if dirty_calls<=dirty_before_reopen_edit then
+              gui_context.mark_dirty=original_mark_dirty
+              fail("reopened dialog did not restore native invalidation");return
+            end
+            local release_seen=false
+            local new_document_count=0
+            local new_song_distinct=false
+            local original_epoch=gui_context:lifetime_state().epoch
+            local new_song_gui_attached=false
+            local release_notifier=function()
+              release_seen=true
+            end
+            local new_document_notifier=function()
+              new_document_count=new_document_count+1
+              if new_document_count==1 then new_song_distinct=not rawequal(renoise.song(),song) end
+            end
+            local tool=renoise.tool()
+            tool.app_release_document_observable:add_notifier(release_notifier)
+            tool.app_new_document_observable:add_notifier(new_document_notifier)
+            lifecycle_fixture_path=renoise.tool().bundle_path..
+              "\\..\\fixtures\\acceptance-integrity-observers.xrns"
+            local fixture,save_error=save_independent_fixture(song,"acceptance-integrity-observers.xrns")
+            if not fixture then
+              pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+              pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+              gui_context.mark_dirty=original_mark_dirty
+              fail(save_error or "disposable lifecycle song could not be saved");return
+            end
+            local app=renoise.app()
+            local changed,new_error=pcall(function() app:new_song_no_template() end)
+            if not changed then
+              pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+              pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+              gui_context.mark_dirty=original_mark_dirty
+              fail("native new-song request failed: "..tostring(new_error));return
+            end
+            local lifecycle_waits=0
+            local lifecycle
+            lifecycle=function()
+              lifecycle_waits=lifecycle_waits+1
+              if (not release_seen or new_document_count<1) and lifecycle_waits<=IDLE_TIMEOUT then return end
+              pcall(function() idle:remove_notifier(lifecycle) end)
+              if not release_seen or new_document_count<1 or gui_context:lifetime_state().song_attached then
+                pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+                pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+                gui_context.mark_dirty=original_mark_dirty
+                fail("new-song lifecycle retained the old production context");return
+              end
+              local released_state=ui_state()
+              if released_state.native_observers_attached or released_state.native_listener_count~=0 or
+                  released_state.idle_listener_attached then
+                pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+                pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+                gui_context.mark_dirty=original_mark_dirty
+                fail("released song retained native or idle observers");return
+              end
+              local shown,show_error=show_gui()
+              local attached_state=ui_state()
+              local attached_lifetime=gui_context:lifetime_state()
+              if not shown or not gui_dialog or not attached_lifetime.song_attached or
+                  attached_lifetime.epoch<=original_epoch or not attached_state.native_observers_attached or
+                  attached_state.native_listener_count<=0 or not attached_state.idle_listener_attached then
+                pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+                pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+                gui_context.mark_dirty=original_mark_dirty
+                fail("GUI did not attach exactly one observer set to the new song: "..tostring(show_error));return
+              end
+              local attached_listener_count=attached_state.native_listener_count
+              local shown_again,show_again_error=show_gui()
+              local repeated_state=ui_state()
+              if not shown_again or repeated_state.native_listener_count~=attached_listener_count or
+                  not repeated_state.native_observers_attached or not repeated_state.idle_listener_attached then
+                pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+                pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+                gui_context.mark_dirty=original_mark_dirty
+                fail("repeated new-song GUI show duplicated or lost observers: "..tostring(show_again_error));return
+              end
+              new_song_gui_attached=true
+              local before_load=new_document_count
+              local loaded,load_error=pcall(function() app:load_song(renoise.tool().bundle_path..
+                "\\..\\fixtures\\acceptance-integrity-observers.xrns") end)
+              if not loaded then
+                pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+                pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+                gui_context.mark_dirty=original_mark_dirty
+                fail("saved disposable song could not be reloaded: "..tostring(load_error));return
+              end
+              local reload_waits=0
+              local reloaded
+              reloaded=function()
+                reload_waits=reload_waits+1
+                if new_document_count<=before_load and reload_waits<=IDLE_TIMEOUT then return end
+                pcall(function() idle:remove_notifier(reloaded) end)
+                pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
+                pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
+                gui_context.mark_dirty=original_mark_dirty
+                pcall(os.remove,renoise.tool().bundle_path.."\\..\\fixtures\\acceptance-integrity-observers.xrns")
+                lifecycle_fixture_path=nil
+                local matrix_passed=idle_reconciled_cases==#matrix and busy_reconciled_cases==#matrix and
+                  busy_cases==#matrix and
+                  canceled_cases==#matrix and preserved_cases==#matrix and generate_calls==#matrix+1
+                local old_context_attached=gui_context:lifetime_state().song_attached
+                local passed=new_document_count>before_load and new_song_distinct and new_song_gui_attached and
+                  not old_context_attached and matrix_passed and generation.status=="COMMITTED"
+                local failure_reason
+                if new_document_count<=before_load or not new_song_distinct then
+                  failure_reason="new-song and reload document events were not observed"
+                elseif old_context_attached then
+                  failure_reason="old GUI context reattached during song reload"
+                elseif not new_song_gui_attached then
+                  failure_reason="new-song GUI failed native observer attachment checks"
+                elseif not matrix_passed then
+                  failure_reason=string.format(
+                    "native matrix incomplete (idle_reconciled=%d busy_reconciled=%d busy=%d canceled=%d preserved=%d generates=%d)",
+                    idle_reconciled_cases,busy_reconciled_cases,busy_cases,canceled_cases,preserved_cases,generate_calls)
+                elseif generation.status~="COMMITTED" then
+                  failure_reason="fresh Generate ended with status "..tostring(generation.status)
+                end
+                production_context,production_dialog=nil,nil
+                done({status=passed and "PASS" or "FAIL",case="integrity-observers",
+                  post_commit_blocked=true,revalidation_required=true,restored_destination_revalidated=true,
+                  visible_hidden_name_mute_idle_busy=matrix_passed,
+                  active_writer_canceled=canceled_cases==#matrix,
+                  canceled_destination_and_store_preserved=preserved_cases==#matrix,
+                  gui_idle_reconciled=idle_reconciled_cases==#matrix and busy_reconciled_cases==#matrix,
+                  idle_reconciled_cases=idle_reconciled_cases,busy_reconciled_cases=busy_reconciled_cases,
+                  dialog_close_reopen_detached=closed_state.native_listener_count==0 and
+                    reopened_state.native_listener_count==initial_listener_count,
+                  old_song_released=release_seen,new_song_gui_attached=new_song_gui_attached,
+                  listeners_detached=release_seen and released_state.native_listener_count==0 and
+                    not released_state.idle_listener_attached,
+                  generation_calls=generate_calls,fresh_commit=generation.status,
+                  reason=failure_reason})
+              end
+              idle:add_notifier(reloaded)
+            end
+            idle:add_notifier(lifecycle)
+          end
+          idle:add_notifier(detached_check)
+        end
+        idle:add_notifier(closed)
+      end
+      idle:add_notifier(fresh_terminal)
+    end
+    run_next_matrix_case()
   end
   local first_waits=0
   local first_idle=renoise.tool().app_idle_observable
@@ -1792,7 +2199,6 @@ local function run_editor_responsiveness(done)
   local gui_context_module,original_gui_context_new,gui_context,gui_transition_context
   local gui_live_trace_enabled=false
   local gui_live_trace={}
-  local gui_observer_event_trace={}
   local gui_inventory_match_trace={}
   local gui_context_created_count=0
   local gui_live_request_trace={}
@@ -2232,56 +2638,7 @@ local function run_editor_responsiveness(done)
       original_app_factory=nil
       return nil,"GUI test dialog capture could not wrap renoise.app: "..tostring(app_wrap_error)
     end
-    local observer_module=require("runtime.observers")
-    local original_observer_new=observer_module.new
-    local cached_gui_module=package.loaded["gui"]
-    observer_module.new=function(...)
-      local observer=original_observer_new(...)
-      local original_attach=observer.attach
-      observer.attach=function(self,current_song,current_runtime,callback)
-        local observed_callback=callback
-        if type(callback)=="function" then
-          observed_callback=function(kind,subject,internal,inventory_kind)
-            if gui_live_trace_enabled and #gui_observer_event_trace<80 then
-              local subject_name="?"
-              pcall(function() subject_name=tostring(subject and subject.name or "") end)
-              local temporary=false
-              if current_runtime and type(current_runtime.is_temporary)=="function" then
-                local ok,value=pcall(current_runtime.is_temporary,current_runtime,instrument,subject)
-                temporary=ok and value==true
-              end
-              local occupancy="?"
-              if current_runtime and type(current_runtime.occupancy_state)=="function" then
-                local ok,value=pcall(current_runtime.occupancy_state,current_runtime)
-                occupancy=ok and tostring(value and value.status or "?") or "?"
-              end
-              local mutation_depth="?"
-              if current_runtime and type(current_runtime.mutation_state)=="function" then
-                local ok,value=pcall(current_runtime.mutation_state,current_runtime)
-                mutation_depth=ok and tostring(value and value.depth or "?") or "?"
-              end
-              gui_observer_event_trace[#gui_observer_event_trace+1]=table.concat({
-                tostring(kind),"subject="..subject_name,
-                "generated="..tostring(rawequal(subject,phrase)),
-                "instrument="..tostring(rawequal(subject,instrument)),
-                "temporary="..tostring(temporary),"internal="..tostring(internal),
-                "writer="..occupancy,"mutation="..mutation_depth,
-                "inventory_kind="..tostring(inventory_kind),
-                "matches_method="..tostring(type(current_runtime and current_runtime.matches_mutation_inventory)=="function")
-              },",")
-              metrics.gui_observer_event_trace=table.concat(gui_observer_event_trace,";")
-            end
-            return callback(kind,subject,internal,inventory_kind)
-          end
-        end
-        return original_attach(self,current_song,current_runtime,observed_callback)
-      end
-      return observer
-    end
-    package.loaded["gui"]=nil
     local shown,show_error=pcall(function() require("gui").show() end)
-    package.loaded["gui"]=cached_gui_module
-    observer_module.new=original_observer_new
     pcall(function() renoise.ViewBuilder=builder_factory end)
     original_view_builder=nil
     pcall(function() renoise.app=app_factory end)

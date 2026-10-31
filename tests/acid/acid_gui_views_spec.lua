@@ -1,15 +1,31 @@
 dofile("tests/bootstrap.lua")("acid")
 
 local function observable()
-  local handlers={}
+  local handlers,notifier_history={},{}
   return {
-    add_notifier=function(_,handler) handlers[handler]=true end,
-    remove_notifier=function(_,handler) handlers[handler]=nil end,
+    add_notifier=function(self,handler)
+      if self.fail_add then error("injected notifier registration failure") end
+      handlers[handler]=true
+      notifier_history[#notifier_history+1]=handler
+      if self.fail_add_after_register then error("injected partial notifier registration failure") end
+    end,
+    has_notifier=function(_,handler) return handlers[handler]==true end,
+    remove_notifier=function(self,handler)
+      if self.fail_remove then error("injected notifier removal failure") end
+      if not handlers[handler] then error("injected removal of unattached notifier") end
+      handlers[handler]=nil
+      if self.fail_remove_after_unregister then error("injected removal failure after unregister") end
+    end,
+    fail_remove=false,
+    fail_remove_after_unregister=false,
+    fail_add=false,
+    fail_add_after_register=false,
     listener_count=function()
       local count=0
       for _ in pairs(handlers) do count=count+1 end
       return count
     end,
+    notifier_history=notifier_history,
     fire=function()
       local pending={}
       for handler in pairs(handlers) do pending[#pending+1]=handler end
@@ -246,6 +262,33 @@ runtime_context.new=function(options)
   end
   return context
 end
+tool.app_new_document_observable.fail_add=true
+local lifecycle_loaded,lifecycle_error=pcall(require,"gui")
+assert(not lifecycle_loaded and tostring(lifecycle_error):find("New document notifier registration failed",1,true),
+  "required lifecycle registration failure is visible")
+assert(tool.app_release_document_observable:listener_count()==0,
+  "partial lifecycle registration unwinds earlier listeners")
+package.loaded.gui=nil
+tool.app_new_document_observable.fail_add=false
+tool.app_new_document_observable.fail_add_after_register=true
+lifecycle_loaded,lifecycle_error=pcall(require,"gui")
+assert(not lifecycle_loaded and tostring(lifecycle_error):find("New document notifier registration failed",1,true),
+  "partially installed lifecycle notifier registration is visible")
+assert(tool.app_release_document_observable:listener_count()==0 and
+  tool.app_new_document_observable:listener_count()==0,
+  "partial notifier installation is removed after registration throws")
+package.loaded.gui=nil
+tool.app_new_document_observable.fail_add_after_register=false
+local unload_observable=tool.tool_will_unload_observable
+tool.tool_will_unload_observable=nil
+lifecycle_loaded,lifecycle_error=pcall(require,"gui")
+assert(not lifecycle_loaded and tostring(lifecycle_error):find("Tool unload notifier registration failed",1,true),
+  "missing required lifecycle observable is visible")
+assert(tool.app_release_document_observable:listener_count()==0 and
+  tool.app_new_document_observable:listener_count()==0,
+  "missing required lifecycle observable unwinds earlier subscriptions")
+tool.tool_will_unload_observable=unload_observable
+package.loaded.gui=nil
 require("gui").show()
 runtime_context.new=new_context
 assert(dialog and dialog.visible)
@@ -604,6 +647,46 @@ dialog.visible=false
 tool.app_idle_observable:fire()
 assert(song.selected_phrase_observable:listener_count()==0,
   "closing ACID removes its selected-phrase observer")
+assert(tool.app_idle_observable:listener_count()==0,
+  "closing ACID removes its dialog idle listener")
+local gui_module=require("gui")
+gui_module.show()
+dialog.visible=false
+tool.app_idle_observable:fire()
+tool.app_idle_observable.fail_add=true
+idle_loaded,idle_error=pcall(gui_module.show)
+assert(not idle_loaded and tostring(idle_error):find("idle notifier registration failed",1,true),
+  "idle notifier registration failure before attachment is visible")
+assert(tool.app_idle_observable:listener_count()==0 and
+  song.selected_phrase_observable:listener_count()==0 and
+  not gui_module.get_ui_state().dialog_visible,
+  "pre-attachment idle registration failure leaves no phantom notifier")
+tool.app_idle_observable.fail_add=false
+gui_module.show()
+assert(gui_module.get_ui_state().dialog_visible and tool.app_idle_observable:listener_count()==1,
+  "dialog reopens after pre-attachment idle registration failure")
+dialog.visible=false
+tool.app_idle_observable:fire()
+tool.app_idle_observable.fail_add_after_register=true
+idle_loaded,idle_error=pcall(gui_module.show)
+assert(not idle_loaded and tostring(idle_error):find("idle notifier registration failed",1,true),
+  "idle notifier registration failure is visible")
+assert(tool.app_idle_observable:listener_count()==0 and
+  song.selected_phrase_observable:listener_count()==0 and
+  not gui_module.get_ui_state().dialog_visible,
+  "failed idle registration unwinds dialog and native subscriptions")
+tool.app_idle_observable.fail_add_after_register=false
+gui_module.show()
+assert(gui_module.get_ui_state().dialog_visible and tool.app_idle_observable:listener_count()==1,
+  "dialog can reopen after failed idle registration cleanup")
+dialog.visible=false
+tool.app_idle_observable.fail_remove_after_unregister=true
+tool.app_idle_observable:fire()
+assert(tool.app_idle_observable:listener_count()==0 and
+  not gui_module.get_ui_state().idle_listener_attached,
+  "removal that unregisters before throwing retires the exact idle handler")
+tool.app_idle_observable.fail_remove_after_unregister=false
+gui_module.show()
 
 local lifecycle_events={}
 draft_cache.has_volatile=function() return true end
@@ -612,10 +695,68 @@ package.loaded["writers.phrase_writer"].release=function()
   writer_releases=writer_releases+1
   lifecycle_events[#lifecycle_events+1]="release"
 end
+local queued_idle_notifier=tool.app_idle_observable.notifier_history[
+  #tool.app_idle_observable.notifier_history]
 tool.app_release_document_observable:fire()
 assert(writer_releases==1 and lifecycle_events[1]=="warning" and lifecycle_events[2]=="release",
   "document release warns about volatile drafts before releasing writer host references")
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
+require("gui").show()
+assert(tool.app_idle_observable:listener_count()==1,
+  "reopened ACID attaches one dialog idle listener")
+local replacement_state_before_stale=gui_module.get_ui_state()
+assert(replacement_state_before_stale.native_observers_attached and
+  replacement_state_before_stale.native_listener_count>0,
+  string.format("reopened ACID lacked native observers before stale callback (attached=%s listeners=%d error=%s)",
+    tostring(replacement_state_before_stale.native_observers_attached),
+    replacement_state_before_stale.native_listener_count,
+    tostring(replacement_state_before_stale.native_observer_error)))
+queued_idle_notifier()
+local stale_callback_state=gui_module.get_ui_state()
+assert(tool.app_idle_observable:listener_count()==1 and stale_callback_state.idle_listener_attached and
+  stale_callback_state.native_observers_attached and stale_callback_state.native_listener_count>0,
+  string.format("queued idle callback removed replacement observers (idle=%d active=%s native=%s listeners=%d)",
+    tool.app_idle_observable:listener_count(),tostring(stale_callback_state.idle_listener_attached),
+    tostring(stale_callback_state.native_observers_attached),stale_callback_state.native_listener_count))
+gui_module.show()
+assert(dialog.visible and tool.app_idle_observable:listener_count()==1,
+  "replacement dialog remains functional after a stale idle callback")
+tool.app_idle_observable.fail_remove=true
+tool.app_release_document_observable:fire()
+assert(tool.app_idle_observable:listener_count()==1,
+  "failed idle listener removal retains cleanup evidence")
+tool.app_idle_observable:fire()
+assert(tool.app_idle_observable:listener_count()==1,
+  "retained idle callback is inert after release")
+tool.app_idle_observable.fail_remove=false
+tool.app_new_document_observable:fire()
+assert(tool.app_idle_observable:listener_count()==0,
+  "new document retries and completes idle listener removal")
+gui_module.show()
+tool.app_idle_observable.fail_remove=true
+tool.app_release_document_observable.fail_remove=true
 tool.tool_will_unload_observable:fire()
-assert(writer_releases==2,"tool unload releases writer host references")
+assert(writer_releases==4,"tool unload releases writer host references")
+assert(tool.app_idle_observable:listener_count()==1 and
+  tool.app_release_document_observable:listener_count()==1 and
+  tool.app_new_document_observable:listener_count()==0 and
+  tool.tool_will_unload_observable:listener_count()==1,
+  "tool unload retains cleanup callback after listener removal fails")
+tool.app_release_document_observable.fail_remove=false
+tool.tool_will_unload_observable:fire()
+assert(tool.app_idle_observable:listener_count()==1 and
+  tool.app_release_document_observable:listener_count()==0 and
+  tool.tool_will_unload_observable:listener_count()==1,
+  "unload retries root listener removal while retaining the idle cleanup retry")
+tool.app_idle_observable.fail_remove=false
+tool.tool_will_unload_observable:fire()
+assert(tool.app_idle_observable:listener_count()==0 and
+  tool.app_release_document_observable:listener_count()==0 and
+  tool.app_new_document_observable:listener_count()==0 and
+  tool.tool_will_unload_observable:listener_count()==0,
+  "inert unload callback retries failed listener cleanup")
+tool.app_release_document_observable:fire()
+tool.app_new_document_observable:fire()
+assert(writer_releases==4,"removed lifecycle callbacks remain inert")
 assert(selection_assignment_attempts==0,"ACID never attempts to assign read-only native selection")
 print("ACID Program/Grid views, native phrase selection and Live Edit destination checks passed")

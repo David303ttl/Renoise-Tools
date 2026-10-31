@@ -69,12 +69,13 @@ end
 do
   local ctx = new_context{}
   local allowed = {request_generation = true, revoke = true, state = true,
+    set_observer_error = true,
     attach_document = true, open_dialog = true, close_dialog = true,
     release_document = true, lifetime_state = true, bind_new = true, bind_phrase = true,
     restore_editor_target = true,
     target_state = true, target_projection = true, refresh_inventory = true, instrument_choices = true,
     phrase_choices = true, draft_options = true, mutate = true, mark_dirty = true,
-    matches_mutation_inventory = true,
+    matches_mutation_inventory = true, notify_native_change = true,
     reconcile = true, mutation_state = true, occupancy_state = true,
     record_blocker = true, integrity_state = true, revalidation_status = true,
     revalidate = true, transition = true, revision_state = true, editor_state = true,
@@ -883,6 +884,86 @@ do
   assert(not ctx:matches_mutation_inventory(other_song,"instruments"),
     "document release retained its inventory proof")
   if done then done({kind="failure",status="cancelled"}) end
+end
+
+-- Failed required observers block every generation trigger and integrity
+-- revalidation until a complete native attachment restores protection.
+do
+  local fixture=dofile("tests/acid/runtime_phrase_fixture.lua")
+  local song=fixture.fixture()
+  dofile("tests/acid/observer_host_fixture.lua").attach(song)
+  local captured,dispatched=0,0
+  local ctx=context.new{writer=fake_writer(),capture=function(_,token)
+    captured=captured+1
+    return {token=token}
+  end,sink=function(_,done)
+    dispatched=dispatched+1
+    return true
+  end}
+  assert(ctx:attach_document(song))
+  ctx:open_dialog()
+  local reason="Native observer failure: missing required phrase listener"
+  ctx:set_observer_error(reason)
+  for _,trigger in ipairs({"manual","live"}) do
+    local accepted,blocked_reason=ctx:request_generation(trigger)
+    assert(accepted==false and blocked_reason==reason,trigger.." request escaped observer block")
+  end
+  local status=ctx:revalidation_status()
+  assert(status.blocked and not status.verified and status.reason==reason)
+  local identity,identity_reason=ctx:independence_eligibility()
+  assert(identity==nil and identity_reason==reason,
+    "identity operation eligibility escaped observer block")
+  local independent,identity_error=ctx:make_independent()
+  assert(independent==false and identity_error==reason,
+    "identity operation escaped observer block")
+  local revalidated,revalidation_error=ctx:revalidate(nil)
+  assert(revalidated==false and revalidation_error==reason,
+    "revalidation cleared a failed observer protection block")
+  assert(captured==0 and dispatched==0,"blocked requests crossed capture or dispatch")
+
+  local observer=require("runtime.observers").new()
+  assert(observer:attach(song,ctx),"complete native listener attachment failed")
+  status=ctx:revalidation_status()
+  assert(not status.blocked,
+    "successful attachment did not clear the observer protection block")
+  assert(ctx:request_generation("manual")==true)
+  assert(captured==1 and dispatched==1)
+  observer:detach()
+  assert(ctx:release_document())
+end
+
+-- A raw selection excursion invalidates an in-flight request immediately,
+-- even when the host returns to the original pair before idle reconciliation.
+do
+  local fixture=dofile("tests/acid/runtime_phrase_fixture.lua")
+  local song,instrument,phrase=fixture.fixture()
+  dofile("tests/acid/observer_host_fixture.lua").attach(song)
+  song.selected_instrument=instrument
+  song.selected_phrase=phrase
+  local completion,request
+  local ctx=context.new{writer=fake_writer(),capture=function(_,token)return {token=token}end,
+    sink=function(current,done)request=current;completion=done;return true end}
+  assert(ctx:attach_document(song))
+  ctx:open_dialog()
+  assert(ctx:bind_new(instrument))
+  local observer=require("runtime.observers").new()
+  assert(observer:attach(song,ctx))
+  assert(ctx:request_generation("manual"))
+  local original=request
+  song.selected_instrument=nil
+  song.selected_phrase=nil
+  song.selected_instrument_observable:fire()
+  assert(not original.token:is_current(),"selection callback must revoke the request before idle")
+  song.selected_instrument=instrument
+  song.selected_phrase=phrase
+  song.selected_instrument_observable:fire()
+  assert(not original.token:is_current(),"returning to the original pair must not restore request validity")
+  local projected=assert(ctx:reconcile())
+  assert(projected.kind=="new" and projected.instrument==instrument,
+    "prompt invalidation must preserve the explicit New target during reconciliation")
+  assert(completion({kind="failure",status="cancelled"}))
+  observer:detach()
+  assert(ctx:release_document())
 end
 
 print("ACID runtime generation delivery boundary checks passed")

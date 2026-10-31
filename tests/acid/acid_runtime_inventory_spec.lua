@@ -3,6 +3,7 @@ local ownership=require('renoise.phrase_ownership')
 local store=require('renoise.pattern_store')
 local seq=require('model.sequencer')
 local cache=require('runtime.draft_cache')
+local observers=require('runtime.observers')
 local fixture,phrase,instrument,runtime=helper.fixture,helper.phrase,helper.instrument,helper.runtime
 
 -- Real classifier proofs establish detached baselines; identical content is not identity.
@@ -39,6 +40,55 @@ do
  assert(ctx:refresh_inventory().kind=='new')
  assert(ctx:bind_phrase(inst,nil).kind=='unavailable')
  assert(helper.eq_calls()==0,'inventory/drafts must use raw phrase identity')
+end
+
+-- Native undo can restore a valid old phrase seal/content while the newer
+-- committed source remains in song data. Reconciliation and Revalidate must
+-- leave that association unavailable and preserve the phrase's draft.
+do
+ local song,inst,a,_,source=fixture()
+ song.selected_instrument,song.selected_phrase=inst,a
+ local ctx=runtime(song)
+ local draft=seq.copy_source(source)
+ draft.pitch_events[1]=seq.new_pitch(5,0,false,false)
+ assert(cache.put(song,inst,a,draft,'play_once',0,ctx:draft_options()))
+ assert(ctx:bind_phrase(inst,a).kind=='owned')
+
+ local newer=seq.copy_source(source)
+ newer.pitch_events[1]=seq.new_pitch(8,0,false,false)
+ assert(store.save(song,101,newer,'play_once',0))
+ local saved_store=song.tool_data
+ local observer=observers.new()
+ local host_observers=dofile('tests/acid/observer_host_fixture.lua')
+ host_observers.attach(song)
+ assert(observer:attach(song,ctx))
+
+ -- The phrase remains at its pre-edit state, matching its old valid seal.
+ song.undoing=true
+ a:fire_line_notifier()
+ song.undoing=false
+ observer:refresh()
+ local reconciled=ctx:reconcile()
+ assert(reconciled.kind=='unavailable',
+  'undo-restored phrase was accepted against the newer committed source')
+ assert(rawequal(ctx:target_state().phrase,a),
+  'undo reconciliation replaced the explicit phrase target')
+ assert(not cache.get(song,inst,a,ctx:draft_options()),
+  'mismatched committed baseline kept its old draft attached to the phrase')
+ local recovery=cache.list(song)
+ assert(#recovery==1 and seq.same_source(recovery[1].pattern,draft),
+  'undo reconciliation did not retain the detached draft for recovery')
+ assert(song.tool_data==saved_store,'undo reconciliation rewrote committed source data')
+ assert(not ctx:request_generation('manual'),'incompatible undo association allowed generation')
+ local status,proof=ctx:revalidation_status()
+ assert(not status.verified and not proof and not status.blocked,
+  'Revalidate must not issue a proof when no integrity blocker exists')
+ assert(not ctx:revalidate(proof),'Revalidate accepted missing recovery evidence')
+ assert(song.tool_data==saved_store,
+  'Revalidate mutated committed source data')
+ assert(ctx:bind_phrase(inst,a).kind=='unavailable',
+  'Revalidate made the mismatched phrase eligible')
+ observer:detach()
 end
 
 -- Clean editor edits persist against the retained draft baseline without

@@ -799,7 +799,10 @@ local function cancel_document_scoped_commands(current, old_epoch)
     local condition = record.args and record.args.condition
     local is_cross_epoch_wait = record.operation == "wait.condition" and
       (condition == "document_epoch_changed" or condition == "observed_operation_settled")
-    if record.document_epoch == old_epoch and not is_active_transition and not is_cross_epoch_wait then
+    local is_lifecycle_acceptance = record.acceptance_started and
+      record.operation == "acid.acceptance.run" and record.args.case == "integrity-observers"
+    if record.document_epoch == old_epoch and not is_active_transition and not is_cross_epoch_wait and
+        not is_lifecycle_acceptance then
       to_cancel[#to_cancel + 1] = record
     end
   end
@@ -980,6 +983,7 @@ local function process_record(current, record)
       finish_record(current, record, true, result)
       return true
     end
+    record.acceptance_started = true
     local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete)
     if not call_ok then
       finish_error(current, record, "acceptance_error",

@@ -4,6 +4,7 @@ local function observable()
   local handlers={}
   return {
     add_notifier=function(_,handler) handlers[handler]=true end,
+    has_notifier=function(_,handler) return handlers[handler]==true end,
     remove_notifier=function(_,handler) handlers[handler]=nil end,
     fire=function(self)
       local pending={}
@@ -39,7 +40,7 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="ACID 0.1 #12 [v3:00000000]",invalid_seal=true}
@@ -531,12 +532,14 @@ assert(target_popup.items[target_popup.value]:find("Renamed target",1,true),
 assert(phrase_choice.value==#phrase_choice.items,"native rename preserves explicit New")
 song.instruments={other_instrument,instrument}
 song.selected_instrument_index=2
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
 song.instruments_observable:fire()
 tool.app_idle_observable:fire()
 assert(target_popup.value==2 and target_popup.items[2]:find("Renamed target",1,true),
   "native reorder keeps the exact bound instrument")
 song.instruments={instrument}
 song.selected_instrument_index=1
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
 song.instruments_observable:fire()
 tool.app_idle_observable:fire()
 assert(#target_popup.items==1 and target_popup.value==1,"native removal refreshes instrument choices")
