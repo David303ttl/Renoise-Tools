@@ -75,11 +75,11 @@
 --   done only after terminal cleanup/evidence as its final host/GUI side effect;
 --   the acceptance return may follow synchronous done.
 --   A writer idle reading inside a delivery callback is not admission proof;
---   the adapter guards the full callback. Cancellation is normalized only from
+--   the runtime guards the full callback. Cancellation is normalized only from
 --   verified settlement, never from a boolean acknowledgement alone. A revoked
 --   or accepted-pending record stays pending until its matching done; a clean
 --   cancellation without a terminal must be normalized to a terminal
---   settlement by the adapter. Diagnostics, blocks, revoke, and idle readings
+--   settlement by the runtime. Diagnostics, blocks, revoke, and idle readings
 --   never create a terminal result; an unresolved render remains pending or
 --   tombstoned until its own terminal state retires it. Pending-token scrubbing
 --   and native writer registry tombstoning remain writer cleanup work.
@@ -412,12 +412,12 @@ function M.new(options)
   end
 
   local function adopt_success(record,result,destination_current,apply_success)
-    if not destination_current or not inventory then return false,"No current destination inventory" end
+    if not inventory then return false,"No current destination inventory" end
     if not host_object(result.phrase) then return false,"Committed destination phrase is unavailable" end
     local request=record.request
     if not request then return false,"Request values are unavailable" end
     local phrase=result.phrase
-    local transfer_new_draft=request.kind=="create" and not apply_success and
+    local transfer_new_draft=destination_current and request.kind=="create" and not apply_success and
       (editor_dirty or editor_draft) and editor and editor_target and
       editor_target.kind=="new" and rawequal(editor_target.instrument,request.instrument)
     local new_draft_capture
@@ -436,6 +436,8 @@ function M.new(options)
       pending_trigger=nil
       return false,reason or "Cannot adopt committed baseline"
     end
+    -- A closed dialog may retain committed evidence without changing its editor or target.
+    if not destination_current then return true end
     if request.kind=="create" and not rawequal(request.phrase,phrase) then
       inventory:bind_phrase(request.instrument,phrase)
       transitions:transition("target",{instrument=request.instrument,phrase=phrase,kind="owned"})
@@ -758,8 +760,9 @@ function M.new(options)
       end
       local terminal,success=normalize_result(record,result)
       local revisions=transitions:revision_state()
-      local destination_current=record.session==session and not record.released and
+      local baseline_current=record.session==session and not record.released and
         record.revisions~=nil and revisions.target_revision==record.revisions.target_revision
+      local destination_current=terminal_current and baseline_current
       record.settled = true
       record.current = false
       local effects
@@ -770,7 +773,7 @@ function M.new(options)
           edit_revision=record.revisions.edit_revision})
       end
       local apply_success=effects and effects.apply_success==true or false
-      if success and destination_current then
+      if success and baseline_current then
         local adopted,adopt_reason=adopt_success(record,terminal,destination_current,apply_success)
         if not adopted then
           diagnose(record,"completion.baseline",adopt_reason)

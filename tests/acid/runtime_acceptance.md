@@ -2,10 +2,28 @@
 
 ## Gate 5 acceptance (2026-10-31)
 
-Baseline `e469f032a7cf4a2d9f51e242e8dddaab2c76958e`; reviewed HEAD `467dc37`.
-Committed baseline-to-HEAD changes affect the playbook and roadmap. This working
-tree changes runtime completion handling, editor/draft specs and acceptance docs.
+Baseline `e469f032a7cf4a2d9f51e242e8dddaab2c76958e`; audited commit `7d8fb918f0dfab6106d265ceb482d7426200e633`.
+Committed changes include runtime completion handling, editor/draft specs and
+acceptance docs. The follow-up correction reconciles verified committed baselines
+after dialog close without promoting the bound target or changing the editor.
 Persistence formats, manifest versions and runtime module boundaries are unchanged.
+
+New Phrase draft transfer intentionally retains the durable New scratch as a
+recovery copy, including when destination persistence fails. The session draft
+transfers to the created phrase; reopening New can independently restore the
+durable copy. `acid_runtime_editor_spec.lua` checks both destinations and reopen
+restoration, plus verified create completion after close without reopen. That
+completion retires the request and retains committed source and the exact newer
+New draft without binding the created phrase or updating editor revisions.
+
+Follow-up native check remains unverified: start New Phrase generation, edit
+again while busy, close the dialog before terminal delivery, then let it settle
+without reopening. Reopen and verify the committed phrase contains the captured
+source, New restores the newer draft, and no second generation occurred. Prior
+native reports below predate this correction and do not validate this ordering.
+Follow-up verification: `./scripts/run_tests.ps1` passes 68/68 specs under Lua
+5.1, including the editor regression and runtime lifetime/writer integration
+suites; `git diff --check` passes. No native rerun was performed for this correction.
 
 | Subgate | Assertions and owners | Evidence |
 | --- | --- | --- |

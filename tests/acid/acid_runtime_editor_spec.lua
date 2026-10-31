@@ -163,12 +163,54 @@ local function verify_create_transfer(failure)
    assert(song.tool_data==durable_before,
     'failed destination persistence changed durable New draft bytes')
   end
+  ctx:close_dialog()
+  ctx:open_dialog()
+  local recovered=assert(ctx:restore_editor_target(instrument,nil))
+  assert(seq.same_source(recovered.source,newer),
+   'reopening New did not restore the intentional durable recovery copy')
  end
 end
 
 verify_create_transfer(nil)
 verify_create_transfer('persistence')
 verify_create_transfer('session')
+
+-- A committed create arriving while closed reconciles evidence without promoting New.
+do
+ local ctx,log,song,instrument,_,_,source=fixture(true)
+ assert(ctx:transition('edit',values(copy_edit(source,FIRST_COMMITTED_NOTE))))
+ assert(ctx:request_generation('manual'))
+ local request=log.requests[1]
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ assert(ctx:transition('edit',values(newer)))
+ local capture=assert(cache.capture(song,instrument,nil,ctx:draft_options()))
+ assert(ctx:close_dialog())
+ local target_before=ctx:target_state()
+ local revisions_before=ctx:revision_state()
+ local created=helper.phrase(request.source,CREATED_PHRASE_ID)
+ instrument.phrases[#instrument.phrases+1]=created
+ assert(store.save(song,CREATED_PHRASE_ID,request.source,request.output_policy,request.pb_range))
+ local durable_before=song.tool_data
+ local baseline=validated_baseline(song,instrument,created,CREATED_PHRASE_ID)
+ log.done[1]({kind='success',status='committed',verified=true,token=request.token,
+  epoch=request.epoch,request=request,phrase=created,baseline=baseline})
+ local target_after=ctx:target_state()
+ assert(target_after.kind==target_before.kind and
+  rawequal(target_after.instrument,target_before.instrument) and
+  rawequal(target_after.phrase,target_before.phrase),'closed completion promoted the bound target')
+ assert(seq.same_source(ctx:editor_state().source,newer),'closed completion changed the editor')
+ local revisions_after=ctx:revision_state()
+ assert(revisions_after.target_revision==revisions_before.target_revision and
+  revisions_after.edit_revision==revisions_before.edit_revision,'closed completion changed editor revisions')
+ assert(cache.is_current(song,capture) and song.tool_data==durable_before,
+  'closed completion consumed the New draft or changed committed source bytes')
+ assert(ctx:state().status=='idle' and log.sinks==1,'closed completion did not retire its request')
+ ctx:open_dialog()
+ assert(ctx:restore_editor_target(instrument,created),'committed phrase was lost after closed completion')
+ assert(seq.same_source(ctx:editor_state().source,request.source),'committed source was not retained')
+ assert(ctx:restore_editor_target(instrument,nil))
+ assert(seq.same_source(ctx:editor_state().source,newer),'closed completion lost the newer New draft')
+end
 
 -- Runtime admission validates its detached editor buffer without an extra source copy.
 do
