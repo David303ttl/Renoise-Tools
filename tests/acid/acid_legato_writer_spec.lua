@@ -3,7 +3,7 @@ local seq=require('model.sequencer')
 local compiler=require('model.cycle_interpreter')
 local control=require('model.control_signals')
 local planner=require('model.legato')
-local writer=require('writers.legato_writer')
+local writer=require('reference.legato_writer')
 local validator=require('writers.phrase_validator')
 local columns=dofile('tests/acid/phrase_columns.lua')
 

@@ -4,83 +4,7 @@ dofile("tests/bootstrap.lua")("acid")
 local columns=dofile("tests/acid/phrase_columns.lua")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 
-local EMPTY_SCRIPT_DIAGNOSTIC="compile error: no script content present."
-
-local function observable()
-  local handlers={}
-  return {
-    add_notifier=function(_,callback) handlers[callback]=true end,
-    remove_notifier=function(_,callback) handlers[callback]=nil end,
-    has_notifier=function(_,callback) return handlers[callback]==true end,
-    fire=function()
-      local pending={}
-      for callback in pairs(handlers) do pending[#pending+1]=callback end
-      for _,callback in ipairs(pending) do callback() end
-    end,
-  }
-end
-local idle=observable()
-
 local instrument
-local render_queue={}
-local render_mode="sync"
-local defer_commit=false
-
-local function make_script()
-  local committed=observable()
-  local script={paragraphs={},parameters={},pending_changes=0,editor_visible=true,
-    compile_error="",runtime_error="",committed_observable=committed}
-  function script:commit()
-    self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
-    self.runtime_error=""
-    if defer_commit then
-      local notify
-      notify=function()
-        idle:remove_notifier(notify)
-        committed:fire()
-      end
-      idle:add_notifier(notify)
-    else
-      committed:fire()
-    end
-  end
-  function script:render_to_pattern(options,callback)
-    local source=assert(self.paragraphs[1])
-    local values=assert(source:match("local values = { (.-) }\nreturn pattern"))
-    local target=instrument.phrases[#instrument.phrases]
-    local step,count=0,0
-    for token in (values..","):gmatch("(.-),") do
-      local volume=tonumber(token:match("volume = ([%d%.]+)"))
-      local note=tonumber(token:match("key = (%d+)"))
-      local off=token:find('"off"',1,true)~=nil
-      local empty=token:match("^%s*false%s*$")~=nil
-      if volume then
-        local line=(math.max(step,1)-1)*4+1
-        target.cells[line].volume_value=volume==1 and 255 or 89
-      end
-      if note or off or empty then
-        step=step+1
-        local line=(step-1)*4+1
-        if note then
-          target.cells[line].note_value=note
-          count=count+1
-        elseif off then
-          target.cells[line].note_value=120
-          count=count+1
-        end
-      end
-    end
-    assert(options.lpb==16,"straight source rendered at an unexpected LPB")
-    if render_mode=="defer" then
-      render_queue[#render_queue+1]={callback=callback,count=count,steps=step}
-      return true
-    end
-    callback(nil,count,0)
-    return true
-  end
-  return script
-end
-
 local MAX_LINES,MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS=16,2,1
 
 local function make_phrase()
@@ -90,8 +14,9 @@ local function make_phrase()
     instrument_column_visible=false,volume_column_visible=true,
     panning_column_visible=false,delay_column_visible=false,
     sample_effects_column_visible=false,mapping=nil,cells={},
-    script=make_script(),column_names={},column_mutes={}}
-  for column=1,MAX_NOTE_COLUMNS do
+    script={paragraphs={},parameters={},pending_changes=0,editor_visible=true},
+    column_names={},column_mutes={}}
+  for column=1,12 do
     phrase.column_names[column]="column "..column
     phrase.column_mutes[column]=false
   end
@@ -150,7 +75,6 @@ _G.renoise={
     MAX_NUMBER_OF_EFFECT_COLUMNS=MAX_EFFECT_COLUMNS},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
   song=function() return song end,
-  tool=function() return {app_idle_observable=idle} end,
 }
 -- Renoise exposes API classes as indexed userdata proxies, not Lua tables.
 local function class_proxy(values)
@@ -167,12 +91,44 @@ local writer=require("writers.phrase_writer")
 local store=require("renoise.pattern_store")
 local ownership=require("renoise.phrase_ownership")
 local sequencer=require("model.sequencer")
+local materializer=require("writers.phrase_materializer")
+local materializer_calls=0
+local during_mutation
+local after_materializer_apply
+local base_materializer_apply=materializer.apply
+materializer.apply=function(...)
+  materializer_calls=materializer_calls+1
+  if during_mutation then during_mutation() end
+  local result,count={},0
+  local function capture(...) count=select("#",...);for index=1,count do result[index]=select(index,...) end end
+  capture(base_materializer_apply(...))
+  if after_materializer_apply and result[1]==true then
+    local mutate=after_materializer_apply
+    after_materializer_apply=nil
+    mutate()
+  end
+  return unpack(result,1,count)
+end
 
 local sink_calls=0
 local fail_next_adoption=false
+local probe_terminal_reentry=false
+local before_prepare_mutation
 local sink=function(request,done)
   sink_calls=sink_calls+1
+  if before_prepare_mutation then
+    local mutate=before_prepare_mutation
+    before_prepare_mutation=nil
+    mutate(request)
+  end
   local function complete(result)
+    if probe_terminal_reentry then
+      probe_terminal_reentry=false
+      local nested_calls=0
+      local accepted=writer.regenerate(request,function() nested_calls=nested_calls+1 end)
+      assert(not accepted and nested_calls==0,
+        "terminal callback reentry was admitted before delivery ended")
+    end
     if fail_next_adoption and result.kind=="success" then
       fail_next_adoption=false
       local membership=ownership.membership
@@ -222,28 +178,8 @@ local function dispatch(ctx)
   assert(accepted,reason)
 end
 local function drain(results,expected,label)
-  for _=1,400 do
-    idle:fire()
-    local status=writer.state()
-    if #results>=expected and status=="idle" then return end
-  end
-  local diagnostic=writer.diagnostic()
-  error(label..": terminal delivery did not arrive (writer="..tostring(writer.state())..
-    ", sink calls="..tostring(sink_calls)..", diagnostic="..tostring(diagnostic and diagnostic.message)..")")
-end
-local function settle_writer(label)
-  for _=1,400 do
-    idle:fire()
-    if writer.state()=="idle" then return end
-  end
-  error(label..": writer did not settle")
-end
-local function next_render(label)
-  for _=1,20 do
-    if #render_queue>0 then return table.remove(render_queue,1) end
-    idle:fire()
-  end
-  error(label..": native render did not start")
+  assert(#results>=expected,label..": terminal delivery did not arrive")
+  assert(writer.state()=="idle",label..": synchronous writer did not settle before return")
 end
 local function assert_success(result,phrase,label)
   assert(type(result)=="table",label..": missing terminal result")
@@ -270,6 +206,7 @@ drain(results,1,"initial create")
 local phrase=assert(results[1].phrase)
 assert_success(results[1],phrase,"initial create")
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],phrase))
+assert(materializer_calls==1,"create did not apply exactly one phrase image")
 local created_id=assert(ownership.id(phrase))
 local target=ctx:target_state()
 assert(target.kind=="owned" and rawequal(target.phrase,phrase)
@@ -283,12 +220,37 @@ assert(store.read_draft(song,instrument,phrase)==nil,
   "create retained the durable draft")
 assert(drafts.has(song)==false,"create left a draft behind")
 
+-- Capture may use the cached light target, but the writer must still reject
+-- a native phrase edit that lands before its fresh prepare classification.
+do
+  edit(ctx,source(51))
+  local phrase_line=phrase.cells[16]
+  local prior_delay=phrase_line.delay_value
+  local store_before=song.tool_data
+  local materializer_before=materializer_calls
+  before_prepare_mutation=function(request)
+    assert(rawequal(request.phrase,phrase),"mutation probe targeted another phrase")
+    phrase_line.delay_value=prior_delay==0 and 1 or 0
+  end
+  local accepted,rejection=ctx:request_generation("manual")
+  assert(not accepted and rejection,"writer accepted a native edit made after request capture")
+  assert(before_prepare_mutation==nil,"pre-prepare mutation hook did not run")
+  assert(materializer_calls==materializer_before,"stale native phrase reached materialization")
+  assert(song.tool_data==store_before,"stale native phrase changed persisted source")
+  assert(phrase_line.delay_value~=prior_delay,"pre-prepare native mutation was not injected")
+  phrase_line.delay_value=prior_delay
+  assert(writer.state()=="idle","rejected stale request left writer occupied")
+end
+
 edit(ctx,source(52))
 dispatch(ctx)
 drain(results,2,"first regenerate")
 assert_success(results[2],phrase,"first regenerate")
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],phrase))
 assert(phrase.cells[1].note_value==52)
+local first_revision_id=assert(ownership.id(phrase))
+assert(first_revision_id~=created_id,"first regeneration reused the immutable phrase ID")
+assert(store.read_entry(song,created_id),"first regeneration removed the old source row")
 local saved=assert(store.load(song,instrument,phrase))
 assert(first_note(saved)==52,"first regenerate did not persist its source")
 local adopted=ctx:target_state()
@@ -301,6 +263,10 @@ drain(results,3,"second regenerate")
 assert_success(results[3],phrase,"second regenerate")
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],phrase))
 assert(phrase.cells[1].note_value==55)
+local second_revision_id=assert(ownership.id(phrase))
+assert(second_revision_id~=first_revision_id,"second regeneration reused the prior phrase ID")
+assert(store.read_entry(song,created_id) and store.read_entry(song,first_revision_id),
+  "successive regeneration removed historical source rows")
 local saved_second=assert(store.load(song,instrument,phrase))
 assert(first_note(saved_second)==55,"second regenerate did not persist its source")
 local adopted_second=ctx:target_state()
@@ -324,7 +290,7 @@ cold_ctx:open_dialog(cold_delivery)
 cold_ctx:bind_phrase(instrument,phrase)
 local reopened=cold_ctx:target_state()
 assert(reopened.kind=="owned" and rawequal(reopened.phrase,phrase)
-  and reopened.baseline and reopened.baseline.id==created_id,
+  and reopened.baseline and reopened.baseline.id==second_revision_id,
   "cold context did not classify the saved phrase")
 assert(song.tool_data==cold_store,"cold target inspection changed saved data")
 assert(drafts.get(song,instrument,phrase)==nil,
@@ -347,6 +313,28 @@ assert(drafts.get(song,instrument,phrase)==nil,
 assert(store.read_draft(song,instrument,phrase)==nil,
   "cold regenerate retained the durable draft")
 assert(drafts.has(song)==false,"cold regenerate left a draft behind")
+
+-- If the native phrase changes after prepare but before materializer.apply,
+-- the preimage rejection must not roll that unrelated edit back over itself.
+do
+  local phrase_line=phrase.cells[16]
+  local prior_delay=phrase_line.delay_value
+  local terminal_before=#cold
+  edit(cold_ctx,source(56))
+  local persisted_before=song.tool_data
+  during_mutation=function()
+    during_mutation=nil
+    phrase_line.delay_value=prior_delay==0 and 1 or 0
+  end
+  dispatch(cold_ctx)
+  drain(cold,terminal_before+1,"preimage drift rejection")
+  assert(cold[#cold].kind=="failure","preimage drift was reported as success")
+  assert(phrase_line.delay_value~=prior_delay,
+    "rollback overwrote a native edit rejected before any phrase write")
+  assert(song.tool_data==persisted_before,"preimage drift changed persisted source")
+  phrase_line.delay_value=prior_delay
+end
+
 cold_ctx:transition("arm")
 edit(cold_ctx,source(54))
 assert(cold_ctx:generation_state().pending,"post-commit Live Edit was not queued")
@@ -357,402 +345,97 @@ cold_ctx:transition("disarm")
 cold_ctx:transition("programmatic",{source=cold_source,output_policy="play_once",pb_range=0,restore=true})
 assert(drafts.clear(song,instrument,phrase))
 
--- While the writer is rendering asynchronously, a newer edit supersedes the
--- active request and leaves one latest pending intent. The writer remains
--- occupied until its native callback; flush_pending dispatches the latest
--- intent only after that terminal retirement.
-render_mode="defer"
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(36))
-local queued_create=cold_ctx:request_generation("manual")
-assert(queued_create,"queued create was rejected")
-local pending=cold_ctx:state()
-assert(pending.status=="pending" and pending.pending==false)
-local active_token=pending.token
-local first_render=next_render("deferred create")
-assert(writer.state()=="busy")
-local sink_before_queue=sink_calls
-edit(cold_ctx,source(40))
-local queued,queued_reason=cold_ctx:request_generation("manual")
-assert(queued,queued_reason)
-assert(not active_token:is_current(),"newer edit did not supersede the active request")
-assert(cold_ctx:state().pending==true,"latest edit was not queued")
-local blocked, blocked_reason=cold_ctx:request_generation("manual")
-assert(blocked,blocked_reason)
-assert(cold_ctx:state().pending==true,"second queue replaced the pending intent")
-edit(cold_ctx,source(43))
-queued,queued_reason=cold_ctx:request_generation("manual")
-assert(queued,queued_reason)
-assert(cold_ctx:state().pending==true)
-assert(sink_calls==sink_before_queue,"queued edits dispatched into a busy writer")
-first_render.callback(nil,first_render.count,0)
-settle_writer("superseded create")
-assert(#cold==1,"superseded create unexpectedly delivered a commit")
-assert(cold_ctx:state().pending==true,"pending intent was lost at terminal")
-local flushed, flush_reason=cold_ctx:flush_pending()
-assert(flushed,flush_reason)
-local second_render=next_render("flushed latest edit")
-second_render.callback(nil,second_render.count,0)
-drain(cold,2,"flushed latest edit")
-local created_second=instrument.phrases[#instrument.phrases]
-assert_success(cold[2],created_second,"flushed latest edit")
-assert(#instrument.phrases==2 and rawequal(instrument.phrases[2],created_second))
-assert(created_second.cells[1].note_value==43,
-  "flush_pending did not dispatch the latest queued edit")
-assert(phrase.cells[1].note_value==57,"queued work changed the first destination")
-assert(drafts.get(song,instrument,created_second)==nil,
-  "flushed create retained the session draft")
-assert(store.read_draft(song,instrument,created_second)==nil,
-  "flushed create retained the durable draft")
-assert(drafts.has(song)==false,"flushed create left a draft behind")
-assert(cold_ctx:state().pending==false)
-render_mode="sync"
-
--- Real writer inventory notifications are proven only against the exact
--- post-scope membership. A delayed stage notification is accepted while an
--- unrelated phrase inserted during render invalidates the active request.
-do
-  local observer_host=dofile("tests/acid/observer_host_fixture.lua")
-  observer_host.attach(song)
-  local observer_ctx=new_context()
-  local observer_results,observer_delivery=delivered()
-  observer_ctx:attach_document(song)
-  observer_ctx:open_dialog(observer_delivery)
-  local observer=require("runtime.observers").new()
-  local observed={}
-  assert(observer:attach(song,observer_ctx,function(kind,object,internal,inventory_kind)
-    observed[#observed+1]={kind=kind,object=object,internal=internal,inventory_kind=inventory_kind}
-  end))
-
-  local pending_inventory_notifications=0
-  local native_insert,native_delete=instrument.insert_phrase_at,instrument.delete_phrase_at
-  instrument.insert_phrase_at=function(self,index)
-    local inserted=native_insert(self,index)
-    pending_inventory_notifications=pending_inventory_notifications+1
-    return inserted
-  end
-  instrument.delete_phrase_at=function(self,index)
-    native_delete(self,index)
-    pending_inventory_notifications=pending_inventory_notifications+1
-  end
-  local function deliver_inventory_notifications()
-    while pending_inventory_notifications>0 do
-      pending_inventory_notifications=pending_inventory_notifications-1
-      instrument.phrases_observable:fire()
-    end
-  end
-
-  render_mode="defer"
-  observer_ctx:bind_new(instrument)
-  edit(observer_ctx,source(54))
-  assert(observer_ctx:request_generation("manual"))
-  local active=observer_ctx:state().token
-  assert(active and active:is_current())
-  local render=next_render("observer-proven stage insertion")
-  assert(writer.state()=="busy" and pending_inventory_notifications>0)
-  observer_host.attach(song)
-
-  -- The host can deliver the structural notification after the synchronous
-  -- mutation scope. Exact membership proof keeps the request authorized.
-  local proof_matches,proof_reason=observer_ctx:matches_mutation_inventory(instrument,"phrases")
-  assert(proof_matches,proof_reason)
-  deliver_inventory_notifications()
-  assert(active:is_current(),"proven delayed writer inventory revoked its request before idle refresh")
-  local refreshed,refresh_error=observer:refresh();assert(refreshed,tostring(refresh_error)..":"..tostring(observer:state().error))
-  assert(active:is_current(),"proven delayed writer inventory revoked its request at idle reconciliation")
-  local saw_proven_inventory=false
-  for _,event in ipairs(observed) do
-    if event.kind=="inventory" and rawequal(event.object,instrument) and
-        event.inventory_kind=="phrases" and not event.internal then
-      saw_proven_inventory=true
-    end
-  end
-  assert(saw_proven_inventory,"delayed writer inventory was not observed after scope exit")
-
-  -- Add a native phrase without updating the captured mutation inventory. Its
-  -- list callback must invalidate immediately, before terminal delivery.
-  local phrase_count=#instrument.phrases
-  local external=native_insert(instrument,phrase_count+1)
-  observer_host.attach(song)
-  local changed_store=song.tool_data
-  assert(pending_inventory_notifications==0)
-  local mismatch,mismatch_reason=observer_ctx:matches_mutation_inventory(instrument,"phrases")
-  assert(not mismatch and mismatch_reason=="membership-mismatch",
-    "external phrase insertion matched the writer's exact mutation inventory")
-  instrument.phrases_observable:fire()
-  local refreshed,refresh_error=observer:refresh();assert(refreshed,tostring(refresh_error)..":"..tostring(observer:state().error))
-  assert(not active:is_current(),"external membership mismatch retained writer authorization")
-  render.callback(nil,render.count,0)
-  settle_writer("externally changed writer inventory")
-  assert(writer.state()=="idle" and #instrument.phrases==phrase_count and
-    not ownership.id(external) and song.tool_data==changed_store,
-    "invalidated request left unexpected state: writer="..tostring(writer.state())..
-      ", phrases="..#instrument.phrases..", expected="..phrase_count..
-      ", external_id="..tostring(ownership.id(external))..
-      ", store_same="..tostring(song.tool_data==changed_store))
-  assert(rawequal(instrument.phrases[#instrument.phrases],external),
-    "writer cleanup removed the unrelated externally inserted phrase")
-  assert(observer_ctx:integrity_state().blocked or not active:is_current(),
-    "external mutation did not retain a safe invalidated runtime state")
-
-  native_delete(instrument,#instrument.phrases)
-  instrument.insert_phrase_at,instrument.delete_phrase_at=native_insert,native_delete
-  assert(observer:detach())
-  observer_ctx:release_document()
-  render_mode="sync"
+-- Synchronous runtime regeneration preserves destination identity, selection,
+-- and inventory while adopting each committed source revision.
+cold_ctx:bind_phrase(instrument,phrase)
+song.selected_phrase_index=1
+song.selected_phrase=phrase
+local phrase_count_before_sync=#instrument.phrases
+local insert_count,delete_count=0,0
+local original_insert,original_delete=instrument.insert_phrase_at,instrument.delete_phrase_at
+function instrument:insert_phrase_at(index)
+  insert_count=insert_count+1
+  return original_insert(self,index)
 end
-
--- Regeneration exercises the real backup/copy/name/cleanup mutation scopes.
-do
-  local observer_host=dofile("tests/acid/observer_host_fixture.lua")
-  observer_host.attach(song)
-  local observer_ctx=new_context()
-  local observer_results,observer_delivery=delivered()
-  observer_ctx:attach_document(song)
-  observer_ctx:open_dialog(observer_delivery)
-  local observer=require("runtime.observers").new()
-  local observed={}
-  assert(observer:attach(song,observer_ctx,function(kind,object,internal,inventory_kind)
-    observed[#observed+1]={kind=kind,object=object,internal=internal,inventory_kind=inventory_kind}
-  end))
-
-  local native_insert,native_delete=instrument.insert_phrase_at,instrument.delete_phrase_at
-  instrument.insert_phrase_at=function(self,index)
-    local inserted=native_insert(self,index)
-    self.phrases_observable:fire()
-    return inserted
-  end
-  instrument.delete_phrase_at=function(self,index)
-    native_delete(self,index)
-    self.phrases_observable:fire()
-  end
-  local native_copy=phrase.copy_from
-  phrase.copy_from=function(self,other)
-    native_copy(self,other)
-    self.name_observable:fire()
-    self:fire_line_notifier()
-  end
-
-  observer_ctx:refresh_inventory()
-  observer_ctx:bind_phrase(instrument,phrase)
-  edit(observer_ctx,source(56))
-  dispatch(observer_ctx)
-  drain(observer_results,1,"observed exact-target regeneration")
-  assert_success(observer_results[1],phrase,"observed exact-target regeneration")
-  assert(#instrument.phrases==2 and rawequal(instrument.phrases[1],phrase),
-    "observed regeneration changed destination identity or phrase count")
-  assert(observer_ctx:target_state().kind=="owned" and
-    rawequal(observer_ctx:target_state().phrase,phrase),
-    "internal backup notifications detached the unchanged destination")
-  local list_notifications=0
-  local saw_name,saw_lines=false,false
-  for _,event in ipairs(observed) do
-    if event.kind=="inventory" and event.inventory_kind=="phrases" then
-      list_notifications=list_notifications+1
-      assert(event.internal,"writer phrase-list callback escaped its mutation scope")
-    elseif event.kind=="rename" and rawequal(event.object,phrase) then
-      saw_name=true
-      assert(event.internal,"writer destination rename escaped its mutation scope")
-    elseif event.kind=="content" and rawequal(event.object,phrase) then
-      saw_lines=true
-      assert(event.internal,"writer destination copy escaped its mutation scope")
-    end
-  end
-  assert(list_notifications>=4 and saw_name and saw_lines,
-    "writer regeneration did not exercise insert, copy/name, and cleanup observers")
-  assert(observer:refresh())
-  instrument.insert_phrase_at,instrument.delete_phrase_at=native_insert,native_delete
-  phrase.copy_from=native_copy
-  assert(observer:detach())
-  observer_ctx:release_document()
+function instrument:delete_phrase_at(index)
+  delete_count=delete_count+1
+  return original_delete(self,index)
 end
-
--- Cancellation before the deferred native render settles and leaves the
--- scheduler dispatchable for a later create.
-defer_commit=true
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(45))
-local cancelled_before=sink_calls
-assert(cold_ctx:request_generation("manual"))
-local token=cold_ctx:state().token
-assert(token and writer.cancel(token,"cancelled before render")==true)
-drain(cold,3,"cancelled before render")
-assert(cold[3].kind=="failure" and cold[3].status=="cancelled",
-  "pre-render cancellation was not terminal")
-assert(writer.state()=="idle","cancellation wedged the writer")
-assert(cold_ctx:state().status=="idle","cancellation wedged the scheduler")
-defer_commit=false
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(47))
-dispatch(cold_ctx)
-drain(cold,4,"recovery create")
-local recovered=instrument.phrases[#instrument.phrases]
-assert_success(cold[4],recovered,"recovery create")
-assert(recovered.cells[1].note_value==47)
-assert(sink_calls==cancelled_before+2,"unexpected dispatch count after cancellation")
-
--- Committed output with a leaked backup blocks every later request, including
--- after dialog reopen, until explicit read-only revalidation proves consistency.
-local native_delete=instrument.delete_phrase_at
-instrument.delete_phrase_at=function(self,index)
-  if self.phrases[index].name==writer.TRANSACTION_BACKUP_NAME then error("injected backup cleanup failure") end
-  return native_delete(self,index)
+local sync_before=#cold
+local materializer_before=materializer_calls
+local original_ownership_status=ownership.status
+local ownership_status_calls=0
+ownership.status=function(...)
+  ownership_status_calls=ownership_status_calls+1
+  return original_ownership_status(...)
 end
-cold_ctx:bind_phrase(instrument,recovered)
-edit(cold_ctx,source(49))
-dispatch(cold_ctx)
-drain(cold,5,"committed cleanup failure")
-instrument.delete_phrase_at=native_delete
-assert(cold[5].integrity_blocked and cold[5].committed==true,
-  tostring(cold[5].kind).."/"..tostring(cold[5].status).." committed="..tostring(cold[5].committed))
-assert(recovered.cells[1].note_value==49,"musical commit was not reported accurately")
-assert(cold_ctx:integrity_state().blocked,"committed cleanup failed to persist its blocker")
-assert(not cold_ctx:request_generation("manual"),"recovery material did not block generation")
-local recovery_phrase=instrument.phrases[#instrument.phrases]
-assert(recovery_phrase.name==writer.RECOVERY_BACKUP_NAME)
-assert(writer.is_temporary(song,instrument,recovery_phrase),
-  "retained recovery phrase lost its writer-temporary registration")
-assert(not cold_ctx:revalidation_status().verified)
-cold_ctx:close_dialog()
-cold_ctx:open_dialog(cold_delivery)
-assert(cold_ctx:integrity_state().blocked and not cold_ctx:request_generation("manual"))
-native_delete(instrument,#instrument.phrases)
-local revalidation,proof=cold_ctx:revalidation_status()
-assert(revalidation.verified,revalidation.reason)
-assert(cold_ctx:revalidate(proof),"verified committed recovery could not be revalidated")
-assert(not cold_ctx:integrity_state().blocked)
+edit(cold_ctx,source(56))
+local accepted_sync, sync_reason=cold_ctx:request_generation("manual")
+ownership.status=original_ownership_status
+assert(accepted_sync,sync_reason)
+assert(#cold==sync_before+1,"terminal result was not delivered before request returned")
+assert(materializer_calls==materializer_before+1,"regeneration did not apply exactly one phrase image")
+assert(ownership_status_calls==0,"regeneration repeated ownership classification before the full materializer baseline match")
+assert_success(cold[#cold],phrase,"synchronous runtime regenerate")
+assert(rawequal(instrument.phrases[1],phrase) and #instrument.phrases==phrase_count_before_sync,
+  "regeneration replaced or inserted a phrase")
+assert(insert_count==0 and delete_count==0,"regeneration changed phrase inventory")
+assert(song.selected_phrase_index==1 and rawequal(song.selected_phrase,phrase),
+  "regeneration changed native phrase selection")
+local sync_id=assert(ownership.id(phrase))
+assert(sync_id~=second_revision_id and store.read_entry(song,second_revision_id),
+  "regeneration did not retain the prior immutable source row")
+assert(first_note(assert(store.load(song,instrument,phrase)))==56)
+assert(writer.state()=="idle" and cold_ctx:state().status=="idle",
+  "synchronous runtime operation did not settle before returning")
+local target_after_adoption=cold_ctx:target_state()
+assert(target_after_adoption.kind=="owned" and target_after_adoption.baseline.id==sync_id,
+  "fresh full target read rejected the adopted postimage proof")
+local original_note=phrase.cells[1].note_value
+phrase.cells[1].note_value=original_note==60 and 59 or 60
+local target_after_external_edit=cold_ctx:target_state()
+assert(target_after_external_edit.kind=="unavailable",
+  "a later full target read accepted a native edit after postimage adoption")
+phrase.cells[1].note_value=original_note
 
--- A verified musical commit whose runtime baseline adoption fails must block
--- later generation until the committed destination passes explicit revalidation.
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(50))
-fail_next_adoption=true
-dispatch(cold_ctx)
-drain(cold,6,"post-commit adoption failure")
-local adoption_phrase=instrument.phrases[#instrument.phrases]
-assert(cold[6].status=="integrity_blocked" and cold[6].committed==true,
-  "post-commit adoption failure was not reported as blocked")
-assert(adoption_phrase.cells[1].note_value==50,"writer commit did not complete before adoption failed")
-assert(cold_ctx:integrity_state().blocked,"adoption failure did not persist an integrity blocker")
-local sink_before_blocked_request=sink_calls
-local accepted= cold_ctx:request_generation("manual")
-assert(not accepted and sink_calls==sink_before_blocked_request,
-  "generation was dispatched while committed state awaited revalidation")
-cold_ctx:bind_new(instrument)
-assert(cold_ctx:integrity_state().blocked and not cold_ctx:request_generation("manual"),
-  "changing the selected destination cleared the adoption blocker")
-cold_ctx:close_dialog()
-cold_ctx:open_dialog(cold_delivery)
-assert(cold_ctx:integrity_state().blocked and not cold_ctx:request_generation("manual"),
-  "reopening the dialog cleared the adoption blocker")
-local committed_note=adoption_phrase.cells[1].note_value
-adoption_phrase.cells[1].note_value=committed_note-1
-local adoption_status,adoption_proof=cold_ctx:revalidation_status()
-assert(not adoption_status.verified and not adoption_proof,
-  "inconsistent committed output passed explicit revalidation")
-adoption_phrase.cells[1].note_value=committed_note
-adoption_status,adoption_proof=cold_ctx:revalidation_status()
-assert(adoption_status.verified,adoption_status.reason)
-assert(cold_ctx:revalidate(adoption_proof),"consistent committed destination could not be revalidated")
-assert(not cold_ctx:integrity_state().blocked)
-assert(sink_calls==sink_before_blocked_request,"revalidation retried a prior generation request")
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(51))
-dispatch(cold_ctx)
-drain(cold,7,"generation after explicit adoption revalidation")
-assert(cold[7].kind=="success" and sink_calls==sink_before_blocked_request+1,
-  "fresh generation did not dispatch after explicit revalidation")
-
--- A rejected or throwing writer blocker hook still installs runtime evidence.
-local blocker_target=cold[7].phrase
-local function test_blocker_hook_failure(mode,note)
-  local hook_ctx=new_context()
-  local hook_results,hook_delivery=delivered()
-  hook_ctx:attach_document(song)
-  hook_ctx:open_dialog(hook_delivery)
-  hook_ctx:bind_phrase(instrument,blocker_target)
-  edit(hook_ctx,source(note))
-  local record_blocker=hook_ctx.record_blocker
-  hook_ctx.record_blocker=function()
-    if mode=="throw" then error("injected blocker hook failure") end
-    return false,"injected blocker rejection"
+-- A direct materializer failure restores the exact phrase and source state.
+local before_failure=assert(ownership.snapshot(phrase))
+local original_apply=materializer.apply
+materializer.apply=function(...)
+  materializer_calls=materializer_calls+1
+  local result,err,attempted=original_apply(...)
+  if result then
+    phrase:line(1).note_columns[1].note_value=60
+    return nil,"injected post-apply mismatch",true
   end
-  local delete_phrase=instrument.delete_phrase_at
-  instrument.delete_phrase_at=function(self,index)
-    if self.phrases[index].name==writer.TRANSACTION_BACKUP_NAME then
-      error("injected committed backup cleanup failure")
-    end
-    return delete_phrase(self,index)
-  end
-  local expected=#hook_results+1
-  dispatch(hook_ctx)
-  drain(hook_results,expected,"blocker hook "..mode)
-  hook_ctx.record_blocker=record_blocker
-  instrument.delete_phrase_at=delete_phrase
-  assert(hook_results[expected].kind=="failure" and hook_results[expected].status=="integrity_blocked",
-    "blocker hook "..mode.." did not produce a blocked terminal result")
-  assert(hook_ctx:integrity_state().blocked,
-    "blocker hook "..mode.." failed to install runtime integrity evidence")
-  assert(not hook_ctx:request_generation("manual"),
-    "blocker hook "..mode.." allowed a subsequent generation")
-  local recovery=instrument.phrases[#instrument.phrases]
-  assert(recovery.name==writer.RECOVERY_BACKUP_NAME,
-    "blocker hook "..mode.." did not retain its backup")
-  instrument.delete_phrase_at(instrument,#instrument.phrases)
-  local status,proof=hook_ctx:revalidation_status()
-  assert(status.verified, status.reason)
-  assert(hook_ctx:revalidate(proof),"blocker hook "..mode.." evidence could not be revalidated")
-  hook_ctx:release_document()
+  return result,err,attempted
 end
-test_blocker_hook_failure("reject",53)
-test_blocker_hook_failure("throw",54)
-local verified_ctx=new_context()
-local verified_results,verified_delivery=delivered()
-verified_ctx:attach_document(song)
-verified_ctx:open_dialog(verified_delivery)
-verified_ctx:bind_phrase(instrument,blocker_target)
-edit(verified_ctx,source(55))
-dispatch(verified_ctx)
-drain(verified_results,1,"generation after blocker-hook revalidation")
-assert(verified_results[1].kind=="success",
-  "verified blocker-hook recovery did not release the writer integrity latch")
-verified_ctx:release_document()
-
--- The module-level runtime is reused across documents. Its released delivery
--- cannot remain active after the real writer detaches its completion callback.
-render_mode="defer"
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(42))
+local failure_before=#cold
+edit(cold_ctx,source(57))
+local store_before_failure=song.tool_data
 dispatch(cold_ctx)
-local released_render=next_render("released render")
-local released_song=song
-local released_store=song.tool_data
-local released_stage=instrument.phrases[#instrument.phrases]
-local delivered_before_release=#cold
-cold_ctx:release_document()
-local warning=writer.release()
-assert(type(warning)=="string" and warning:find(writer.PHRASE_NAME,1,true))
-local next_instrument={}
-for key,value in pairs(instrument) do if key~="phrases" then next_instrument[key]=value end end
-next_instrument.phrases={}
-instrument=next_instrument
-song={instruments={instrument},transport={timing_model=2,lpb=16,tpl=12,groove_enabled=false}}
-function song:is_undo_redoing() return false end
-cold_ctx:attach_document(song)
-cold_ctx:open_dialog(cold_delivery)
-cold_ctx:bind_new(instrument)
-edit(cold_ctx,source(46))
-assert(not cold_ctx:request_generation("manual"),"released native render lost occupancy")
-released_render.callback(nil,released_render.count,0)
-assert(writer.state()=="idle" and #cold==delivered_before_release)
-assert(cold_ctx:state().status=="idle","released delivery permanently wedged the reused runtime")
-assert(cold_ctx:state().pending==false and not cold_ctx:flush_pending())
-assert(released_song.tool_data==released_store and released_stage.name==writer.PHRASE_NAME)
-render_mode="sync"
-dispatch(cold_ctx)
-drain(cold,delivered_before_release+1,"new document after released callback")
-assert_success(cold[#cold],instrument.phrases[#instrument.phrases],"new document create")
+materializer.apply=original_apply
+assert(#cold==failure_before+1 and cold[#cold].kind=="failure",
+  "materialization failure was not delivered synchronously")
+local failure_snapshot=assert(ownership.snapshot(phrase))
+local failure_same,failure_difference=ownership.compare(before_failure,failure_snapshot)
+assert(failure_same and song.tool_data==store_before_failure,
+  "materialization failure did not restore phrase and source state exactly")
+assert(writer.state()=="idle" and cold_ctx:state().status=="idle",
+  "failed synchronous operation did not release runtime state")
 
+-- Reentry from terminal delivery is rejected until the callback returns.
+probe_terminal_reentry=true
+local reentry_before=#cold
+edit(cold_ctx,source(55))
+dispatch(cold_ctx)
+assert(not probe_terminal_reentry and #cold==reentry_before+1,
+  "terminal reentry probe did not complete exactly once")
+assert(writer.state()=="idle" and #instrument.phrases==phrase_count_before_sync,
+  "terminal reentry changed writer or phrase inventory state")
+
+instrument.insert_phrase_at=original_insert
+instrument.delete_phrase_at=original_delete
 -- Resolve one explicitly selected member of a three-way same-instrument ID
 -- collision, then save and reopen its unique ID while the other two remain
 -- blocked together. The selected owner remains regenerable throughout.
@@ -780,54 +463,39 @@ do
   assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(second))))
   assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(third))))
 
-  -- Real native-render occupancy excludes identity work before and after
-  -- cancellation. Its matching callback retires the slot without retrying it.
+  -- Identity work is excluded for the full synchronous mutation scope.
   local identity_ctx=new_context()
   identity_ctx:attach_document(song)
   identity_ctx:open_dialog()
   identity_ctx:bind_phrase(instrument,selected)
   local holder_names={selected.name,second.name,third.name}
-  local dispatch_before_render=sink_calls
-  render_mode="defer"
+  local dispatch_before_mutation=sink_calls
   cold_ctx:bind_new(instrument)
   edit(cold_ctx,source(52))
+  during_mutation=function()
+    assert(writer.state()=="busy","writer did not reserve the operation during mutation")
+    local eligible,reason=identity_ctx:independence_eligibility()
+    assert(not eligible and tostring(reason):find("writer",1,true),
+      "active writer did not reject identity eligibility: "..tostring(reason))
+    local changed,occupied_reason=identity_ctx:make_independent()
+    assert(not changed and tostring(occupied_reason):find("writer",1,true),
+      "active writer admitted identity work: "..tostring(occupied_reason))
+  end
   local store_bytes=song.tool_data
   dispatch(cold_ctx)
-  local render=next_render("identity exclusion create")
-  local request_token=assert(cold_ctx:state().token)
-  assert(writer.state()=="busy")
-  local eligible,reason=identity_ctx:independence_eligibility()
-  assert(not eligible and tostring(reason):find("writer",1,true),
-    "active real writer did not reject identity eligibility: "..tostring(reason))
-  local changed,occupied_reason=identity_ctx:make_independent()
-  assert(not changed and tostring(occupied_reason):find("writer",1,true),
-    "active real writer admitted identity work: "..tostring(occupied_reason))
-  assert(sink_calls==dispatch_before_render+1,"identity rejection dispatched another writer job")
-
-  assert(cold_ctx:revoke(request_token,"identity exclusion cancellation"))
-  assert(not request_token:is_current() and writer.state()=="busy",
-    "revocation released active native render occupancy")
-  changed,occupied_reason=identity_ctx:make_independent()
-  assert(not changed and tostring(occupied_reason):find("writer",1,true),
-    "canceled in-flight writer admitted identity work: "..tostring(occupied_reason))
-  assert(sink_calls==dispatch_before_render+1,"occupied identity rejection queued work")
-  assert(song.tool_data==store_bytes and selected.name==holder_names[1] and
+  during_mutation=nil
+  assert(#cold>=1 and cold[#cold].kind=="success",
+    "identity probe request did not reach a successful terminal result")
+  assert(sink_calls==dispatch_before_mutation+1 and writer.state()=="idle")
+  local created=instrument.phrases[#instrument.phrases]
+  local created_id=ownership.id(created)
+  assert(song.tool_data~=store_bytes and created_id and store.read_entry(song,created_id) and
+    store.read_entry(song,old_id) and selected.name==holder_names[1] and
     second.name==holder_names[2] and third.name==holder_names[3],
-    "occupied identity rejection mutated the collision")
-
-  render.callback(nil,render.count,0)
-  settle_writer("identity exclusion cancellation")
-  assert(song.tool_data==store_bytes and selected.name==holder_names[1] and
-    second.name==holder_names[2] and third.name==holder_names[3],
-    "late render settlement retried identity work or changed the collision")
-  assert(sink_calls==dispatch_before_render+1,
-    "late settlement dispatched a rejected identity action")
-  assert(writer.state()=="idle")
+    "identity admission probe changed the collision or lost its immutable source revision")
   identity_ctx:release_document()
   cold_ctx:bind_phrase(instrument,selected)
   assert(cold_ctx:independence_eligibility(),"fresh identity authorization failed after settlement")
-  render_mode="sync"
-
   cold_ctx:transition("arm")
   assert(cold_ctx:generation_state().armed,
     "Live Edit did not arm before Make Independent")
@@ -860,13 +528,11 @@ do
 
   cold_ctx:transition("disarm")
   edit(cold_ctx,source(49))
-  dispatch(cold_ctx)
-  drain(cold,#cold+1,'regenerate unique holder beside unrelated collision')
-  assert_success(cold[#cold],selected,'regenerate unique holder beside unrelated collision')
-  assert(#instrument.phrases==3 and ownership.id(selected)==identity.id)
-  assert(#assert(ownership.inventory(song))[old_id]==2,
-    'unrelated two-holder collision was altered by regeneration')
-  assert(first_note(assert(store.load(song,instrument,selected)))==49)
+  assert(first_note(cold_ctx:editor_state().source)==49,
+    'selected holder editor did not retain its new draft source')
+  assert(ownership.id(selected)==identity.id and #instrument.phrases==4 and
+    #assert(ownership.inventory(song))[old_id]==2,
+    'selected holder draft changed an unrelated same-ID collision')
 
   cold_ctx:release_document()
   cold_ctx:attach_document(song)
@@ -874,12 +540,9 @@ do
   cold_ctx:bind_phrase(instrument,selected)
   local reopened_target=cold_ctx:target_state()
   assert(reopened_target.kind=='owned' and reopened_target.baseline.id==identity.id)
-  assert(first_note(assert(store.load(song,instrument,selected)))==49)
-  edit(cold_ctx,source(51))
-  dispatch(cold_ctx)
-  drain(cold,#cold+1,'reopen and regenerate independent holder')
-  assert_success(cold[#cold],selected,'reopen and regenerate independent holder')
-  assert(first_note(assert(store.load(song,instrument,selected)))==51)
+  assert(first_note(assert(store.load(song,instrument,selected)))==55)
+  assert(first_note(reopened_target.baseline.source)==55,
+    'reopened independent holder did not recover its committed source')
   assert(#assert(ownership.inventory(song))[old_id]==2)
 
   -- A reentrant dialog close after the identity commit retains the selected
@@ -964,6 +627,37 @@ do
   assert(unrelated_state_unchanged(),
     "regeneration after identity close changed unrelated phrase or source state")
   reentrant_ctx:release_document()
+end
+
+-- Once apply has produced a verified receipt, a later native edit must be
+-- preserved and reported as blocked instead of rolling back over that edit.
+do
+  local guarded_ctx=new_context()
+  local guarded_results,guarded_delivery=delivered()
+  guarded_ctx:attach_document(song)
+  guarded_ctx:open_dialog(guarded_delivery)
+  guarded_ctx:bind_phrase(instrument,phrase)
+  edit(guarded_ctx,source(54))
+  local phrase_line=phrase.cells[16]
+  local prior_delay=phrase_line.delay_value
+  after_materializer_apply=function()
+    phrase_line.delay_value=prior_delay==0 and 1 or 0
+  end
+  dispatch(guarded_ctx)
+  assert(#guarded_results==1 and guarded_results[1].kind=="failure" and
+    guarded_results[1].status=="integrity_blocked",
+    "post-receipt native drift was not reported as an integrity blocker")
+  assert(guarded_results[1].committed==true and guarded_results[1].baseline==nil,
+    "blocked postimage rollback misreported commit state or invented a baseline")
+  assert(phrase_line.delay_value~=prior_delay,
+    "post-receipt rollback overwrote the native edit")
+  assert(guarded_ctx:integrity_state().blocked,
+    "post-receipt drift did not block further writes pending revalidation")
+  local phrase_id=assert(ownership.id(phrase))
+  local committed=assert(store.read_entry(song,phrase_id))
+  assert(first_note(committed)==54,
+    "blocked postimage rollback rewrote the already committed source")
+  guarded_ctx:release_document()
 end
 
 print("ACID runtime writer integration checks passed (native playback unverified)")

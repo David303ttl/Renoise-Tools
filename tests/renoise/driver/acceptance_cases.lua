@@ -23,6 +23,7 @@ local WORKFLOW_PHRASES_PER_INSTRUMENT = 4
 local WORKFLOW_OWNED_PER_INSTRUMENT = 2
 local WORKFLOW_FOREIGN_PER_INSTRUMENT = 2
 local prepared_independence_undo = nil
+local prepared_revision_undo = nil
 
 local function has_eligibility(value)
   return value ~= nil and value ~= false
@@ -85,6 +86,22 @@ local function on_next_idle(callback)
   local idle = renoise.tool().app_idle_observable
   local notifier
   notifier = function()
+    pcall(function() idle:remove_notifier(notifier) end)
+    callback()
+  end
+  idle:add_notifier(notifier)
+end
+
+-- Let a synchronous writer's completion delivery return before starting the
+-- next transaction. The first tick may still belong to the idle dispatch that
+-- delivered the prior result.
+local function after_delivery_idle(callback)
+  local idle = renoise.tool().app_idle_observable
+  local ticks = 0
+  local notifier
+  notifier = function()
+    ticks = ticks + 1
+    if ticks < 2 then return end
     pcall(function() idle:remove_notifier(notifier) end)
     callback()
   end
@@ -239,7 +256,9 @@ local function writer_rejects_regeneration_without_mutation(song, instrument_ind
   local raw_before = song.tool_data
   local snapshot_before = ownership.snapshot(phrase)
   local build_ok, request = pcall(factory.build, song, instrument_index, source, phrase_index)
-  if not build_ok or type(request) ~= "table" or request.kind ~= "regenerate" or request.baseline ~= nil then
+  if not build_ok or type(request) ~= "table" or request.kind ~= "regenerate" or
+      (request.baseline ~= nil and (type(request.baseline) ~= "table" or
+        request.baseline.id ~= request.id or rawget(request.baseline, "snapshot") ~= nil)) then
     return false
   end
   local callback_called = false
@@ -586,6 +605,8 @@ local function run_make_independent(done)
       status = identity_passed and "PASS" or "FAIL",
       case = "make-independent",
       old_id = old_id,
+      initial_old_id = old_id,
+      independent_id_before_regenerate = outcome.id,
       new_id = ownership.id(duplicate),
       holders_before = TWO_HOLDER_COUNT,
       holders_after_old_id = groups and #groups[old_id] or 0,
@@ -624,32 +645,42 @@ local function run_make_independent(done)
       return
     end
     local regenerate_accepted, regenerate_start_error = writer.regenerate(regenerate_request, function(regenerated)
+      local regenerated_id = type(regenerated) == "table" and regenerated.id or nil
       if type(regenerated) ~= "table" or regenerated.kind ~= "success" or
-          regenerated.verified ~= true or not rawequal(regenerated.phrase, duplicate) then
+          regenerated.verified ~= true or not rawequal(regenerated.phrase, duplicate) or
+          not regenerated_id or regenerated_id == outcome.id then
         details.status = "FAIL"
-        details.regenerate_error = describe_failure(regenerated or "regeneration did not return the same verified phrase")
+        details.regenerate_error = describe_failure(regenerated or "regeneration did not return the same verified phrase with a fresh revision")
         release_context()
         done(details)
         return
       end
-      on_next_idle(function()
         local regenerated_snapshot = ownership.snapshot(duplicate)
-        local regenerated_source, regenerated_policy, regenerated_pb = store.read_entry(song, outcome.id)
+        local regenerated_source, regenerated_policy, regenerated_pb = store.read_entry(song, regenerated_id)
+        local historical_source, historical_policy, historical_pb = store.read_entry(song, outcome.id)
         local regenerated_groups = ownership.inventory(song)
         local original_after_regenerate = ownership.snapshot(original)
         details.regenerated_same_object = rawequal(regenerated.phrase, duplicate)
+        details.previous_independent_id = outcome.id
+        details.new_id = regenerated_id
         details.phrase_count_after_regenerate = #instrument.phrases
         details.source_changed_by_regenerate = regenerated_source and
           sequence.same_source(regenerated_source, changed_source) or false
         details.regenerate_settings_preserved = regenerated_policy == request.output_policy and
           regenerated_pb == request.pb_range
+        details.previous_source_preserved = historical_source and sequence.same_source(historical_source, new_source) and
+          historical_policy == request.output_policy and historical_pb == request.pb_range
         details.original_holder_unchanged_after_regenerate = original_after_regenerate and
           ownership.compare(original_before, original_after_regenerate)
-        details.holders_after_regenerate = regenerated_groups and regenerated_groups[outcome.id] and
+        details.holders_after_regenerate = regenerated_groups and regenerated_groups[regenerated_id] and
+          #regenerated_groups[regenerated_id] or 0
+        details.previous_holders_after_regenerate = regenerated_groups and regenerated_groups[outcome.id] and
           #regenerated_groups[outcome.id] or 0
         local regenerate_passed = details.regenerated_same_object and
           details.phrase_count_after_regenerate == 2 and regenerated_snapshot ~= nil and
           details.source_changed_by_regenerate and details.regenerate_settings_preserved and
+          details.previous_source_preserved and details.previous_holders_after_regenerate == 0 and
+          ownership.id(duplicate) == regenerated_id and
           details.original_holder_unchanged_after_regenerate and
           details.holders_after_regenerate == 1
         details.status = identity_passed and regenerate_passed and "PASS" or "FAIL"
@@ -693,26 +724,35 @@ local function run_make_independent(done)
           done(details)
         end
 
-        local original_index
-        for index, phrase in ipairs(instrument.phrases) do
-          if rawequal(phrase, original) then original_index = index; break end
-        end
-        local original_request, original_request_error = factory.build(song, instrument_index, source, original_index)
-        if not original_request or original_request.kind ~= "regenerate" then
-          details.status = "FAIL"
-          details.original_regenerate_error = describe_failure(original_request_error or
-            "original owned phrase did not build a regenerate request")
-          release_context()
-          done(details)
-          return
-        end
-        local original_data_before = song.tool_data
-        local original_snapshot_before = ownership.snapshot(original)
-        local duplicate_snapshot_before = ownership.snapshot(duplicate)
-        local original_accepted, original_start_error = writer.regenerate(original_request, function(original_result)
-          on_next_idle(function()
-            local original_source_after, original_policy_after, original_pb_after = store.read_entry(song, old_id)
-            local duplicate_source_after, duplicate_policy_after, duplicate_pb_after = store.read_entry(song, outcome.id)
+        after_delivery_idle(function()
+          local original_index
+          for index, phrase in ipairs(instrument.phrases) do
+            if rawequal(phrase, original) then original_index = index; break end
+          end
+          local original_request, original_request_error = factory.build(song, instrument_index, source, original_index)
+          if not original_request or original_request.kind ~= "regenerate" then
+            details.status = "FAIL"
+            details.original_regenerate_error = describe_failure(original_request_error or
+              "original owned phrase did not build a regenerate request")
+            release_context()
+            done(details)
+            return
+          end
+          local original_snapshot_before = ownership.snapshot(original)
+          local duplicate_snapshot_before = ownership.snapshot(duplicate)
+          local duplicate_id_before_original_regenerate = regenerated_id
+          local original_id_before_regenerate = ownership.id(original)
+          local original_accepted, original_start_error = writer.regenerate(original_request, function(original_result)
+            local original_regenerated_id = type(original_result) == "table" and original_result.id or nil
+            local original_source_after, original_policy_after, original_pb_after
+            if original_regenerated_id then
+              original_source_after, original_policy_after, original_pb_after = store.read_entry(song, original_regenerated_id)
+            end
+            local original_historical_source, original_historical_policy, original_historical_pb = store.read_entry(song, old_id)
+            local duplicate_source_after, duplicate_policy_after, duplicate_pb_after =
+              store.read_entry(song, duplicate_id_before_original_regenerate)
+            local duplicate_historical_source, duplicate_historical_policy, duplicate_historical_pb =
+              store.read_entry(song, outcome.id)
             local original_snapshot_after = ownership.snapshot(original)
             local duplicate_snapshot_after = ownership.snapshot(duplicate)
             local original_groups = ownership.inventory(song)
@@ -720,29 +760,46 @@ local function run_make_independent(done)
               original_result.kind == "success" and original_result.verified == true and
               rawequal(original_result.phrase, original)
             local original_unchanged = original_snapshot_before and original_snapshot_after and
-              ownership.compare(original_snapshot_before, original_snapshot_after)
+              original_snapshot_before.name ~= original_snapshot_after.name and
+              ownership.compare(original_snapshot_before, original_snapshot_after, "name")
             local independent_duplicate_unchanged = duplicate_snapshot_before and duplicate_snapshot_after and
+              ownership.id(duplicate) == duplicate_id_before_original_regenerate and
               ownership.compare(duplicate_snapshot_before, duplicate_snapshot_after) and
               duplicate_source_after and sequence.same_source(duplicate_source_after, changed_source) and
-              duplicate_policy_after == request.output_policy and duplicate_pb_after == request.pb_range
+              duplicate_policy_after == request.output_policy and duplicate_pb_after == request.pb_range and
+              duplicate_historical_source and sequence.same_source(duplicate_historical_source, new_source) and
+              duplicate_historical_policy == request.output_policy and duplicate_historical_pb == request.pb_range
             local original_source_preserved = original_source_after and
               sequence.same_source(original_source_after, source) and
               original_policy_after == request.output_policy and original_pb_after == request.pb_range
-            local original_groups_preserved = original_groups and original_groups[old_id] and
-              #original_groups[old_id] == 1 and rawequal(original_groups[old_id][1].phrase, original) and
-              original_groups[outcome.id] and #original_groups[outcome.id] == 1 and
-              rawequal(original_groups[outcome.id][1].phrase, duplicate)
-            local original_store_unchanged = song.tool_data == original_data_before
+            local original_historical_source_preserved = original_historical_source and
+              sequence.same_source(original_historical_source, source) and
+              original_historical_policy == request.output_policy and original_historical_pb == request.pb_range
+            local original_groups_preserved = original_groups and original_regenerated_id and
+              original_regenerated_id ~= original_id_before_regenerate and
+              ownership.id(original) == original_regenerated_id and original_groups[original_regenerated_id] and
+              #original_groups[original_regenerated_id] == 1 and
+              rawequal(original_groups[original_regenerated_id][1].phrase, original) and
+              original_groups[duplicate_id_before_original_regenerate] and
+              #original_groups[duplicate_id_before_original_regenerate] == 1 and
+              rawequal(original_groups[duplicate_id_before_original_regenerate][1].phrase, duplicate) and
+              original_groups[old_id] == nil and original_groups[outcome.id] == nil
             local original_count_unchanged = #instrument.phrases == TWO_HOLDER_COUNT
             local original_regeneration_passed = original_regenerated and original_unchanged and
-              independent_duplicate_unchanged and original_source_preserved and original_groups_preserved and
-              original_store_unchanged and original_count_unchanged
+              independent_duplicate_unchanged and original_source_preserved and
+              original_historical_source_preserved and original_groups_preserved and original_count_unchanged
+            details.previous_original_id = old_id
+            details.old_id = original_regenerated_id
             details.original_regenerated_same_object = original_regenerated == true
             details.original_regenerated_content_unchanged = original_unchanged == true
+            details.original_regenerated_revision_name_changed = original_snapshot_before and
+              original_snapshot_after and original_snapshot_before.name ~= original_snapshot_after.name or false
             details.duplicate_unchanged_during_original_regeneration = independent_duplicate_unchanged == true
             details.original_source_and_settings_preserved = original_source_preserved == true
+            details.previous_original_source_preserved = original_historical_source_preserved == true
             details.original_regeneration_preserved_independent_associations = original_groups_preserved == true
-            details.original_regeneration_store_unchanged = original_store_unchanged
+            details.original_regeneration_created_fresh_revision = original_regenerated_id ~= nil and
+              original_regenerated_id ~= original_id_before_regenerate
             details.original_regeneration_phrase_count_unchanged = original_count_unchanged
             if not original_regeneration_passed then
               details.status = "FAIL"
@@ -755,14 +812,14 @@ local function run_make_independent(done)
             end
             finish_save()
           end)
+          if not original_accepted then
+            details.status = "FAIL"
+            details.original_regenerate_error = describe_failure(original_start_error)
+            release_context()
+            done(details)
+            return
+          end
         end)
-        if not original_accepted then
-          details.status = "FAIL"
-          details.original_regenerate_error = describe_failure(original_start_error)
-          release_context()
-          done(details)
-          return
-        end
     end)
     if not regenerate_accepted then
       details.status = "FAIL"
@@ -770,7 +827,6 @@ local function run_make_independent(done)
       release_context()
       done(details)
     end
-    end)
   end
   local accepted, start_error = writer.create(request, function(result)
     local idle = renoise.tool().app_idle_observable
@@ -1373,6 +1429,866 @@ continue_independence_undo = function(state, done)
       done(details)
     end)
   end)
+  return true
+end
+
+local function run_revision_undo_fixture(done, case_name)
+  case_name = case_name or "revision-undo-fixture"
+  local song = renoise.song()
+  local instrument_index = song.selected_instrument_index
+  local sequence = require("model.sequencer")
+  local writer = require("writers.phrase_writer")
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local source = sequence.new_pattern(ACCEPTANCE_PATTERN_LENGTH)
+  source.pitch_events[FIRST_NOTE_LINE] = sequence.new_pitch(ACCEPTANCE_GENERATED_NOTE, ACCEPTANCE_KEY, true, false)
+  local request, request_error = factory.build(song, instrument_index, source)
+  if not request then
+    done({ status = "FAIL", case = case_name, reason = describe_failure(request_error) })
+    return true
+  end
+  local function complete(result)
+    if type(result) ~= "table" or result.kind ~= "success" or result.verified ~= true or not result.phrase then
+      done({ status = "FAIL", case = case_name, reason = describe_failure(result) })
+      return
+    end
+    local phrase = result.phrase
+    local ownership = require("renoise.phrase_ownership")
+    local store = require("renoise.pattern_store")
+    local id = ownership.id(phrase)
+    local stored, policy, pb
+    if id then stored, policy, pb = store.read_entry(song, id) end
+    local saved, save_error
+    if stored and sequence.same_source(stored, source) then
+      saved, save_error = save_independent_fixture(song, "acceptance-revision-undo.xrns")
+    else
+      save_error = "fixture source was not committed exactly"
+    end
+    done({ status = saved and "PASS" or "FAIL", case = case_name,
+      reason = save_error,
+      roundtrip_fixture = saved and saved.fixture, phrase_id = id,
+      source_key = stored and stored.pitch_events[FIRST_NOTE_LINE].key,
+      output_policy = policy, pb_range = pb })
+  end
+  local accepted, start_error = writer.create(request, complete)
+  if not accepted then
+    done({ status = "FAIL", case = case_name, reason = describe_failure(start_error) })
+  end
+  return true
+end
+
+local function remove_prepared_revision_undo(state)
+  if not state then return end
+  remove_undo_idle_notifier(state, "watch_notifier")
+  for _, record in ipairs(state.wrappers or {}) do
+    pcall(function() record.target[record.key] = record.original end)
+  end
+  state.wrappers = {}
+end
+
+local function probe_gui_idle_notifier(state)
+  if state.gui_idle_probe_invoked or type(state.gui_idle_original_notifier) ~= "function" or
+      not state.gui_idle_observable then return end
+  state.gui_idle_probe_invoked = true
+  local observable = state.gui_idle_observable
+  local notifier = state.gui_idle_original_notifier
+  local before_ok, before = pcall(observable.has_notifier, observable, notifier)
+  state.idle_notifier_registered_before_probe = before_ok and before == true
+  local called, result = pcall(notifier)
+  state.gui_idle_probe_succeeded = called
+  if not called then state.gui_idle_probe_error = tostring(result) end
+  state.gui_idle_probe_result = called and tostring(result) or nil
+  local after_ok, after = pcall(observable.has_notifier, observable, notifier)
+  state.idle_notifier_registered_after_probe = after_ok and after == true
+  if state.context then
+    local lifetime_ok, lifetime = pcall(state.context.lifetime_state, state.context)
+    if lifetime_ok and type(lifetime) == "table" then
+      state.gui_idle_probe_context_open = lifetime.open == true
+      state.gui_idle_probe_song_attached = lifetime.song_attached == true
+      state.gui_idle_probe_context_session = lifetime.session
+    end
+  end
+end
+
+local function watch_prepared_revision_undo(state)
+  local idle = renoise.tool().app_idle_observable
+  local deadline = os.time() + UNDO_PREPARATION_TIMEOUT_SECONDS
+  local notifier
+  notifier = function()
+    if not rawequal(prepared_revision_undo, state) then
+      remove_undo_idle_notifier(state, "watch_notifier")
+      return
+    end
+    local ok, current_song = pcall(renoise.song)
+    if not ok or not rawequal(current_song, state.song) or os.time() >= deadline then
+      remove_undo_idle_notifier(state, "watch_notifier")
+      prepared_revision_undo = nil
+      if state.action_dialog and state.action_dialog.visible then pcall(state.action_dialog.close, state.action_dialog) end
+      if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+      if state.context then pcall(state.context.release_document, state.context) end
+      remove_prepared_revision_undo(state)
+    end
+  end
+  state.watch_notifier = notifier
+  idle:add_notifier(notifier)
+end
+
+local function run_revision_undo_prepare(done, action_mode)
+  action_mode = action_mode == "live-edit" and "live-edit" or "generate"
+  if action_mode == "live-edit" then
+    local completion = done
+    done = function(result)
+      if type(result) == "table" and result.case == "revision-undo-prepare" then
+        result.case = "revision-live-undo-prepare"
+      end
+      completion(result)
+    end
+  end
+  local previous = prepared_revision_undo
+  if previous then
+    remove_undo_idle_notifier(previous, "watch_notifier")
+    if previous.dialog and previous.dialog.visible then pcall(previous.dialog.close, previous.dialog) end
+    if previous.context then pcall(previous.context.release_document, previous.context) end
+    remove_prepared_revision_undo(previous)
+    prepared_revision_undo = nil
+  end
+  local song = renoise.song()
+  local instrument_index = song.selected_instrument_index
+  local instrument = song.instruments[instrument_index]
+  local ownership = require("renoise.phrase_ownership")
+  local store = require("renoise.pattern_store")
+  local sequence = require("model.sequencer")
+  if not instrument or #instrument.phrases ~= 1 or song:can_undo() or song:can_redo() then
+    done({ status = "FAIL", case = "revision-undo-prepare",
+      reason = "Reopened fixture must contain one phrase and have empty undo history" })
+    return true
+  end
+  local phrase = instrument.phrases[1]
+  local old_id = ownership.id(phrase)
+  local old_source, old_policy, old_pb
+  if old_id then old_source, old_policy, old_pb = store.read_entry(song, old_id) end
+  local before_snapshot = ownership.snapshot(phrase)
+  if not old_id or not old_source or not before_snapshot then
+    done({ status = "FAIL", case = "revision-undo-prepare", reason = "Fixture phrase has no complete owned source" })
+    return true
+  end
+  local fixture_note = phrase:line(FIRST_NOTE_LINE):note_column(FIRST_NOTE_COLUMN).note_value
+  if fixture_note ~= old_source.pitch_events[FIRST_NOTE_LINE].note then
+    done({ status = "FAIL", case = "revision-undo-prepare",
+      reason = "Fixture output does not match its immutable source note" })
+    return true
+  end
+
+  local context_module = require("runtime.context")
+  local original_context_new = context_module.new
+  local original_view_builder = renoise.ViewBuilder
+  local original_app = renoise.app
+    local original_tool = renoise.tool
+  local state = { song = song, instrument = instrument, instrument_index = instrument_index,
+    phrase = phrase, phrase_index = 1, old_id = old_id, old_source = old_source,
+    old_policy = old_policy, old_pb = old_pb, before_snapshot = before_snapshot,
+    callbacks = {}, controls = {}, wrappers = {} }
+  context_module.new = function(options)
+    state.context = original_context_new(options)
+    local original_request = state.context.request_generation
+    local original_reconcile = state.context.reconcile
+    local original_restore_editor_target = state.context.restore_editor_target
+    local original_notify_native_change = state.context.notify_native_change
+    state.context.request_generation = function(self, ...)
+      state.request_count = (state.request_count or 0) + 1
+      -- Capture the full tuple separately; this context wrapper is test-only.
+      local function pack(...) return { n = select("#", ...), ... } end
+      local values = pack(pcall(original_request, self, ...))
+      state.request_called = values[1] == true
+      state.request_accepted = values[2]
+      state.request_reason = values[3]
+      if not values[1] then
+        state.request_error = tostring(values[2])
+        error(values[2], 0)
+      end
+      local unpack_values = unpack or table.unpack
+      return unpack_values(values, 2, values.n)
+    end
+    if type(original_reconcile) == "function" then
+      state.context.reconcile = function(self, ...)
+        state.reconcile_count = (state.reconcile_count or 0) + 1
+        local function pack(...) return { n = select("#", ...), ... } end
+        local values = pack(pcall(original_reconcile, self, ...))
+        state.reconcile_last_ok = values[1] == true
+        if values[1] then
+          local target, effects = values[2], values[3]
+          state.reconcile_last_target_kind = type(target) == "table" and target.kind or nil
+          state.reconcile_last_effects = type(effects) == "table" and {
+            reconcile = effects.reconcile == true,
+            native_revision_reconciled = effects.native_revision_reconciled == true,
+            hydrate = effects.hydrate == true,
+            preserve = effects.preserve == true,
+          } or nil
+        else
+          state.reconcile_last_error = tostring(values[2])
+        end
+          state.reconcile_history = state.reconcile_history or {}
+          state.reconcile_history[#state.reconcile_history + 1] = tostring(state.reconcile_count) .. ":" ..
+            tostring(state.reconcile_last_target_kind or "error") .. ":" ..
+            tostring(state.reconcile_last_effects and state.reconcile_last_effects.native_revision_reconciled or false)
+          while #state.reconcile_history > 12 do table.remove(state.reconcile_history, 1) end
+        if not values[1] then error(values[2], 0) end
+        local unpack_values = unpack or table.unpack
+        return unpack_values(values, 2, values.n)
+      end
+    end
+    if type(original_notify_native_change) == "function" then
+      state.context.notify_native_change = function(self, kind, subject, ...)
+        state.native_change_count = (state.native_change_count or 0) + 1
+        state.native_change_last_kind = tostring(kind)
+        state.native_change_last_matches_phrase = rawequal(subject, state.phrase)
+        state.native_change_last_matches_instrument = rawequal(subject, state.instrument)
+        local function pack(...) return { n = select("#", ...), ... } end
+        local values = pack(pcall(original_notify_native_change, self, kind, subject, ...))
+        state.native_change_last_ok = values[1] == true
+        state.native_change_last_result = values[1] and values[2] == true or false
+        if values[1] then state.native_change_last_error = nil
+        else state.native_change_last_error = tostring(values[2]) end
+        if not values[1] then error(values[2], 0) end
+        local unpack_values = unpack or table.unpack
+        return unpack_values(values, 2, values.n)
+      end
+    end
+    if type(original_restore_editor_target) == "function" then
+      state.context.restore_editor_target = function(self, instrument, phrase, ...)
+        state.restore_editor_target_calls = (state.restore_editor_target_calls or 0) + 1
+        state.restore_editor_target_matches_phrase = rawequal(phrase, state.phrase)
+        local function pack(...) return { n = select("#", ...), ... } end
+        local values = pack(pcall(original_restore_editor_target, self, instrument, phrase, ...))
+        state.restore_editor_target_last_ok = values[1] == true
+          local result = values[1] and type(values[2]) == "table" and values[2] or nil
+          state.restore_editor_target_result = result ~= nil
+          state.restore_editor_target_kind = result and result.target and result.target.kind or nil
+          state.restore_editor_source_available = result and result.source_available == true or false
+          state.restore_editor_editor_available = result and type(result.editor) == "table" or false
+          state.restore_editor_draft = result and result.draft == true or false
+          state.restore_editor_target_reason = result and tostring(result.reason or result.draft_error or "") or
+            (values[1] and tostring(values[3] or "") or tostring(values[2]))
+        if not values[1] then error(values[2], 0) end
+        local unpack_values = unpack or table.unpack
+        return unpack_values(values, 2, values.n)
+      end
+    end
+    return state.context
+  end
+  local wrapped, wrap_error = pcall(function()
+    renoise.ViewBuilder = function(...)
+      local builder = original_view_builder(...)
+      return setmetatable({}, { __index = function(_, kind)
+        local constructor = builder[kind]
+        if type(constructor) ~= "function" then return constructor end
+        return function(_, properties, ...)
+          local props = type(properties) == "table" and properties or nil
+          local id = props and props.id
+          local label = props and props.text
+          if id and props.notifier then
+            state.callbacks[id] = props.notifier
+            if id == "acid_program_key_popup" then
+              local notifier = props.notifier
+              props.notifier = function(...)
+                if state.suppress_key_notifier then return end
+                return notifier(...)
+              end
+            elseif id == "acid_live_edit" then
+              local notifier = props.notifier
+              props.notifier = function(...)
+                if state.suppress_live_notifier then return end
+                return notifier(...)
+              end
+            end
+          end
+          if label and props.notifier then state.callbacks[label] = props.notifier end
+          local view = constructor(builder, properties, ...)
+          if id then state.controls[id] = view end
+          if kind == "multiline_textfield" and props and props.width == 820 and props.height == 80 then
+            state.gui_status_control = view
+          end
+          if kind == "popup" and props and props.width == 360 and type(props.notifier) == "function" then
+            state.callbacks.acid_phrase_choice = props.notifier
+            state.controls.acid_phrase_choice = view
+          end
+          return view
+        end
+      end })
+    end
+    renoise.app = function(...)
+      local app = original_app(...)
+      return setmetatable({}, { __index = function(_, key)
+        local member = app[key]
+        if key == "show_custom_dialog" and type(member) == "function" then
+          return function(_, ...)
+            local function pack(...) return { n = select("#", ...), ... } end
+            local args = pack(...)
+            if args[1] == "ACID - PITCH/TIME" then
+              local function dispatch_production_key(dialog, key_event)
+                if type(state.production_key_handler) == "function" then
+                  return state.production_key_handler(dialog, key_event)
+                end
+                return key_event
+              end
+              state.dialog = member(app, args[1], args[2], dispatch_production_key,
+                { send_key_repeat = false, send_key_release = false })
+              state.action_dialog = state.dialog
+              return state.dialog
+            end
+            return member(app, unpack(args, 1, args.n))
+          end
+        end
+        if type(member) == "function" then return function(_, ...) return member(app, ...) end end
+        return member
+      end })
+    end
+    renoise.tool = function(...)
+      local tool = original_tool(...)
+      return setmetatable({}, { __index = function(_, key)
+        local member = tool[key]
+        if key ~= "app_idle_observable" or member == nil then
+          if type(member) == "function" then return function(_, ...) return member(tool, ...) end end
+          return member
+        end
+        local observable = member
+        state.gui_idle_observable = observable
+        return setmetatable({}, { __index = function(_, method_name)
+          local method = observable[method_name]
+          if type(method) ~= "function" then return method end
+          return function(_, ...)
+            if method_name == "add_notifier" then
+              state.gui_idle_registration_count = (state.gui_idle_registration_count or 0) + 1
+              state.gui_idle_original_notifier = select(1, ...)
+            end
+            return method(observable, ...)
+          end
+        end })
+      end })
+    end
+    require("gui").show()
+  end)
+  context_module.new = original_context_new
+  renoise.ViewBuilder = original_view_builder
+  renoise.app = original_app
+  renoise.tool = original_tool
+  if not wrapped or not state.context or not state.dialog or not state.dialog.visible then
+    if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+    if state.context then pcall(state.context.release_document, state.context) end
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = "revision-undo-prepare",
+      reason = tostring(wrap_error or "Production GUI capture failed") })
+    return true
+  end
+  local key_view = state.controls.acid_program_key_popup
+  local key_callback = state.callbacks.acid_program_key_popup
+  local generate_callback = state.callbacks["Generate / Regenerate ACID Phrase"]
+  local live_control = state.controls.acid_live_edit
+  local live_callback = state.callbacks.acid_live_edit
+  local phrase_choice = state.callbacks.acid_phrase_choice
+  local phrase_view = state.controls.acid_phrase_choice
+  if not key_view or type(key_callback) ~= "function" or
+      (action_mode == "generate" and type(generate_callback) ~= "function") or
+      (action_mode == "live-edit" and (not live_control or type(live_callback) ~= "function")) or
+      type(phrase_choice) ~= "function" or not phrase_view or type(phrase_view.items) ~= "table" then
+    pcall(state.dialog.close, state.dialog)
+    pcall(state.context.release_document, state.context)
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = "revision-undo-prepare",
+      reason = "Production GUI did not expose the callbacks required by the selected edit action" })
+    return true
+  end
+  state.production_key_handler = function(_, key_event)
+    local key_state = key_event.state or "pressed"
+    state.dialog_key_event_summary = tostring(key_event.name) .. ":" .. tostring(key_state)
+    if (key_event.name == "enter" or key_event.name == "return") and key_state ~= "released" and
+        type(state.dispatch_enter) == "function" then
+      state.enter_dispatched = true
+      state.dispatch_enter()
+      return nil
+    end
+    return key_event
+  end
+  local phrase_choice_index
+  for index, label in ipairs(phrase_view.items) do
+    if type(label) == "string" and label:match("^01:") then phrase_choice_index = index; break end
+  end
+  if not phrase_choice_index then
+    pcall(state.dialog.close, state.dialog)
+    pcall(state.context.release_document, state.context)
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = "revision-undo-prepare",
+      reason = "Production phrase chooser did not expose the existing fixture phrase" })
+    return true
+  end
+  phrase_choice(phrase_choice_index)
+  local target = state.context:target_state()
+  if not target or target.kind ~= "owned" or not rawequal(target.phrase, phrase) then
+    pcall(state.dialog.close, state.dialog)
+    pcall(state.context.release_document, state.context)
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = "revision-undo-prepare", reason = "Production GUI did not bind the fixture phrase" })
+    return true
+  end
+  local before_editor = state.context:editor_state()
+  if not before_editor or not sequence.same_source(before_editor.source, old_source) then
+    pcall(state.dialog.close, state.dialog)
+    pcall(state.context.release_document, state.context)
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = "revision-undo-prepare", reason = "GUI source did not hydrate from the fixture row" })
+    return true
+  end
+  state.before_editor = before_editor
+  state.action_mode = action_mode
+  state.dialog_key_event_summary = ""
+  local function generate_from_user_action()
+    if state.action_started then return nil end
+    state.action_started = true
+    local changed_value = (old_source.pitch_events[FIRST_NOTE_LINE].key + 1) % 12 + 1
+    if action_mode == "live-edit" then
+      state.suppress_live_notifier = true
+      live_control.value = true
+      state.suppress_live_notifier = false
+      local live_called, live_error = pcall(live_callback, true)
+      state.live_edit_arm_error = not live_called and tostring(live_error) or nil
+      state.live_edit_armed = live_called
+    end
+    state.suppress_key_notifier = true
+    key_view.value = changed_value
+    state.suppress_key_notifier = false
+    key_callback(changed_value)
+    state.edited_source = state.context:editor_state().source
+    state.edited_key = state.edited_source and state.edited_source.pitch_events[FIRST_NOTE_LINE].key
+    if action_mode == "live-edit" then
+      state.live_edit_callback_error = state.live_edit_arm_error
+      state.live_edit_callback_invoked = true
+    else
+      local generate_called, generate_error = pcall(generate_callback)
+      state.generate_callback_error = not generate_called and tostring(generate_error) or nil
+      state.generate_callback_invoked = true
+    end
+    return nil
+  end
+  state.dispatch_enter = generate_from_user_action
+  state.action_dialog = state.dialog
+  if not state.action_dialog then
+    pcall(state.dialog.close, state.dialog)
+    pcall(state.context.release_document, state.context)
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = "revision-undo-prepare",
+      reason = "Production dialog was not captured for native Enter dispatch" })
+    return true
+  end
+  prepared_revision_undo = state
+  watch_prepared_revision_undo(state)
+  done({ status = "PASS", case = "revision-undo-prepare", action_ready = true,
+    gui_open = state.dialog.visible, action_dialog_visible = state.action_dialog.visible, phrase_id = old_id })
+  return true
+end
+
+local function run_revision_undo(done, requested_mode)
+  local state = prepared_revision_undo
+  if not state then
+    done({ status = "FAIL", case = requested_mode == "live-edit" and "revision-live-undo" or "revision-undo",
+      reason = "Production GUI action was not prepared" })
+    return true
+  end
+  local case_name = state.action_mode == "live-edit" and "revision-live-undo" or "revision-undo"
+  if not state.action_started then
+    prepared_revision_undo = nil
+    if state.action_dialog and state.action_dialog.visible then pcall(state.action_dialog.close, state.action_dialog) end
+    if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+    if state.context then pcall(state.context.release_document, state.context) end
+    remove_prepared_revision_undo(state)
+    done({ status = "FAIL", case = case_name, reason = "Guarded Enter did not invoke the real GUI action",
+      gui_open = state.dialog and state.dialog.visible == true,
+      action_dialog_open = state.action_dialog and state.action_dialog.visible == true })
+    return true
+  end
+  local function fail(reason, details)
+    details = details or {}
+    local function safe_text(value)
+      if value == nil then return nil end
+      if type(value) == "string" or type(value) == "number" or type(value) == "boolean" then
+        return value
+      end
+      return tostring(value)
+    end
+    local generation
+    if state.context then
+      local ok, value = pcall(state.context.generation_state, state.context)
+      if ok then generation = value end
+    end
+    local writer = require("writers.phrase_writer")
+    local writer_status, writer_token = writer.state()
+    local writer_diagnostic = writer.diagnostic()
+    local source_control = state.controls.acid_source_state
+    local editor_state
+    if state.context then
+      local ok, value = pcall(state.context.editor_state, state.context)
+      if ok then editor_state = value end
+    end
+    local editor_pitch = editor_state and editor_state.source and
+      editor_state.source.pitch_events and editor_state.source.pitch_events[FIRST_NOTE_LINE]
+    local expected_pitch = state.old_source and state.old_source.pitch_events and
+      state.old_source.pitch_events[FIRST_NOTE_LINE]
+    local editor_matches_old = false
+    if editor_state and editor_state.source and state.old_source then
+      local ok, value = pcall(require("model.sequencer").same_source,
+        editor_state.source, state.old_source)
+      editor_matches_old = ok and value == true
+    end
+    local selected_instrument_index, selected_phrase_index
+    pcall(function()
+      selected_instrument_index = state.song.selected_instrument_index
+      selected_phrase_index = state.song.selected_phrase_index
+    end)
+    local integrity
+    if state.context then
+      local ok, value = pcall(state.context.integrity_state, state.context)
+      if ok and type(value) == "table" then integrity = value end
+    end
+    local gui_state
+    do
+      local ok, value = pcall(function() return require("gui").get_ui_state() end)
+      if ok and type(value) == "table" then gui_state = value end
+    end
+    details.generation_status = details.generation_status or (generation and safe_text(generation.status))
+    details.generation_busy = details.generation_busy or (generation and generation.busy == true)
+    details.generation_pending = details.generation_pending or (generation and generation.pending == true)
+    details.generation_last_result = details.generation_last_result or
+      (generation and generation.last_result and safe_text(generation.last_result.kind))
+    details.generation_last_result_code = details.generation_last_result_code or
+      (generation and generation.last_result and safe_text(generation.last_result.code))
+    details.generation_last_result_reason = details.generation_last_result_reason or
+      (generation and generation.last_result and safe_text(generation.last_result.reason or generation.last_result.message))
+    details.writer_status = details.writer_status or safe_text(writer_status)
+    details.writer_token_present = details.writer_token_present or (writer_token ~= nil)
+    details.writer_diagnostic_code = details.writer_diagnostic_code or
+      (writer_diagnostic and safe_text(writer_diagnostic.code))
+    details.writer_diagnostic_message = details.writer_diagnostic_message or
+      (writer_diagnostic and safe_text(writer_diagnostic.message))
+    details.request_count = details.request_count or state.request_count or 0
+    details.request_accepted = details.request_accepted or safe_text(state.request_accepted)
+    details.request_reason = details.request_reason or safe_text(state.request_reason)
+    details.request_error = details.request_error or safe_text(state.request_error)
+    details.generate_callback_invoked = details.generate_callback_invoked or state.generate_callback_invoked == true
+    details.live_edit_callback_invoked = state.live_edit_callback_invoked == true
+    details.action_mode = state.action_mode
+    details.generate_callback_error = details.generate_callback_error or safe_text(state.generate_callback_error)
+    details.key_event = details.key_event or safe_text(state.dialog_key_event_summary)
+    details.production_dialog_visible = state.dialog and state.dialog.visible == true
+    details.action_dialog_same_as_production = rawequal(state.action_dialog, state.dialog)
+    details.context_reconcile_calls = state.reconcile_count or 0
+    details.context_reconcile_last_ok = state.reconcile_last_ok
+    details.context_reconcile_last_target_kind = safe_text(state.reconcile_last_target_kind)
+    details.context_reconcile_last_effects = state.reconcile_last_effects
+    details.context_reconcile_last_error = safe_text(state.reconcile_last_error)
+    details.restore_editor_target_calls = state.restore_editor_target_calls or 0
+    details.restore_editor_target_last_ok = state.restore_editor_target_last_ok
+    details.restore_editor_target_result = state.restore_editor_target_result
+    details.restore_editor_target_reason = safe_text(state.restore_editor_target_reason)
+    details.restore_editor_target_matches_phrase = state.restore_editor_target_matches_phrase
+    details.restore_editor_target_kind = safe_text(state.restore_editor_target_kind)
+    details.restore_editor_source_available = state.restore_editor_source_available
+    details.restore_editor_editor_available = state.restore_editor_editor_available
+    details.restore_editor_draft = state.restore_editor_draft
+    details.idle_notifier_add_count = state.idle_notifier_add_count or 0
+    details.idle_notifier_remove_count = state.idle_notifier_remove_count or 0
+    details.idle_notifier_registered = state.idle_notifier_registered == true
+    details.gui_idle_listener_attached = gui_state and gui_state.idle_listener_attached == true
+    details.gui_native_observers_attached = gui_state and gui_state.native_observers_attached == true
+    details.gui_native_listener_count = gui_state and gui_state.native_listener_count
+    details.gui_native_observer_error = gui_state and safe_text(gui_state.native_observer_error)
+    details.gui_observer_error = gui_state and safe_text(gui_state.observer_error)
+    details.gui_idle_registration_count = state.gui_idle_registration_count or 0
+    details.gui_idle_notifier_captured = type(state.gui_idle_original_notifier) == "function"
+    details.idle_notifier_registered_before_probe = state.idle_notifier_registered_before_probe
+    details.gui_idle_probe_invoked = state.gui_idle_probe_invoked == true
+    details.gui_idle_probe_succeeded = state.gui_idle_probe_succeeded
+    details.gui_idle_probe_result = safe_text(state.gui_idle_probe_result)
+    details.gui_idle_probe_error = safe_text(state.gui_idle_probe_error)
+    details.idle_notifier_registered_after_probe = state.idle_notifier_registered_after_probe
+    details.gui_idle_probe_context_open = state.gui_idle_probe_context_open
+    details.gui_idle_probe_song_attached = state.gui_idle_probe_song_attached
+    details.gui_idle_probe_context_session = state.gui_idle_probe_context_session
+    details.verifier_idle_ticks = state.verifier_idle_ticks or 0
+    details.verifier_idle_actions = state.verifier_idle_actions or 0
+    details.native_change_count = state.native_change_count or 0
+    details.native_change_last_kind = safe_text(state.native_change_last_kind)
+    details.native_change_last_matches_phrase = state.native_change_last_matches_phrase
+    details.native_change_last_matches_instrument = state.native_change_last_matches_instrument
+    details.native_change_last_ok = state.native_change_last_ok
+    details.native_change_last_result = state.native_change_last_result
+    details.native_change_last_error = safe_text(state.native_change_last_error)
+    details.reconcile_history = state.reconcile_history and table.concat(state.reconcile_history, ";") or ""
+    details.gui_editor_available = editor_state ~= nil
+    details.gui_editor_source_key = editor_pitch and safe_text(editor_pitch.key)
+    details.gui_editor_source_note = editor_pitch and safe_text(editor_pitch.note)
+    details.gui_editor_source_matches_old = editor_matches_old
+    details.gui_expected_old_source_key = expected_pitch and safe_text(expected_pitch.key)
+    details.gui_key_control_value = state.controls.acid_program_key_popup and
+      safe_text(state.controls.acid_program_key_popup.value)
+    details.selected_instrument_index = selected_instrument_index
+    details.selected_phrase_index = selected_phrase_index
+    details.source_state_text = details.source_state_text or
+      (source_control and safe_text(source_control.text))
+    details.gui_status_text = details.gui_status_text or
+      (state.gui_status_control and safe_text(state.gui_status_control.text))
+    details.integrity_blocked = details.integrity_blocked or
+      (integrity and integrity.blocked == true)
+    details.integrity_reason = details.integrity_reason or
+      (integrity and safe_text(integrity.reason or integrity.message))
+    remove_undo_idle_notifier(state, "watch_notifier")
+    state.verifier_stopped = true
+    remove_undo_idle_notifier(state, "verifier_notifier")
+    prepared_revision_undo = nil
+    if state.action_dialog and state.action_dialog.visible then pcall(state.action_dialog.close, state.action_dialog) end
+    if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+    if state.context then pcall(state.context.release_document, state.context) end
+    remove_prepared_revision_undo(state)
+    details.status, details.case, details.reason = "FAIL", case_name, reason
+    done(details)
+  end
+  local function wait_idle(callback)
+    if state.verifier_stopped then return end
+    if state.verifier_idle_action then
+      fail("revision verifier already has a queued idle action")
+      return
+    end
+    state.verifier_idle_action = callback
+  end
+  local function start_verification()
+    local idle = renoise.tool().app_idle_observable
+    local function verifier_idle_notifier()
+      if state.verifier_stopped then return end
+      state.verifier_idle_ticks = (state.verifier_idle_ticks or 0) + 1
+      local action = state.verifier_idle_action
+      if not action then return end
+      state.verifier_idle_action = nil
+      state.verifier_idle_actions = (state.verifier_idle_actions or 0) + 1
+      local ok, action_error = xpcall(action, function(callback_error)
+        if debug and type(debug.traceback) == "function" then
+          return debug.traceback(tostring(callback_error), 2)
+        end
+        return tostring(callback_error)
+      end)
+      if not ok and not state.verifier_stopped then fail(action_error) end
+    end
+    state.verifier_notifier = verifier_idle_notifier
+    local added, add_error = pcall(idle.add_notifier, idle, verifier_idle_notifier)
+    local registered, present = pcall(idle.has_notifier, idle, verifier_idle_notifier)
+    if not added or not registered or present ~= true then
+      fail("revision verifier idle notifier could not be registered: " .. tostring(add_error or present))
+      return
+    end
+    local sequence = require("model.sequencer")
+    local ownership = require("renoise.phrase_ownership")
+    local store = require("renoise.pattern_store")
+    local function inventory_stable()
+      return #state.instrument.phrases == 1 and rawequal(state.instrument.phrases[1], state.phrase)
+    end
+    local function read_current()
+      local id = ownership.id(state.phrase)
+      local source, policy, pb
+      if id then source, policy, pb = store.read_entry(state.song, id) end
+      local snapshot = ownership.snapshot(state.phrase)
+      local editor = state.context:editor_state()
+      return { id = id, source = source, policy = policy, pb = pb,
+        snapshot = snapshot, editor = editor }
+    end
+    local function coherent(actual, expected_id, expected_source, expected_snapshot, expected_policy, expected_pb,
+        require_editor)
+      local old_source, old_policy, old_pb = store.read_entry(state.song, state.old_id)
+      local new_source, new_policy, new_pb
+      if state.new_id then new_source, new_policy, new_pb = store.read_entry(state.song, state.new_id) end
+      return inventory_stable() and actual.id == expected_id and actual.source and
+        sequence.same_source(actual.source, expected_source) and actual.policy == expected_policy and
+        actual.pb == expected_pb and actual.snapshot and ownership.compare(actual.snapshot, expected_snapshot) and
+        state.phrase:line(FIRST_NOTE_LINE):note_column(FIRST_NOTE_COLUMN).note_value ==
+          expected_source.pitch_events[FIRST_NOTE_LINE].note and
+        (require_editor == false or (actual.editor and sequence.same_source(actual.editor.source, expected_source) and
+        actual.editor.output_policy == expected_policy and actual.editor.pb_range == expected_pb)) and
+        old_source and sequence.same_source(old_source, state.old_source) and
+        old_policy == state.old_policy and old_pb == state.old_pb and
+        (not state.new_id or (new_source and sequence.same_source(new_source, state.new_source) and
+          new_policy == state.new_policy and new_pb == state.new_pb))
+    end
+    local deadline = os.time() + UNDO_ACTION_WAIT_TIMEOUT_SECONDS
+    local function wait_for_commit()
+      if os.time() >= deadline then fail("real Generate callback did not settle", {
+        generate_callback_invoked = state.generate_callback_invoked == true,
+        edited_key = state.edited_key, key_event = state.dialog_key_event_summary })
+        return
+      end
+      local generation = state.context:generation_state()
+      if generation.busy or generation.pending or generation.status == "RENDERING" or generation.status == "DIRTY" then
+        wait_idle(wait_for_commit)
+        return
+      end
+      local actual = read_current()
+      local action_callback_invoked = state.action_mode == "live-edit" and
+        state.live_edit_callback_invoked == true or state.generate_callback_invoked == true
+      if not state.action_started or not state.enter_dispatched or not state.edited_source or state.edited_key == nil or
+          not action_callback_invoked or state.generate_callback_error or state.live_edit_callback_error or
+          state.edited_key == state.old_source.pitch_events[FIRST_NOTE_LINE].key or
+          not actual.source or not sequence.same_source(actual.source, state.edited_source) or
+          not actual.id or actual.id == state.old_id or not actual.snapshot then
+        fail("source edit and real Generate did not commit one new coherent revision", {
+          generate_callback_invoked = state.generate_callback_invoked == true,
+          edited_key = state.edited_key, committed_id = actual.id })
+        return
+      end
+      state.new_id, state.new_source, state.new_policy, state.new_pb = actual.id,
+        actual.source, actual.policy, actual.pb
+      state.after_snapshot = actual.snapshot
+      state.after_editor = actual.editor
+      state.phrase_index = 1
+      if not coherent(actual, state.new_id, state.new_source, state.after_snapshot,
+          state.new_policy, state.new_pb) then
+        fail("post-Generate output, immutable source row or GUI editor state disagree")
+        return
+      end
+      if not state.song:can_undo() or state.song:can_redo() then
+        fail("native Generate did not create an undoable action from the cleared fixture history")
+        return
+      end
+      wait_idle(function()
+        local stable = read_current()
+        if not coherent(stable, state.new_id, state.new_source, state.after_snapshot,
+            state.new_policy, state.new_pb) then
+          fail("an idle callback changed committed output or GUI source without user action")
+          return
+        end
+        local called, undo_error = pcall(function() state.song:undo() end)
+        if not called then fail(tostring(undo_error)); return end
+        wait_idle(function()
+          local restored = read_current()
+          if not coherent(restored, state.old_id, state.old_source, state.before_snapshot,
+              state.old_policy, state.old_pb, false) then
+            local old_row_source, old_row_policy, old_row_pb = store.read_entry(state.song, state.old_id)
+            local new_row_source, new_row_policy, new_row_pb
+            if state.new_id then
+              new_row_source, new_row_policy, new_row_pb = store.read_entry(state.song, state.new_id)
+            end
+            local actual_note
+            pcall(function()
+              actual_note = state.phrase:line(FIRST_NOTE_LINE):note_column(FIRST_NOTE_COLUMN).note_value
+            end)
+            local expected_note = state.old_source.pitch_events[FIRST_NOTE_LINE].note
+            fail("one native Undo did not restore the exact phrase, source, settings and GUI state", {
+              current_id = restored.id, expected_id = state.old_id,
+              gui_source_restored = restored.editor and sequence.same_source(restored.editor.source, state.old_source) or false,
+              phrase_identity_preserved = inventory_stable(), native_undo_remaining = state.song:can_undo(),
+              undo_source_matches = restored.source and sequence.same_source(restored.source, state.old_source) or false,
+              undo_policy_matches = restored.policy == state.old_policy,
+              undo_pb_range_matches = restored.pb == state.old_pb,
+              undo_output_snapshot_matches = restored.snapshot and ownership.compare(restored.snapshot, state.before_snapshot) or false,
+              undo_output_note_actual = actual_note, undo_output_note_expected = expected_note,
+              undo_old_source_row_retained = old_row_source and sequence.same_source(old_row_source, state.old_source) or false,
+              undo_old_policy_retained = old_row_policy == state.old_policy,
+              undo_old_pb_range_retained = old_row_pb == state.old_pb,
+              undo_new_source_row_retained = new_row_source and state.new_source and sequence.same_source(new_row_source, state.new_source) or false,
+              undo_new_policy_retained = new_row_policy == state.new_policy,
+              undo_new_pb_range_retained = new_row_pb == state.new_pb })
+            return
+          end
+          if state.song:can_undo() or not state.song:can_redo() then
+            fail("the source and phrase commit was split across native undo states", {
+              undo_remaining = state.song:can_undo(), redo_available = state.song:can_redo() })
+            return
+          end
+          local editor_waits, editor_stable_waits = 0, 0
+          local editor_deadline = os.time() + UNDO_ACTION_WAIT_TIMEOUT_SECONDS
+          local function verify_editor_restored()
+            editor_waits = editor_waits + 1
+            local stable_undo = read_current()
+            if not coherent(stable_undo, state.old_id, state.old_source, state.before_snapshot,
+                state.old_policy, state.old_pb, false) then
+              fail("idle processing regenerated or desynchronized the restored native phrase revision", {
+                current_id = stable_undo.id, expected_id = state.old_id })
+              return
+            end
+            local editor_matches = stable_undo.editor and
+              sequence.same_source(stable_undo.editor.source, state.old_source) and
+              stable_undo.editor.output_policy == state.old_policy and stable_undo.editor.pb_range == state.old_pb
+            if editor_matches then editor_stable_waits = editor_stable_waits + 1
+            else editor_stable_waits = 0 end
+            if editor_stable_waits >= 2 then
+              if not coherent(stable_undo, state.old_id, state.old_source, state.before_snapshot,
+                  state.old_policy, state.old_pb) then
+                fail("reconciled GUI source does not match the natively restored phrase")
+                return
+              end
+              if state.song:can_undo() or not state.song:can_redo() then
+                fail("the source and phrase commit was split while GUI reconciliation settled", {
+                  undo_remaining = state.song:can_undo(), redo_available = state.song:can_redo() })
+                return
+              end
+              local redone, redo_error = pcall(function() state.song:redo() end)
+              if not redone then fail(tostring(redo_error)); return end
+              wait_idle(function()
+                local restored_post = read_current()
+                if not coherent(restored_post, state.new_id, state.new_source, state.after_snapshot,
+                    state.new_policy, state.new_pb) or state.song:can_redo() or not state.song:can_undo() then
+                  fail("one native Redo did not restore the exact committed revision")
+                  return
+                end
+                local result = { status = "PASS", case = case_name,
+                  action_mode = state.action_mode,
+                  action_used_real_gui_callbacks = state.generate_callback_invoked == true or
+                    state.live_edit_callback_invoked == true,
+                  live_edit_callback_invoked = state.live_edit_callback_invoked == true,
+                  action_received_enter = state.enter_dispatched == true,
+                  gui_kept_open = state.dialog.visible == true,
+                  phrase_object_preserved = inventory_stable(),
+                  old_revision_retained = true, new_revision_id = state.new_id,
+                  old_revision_id = state.old_id, undo_restored_gui_source = true,
+                  gui_reconciliation_idle_count = editor_waits,
+                  one_step_undo_and_redo = true, no_idle_regeneration = true }
+                remove_undo_idle_notifier(state, "watch_notifier")
+                prepared_revision_undo = nil
+                state.verifier_stopped = true
+                remove_undo_idle_notifier(state, "verifier_notifier")
+                if state.action_dialog and state.action_dialog.visible then pcall(state.action_dialog.close, state.action_dialog) end
+                if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+                if state.context then pcall(state.context.release_document, state.context) end
+                remove_prepared_revision_undo(state)
+                done(result)
+              end)
+              return
+            end
+            local undo_processing = false
+            local processing_ok, processing_value = pcall(state.song.is_undo_redoing, state.song)
+            if processing_ok then undo_processing = processing_value == true end
+            if editor_waits >= 600 or os.time() >= editor_deadline then
+              probe_gui_idle_notifier(state)
+              fail("GUI editor did not rehydrate the native Undo revision before the bounded settle timeout", {
+                gui_reconciliation_idle_count = editor_waits,
+                native_undo_processing = undo_processing,
+                gui_editor_available = stable_undo.editor ~= nil,
+                gui_source_restored = editor_matches == true,
+                gui_idle_registration_count = state.gui_idle_registration_count or 0,
+                gui_idle_notifier_captured = type(state.gui_idle_original_notifier) == "function",
+                idle_notifier_registered_before_probe = state.idle_notifier_registered_before_probe,
+                gui_idle_probe_invoked = state.gui_idle_probe_invoked == true,
+                gui_idle_probe_succeeded = state.gui_idle_probe_succeeded,
+                gui_idle_probe_result = state.gui_idle_probe_result,
+                gui_idle_probe_error = state.gui_idle_probe_error,
+                idle_notifier_registered_after_probe = state.idle_notifier_registered_after_probe,
+                gui_idle_probe_context_open = state.gui_idle_probe_context_open,
+                gui_idle_probe_song_attached = state.gui_idle_probe_song_attached,
+                gui_idle_probe_context_session = state.gui_idle_probe_context_session })
+              return
+            end
+            wait_idle(verify_editor_restored)
+          end
+          verify_editor_restored()
+        end)
+      end)
+    end
+    wait_for_commit()
+  end
+  start_verification()
   return true
 end
 
@@ -2166,6 +3082,8 @@ local function run_writer_recovery(done)
   return true
 end
 
+local run_editor_responsiveness
+
 local function run_multi_instrument_workflow(done, json)
   local song = renoise.song()
   local sequence = require("model.sequencer")
@@ -2184,6 +3102,9 @@ local function run_multi_instrument_workflow(done, json)
   end
 
   local instruments, instrument_indices, targets, foreign, list_observers = {}, {}, {}, {}, {}
+  local playback_asserted = false
+  local playback_tracks = {}
+  local playback_transport_started = false
   local native_identity_registry, next_native_identity = {}, 0
   local trace, active_operation = {}, "setup"
   local transaction_count, completed, selection_checks = 0, false, true
@@ -2207,8 +3128,6 @@ local function run_multi_instrument_workflow(done, json)
   local function same_selection(left, right)
     return rawequal(left.instrument, right.instrument) and
       rawequal(left.phrase, right.phrase) and
-      left.instrument_identity == right.instrument_identity and
-      left.phrase_identity == right.phrase_identity and
       left.instrument_index == right.instrument_index and
       left.phrase_index == right.phrase_index
   end
@@ -2241,9 +3160,13 @@ local function run_multi_instrument_workflow(done, json)
     end
     list_observers = {}
   end
-  local function finish(status, reason)
+  local function finish(status, reason, extra)
     if completed then return end
     completed = true
+    if playback_transport_started then
+      pcall(function() song.transport:stop() end)
+      playback_transport_started = false
+    end
     stop_observers()
     local trace_summary = json.array()
     for index, event in ipairs(trace) do
@@ -2277,7 +3200,8 @@ local function run_multi_instrument_workflow(done, json)
       selection_trace = trace_summary,
       user_navigation_injected = false,
       selection_stable = selection_checks,
-      playback_asserted = false,
+      playback_asserted = playback_asserted,
+      playback_track_count = #playback_tracks,
       live_edit_asserted = false,
       persistence_asserted = false,
     }
@@ -2286,6 +3210,7 @@ local function run_multi_instrument_workflow(done, json)
       summary.phrase_count = summary.phrase_count + count
       summary.phrases_per_instrument[index] = count
     end
+    for key, value in pairs(extra or {}) do summary[key] = value end
     done(summary)
   end
   local function record_selection(event_kind, instrument_index)
@@ -2483,6 +3408,101 @@ local function run_multi_instrument_workflow(done, json)
     instrument_indices[index] = native_index
     attach_list_observer(instrument, index)
   end
+  local function create_sample(instrument, label)
+    if #instrument.samples == 0 then instrument:insert_sample_at(1) end
+    local sample = instrument.samples[1]
+    local buffer = sample.sample_buffer
+    local frame_count = 256
+    if not buffer:create_sample_data(44100, 16, 1, frame_count) then
+      return nil, label .. " sample allocation failed"
+    end
+    buffer:prepare_sample_data_changes()
+    local finalized = false
+    local ok, err = pcall(function()
+      for frame = 1, frame_count do
+        buffer:set_sample_data(1, frame, math.sin(frame * math.pi * 2 / frame_count) * 0.2)
+      end
+      buffer:finalize_sample_data_changes()
+      finalized = true
+    end)
+    if not finalized then pcall(buffer.finalize_sample_data_changes, buffer) end
+    if not ok then return nil, label .. " sample data setup failed: " .. tostring(err) end
+    sample.name = label .. " sample"
+    return true
+  end
+  local sample_a, sample_a_error = create_sample(instruments[1], "Workflow A")
+  local sample_c, sample_c_error = create_sample(instruments[3], "Workflow C")
+  if not sample_a or not sample_c then
+    finish("FAIL", tostring(sample_a_error or sample_c_error))
+    return
+  end
+  local plugin_properties = instruments[2].plugin_properties
+  local plugin_info
+  for _, info in ipairs(plugin_properties.available_plugin_infos) do
+    local name = type(info.name) == "string" and info.name:lower() or ""
+    if name:find("surge", 1, true) and type(info.path) == "string" and info.path ~= "" then
+      plugin_info = info
+      break
+    end
+  end
+  if not plugin_info then
+    finish("FAIL", "Surge VST plugin is not available in Renoise's plugin registry")
+    return
+  end
+  local plugin_loaded, plugin_error = pcall(instruments[2].plugin_properties.load_plugin,
+    instruments[2].plugin_properties, plugin_info.path)
+  if not plugin_loaded or not instruments[2].plugin_properties.plugin_loaded then
+    finish("FAIL", "Surge VST could not be loaded: " .. tostring(plugin_error or plugin_info.name))
+    return
+  end
+  local sequencer_track_indices = {}
+  for track_index, track in ipairs(song.tracks) do
+    if track.type == renoise.Track.TRACK_TYPE_SEQUENCER then
+      sequencer_track_indices[#sequencer_track_indices + 1] = track_index
+    end
+  end
+  while #sequencer_track_indices < 4 do
+    song:insert_track_at(#song.tracks)
+    sequencer_track_indices = {}
+    for track_index, track in ipairs(song.tracks) do
+      if track.type == renoise.Track.TRACK_TYPE_SEQUENCER then
+        sequencer_track_indices[#sequencer_track_indices + 1] = track_index
+      end
+    end
+  end
+  local program_instruments = { instruments[1], instruments[2], instruments[3], instruments[1] }
+  local pattern = song.patterns[1]
+  for track_slot = 1, 4 do
+    local track_index = sequencer_track_indices[track_slot]
+    local track = song.tracks[track_index]
+    if track.visible_note_columns < 1 then track.visible_note_columns = 1 end
+    local column = pattern.tracks[track_index]:line(1):note_column(1)
+    local instrument_slot
+    for index, instrument in ipairs(song.instruments) do
+      if rawequal(instrument, program_instruments[track_slot]) then instrument_slot = index - 1; break end
+    end
+    if instrument_slot == nil then
+      finish("FAIL", "A workflow playback instrument is missing from the song")
+      return
+    end
+    column.note_value = 48 + track_slot - 1
+    column.instrument_value = instrument_slot
+    playback_tracks[track_slot] = { track_index = track_index, instrument = program_instruments[track_slot],
+      note_value = column.note_value, instrument_value = column.instrument_value }
+  end
+  local function playback_tracks_intact()
+    if #playback_tracks ~= 4 then return false end
+    for _, record in ipairs(playback_tracks) do
+      local track = song.tracks[record.track_index]
+      local column = song.patterns[1].tracks[record.track_index]:line(1):note_column(1)
+      local instrument = song.instruments[column.instrument_value + 1]
+      if column.note_value ~= record.note_value or column.instrument_value ~= record.instrument_value or
+          not rawequal(instrument, record.instrument) or track.type ~= renoise.Track.TRACK_TYPE_SEQUENCER then
+        return false
+      end
+    end
+    return true
+  end
   for _, event in ipairs(trace) do
     if event.operation == "setup" then
       event.selection_stable = same_selection(fixture_selection, event.selection_state)
@@ -2547,10 +3567,62 @@ local function run_multi_instrument_workflow(done, json)
           for _, event in ipairs(trace) do
             if event.selection_stable ~= true then report_selection_stable = false end
           end
+          local track_programs_valid = playback_tracks_intact()
           local passed = final_inventory and ordered and report_selection_stable and selection_checks and #trace > 0 and
-            (#targets == 6) and (#foreign == 6) and transaction_count == 12
-          if passed then finish("PASS")
-          else finish("FAIL", "multi-instrument regeneration changed phrase identity, content, order, count, or native selection") end
+            (#targets == 6) and (#foreign == 6) and transaction_count == 12 and
+            playback_asserted and track_programs_valid
+          if not passed then
+            finish("FAIL", "multi-instrument regeneration changed phrase identity, content, order, count, playback programs, or native selection")
+            return
+          end
+          if type(run_editor_responsiveness) ~= "function" then
+            finish("FAIL", "Production GUI workflow probe is unavailable")
+            return
+          end
+          run_editor_responsiveness(function(gui_result)
+            local actions = type(gui_result) == "table" and gui_result.gui_action_names or ""
+            local navigation_asserted = type(actions) == "string" and
+              actions:find("new-phrase-target", 1, true) ~= nil and
+              actions:find("owned-phrase-target", 1, true) ~= nil
+            local live_edit_asserted = type(gui_result) == "table" and gui_result.status == "PASS" and
+              gui_result.gui_live_synchronous_verified == true and
+              gui_result.gui_live_final_result == "success" and
+              gui_result.gui_live_committed_source_match == true
+            local source_rows_verified = true
+            for _, target_record in ipairs(targets) do
+              local source, policy, pb = store.read_entry(song, target_record.id)
+              if not source or not sequence.same_source(source, target_record.source) or
+                  policy ~= target_record.output_policy or pb ~= target_record.pb_range then
+                source_rows_verified = false
+                break
+              end
+            end
+            local gui_passed = type(gui_result) == "table" and gui_result.status == "PASS" and
+              navigation_asserted and live_edit_asserted and source_rows_verified
+            local gui_details = { user_navigation_injected = navigation_asserted,
+              live_edit_asserted = live_edit_asserted,
+              persistence_asserted = source_rows_verified,
+              source_rows_verified = source_rows_verified,
+              gui_live_reason = type(gui_result) == "table" and gui_result.reason or nil,
+              gui_live_first_edit_elapsed_ms = type(gui_result) == "table" and
+                gui_result.gui_live_first_edit_elapsed_ms or nil,
+              gui_live_request_count = type(gui_result) == "table" and
+                gui_result.gui_live_request_count or nil,
+              gui_live_committed_source_match = type(gui_result) == "table" and
+                gui_result.gui_live_committed_source_match or false,
+              gui_workflow_status = type(gui_result) == "table" and gui_result.status or "missing",
+              gui_workflow_action_names = actions }
+            if type(gui_result) == "table" then
+              for key, value in pairs(gui_result) do
+                if type(key) == "string" and key:find("_profile_", 1, true) then
+                  gui_details[key] = value
+                end
+              end
+            end
+            finish(gui_passed and "PASS" or "FAIL",
+              not gui_passed and (type(gui_result) == "table" and gui_result.reason or "Production GUI Live Edit/navigation/persisted-source checks failed") or nil,
+              gui_details)
+          end)
           return
         end
 
@@ -2581,10 +3653,16 @@ local function run_multi_instrument_workflow(done, json)
           " target " .. tostring(target_record.slot)
         transaction_count = transaction_count + 1
         local trace_start = #trace + 1
+        local previous_id = target_record.id
+        local previous_source = target_record.source
         local accepted, start_error = writer.regenerate(request, function(result)
           on_next_idle(function()
             local after_selection = selection_state()
-            local target_source, policy, pb_range = store.read_entry(song, target_record.id)
+            local new_id = ownership.id(target)
+            local target_source, policy, pb_range
+            if new_id then target_source, policy, pb_range = store.read_entry(song, new_id) end
+            local historical_source, historical_policy, historical_pb
+            historical_source, historical_policy, historical_pb = store.read_entry(song, previous_id)
             local target_snapshot = ownership.snapshot(target)
             local expected_output_note = sequence.BASE_NOTE + changed_key
             local expected_output_observed = false
@@ -2600,11 +3678,14 @@ local function run_multi_instrument_workflow(done, json)
             if not selection_stable then selection_checks = false end
             local target_valid = type(result) == "table" and result.kind == "success" and
               result.verified == true and rawequal(result.phrase, target) and
+              new_id and new_id ~= previous_id and
               rawequal(instrument.phrases[phrase_index], target) and
               #instrument.phrases == WORKFLOW_PHRASES_PER_INSTRUMENT and target_snapshot and
               expected_output_observed and
               target_source and sequence.same_source(target_source, changed_source) and
-              policy == target_record.output_policy and pb_range == target_record.pb_range
+              policy == target_record.output_policy and pb_range == target_record.pb_range and
+              historical_source and sequence.same_source(historical_source, previous_source) and
+              historical_policy == target_record.output_policy and historical_pb == target_record.pb_range
             local peers_valid = inventory_unchanged_except(before_inventory, target)
             for _, event in ipairs(trace) do
               if event.operation == active_operation and event.selection_stable == nil then
@@ -2618,6 +3699,7 @@ local function run_multi_instrument_workflow(done, json)
                   "another phrase or instrument changed during regeneration"))
               return
             end
+            target_record.id = new_id
             target_record.source = changed_source
             target_cursor = target_cursor + 1
             regenerate_next()
@@ -2625,7 +3707,30 @@ local function run_multi_instrument_workflow(done, json)
         end)
         if not accepted then finish("FAIL", describe_failure(start_error)) end
       end
-      regenerate_next()
+      local transport = song.transport
+      local before_beats = transport.playback_pos_beats
+      local started, start_error = pcall(transport.start, transport, renoise.Transport.PLAYMODE_RESTART_PATTERN)
+      if not started or not transport.playing then
+        finish("FAIL", "Four-track playback did not start: " .. tostring(start_error or "transport stopped"))
+        return
+      end
+      playback_transport_started = true
+      local playback_waits = 0
+      local function verify_playback_progress()
+        if completed then return end
+        playback_waits = playback_waits + 1
+        if playback_tracks_intact() and transport.playing and transport.playback_pos_beats > before_beats then
+          playback_asserted = true
+          regenerate_next()
+          return
+        end
+        if playback_waits >= 600 then
+          finish("FAIL", "Four-track playback did not advance with stable sample/VST program assignments")
+          return
+        end
+        on_next_idle(verify_playback_progress)
+      end
+      on_next_idle(verify_playback_progress)
       return
     end
 
@@ -2647,8 +3752,9 @@ local function run_multi_instrument_workflow(done, json)
   return true
 end
 
-local function run_editor_responsiveness(done)
+run_editor_responsiveness = function(done)
   local song=renoise.song()
+  local store=require("renoise.pattern_store")
   local unpack_values=unpack or table.unpack
   local function pack_values(...) return {n=select("#",...),...} end
   local instrument_index=song.selected_instrument_index
@@ -2667,7 +3773,7 @@ local function run_editor_responsiveness(done)
   local original_matches_snapshot=ownership.matches_snapshot
   local original_classify=validator.classify
   local original_classify_against=validator.classify_against
-  local captured_column_name
+  local captured_baseline_is_opaque
   local capture_calls,sink_calls=0,0
   local metrics={}
   local scans=0
@@ -2792,6 +3898,12 @@ local function run_editor_responsiveness(done)
     end
     local function publish_phrase_profile(prefix)
       for _,name in ipairs({"snapshot","copy_snapshot","compare","classify","classify_against",
+          "classify_verified_postimage","classify_against_reference",
+          "matches_snapshot","snapshot_index","ownership_status","make_name",
+          "capture_recovery","make_name_from_verified_snapshot",
+          "preflight_destination","store_allocate","store_prepare_revision","store_commit",
+          "materializer_apply","materializer_verify","materializer_restore",
+          "context_adopt","runtime_request_guard","runtime_inventory_guard",
           "plan","restore_editor_target","transition","render_project","render_step_text",
           "request_new","request_capture","request_checkpoint","writer_create","writer_regenerate"}) do
         local item=phrase_profile[name] or {calls=0,elapsed_ms=0}
@@ -2801,7 +3913,11 @@ local function run_editor_responsiveness(done)
     end
     local planner=require("model.output_planner")
     local request_module=require("runtime.requests")
+    local inventory_module=require("runtime.inventory")
+    local materializer=require("writers.phrase_materializer")
+    local store=require("renoise.pattern_store")
     local original_requests_new=request_module.new
+    local original_inventory_new=inventory_module.new
     request_module.new=function(access)
       local owner=original_requests_new(access)
       profile_function(owner,"capture","request_capture")
@@ -2809,15 +3925,37 @@ local function run_editor_responsiveness(done)
       return owner
     end
     phrase_profile_restore[#phrase_profile_restore+1]={target=request_module,key="new",original=original_requests_new}
+    inventory_module.new=function(...)
+      local owner=original_inventory_new(...)
+      profile_function(owner,"adopt","context_adopt")
+      return owner
+    end
+    phrase_profile_restore[#phrase_profile_restore+1]={target=inventory_module,key="new",original=original_inventory_new}
     profile_function(writer,"create","writer_create")
     profile_function(writer,"regenerate","writer_regenerate")
     profile_function(request_module,"new","request_new")
     profile_function(ownership,"snapshot","snapshot")
     profile_function(ownership,"copy_snapshot","copy_snapshot")
     profile_function(ownership,"compare","compare")
+    profile_function(ownership,"matches_snapshot","matches_snapshot")
+    profile_function(ownership,"snapshot_index","snapshot_index")
+    profile_function(ownership,"status","ownership_status")
+    profile_function(ownership,"make_name","make_name")
+    profile_function(ownership,"capture_recovery","capture_recovery")
+    profile_function(ownership,"make_name_from_verified_snapshot","make_name_from_verified_snapshot")
     profile_function(validator,"classify","classify")
     profile_function(validator,"classify_against","classify_against")
+    profile_function(validator,"classify_verified_postimage","classify_verified_postimage")
+    profile_function(validator,"classify_against_reference","classify_against_reference")
+    profile_function(validator,"preflight_destination","preflight_destination")
+    profile_function(store,"allocate","store_allocate")
+    profile_function(store,"prepare_revision","store_prepare_revision")
+    profile_function(store,"commit","store_commit")
+    profile_function(materializer,"apply","materializer_apply")
+    profile_function(materializer,"verify","materializer_verify")
+    profile_function(materializer,"restore","materializer_restore")
     profile_function(planner,"plan","plan")
+    profile_function(planner,"plan_for_materialization","plan")
     profile_function(editor,"project","render_project")
     profile_function(editor,"step_text","render_step_text")
     local function same_items(actual,expected)
@@ -2895,6 +4033,8 @@ local function run_editor_responsiveness(done)
     gui_context_module.new=function(options)
       gui_context_created_count=gui_context_created_count+1
       gui_context=original_gui_context_new(options)
+      profile_function(gui_context,"matches_mutation_inventory","runtime_inventory_guard")
+      profile_function(gui_context,"request_generation","runtime_request_guard")
       local original_inventory_match=gui_context.matches_mutation_inventory
       if type(original_inventory_match)=="function" then
         gui_context.matches_mutation_inventory=function(self,subject,inventory_kind)
@@ -3601,11 +4741,18 @@ local function run_editor_responsiveness(done)
       pitch_position_notifier(1)
       local live_index=1
       local before_live,live_policy,live_pb=persisted.read_draft(song,instrument,phrase)
+      local before_revision_id=ownership.id(phrase)
+      local before_committed_source,before_committed_policy,before_committed_pb
+      if before_revision_id then
+        before_committed_source,before_committed_policy,before_committed_pb=
+          store.read_entry(song,before_revision_id)
+      end
       if not before_live or live_index<1 or live_index>before_live.length then
         finished(false,"Live Edit test could not read the selected source pitch")
         return
       end
       local arm_count=callback_counts.acid_live_edit or 0
+      local request_trace_before=#gui_live_request_trace
       metrics.gui_live_checkbox_found=live_control~=nil
       metrics.gui_live_checkbox_callback_found=live_notifier~=nil
       metrics.gui_live_checkbox_value_before=live_control.value==true
@@ -3654,169 +4801,80 @@ local function run_editor_responsiveness(done)
         metrics.gui_live_first_edit_accepted=gui_transition_effects.accepted==true
         metrics.gui_live_first_edit_rejection=tostring(gui_transition_effects.reason or "")
       end
-      if not first_state.armed or not (first_state.busy or first_state.pending) then
-        set_live_armed(false)
-        finished(false,"First armed note edit did not start generation")
-        return
+      local current_revision_id=ownership.id(phrase)
+      local latest_source,latest_policy,latest_pb=store.read_entry(song,current_revision_id)
+      local old_source_retained,old_policy_retained,old_pb_retained
+      if before_revision_id then
+        old_source_retained,old_policy_retained,old_pb_retained=
+          store.read_entry(song,before_revision_id)
       end
-      local idle=renoise.tool().app_idle_observable
-      local function continue_when_busy()
-      reset_phrase_profile()
-      phrase_profile_enabled=true
-      metrics.gui_live_busy_edit_elapsed_ms=edit_live_note(second_value)
-      phrase_profile_enabled=false
-      publish_phrase_profile("gui_live_busy_profile")
-      live_context=gui_transition_context or live_context
-      local second_state=live_context:generation_state()
+      local editor_state=live_context and live_context:editor_state()
+      local output_value=phrase:line(live_index):note_column(1).note_value
+      local output_matches=latest_source and
+        latest_source.pitch_events[live_index].key==first_value-1 and
+        output_value==latest_source.pitch_events[live_index].note and
+        editor_state and sequence.same_source(editor_state.source,latest_source)
+      local writer_state=writer.state()
+      local live_result=first_state.last_result
+      local draft=persisted.read_draft(song,instrument,phrase)
+      local request_count=#gui_live_request_trace-request_trace_before
       metrics.gui_live_transition_trace=table.concat(gui_live_trace,";")
-      metrics.gui_live_second_edit_pending=second_state.pending==true
-      local latest_source,latest_policy,latest_pb=persisted.read_draft(song,instrument,phrase)
-      if not second_state.armed or not second_state.busy or not second_state.pending or
-          not latest_source or latest_source.pitch_events[live_index].key~=second_value-1 or
-          sequence.same_source(before_live,latest_source) then
-        set_live_armed(false)
-        finished(false,"Second armed note edit did not persist as the pending latest source")
-        return
-      end
-      metrics.gui_live_latest_source_verified=true
+      metrics.gui_live_request_count=request_count
+      metrics.gui_live_revision_id_advanced=current_revision_id~=nil and current_revision_id~=before_revision_id
+      metrics.gui_live_prior_source_retained=old_source_retained~=nil and
+        before_committed_source~=nil and sequence.same_source(old_source_retained,before_committed_source) and
+        old_policy_retained==before_committed_policy and old_pb_retained==before_committed_pb
+      metrics.gui_live_writer_idle_at_return=writer_state=="idle"
+      metrics.gui_live_terminal_status=tostring(first_state.status)
+      metrics.gui_live_terminal_result=live_result and tostring(live_result.kind) or "missing"
+      metrics.gui_live_final_result=live_result and tostring(live_result.kind) or "missing"
+      metrics.gui_live_pending_at_return=first_state.pending==true
+      metrics.gui_live_draft_at_return=draft~=nil
+      metrics.gui_live_committed_note_value=output_value
+      metrics.gui_live_committed_source_match=output_matches==true
       metrics.gui_live_output_policy=latest_policy or live_policy
       metrics.gui_live_pb_range=latest_pb or live_pb
-      local waits=0
-      local settled=false
-      local safe_settle
-      local settle
-      settle=function()
-        if settled then return end
-        waits=waits+1
-        local state=live_context:generation_state()
-        local persisted_source=persisted.read_draft(song,instrument,phrase)
-        local writer_state=writer.state()
-        local last_result=state.last_result
-        metrics.gui_live_wait_writer_state=writer_state
-        metrics.gui_live_wait_pending=state.pending==true
-        metrics.gui_live_wait_status=tostring(state.status)
-        metrics.gui_live_wait_result=last_result and tostring(last_result.kind) or "missing"
-        metrics.gui_live_wait_reason=last_result and tostring(last_result.reason or last_result.message or "") or ""
-        metrics.gui_live_wait_draft_present=persisted_source~=nil
-        metrics.gui_live_transition_trace=table.concat(gui_live_trace,";")
-        if writer_state=="idle" and not state.pending then
-          metrics.gui_live_settle_idle_ticks=waits
-          metrics.gui_live_final_result=last_result and last_result.kind or "missing"
-          metrics.gui_live_final_status=state.status
-          pcall(function() idle:remove_notifier(safe_settle) end)
-          if not last_result or last_result.kind~="success" or persisted_source then
-            pcall(function() set_live_armed(false) end)
-            settled=true
-            finished(false,"Live Edit settled without committing latest draft: writer="..
-              tostring(writer_state).." status="..tostring(state.status).." result="..
-              tostring(last_result and last_result.kind).." reason="..
-              tostring(last_result and (last_result.reason or last_result.message) or "")..
-              " draft="..tostring(persisted_source~=nil))
-            return
-          end
-        elseif waits<300 then
-          return
-        else
-          pcall(function() idle:remove_notifier(safe_settle) end)
-          set_live_armed(false)
-          settled=true
-          finished(false,"Live Edit did not settle within 300 idle ticks: writer="..
-            tostring(writer_state).." status="..tostring(state.status).." pending="..
-            tostring(state.pending).." result="..tostring(last_result and last_result.kind)..
-            " draft="..tostring(persisted_source~=nil))
-          return
-        end
-        local output_value=phrase:line(live_index):note_column(1).note_value
-        local output_matches=output_value==latest_source.pitch_events[live_index].note
-        metrics.gui_live_committed_note_value=output_value
-        metrics.gui_live_committed_source_match=output_matches
-        local disarm_count=callback_counts.acid_live_edit or 0
+      metrics.gui_live_terminal_before_return=live_result~=nil and writer_state=="idle" and
+        live_result.kind=="success" and writer_state=="idle" and
+        not first_state.busy and not first_state.pending and not draft
+      if not first_state.armed or not metrics.gui_live_terminal_before_return or
+          not output_matches or request_count~=1 or
+          not metrics.gui_live_revision_id_advanced or not metrics.gui_live_prior_source_retained then
         set_live_armed(false)
-        local disarmed=live_context:generation_state()
-        metrics.gui_live_disarmed=not disarmed.armed
-        local dialog_closed=close_test_gui()
-        metrics.gui_dialog_closed=dialog_closed
-        if state.last_result==nil or state.last_result.kind~="success" or
-            not output_matches or disarmed.armed or not dialog_closed then
-          settled=true
-          finished(false,"Live Edit did not commit the latest note or close its dialog cleanly")
-          return
-        end
-        metrics.gui_live_checkbox_dispatches=(callback_counts.acid_live_edit or 0)-arm_count
-        metrics.gui_live_disarm_dispatches=(callback_counts.acid_live_edit or 0)-disarm_count
-        action_timings["live-first-note"]=metrics.gui_live_first_edit_elapsed_ms
-        action_timings["live-busy-note"]=metrics.gui_live_busy_edit_elapsed_ms
-        local over_budget={}
-        for name,elapsed in pairs(action_timings) do
-          if elapsed>30 then over_budget[#over_budget+1]=name.."="..string.format("%.2f",elapsed) end
-        end
-        table.sort(over_budget)
-        metrics.gui_over_budget_actions=table.concat(over_budget,",")
-        metrics.gui_over_budget_action_count=#over_budget
-        metrics.gui_live_edit_coalescing_verified=true
-        settled=true
-        if #over_budget>0 then
-          finished(false,"GUI actions exceeded 30 ms: "..metrics.gui_over_budget_actions)
-        else
-          finished(true)
-        end
-      end
-      safe_settle=function()
-        local ok,reason=xpcall(settle,function(callback_error)
-          if debug and type(debug.traceback)=="function" then
-            return debug.traceback(tostring(callback_error),2)
-          end
-          return tostring(callback_error)
-        end)
-        if not ok and not settled then
-          settled=true
-          pcall(function() idle:remove_notifier(safe_settle) end)
-          pcall(function() set_live_armed(false) end)
-          finished(false,reason)
-        end
-      end
-      idle:add_notifier(safe_settle)
-      end
-      if first_state.busy then
-        local ok,reason=xpcall(continue_when_busy,function(callback_error)
-          if debug and type(debug.traceback)=="function" then
-            return debug.traceback(tostring(callback_error),2)
-          end
-          return tostring(callback_error)
-        end)
-        if not ok then finished(false,reason) end
+        finished(false,"Live Edit did not synchronously commit one coherent source revision: writer="..
+          tostring(writer_state).." status="..tostring(first_state.status).." result="..
+          tostring(live_result and live_result.kind).." pending="..tostring(first_state.pending)..
+          " draft="..tostring(draft~=nil).." requests="..tostring(request_count)..
+          " revision_advanced="..tostring(metrics.gui_live_revision_id_advanced)..
+          " prior_source_retained="..tostring(metrics.gui_live_prior_source_retained))
         return
       end
-      local busy_waits=0
-      local wait_for_busy
-      wait_for_busy=function()
-        busy_waits=busy_waits+1
-        live_context=gui_transition_context or live_context
-        local state=live_context:generation_state()
-        metrics.gui_live_first_wait_ticks=busy_waits
-        metrics.gui_live_first_wait_writer_state=tostring(writer.state())
-        metrics.gui_live_first_wait_status=tostring(state.status)
-        metrics.gui_live_first_wait_pending=state.pending==true
-        if writer.state()=="busy" and state.busy then
-          pcall(function() idle:remove_notifier(wait_for_busy) end)
-          local ok,reason=xpcall(continue_when_busy,function(callback_error)
-            if debug and type(debug.traceback)=="function" then
-              return debug.traceback(tostring(callback_error),2)
-            end
-            return tostring(callback_error)
-          end)
-          if not ok then finished(false,reason) end
-        elseif busy_waits<300 and (state.pending or writer.state()=="busy") then
-          return
-        else
-          pcall(function() idle:remove_notifier(wait_for_busy) end)
-          set_live_armed(false)
-          finished(false,"Queued Live Edit never entered a writer job: writer="..
-            tostring(writer.state()).." status="..tostring(state.status)..
-            " pending="..tostring(state.pending))
-        end
+      local disarm_count=callback_counts.acid_live_edit or 0
+      set_live_armed(false)
+      local disarmed=live_context:generation_state()
+      metrics.gui_live_disarmed=not disarmed.armed
+      local dialog_closed=close_test_gui()
+      metrics.gui_dialog_closed=dialog_closed
+      if disarmed.armed or not dialog_closed then
+        finished(false,"Live Edit did not disarm or close its dialog cleanly")
+        return
       end
-      idle:add_notifier(wait_for_busy)
+      metrics.gui_live_checkbox_dispatches=(callback_counts.acid_live_edit or 0)-arm_count
+      metrics.gui_live_disarm_dispatches=(callback_counts.acid_live_edit or 0)-disarm_count
+      action_timings["live-note"]=metrics.gui_live_first_edit_elapsed_ms
+      local over_budget={}
+      for name,elapsed in pairs(action_timings) do
+        if elapsed>30 then over_budget[#over_budget+1]=name.."="..string.format("%.2f",elapsed) end
+      end
+      table.sort(over_budget)
+      metrics.gui_over_budget_actions=table.concat(over_budget,",")
+      metrics.gui_over_budget_action_count=#over_budget
+      metrics.gui_live_synchronous_verified=true
+      if #over_budget>0 then
+        finished(false,"GUI actions exceeded 30 ms: "..metrics.gui_over_budget_actions)
+      else
+        finished(true)
+      end
     end
     return true,nil,live_probe
   end
@@ -3884,7 +4942,7 @@ local function run_editor_responsiveness(done)
   local function create_test_context()
     if context then context:release_document() end
     capture_calls=0
-    captured_column_name=nil
+    captured_baseline_is_opaque=nil
     context=require("runtime.context").new({
       writer=writer,
       capture=function() return nil,"The editor request-capture path is required" end,
@@ -3907,7 +4965,8 @@ local function run_editor_responsiveness(done)
         local request=values[1]
         if request then
           pcall(function()
-            captured_column_name=request.baseline.snapshot.columns[1].name
+            captured_baseline_is_opaque=type(request.baseline)=="table" and
+              request.baseline.id==request.id and rawget(request.baseline,"snapshot")==nil
           end)
         end
         return unpack_values(values,1,values.n)
@@ -4235,7 +5294,7 @@ local function run_editor_responsiveness(done)
       pcall(function() completion_idle:remove_notifier(wait_completion) end)
       local committed=type(context:generation_state().last_result)=="table" and
         context:generation_state().last_result.kind=="success"
-      local preserved=phrase:column_name(1)==old_name and captured_column_name==old_name
+      local preserved=phrase:column_name(1)==old_name and captured_baseline_is_opaque==true
       local generated_lines=phrase.number_of_lines
       phrase:set_column_name(1,old_name)
       local elapsed=elapsed_ms
@@ -4498,7 +5557,13 @@ local function prepare_cold_negative_fixture(state, target_source)
   local missing_rejected = missing_state.classification == "unavailable" and not missing_state.eligible and
     reject(missing_source, empty_instruments[3])
   if not duplicate_rejected or not modified_rejected or not missing_rejected then
-    return nil, "Cold negative association was eligible or accepted for regeneration"
+    local function state_text(state)
+      return state.classification .. "/eligible=" .. tostring(state.eligible)
+    end
+    return nil, "Cold negative association was eligible or accepted for regeneration: duplicate=" ..
+      state_text(changed_state) .. "/rejected=" .. tostring(duplicate_rejected) ..
+      ", modified=" .. state_text(modified_state) .. "/rejected=" .. tostring(modified_rejected) ..
+      ", missing=" .. state_text(missing_state) .. "/rejected=" .. tostring(missing_rejected)
   end
   return {
     duplicate_id = duplicate_id,
@@ -4535,9 +5600,14 @@ local function run_cold_reopen_regenerate(done)
       reason = describe_failure(request_error or "Cold target did not resolve to an exact regenerate request") })
     return true
   end
+  local terminal_delivered = false
   local accepted, start_error = writer.regenerate(request, function(result)
-    on_next_idle(function()
-      local target_source, target_policy, target_pb = store.read_entry(state.song, state.target_id)
+      terminal_delivered = true
+      local regenerated_id = type(result) == "table" and result.id or nil
+      local target_source, target_policy, target_pb
+      if regenerated_id then target_source, target_policy, target_pb = store.read_entry(state.song, regenerated_id) end
+      local historical_target_source, historical_target_policy, historical_target_pb =
+        store.read_entry(state.song, state.target_id)
       local old_source = store.read_entry(state.song, state.old_id)
       local groups = ownership.inventory(state.song)
       local target_snapshot = ownership.snapshot(state.target_phrase)
@@ -4570,7 +5640,8 @@ local function run_cold_reopen_regenerate(done)
         regenerated_target_matches, target_snapshot_difference =
           ownership.compare(expected_target_snapshot, target_snapshot, "name")
       end
-      local target_identity_preserved = ownership.id(state.target_phrase) == state.target_id and
+      local fresh_revision_identity = regenerated_id ~= nil and regenerated_id ~= state.target_id and
+        ownership.id(state.target_phrase) == regenerated_id and
         ownership.status(state.target_phrase) == "owned"
       local old_phrase_unchanged = old_snapshot and ownership.compare(state.old_snapshot, old_snapshot)
       local sentinel_unchanged = state.sentinel and
@@ -4581,14 +5652,19 @@ local function run_cold_reopen_regenerate(done)
       local same_target_object = writer_succeeded and rawequal(result.phrase, state.target_phrase)
       local target_source_matches = target_source and sequence.same_source(target_source, changed_source)
       local target_settings_preserved = target_policy == state.target_policy and target_pb == state.target_pb
+      local historical_target_preserved = historical_target_source and
+        sequence.same_source(historical_target_source, state.target_source) and
+        historical_target_policy == state.target_policy and historical_target_pb == state.target_pb
       local old_source_preserved = old_source and sequence.same_source(old_source, state.old_source)
       local groups_unique = groups and groups[state.old_id] and #groups[state.old_id] == 1 and
-        groups[state.target_id] and #groups[state.target_id] == 1
+        regenerated_id and groups[regenerated_id] and #groups[regenerated_id] == 1 and
+        groups[state.target_id] == nil
       local primary_phrase_count_preserved = #state.instrument.phrases == TWO_HOLDER_COUNT
       local passed = writer_succeeded and same_target_object and primary_phrase_count_preserved and
-        target_source_matches and target_settings_preserved and old_source_preserved and groups_unique and
+        terminal_delivered and target_source_matches and target_settings_preserved and
+        historical_target_preserved and old_source_preserved and groups_unique and
         source_change_is_unambiguous and expected_changed_cell_count > 0 and
-        regenerated_target_matches and target_identity_preserved and old_phrase_unchanged and sentinel_unchanged
+        regenerated_target_matches and fresh_revision_identity and old_phrase_unchanged and sentinel_unchanged
       if not passed then
         done({ status = "FAIL", case = "cold-reopen-regenerate",
           reason = writer_succeeded and "Cold regenerated readback did not match expected native output" or
@@ -4601,12 +5677,14 @@ local function run_cold_reopen_regenerate(done)
           regenerated_note_and_metadata_match = regenerated_target_matches == true,
           source_change_is_unambiguous = source_change_is_unambiguous == true,
           expected_changed_cell_count = expected_changed_cell_count,
-          target_identity_preserved = target_identity_preserved == true,
+          fresh_revision_identity = fresh_revision_identity == true,
+          historical_target_preserved = historical_target_preserved == true,
           target_snapshot_difference = target_snapshot_difference,
           old_source_preserved = old_source_preserved == true,
           old_phrase_unchanged = old_phrase_unchanged == true,
           sentinel_unchanged = sentinel_unchanged == true,
           groups_unique = groups_unique == true,
+          terminal_delivered = terminal_delivered,
           phrase_count = #state.instrument.phrases })
         return
       end
@@ -4622,7 +5700,9 @@ local function run_cold_reopen_regenerate(done)
         saved_baseline = saved_baseline,
         roundtrip_fixture = saved and saved.fixture or nil,
         roundtrip_bytes = saved and saved.bytes or nil,
-        old_id = state.old_id, target_id = state.target_id,
+        old_id = state.old_id, previous_target_id = state.target_id, target_id = regenerated_id,
+        fresh_revision_identity = fresh_revision_identity == true,
+        historical_target_preserved = historical_target_preserved == true,
         regenerated_same_object = rawequal(result.phrase, state.target_phrase),
         phrase_count = #state.instrument.phrases,
         read_only_load_and_owned_source_restore = true,
@@ -4636,12 +5716,14 @@ local function run_cold_reopen_regenerate(done)
         primary_instrument_phrase_count = #state.instrument.phrases,
         regenerated_note_and_metadata_match = regenerated_target_matches == true,
         expected_changed_cell_count = expected_changed_cell_count,
-        target_identity_preserved = target_identity_preserved == true,
+        terminal_delivered = terminal_delivered,
         reason = save_error })
-    end)
   end)
   if not accepted then
     done({ status = "FAIL", case = "cold-reopen-regenerate", reason = describe_failure(start_error) })
+  elseif not terminal_delivered then
+    done({ status = "FAIL", case = "cold-reopen-regenerate",
+      reason = "Synchronous regeneration returned without terminal delivery" })
   end
   return true
 end
@@ -4736,6 +5818,1033 @@ local function run_cold_reopen_verify(done)
   return true
 end
 
+local function run_selection_feasibility(done, json)
+  local song = renoise.song()
+  local instrument = song and song.selected_instrument
+  if not instrument or song.transport.playing or #instrument.phrases + 2 >
+      renoise.Instrument.MAX_NUMBER_OF_PHRASES then
+    done({ status = "FAIL", case = "selection-feasibility",
+      reason = "Stop playback and select an instrument with capacity for two temporary phrases" })
+    return true
+  end
+  local instrument_index = song.selected_instrument_index
+  local original_phrases = {}
+  for index, phrase in ipairs(instrument.phrases) do original_phrases[index] = phrase end
+  local original_count = #original_phrases
+  local data_before = song.tool_data
+  local created, observations = {}, { trace = json.array() }
+  local idle = renoise.tool().app_idle_observable
+  local notifier
+  local settled = false
+
+  local function remove_notifier()
+    if notifier and idle:has_notifier(notifier) then idle:remove_notifier(notifier) end
+    notifier = nil
+  end
+
+  local function phrase_index(target)
+    for index, phrase in ipairs(instrument.phrases) do
+      if rawequal(phrase, target) then return index end
+    end
+  end
+
+  local function cleanup()
+    remove_notifier()
+    if not rawequal(renoise.song(), song) or not rawequal(song.instruments[instrument_index], instrument) then
+      return false, "song or instrument changed; disposable probe phrases may need manual cleanup"
+    end
+    for index = #created, 1, -1 do
+      local phrase = created[index]
+      local current_index = phrase_index(phrase)
+      if current_index then
+        local ok, err = pcall(function() instrument:delete_phrase_at(current_index) end)
+        if not ok then return false, tostring(err) end
+      end
+    end
+    local preserved = #instrument.phrases == original_count
+    for index, phrase in ipairs(original_phrases) do
+      if not rawequal(instrument.phrases[index], phrase) then preserved = false end
+    end
+    return preserved and song.tool_data == data_before,
+      "phrase inventory or song tool_data changed during probe cleanup"
+  end
+
+  local function finish(ok, reason)
+    if settled then return end
+    settled = true
+    local cleaned, cleanup_error = cleanup()
+    ok = ok and cleaned
+    done({ status = ok and "PASS" or "FAIL", case = "selection-feasibility",
+      reason = reason or (not cleaned and cleanup_error or nil), observations = observations,
+      setter_existing_stable = observations.setter_existing_stable == true,
+      setter_zero_stable = observations.setter_zero_stable == true,
+      cleanup_verified = cleaned == true })
+  end
+
+  local function validate_context()
+    assert(rawequal(renoise.song(), song), "active song changed")
+    assert(not song.transport.playing, "playback started")
+    assert(song.selected_instrument_index == instrument_index and
+      rawequal(song.instruments[instrument_index], instrument), "selected instrument changed")
+  end
+
+  local function wait_idle_pair(label, next_step)
+    local count = 0
+    notifier = function()
+      local ok, err = pcall(function()
+        validate_context()
+        count = count + 1
+        observations.trace[#observations.trace + 1] = { label = label, idle = count,
+          selected_phrase_index = song.selected_phrase_index, phrase_count = #instrument.phrases }
+        if count == 2 then
+          remove_notifier()
+          next_step()
+        end
+      end)
+      if not ok then finish(false, tostring(err)) end
+    end
+    idle:add_notifier(notifier)
+  end
+
+  local function perform(label, action, next_step)
+    local ok, err = pcall(function()
+      validate_context()
+      action()
+      observations.trace[#observations.trace + 1] = { label = label, immediate = true,
+        selected_phrase_index = song.selected_phrase_index, phrase_count = #instrument.phrases }
+    end)
+    if not ok then finish(false, label .. ": " .. tostring(err)); return end
+    wait_idle_pair(label, next_step)
+  end
+
+  local function locate_created(target)
+    local index = phrase_index(target)
+    assert(index, "probe phrase identity is missing")
+    return index
+  end
+
+  local function structural_pair(label, next_step)
+    perform("insert after " .. label, function()
+      assert(#instrument.phrases == original_count + 1 and
+        rawequal(instrument.phrases[original_count + 1], created[1]),
+        "phrase inventory changed unexpectedly")
+      local phrase = instrument:insert_phrase_at(original_count + 2)
+      assert(phrase and rawequal(instrument.phrases[original_count + 2], phrase),
+        "inserted phrase identity is unavailable")
+      created[#created + 1] = phrase
+    end, function()
+      perform("delete after " .. label, function()
+        assert(#instrument.phrases == original_count + 2, "phrase inventory changed unexpectedly")
+        instrument:delete_phrase_at(locate_created(created[2]))
+      end, function()
+        created[2] = nil
+        next_step()
+      end)
+    end)
+  end
+
+  local function set_zero()
+    local ok, err = pcall(function() song.selected_phrase_index = 0 end)
+    observations.setter_zero_pcall = ok
+    observations.setter_zero_error = not ok and tostring(err) or nil
+    local immediate = song.selected_phrase_index
+    observations.setter_zero_immediate = immediate
+    wait_idle_pair("set index 0", function()
+      local trace = observations.trace
+      local first = trace[#trace - 1].selected_phrase_index
+      local second = trace[#trace].selected_phrase_index
+      observations.setter_zero_stable = immediate == 0 and first == 0 and second == 0
+      structural_pair("index 0", function()
+        perform("delete seed", function()
+        assert(#instrument.phrases == original_count + 1, "phrase inventory changed unexpectedly")
+          instrument:delete_phrase_at(locate_created(created[1]))
+        end, function()
+          created[1] = nil
+          finish(#instrument.phrases == original_count, "selection feasibility sequence completed")
+        end)
+      end)
+    end)
+  end
+
+  local function set_existing()
+    local ok, err = pcall(function() song.selected_phrase_index = 1 end)
+    observations.setter_existing_pcall = ok
+    observations.setter_existing_error = not ok and tostring(err) or nil
+    local immediate = song.selected_phrase_index
+    observations.setter_existing_immediate = immediate
+    wait_idle_pair("set existing index 1", function()
+      local trace = observations.trace
+      local first = trace[#trace - 1].selected_phrase_index
+      local second = trace[#trace].selected_phrase_index
+      observations.setter_existing_stable = immediate == 1 and first == 1 and second == 1
+      structural_pair("index 1", set_zero)
+    end)
+  end
+
+  perform("insert seed", function()
+    local phrase = instrument:insert_phrase_at(original_count + 1)
+    assert(phrase and rawequal(instrument.phrases[original_count + 1], phrase),
+      "seed phrase identity is unavailable")
+    created[1] = phrase
+  end, set_existing)
+  return true
+end
+
+local function run_direct_output_feasibility(done, json)
+  local song = renoise.song()
+  local instrument = song and song.selected_instrument
+  if not instrument or song.transport.playing or #instrument.phrases + 2 >
+      renoise.Instrument.MAX_NUMBER_OF_PHRASES then
+    done({ status = "FAIL", case = "direct-output-feasibility",
+      reason = "Stop playback and select an instrument with capacity for two temporary phrases" })
+    return true
+  end
+  local instrument_index = song.selected_instrument_index
+  local data_before = song.tool_data
+  local before_count = #instrument.phrases
+  local original_phrases = {}
+  for index, phrase in ipairs(instrument.phrases) do original_phrases[index] = phrase end
+  local created, matrix = {}, json.array()
+  local rollback_exact = false
+  local source_transaction_verified = false
+  local materializer_apply_calls = 0
+  local materializer_apply_total_ms = 0
+  local materializer_apply_max_ms = 0
+  local materializer_phase_names = { "snapshot", "snapshot_index", "matches_snapshot",
+    "compare", "copy_snapshot" }
+  local materializer_profile_total = {}
+  for _, name in ipairs(materializer_phase_names) do
+    materializer_profile_total[name .. "_calls"] = 0
+    materializer_profile_total[name .. "_ms"] = 0
+  end
+  local settled = false
+  local function phrase_index(target)
+    for index, phrase in ipairs(instrument.phrases) do
+      if rawequal(phrase, target) then return index end
+    end
+  end
+  local function cleanup()
+    if not rawequal(renoise.song(), song) or not rawequal(song.instruments[instrument_index], instrument) then
+      return false, "song or probe instrument changed; created phrases may need manual cleanup"
+    end
+    for index = #created, 1, -1 do
+      local current_index = phrase_index(created[index])
+      if current_index then
+        local ok, err = pcall(function() instrument:delete_phrase_at(current_index) end)
+        if not ok then return false, tostring(err) end
+      end
+    end
+    local preserved = #instrument.phrases == before_count
+    for index, phrase in ipairs(original_phrases) do
+      if not rawequal(instrument.phrases[index], phrase) then preserved = false end
+    end
+    return preserved and song.tool_data == data_before,
+      "phrase inventory or song tool_data changed during cleanup"
+  end
+  local function finish(ok, reason)
+    if settled then return end
+    settled = true
+    local clean, cleanup_error = cleanup()
+    local profile_total_ms = 0
+    for _, name in ipairs(materializer_phase_names) do
+      profile_total_ms = profile_total_ms + materializer_profile_total[name .. "_ms"]
+    end
+    materializer_profile_total.residual_ms = materializer_apply_total_ms - profile_total_ms
+    done({ status = ok and clean and "PASS" or "FAIL", case = "direct-output-feasibility",
+      reason = reason or (not clean and cleanup_error or nil), cases = matrix,
+      rollback_exact = rollback_exact, source_transaction_verified = source_transaction_verified,
+      materializer_apply_calls = materializer_apply_calls,
+      materializer_apply_total_ms = materializer_apply_total_ms,
+      materializer_apply_max_ms = materializer_apply_max_ms,
+      materializer_profile = materializer_profile_total,
+      cleanup_verified = clean == true,
+      phrase_count = #instrument.phrases })
+  end
+
+  local loaded, planner, sequence, emitter, ownership, runner_module, gate_writer, store, materializer = pcall(function()
+    return require("model.output_planner"), require("model.sequencer"),
+      dofile(renoise.tool().bundle_path .. "\\__dev\\reference\\pattrns_writer.lua"),
+      require("renoise.phrase_ownership"),
+      dofile(renoise.tool().bundle_path .. "\\__dev\\reference\\script_runner.lua"),
+      dofile(renoise.tool().bundle_path .. "\\__dev\\reference\\gate_writer.lua"),
+      require("renoise.pattern_store"), require("writers.phrase_materializer")
+  end)
+  if not loaded then finish(false, tostring(planner)); return true end
+  local api = renoise.InstrumentPhrase
+  local capacities = { max_lines = api.MAX_NUMBER_OF_LINES,
+    max_note_columns = api.MAX_NUMBER_OF_NOTE_COLUMNS,
+    max_effect_columns = api.MAX_NUMBER_OF_EFFECT_COLUMNS,
+    play_pattern = api.PLAY_PATTERN, key_tracking_none = api.KEY_TRACKING_NONE }
+  local capabilities = { sample = false, plugin = false, midi = false, alias = false }
+  local note_fields = { "note_value", "instrument_value", "volume_value", "panning_value",
+    "delay_value", "effect_number_value", "effect_amount_value" }
+  local effect_fields = { "number_value", "amount_value" }
+
+  local function context_valid()
+    assert(rawequal(renoise.song(), song), "active song changed")
+    assert(not song.transport.playing, "playback started")
+    assert(song.selected_instrument_index == instrument_index and
+      rawequal(song.instruments[instrument_index], instrument), "selected instrument changed")
+  end
+
+  local function set_properties(phrase, properties, visibility)
+    phrase.looping = false
+    phrase.loop_start = 1
+    phrase.loop_end = 2
+    phrase.number_of_lines = properties.number_of_lines
+    for key, value in pairs(properties) do
+      if key ~= "looping" and key ~= "loop_start" and key ~= "loop_end" and
+          key ~= "number_of_lines" then phrase[key] = value end
+    end
+    phrase.loop_end = properties.loop_end
+    phrase.loop_start = properties.loop_start
+    phrase.looping = properties.looping
+    for key, value in pairs(visibility) do phrase[key] = value end
+  end
+
+  local function write_expected(phrase, output, fail_after, failure_tag)
+    local writes = 0
+    for line_index = 1, capacities.max_lines do
+      local line = phrase:line(line_index)
+      local expected = output.expected.lines[line_index]
+      for column = 1, capacities.max_note_columns do
+        local cell = line:note_column(column)
+        for _, field in ipairs(note_fields) do
+          cell[field] = expected.note_columns[column][field]
+          writes = writes + 1
+          if fail_after and writes == fail_after then
+            error("injected direct write failure:" .. tostring(failure_tag), 0)
+          end
+        end
+      end
+      for column = 1, capacities.max_effect_columns do
+        local cell = line:effect_column(column)
+        for _, field in ipairs(effect_fields) do
+          cell[field] = expected.effect_columns[column][field]
+          writes = writes + 1
+          if fail_after and writes == fail_after then
+            error("injected direct write failure:" .. tostring(failure_tag), 0)
+          end
+        end
+      end
+    end
+  end
+
+  local function assert_expected(phrase, output, before)
+    local snapshot = assert(ownership.snapshot(phrase, capacities))
+    for key, expected in pairs(output.expected.properties) do
+      assert(snapshot.properties[key] == expected, "property mismatch: " .. key)
+    end
+    for key, expected in pairs(output.required_visibility) do
+      local wanted = expected
+      if before then
+        local old = before.properties[key]
+        if type(expected) == "number" then wanted = math.max(old, expected)
+        elseif type(expected) == "boolean" then wanted = old or expected end
+      end
+      assert(snapshot.properties[key] == wanted, "visibility mismatch: " .. key)
+    end
+    for line_index = 1, capacities.max_lines do
+      local actual, expected = snapshot.lines[line_index], output.expected.lines[line_index]
+      for column = 1, capacities.max_note_columns do
+        for _, field in ipairs(note_fields) do
+          assert(actual.notes[column][field] == expected.note_columns[column][field],
+            string.format("note mismatch at line %d column %d field %s", line_index, column, field))
+        end
+      end
+      for column = 1, capacities.max_effect_columns do
+        for _, field in ipairs(effect_fields) do
+          assert(actual.effects[column][field] == expected.effect_columns[column][field],
+            string.format("effect mismatch at line %d column %d field %s", line_index, column, field))
+        end
+      end
+    end
+    return snapshot
+  end
+
+  local function apply_materialized(phrase, output, before)
+    local unpack_values = unpack or table.unpack
+    local function pack_values(...)
+      return { n = select("#", ...), ... }
+    end
+    local profile = {}
+    local originals = {}
+    local wrappers = {}
+    for _, name in ipairs(materializer_phase_names) do
+      local original = ownership[name]
+      if type(original) == "function" then
+        originals[name] = original
+        profile[name .. "_calls"] = 0
+        profile[name .. "_ms"] = 0
+        wrappers[#wrappers + 1] = name
+      end
+    end
+    for _, name in ipairs(wrappers) do
+      local original = originals[name]
+      ownership[name] = function(...)
+        local started = os.clock()
+        local values = pack_values(pcall(original, ...))
+        profile[name .. "_calls"] = profile[name .. "_calls"] + 1
+        profile[name .. "_ms"] = profile[name .. "_ms"] +
+          (os.clock() - started) * MILLISECONDS_PER_SECOND
+        if not values[1] then error(values[2], 0) end
+        return unpack_values(values, 2, values.n)
+      end
+    end
+    local started = os.clock()
+    local values = pack_values(pcall(materializer.apply,
+      phrase, output.expected, output.required_visibility, before, capacities))
+    local elapsed = (os.clock() - started) * MILLISECONDS_PER_SECOND
+    for index = #wrappers, 1, -1 do
+      local name = wrappers[index]
+      pcall(function() ownership[name] = originals[name] end)
+      local calls_key, time_key = name .. "_calls", name .. "_ms"
+      materializer_profile_total[calls_key] = materializer_profile_total[calls_key] + profile[calls_key]
+      materializer_profile_total[time_key] = materializer_profile_total[time_key] + profile[time_key]
+    end
+    local phase_total_ms = 0
+    for _, name in ipairs(materializer_phase_names) do
+      profile[name .. "_calls"] = profile[name .. "_calls"] or 0
+      profile[name .. "_ms"] = profile[name .. "_ms"] or 0
+      phase_total_ms = phase_total_ms + profile[name .. "_ms"]
+    end
+    profile.residual_ms = elapsed - phase_total_ms
+    materializer_apply_calls = materializer_apply_calls + 1
+    materializer_apply_total_ms = materializer_apply_total_ms + elapsed
+    if elapsed > materializer_apply_max_ms then materializer_apply_max_ms = elapsed end
+    if not values[1] then error(values[2], 0) end
+    return values[2], values[3], values[4], elapsed, profile
+  end
+
+  local function seed_detached_preimage(phrase)
+    phrase.looping = false
+    phrase.loop_start = 1
+    phrase.number_of_lines = capacities.max_lines
+    phrase.loop_end = capacities.max_lines
+    phrase.visible_note_columns = capacities.max_note_columns
+    if capacities.max_effect_columns > 0 then
+      phrase.visible_effect_columns = capacities.max_effect_columns
+    end
+    local lines = { 1, math.min(17, capacities.max_lines), capacities.max_lines }
+    local note_columns = { 1, capacities.max_note_columns }
+    for line_slot, line_index in ipairs(lines) do
+      local line = phrase:line(line_index)
+      for column_slot, column_index in ipairs(note_columns) do
+        local cell = line:note_column(column_index)
+        cell.note_value = 48 + line_slot + column_slot
+        cell.instrument_value = column_slot
+        cell.volume_value = 70 + line_slot
+        cell.panning_value = 20 + column_slot
+        cell.delay_value = line_slot
+        cell.effect_number_value = 1 + column_slot
+        cell.effect_amount_value = 10 + line_slot
+      end
+      if capacities.max_effect_columns > 0 then
+        local effect_columns = { 1, capacities.max_effect_columns }
+        for column_slot, column_index in ipairs(effect_columns) do
+          local cell = line:effect_column(column_index)
+          cell.number_value = column_slot
+          cell.amount_value = 30 + line_slot
+        end
+      end
+    end
+    phrase.number_of_lines = math.min(32, capacities.max_lines)
+    phrase.loop_start = 1
+    phrase.loop_end = phrase.number_of_lines
+    phrase.looping = false
+    phrase.visible_note_columns = 1
+    if capacities.max_effect_columns > 0 then phrase.visible_effect_columns = 1 end
+  end
+
+  local function inject_and_restore(phrase, detached, output, tag, fail_after)
+    set_properties(phrase, output.expected.properties, output.required_visibility)
+    local fault_ok, fault_error = pcall(function()
+      if fail_after then
+        write_expected(phrase, output, fail_after, tag)
+      else
+        error("injected direct write failure:" .. tag, 0)
+      end
+    end)
+    assert(not fault_ok and tostring(fault_error):find("injected direct write failure:" .. tag, 1, true),
+      "fault injection did not reach the requested " .. tag .. " point: " .. tostring(fault_error))
+    local restored, restore_error = materializer.restore(phrase, detached, capacities)
+    assert(restored, "materializer rollback failed after " .. tag .. ": " .. tostring(restore_error))
+    local equal, difference = ownership.compare(detached, assert(ownership.snapshot(phrase, capacities)))
+    assert(equal, "full detached rollback mismatch after " .. tag .. ": " .. tostring(difference))
+  end
+
+  local source_ok, source, source_before = pcall(function()
+    local pattern = sequence.new_pattern(4)
+    pattern.pitch_length = 3
+    pattern.pitch_events[1] = sequence.new_pitch(0, 0, false, false)
+    pattern.pitch_events[2] = sequence.new_pitch(4, 0, true, false)
+    pattern.pitch_events[3] = sequence.new_pitch(7, 0, false, false)
+    pattern.time_events[1], pattern.time_events[2] = "N", "T"
+    pattern.time_events[3], pattern.time_events[4] = "N", "R"
+    return pattern, assert(sequence.copy_source(pattern))
+  end)
+  if not source_ok then finish(false, tostring(source)); return true end
+  local cases = json.array()
+  for _, timing_mode in ipairs({ "straight", "triplet" }) do
+    for _, sample in ipairs({ false, true }) do
+      for _, policy in ipairs({ "play_once", "repeat" }) do
+        cases[#cases + 1] = { timing_mode = timing_mode, sample = sample, policy = policy }
+      end
+    end
+  end
+
+  local function run_case(case_index)
+    if settled then return end
+    local case = cases[case_index]
+    if not case then
+      source.timing_mode = source_before.timing_mode
+      finish(sequence.same_source(source, source_before) and song.tool_data == data_before,
+        "planner parity and rollback matrix completed")
+      return
+    end
+    source.timing_mode = case.timing_mode
+    capabilities.sample = case.sample
+    local planned, output, plan_error = pcall(planner.plan, source, case.policy, 0, capacities, capabilities,
+      { pitch_bend_delivery = false })
+    local case_label = case.timing_mode .. "/sample=" .. tostring(case.sample) .. "/" .. case.policy
+    if not planned or not output then finish(false, case_label .. ": " .. tostring(planned and plan_error or output)); return end
+    local emitted, script_source, emit_error = pcall(emitter.emit, output.plan,
+      { unit = output.layout.unit, resolution = output.layout.resolution })
+    if not emitted or not script_source then finish(false, case_label .. ": " .. tostring(emitted and emit_error or script_source)); return end
+    local direct, rendered, apply_elapsed_ms, apply_profile
+    local ok, err = pcall(function()
+      context_valid()
+      direct = instrument:insert_phrase_at(#instrument.phrases + 1)
+      assert(direct, "direct phrase insertion failed")
+      created[#created + 1] = direct
+      rendered = instrument:insert_phrase_at(#instrument.phrases + 1)
+      assert(rendered, "renderer phrase insertion failed")
+      created[#created + 1] = rendered
+      assert(#instrument.phrases == before_count + 2, "phrase list insertion count mismatch")
+      direct.name = "ACID DIRECT OUTPUT PROBE | direct"
+      seed_detached_preimage(direct)
+      direct.base_note = 53
+      direct.autoseek = true
+      direct:set_column_name(1, "preserved column")
+      direct:set_column_is_muted(capacities.max_note_columns, true)
+      local detached = assert(ownership.copy_snapshot(assert(ownership.snapshot(direct, capacities))))
+      local phrase_count = #instrument.phrases
+      if case_index == 1 then
+        local before_transaction = song.tool_data
+        local candidate, transaction_error
+        local transaction_ok, failure = pcall(function()
+          local allocated = assert(store.allocate(song))
+          candidate = assert(store.prepare(song, allocated, source, case.policy, 0,
+            function() return true end))
+          local committed, commit_error = store.commit(song, candidate)
+          assert(committed, "source commit failed: " .. tostring(commit_error))
+          local committed_source = assert(store.read_entry(song, allocated))
+          assert(sequence.same_source(committed_source, source), "committed source did not round-trip")
+          local applied, apply_result = apply_materialized(direct, output, detached)
+          assert(applied and apply_result, "production materializer failed: " .. tostring(apply_result))
+          assert_expected(direct, output, detached)
+          local interrupted, interrupt_error = pcall(function()
+            error("injected post-commit materialization failure", 0)
+          end)
+          assert(not interrupted and tostring(interrupt_error) ==
+            "injected post-commit materialization failure", "transaction fault did not reach injected point")
+          local restored, restore_error = materializer.restore(direct, detached, capacities)
+          assert(restored, "production materializer rollback failed: " .. tostring(restore_error))
+          local phrase_equal, phrase_difference = ownership.compare(detached,
+            assert(ownership.snapshot(direct, capacities)))
+          assert(phrase_equal, "phrase restore failed after committed-source rollback: " ..
+            tostring(phrase_difference))
+          local source_restored, source_restore_error = store.restore(song, candidate)
+          assert(source_restored, "source restore failed after materialization error: " ..
+            tostring(source_restore_error))
+          assert(song.tool_data == before_transaction, "source rollback did not restore exact raw bytes")
+          store.release_candidate(candidate)
+          candidate = nil
+          local rejected_candidate = assert(store.prepare(song, allocated, source, case.policy, 0,
+            function() return false end))
+          local rejected, rejection_error = store.commit(song, rejected_candidate)
+          assert(not rejected and rejection_error and song.tool_data == before_transaction,
+            "rejected source request changed raw song data")
+          store.release_candidate(rejected_candidate)
+        end)
+        if not transaction_ok then
+          transaction_error = tostring(failure)
+          local phrase_restored, phrase_restore_error = pcall(materializer.restore, direct, detached, capacities)
+          if not phrase_restored then transaction_error = transaction_error ..
+            "; phrase cleanup failed: " .. tostring(phrase_restore_error) end
+          if candidate then
+            local source_restored, source_restore_error = pcall(store.restore, song, candidate)
+            if not source_restored then transaction_error = transaction_error ..
+              "; source cleanup failed: " .. tostring(source_restore_error) end
+            store.release_candidate(candidate)
+          end
+          if song.tool_data ~= before_transaction then
+            transaction_error = transaction_error .. "; exact source bytes were not restored"
+          end
+          error(transaction_error, 0)
+        end
+        source_transaction_verified = true
+      end
+      local total_writes = capacities.max_lines *
+        (capacities.max_note_columns * #note_fields + capacities.max_effect_columns * #effect_fields)
+      inject_and_restore(direct, detached, output, "after-properties")
+      inject_and_restore(direct, detached, output, "early-cell", 97)
+      inject_and_restore(direct, detached, output, "late-cell", total_writes - 1)
+      assert(#instrument.phrases == phrase_count, "rollback changed phrase inventory")
+      rollback_exact = true
+      local applied, apply_result, apply_partial
+      applied, apply_result, apply_partial, apply_elapsed_ms, apply_profile =
+        apply_materialized(direct, output, detached)
+      assert(applied and apply_result, "production materializer failed: " .. tostring(apply_result))
+      assert_expected(direct, output, detached)
+      assert(direct.name == "ACID DIRECT OUTPUT PROBE | direct" and direct.base_note == 53 and direct.autoseek,
+        "direct materialization changed preserved phrase metadata")
+      assert(direct:column_name(1) == "preserved column" and
+        direct:column_is_muted(capacities.max_note_columns), "direct materialization changed column metadata")
+      set_properties(rendered, output.expected.properties, output.required_visibility)
+      rendered.playback_mode = api.PLAY_SCRIPT
+      rendered.script.paragraphs = { script_source }
+    end)
+    if not ok then finish(false, case_label .. ": " .. tostring(err)); return end
+
+    local native_runner, runner_error = runner_module.new(rendered.script,
+      { lpb = output.layout.lpb, max_events = output.plan.length }, {
+        done = function(render_error)
+          local completed, completion_error = pcall(function()
+            context_valid()
+            assert(not render_error or render_error == "", "native renderer failed: " .. tostring(render_error))
+            local applied, gate_error = gate_writer.apply_plan(rendered, output.operations)
+            assert(applied, "native gate application failed: " .. tostring(gate_error))
+            set_properties(rendered, output.expected.properties, output.required_visibility)
+            assert_expected(rendered, output)
+            assert(#instrument.phrases == before_count + 2, "native renderer changed phrase inventory")
+            matrix[#matrix + 1] = { timing_mode = case.timing_mode, sample = case.sample,
+              policy = case.policy, parity = true, apply_elapsed_ms = apply_elapsed_ms,
+              apply_profile = apply_profile,
+              planned_lines = output.expected.properties.number_of_lines,
+              semantic_events = output.plan.length, native_capacity_cells = capacities.max_lines *
+                (capacities.max_note_columns + capacities.max_effect_columns) }
+          end)
+          if not completed then finish(false, case_label .. ": " .. tostring(completion_error)); return end
+          for index = #created, 1, -1 do
+            local phrase = created[index]
+            local phrase_position = phrase_index(phrase)
+            if phrase_position then instrument:delete_phrase_at(phrase_position) end
+          end
+          created = {}
+          if #instrument.phrases ~= before_count then
+            finish(false, "probe phrase cleanup did not restore the original count"); return
+          end
+          run_case(case_index + 1)
+        end
+      })
+    if not native_runner then finish(false, tostring(runner_error)); return end
+    local started, start_error = native_runner:start()
+    if not started then finish(false, tostring(start_error)); return end
+  end
+
+  run_case(1)
+  return true
+end
+
+local function run_source_undo_feasibility(done, json)
+  local case_name = "source-undo-feasibility"
+  local song = renoise.song()
+  local instrument = song and song.selected_instrument
+  if not song or not instrument or song.transport.playing then
+    done({ status = "FAIL", case = case_name,
+      reason = "Stop playback and select the instrument for the source undo probe" })
+    return true
+  end
+
+  local instrument_index = song.selected_instrument_index
+  local original_tool_data = song.tool_data
+  local original_phrases = {}
+  for index, existing_phrase in ipairs(instrument.phrases) do
+    original_phrases[index] = existing_phrase
+  end
+  local ownership = require("renoise.phrase_ownership")
+  local phrase
+  local settled = false
+  local variants = json.array()
+  local maximum_history_states = 16
+
+  local function original_inventory_matches()
+    if #instrument.phrases ~= #original_phrases + (phrase and 1 or 0) then return false end
+    for index, original_phrase in ipairs(original_phrases) do
+      if not rawequal(instrument.phrases[index], original_phrase) then return false end
+    end
+    if phrase and not rawequal(instrument.phrases[#original_phrases + 1], phrase) then return false end
+    return true
+  end
+
+  local function context_valid()
+    assert(rawequal(renoise.song(), song), "active song changed")
+    assert(not song.transport.playing, "playback started")
+    assert(song.selected_instrument_index == instrument_index and
+      rawequal(song.instruments[instrument_index], instrument), "selected instrument changed")
+    assert(original_inventory_matches(), "phrase inventory changed during source undo probe")
+  end
+
+  local function phrase_snapshot()
+    if not phrase then return nil end
+    local snapshot, err = ownership.snapshot(phrase)
+    assert(snapshot, err or "could not snapshot the probe phrase")
+    return snapshot
+  end
+
+  local function capture_state()
+    context_valid()
+    return { tool_data = song.tool_data, phrase = phrase_snapshot() }
+  end
+
+  local function state_matches(actual, expected)
+    if actual.tool_data ~= expected.tool_data then return false end
+    if actual.phrase == nil or expected.phrase == nil then
+      return actual.phrase == expected.phrase
+    end
+    return ownership.compare(actual.phrase, expected.phrase) == true
+  end
+
+  local function state_summary(actual, before, after, direction, index)
+    return {
+      direction = direction,
+      index = index,
+      tool_data_matches_before = actual.tool_data == before.tool_data,
+      tool_data_matches_after = actual.tool_data == after.tool_data,
+      phrase_matches_before = actual.phrase == nil and before.phrase == nil or
+        actual.phrase ~= nil and before.phrase ~= nil and
+          ownership.compare(actual.phrase, before.phrase) == true,
+      phrase_matches_after = actual.phrase == nil and after.phrase == nil or
+        actual.phrase ~= nil and after.phrase ~= nil and
+          ownership.compare(actual.phrase, after.phrase) == true,
+      matches_before = state_matches(actual, before),
+      matches_after = state_matches(actual, after),
+    }
+  end
+
+  local function cleanup()
+    if not rawequal(renoise.song(), song) or
+        not rawequal(song.instruments[instrument_index], instrument) then
+      return false, "song or probe instrument changed; manual cleanup may be required"
+    end
+    local ok, err = pcall(function()
+      if phrase then
+        local index
+        for candidate_index, candidate in ipairs(instrument.phrases) do
+          if rawequal(candidate, phrase) then index = candidate_index; break end
+        end
+        if index then instrument:delete_phrase_at(index) end
+      end
+      song.tool_data = original_tool_data
+    end)
+    if not ok then return false, tostring(err) end
+    local inventory_restored = #instrument.phrases == #original_phrases
+    if inventory_restored then
+      for index, original_phrase in ipairs(original_phrases) do
+        if not rawequal(instrument.phrases[index], original_phrase) then
+          inventory_restored = false
+          break
+        end
+      end
+    end
+    return inventory_restored and song.tool_data == original_tool_data,
+      "cleanup did not restore the original phrase identity order and tool_data"
+  end
+
+  local function finish()
+    if settled then return end
+    settled = true
+    local all_grouped, any_undo_state = true, false
+    local missing_undo_variants = json.array()
+    for _, variant in ipairs(variants) do
+      all_grouped = all_grouped and variant.complete_logical_undo_grouped == true
+      any_undo_state = any_undo_state or variant.undo_state_count > 0
+      if variant.undo_state_count == 0 then missing_undo_variants[#missing_undo_variants + 1] = variant.name end
+    end
+    local clean, cleanup_error = cleanup()
+    done({
+      status = all_grouped and clean and "PASS" or "FAIL",
+      case = case_name,
+      reason = not clean and cleanup_error or
+        (not any_undo_state and "No native undo states were exposed to the direct Song API; a real key/menu undo handler may be needed before concluding the behavior is unavailable" or
+          not all_grouped and "At least one variant did not undo and redo phrase plus source as one exact logical action" or nil),
+      variants = variants,
+      variant_count = #variants,
+      maximum_history_states = maximum_history_states,
+      all_variants_one_step = all_grouped,
+      any_native_undo_state = any_undo_state,
+      manual_undo_ui_followup_required = #missing_undo_variants > 0,
+      variants_without_song_api_undo_states = missing_undo_variants,
+      cleanup_verified = clean == true,
+      phrase_count = #instrument.phrases,
+      original_phrase_count = #original_phrases,
+      tool_data_restored = song.tool_data == original_tool_data,
+    })
+  end
+
+  local function add_variant_record(record)
+    variants[#variants + 1] = record
+  end
+
+  local run_variant
+  local variants_spec = {
+    { name = "tool-data-only-describe-undo", description = "ACID source undo probe: tool_data only",
+      method = "describe_undo", mutate_phrase = false, split = false },
+    { name = "phrase-and-source-sync-describe-undo", description = "ACID source undo probe: synchronous pair",
+      method = "describe_undo", mutate_phrase = true, split = false },
+    { name = "phrase-then-source-split-describe-undo", description = "ACID source undo probe: split describe_undo",
+      method = "describe_undo", mutate_phrase = true, split = true },
+    { name = "phrase-then-source-split-batch-once", description = "ACID source undo probe: split batch once",
+      method = "describe_batch_undo_once", mutate_phrase = true, split = true },
+    { name = "phrase-then-source-split-batch-each", description = "ACID source undo probe: split batch each write",
+      method = "describe_batch_undo_each", mutate_phrase = true, split = true },
+  }
+
+  run_variant = function(index)
+    if settled then return end
+    local spec = variants_spec[index]
+    if not spec then finish(); return end
+    local before
+    local record = {
+      name = spec.name,
+      method = spec.method,
+      split_idle = spec.split,
+      status = "RUNNING",
+      history = json.array(),
+      undo_state_count = 0,
+      redo_state_count = 0,
+    }
+    local function next_variant()
+      if index >= #variants_spec then finish() else on_next_idle(function() run_variant(index + 1) end) end
+    end
+    local function fail_variant(err)
+      record.status = "ERROR"
+      record.error = tostring(err)
+      record.complete_logical_undo_grouped = false
+      add_variant_record(record)
+      next_variant()
+    end
+    local function prepare_description()
+      if spec.method == "describe_undo" then
+        assert(type(song.describe_undo) == "function", "Song.describe_undo is unavailable")
+        song:describe_undo(spec.description)
+      elseif spec.method == "describe_batch_undo_once" or spec.method == "describe_batch_undo_each" then
+        assert(type(song.describe_batch_undo) == "function", "Song.describe_batch_undo is unavailable")
+        song:describe_batch_undo(spec.description, 5000)
+      end
+    end
+    local function mutate_phrase()
+      if not spec.mutate_phrase then return end
+      phrase.name = "ACID SOURCE UNDO AFTER " .. tostring(index)
+      phrase:line(1):note_column(1).note_value = 49 + index
+    end
+    local function mutate_source()
+      song.tool_data = "ACID-SOURCE-UNDO-PROBE\n" .. spec.name .. "\n"
+    end
+    local begin_history_walk
+    local function start_action()
+      before = capture_state()
+      record.before_tool_data_present = before.tool_data ~= nil
+      record.before_tool_data_length = before.tool_data and #before.tool_data or 0
+      prepare_description()
+      if spec.split then
+        mutate_phrase()
+        on_next_idle(function()
+          local ok, err = pcall(function()
+            context_valid()
+            if spec.method == "describe_batch_undo_each" then prepare_description() end
+            mutate_source()
+          end)
+          if not ok then fail_variant(err); return end
+          on_next_idle(function()
+            local began, begin_error = pcall(begin_history_walk)
+            if not began then fail_variant(begin_error) end
+          end)
+        end)
+      else
+        mutate_phrase()
+        mutate_source()
+        on_next_idle(function()
+          local began, begin_error = pcall(begin_history_walk)
+          if not began then fail_variant(begin_error) end
+        end)
+      end
+    end
+
+    local function state_now()
+      return capture_state()
+    end
+
+    local function undo_available()
+      local ok, available = pcall(function() return song:can_undo() end)
+      assert(ok and type(available) == "boolean", "Song.can_undo is unavailable")
+      return available
+    end
+
+    local function redo_available()
+      local ok, available = pcall(function() return song:can_redo() end)
+      assert(ok and type(available) == "boolean", "Song.can_redo is unavailable")
+      return available
+    end
+
+    local after
+    local undo_count, redo_count = 0, 0
+    local walk_undo, walk_redo
+
+    local function finish_variant()
+      local current = capture_state()
+      record.undo_state_count = undo_count
+      record.redo_state_count = redo_count
+      record.before_state_restored = record.undo_reached_before == true
+      record.after_state_restored = state_matches(current, after)
+      record.complete_logical_undo_grouped = undo_count == 1 and redo_count == 1 and
+        record.undo_reached_before == true and record.redo_reached_after == true and
+        record.after_state_restored == true
+      record.status = record.complete_logical_undo_grouped and "PASS" or "FAIL"
+      if not record.complete_logical_undo_grouped then
+        record.reason = undo_count == 0 and "No undo state reached the source/phrase action" or
+          undo_count ~= 1 and "Undo split the logical source/phrase action across multiple states" or
+          redo_count ~= 1 and "Redo split the logical source/phrase action across multiple states" or
+          not record.undo_reached_before and "Undo did not restore the exact pre-action phrase and source state" or
+          "Redo did not restore the exact post-action phrase and source state"
+      end
+      add_variant_record(record)
+      next_variant()
+    end
+
+    walk_undo = function(previous)
+      local current = capture_state()
+      if state_matches(current, before) then
+        record.undo_reached_before = true
+        walk_redo()
+        return
+      end
+      if undo_count >= maximum_history_states then
+        record.undo_bound_reached = true
+        walk_redo()
+        return
+      end
+      local available = undo_available()
+      if not available then walk_redo(); return end
+      local called, err = pcall(function() song:undo() end)
+      if not called then fail_variant(err); return end
+      undo_count = undo_count + 1
+      on_next_idle(function()
+        local ok, err = pcall(function()
+          local observed = state_now()
+          record.history[#record.history + 1] = state_summary(observed, before, after,
+            "undo", undo_count)
+          if previous and state_matches(observed, previous) then
+            record.undo_stalled = true
+            walk_redo()
+          else
+            walk_undo(current)
+          end
+        end)
+        if not ok then fail_variant(err) end
+      end)
+    end
+
+    walk_redo = function()
+      local current = capture_state()
+      if state_matches(current, after) then
+        record.redo_reached_after = true
+        finish_variant()
+        return
+      end
+      if redo_count >= maximum_history_states then
+        record.redo_bound_reached = true
+        finish_variant()
+        return
+      end
+      local available = redo_available()
+      if not available then finish_variant(); return end
+      local called, err = pcall(function() song:redo() end)
+      if not called then fail_variant(err); return end
+      redo_count = redo_count + 1
+      on_next_idle(function()
+        local ok, err = pcall(function()
+          local observed = state_now()
+          record.history[#record.history + 1] = state_summary(observed, before, after,
+            "redo", redo_count)
+          walk_redo()
+        end)
+        if not ok then fail_variant(err) end
+      end)
+    end
+
+    begin_history_walk = function()
+      after = capture_state()
+      record.after_tool_data_present = after.tool_data ~= nil
+      record.after_tool_data_length = after.tool_data and #after.tool_data or 0
+      record.history[#record.history + 1] = state_summary(after, before, after, "after_action", 0)
+      walk_undo()
+    end
+
+    local function begin_after_setup()
+      local ok, err = pcall(start_action)
+      if not ok then fail_variant(err) end
+    end
+
+    if spec.mutate_phrase and not phrase then
+      local inserted, returned = pcall(function()
+        return instrument:insert_phrase_at(#original_phrases + 1)
+      end)
+      if not inserted then
+        local addition
+        for _, candidate in ipairs(instrument.phrases) do
+          local was_original = false
+          for _, existing_phrase in ipairs(original_phrases) do
+            if rawequal(candidate, existing_phrase) then was_original = true; break end
+          end
+          if not was_original then
+            if addition then addition = nil; break end
+            addition = candidate
+          end
+        end
+        if addition and #instrument.phrases == #original_phrases + 1 then phrase = addition end
+        fail_variant(returned)
+        return
+      end
+      phrase = returned
+      if not phrase or not rawequal(instrument.phrases[#original_phrases + 1], phrase) or
+          not original_inventory_matches() then
+        fail_variant("probe phrase insertion did not append exactly one phrase to the original inventory")
+        return
+      end
+      local setup_ok, setup_error = pcall(function()
+        phrase.name = "ACID SOURCE UNDO BASELINE"
+        phrase:line(1):note_column(1).note_value = 48
+      end)
+      if not setup_ok then fail_variant(setup_error); return end
+      on_next_idle(begin_after_setup)
+    else
+      begin_after_setup()
+    end
+  end
+
+  local function start_matrix()
+    run_variant(1)
+  end
+
+  local ok, err = pcall(function()
+    assert(type(song.can_undo) == "function" and type(song.can_redo) == "function" and
+      type(song.undo) == "function" and type(song.redo) == "function",
+      "native Song undo/redo API is unavailable")
+    assert(not song:can_undo() and not song:can_redo(),
+      "start from a fresh disposable song with empty undo and redo history")
+    assert(type(json.array) == "function", "JSON array helper is unavailable")
+  end)
+  if not ok then
+    done({ status = "FAIL", case = case_name, reason = tostring(err), variants = variants })
+    return true
+  end
+
+  start_matrix()
+  return true
+end
+
 function M.run(case_name, done, json)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name == "make-independent" then return run_make_independent(done) end
@@ -4744,6 +6853,12 @@ function M.run(case_name, done, json)
   if case_name == "independence-undo-prepare" then return run_independence_undo_prepare(done) end
   if case_name == "independence-undo-fixture" then return run_independence_undo_prepare(done, true) end
   if case_name == "independence-undo" then return run_independence_undo(done) end
+  if case_name == "revision-undo-fixture" then return run_revision_undo_fixture(done) end
+  if case_name == "revision-live-undo-fixture" then return run_revision_undo_fixture(done, case_name) end
+  if case_name == "revision-undo-prepare" then return run_revision_undo_prepare(done) end
+  if case_name == "revision-undo" then return run_revision_undo(done) end
+  if case_name == "revision-live-undo-prepare" then return run_revision_undo_prepare(done, "live-edit") end
+  if case_name == "revision-live-undo" then return run_revision_undo(done, "live-edit") end
   if case_name == "cold-reopen-regenerate" then return run_cold_reopen_regenerate(done) end
   if case_name == "cold-reopen-verify" then return run_cold_reopen_verify(done) end
   if case_name == "draft-recovery" then return run_draft_recovery(done) end
@@ -4751,6 +6866,11 @@ function M.run(case_name, done, json)
   if case_name == "multi-instrument-workflow" then return run_multi_instrument_workflow(done, json) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
   if case_name == "editor-responsiveness" then return run_editor_responsiveness(done) end
+  if case_name == "selection-feasibility" then return run_selection_feasibility(done, json) end
+  if case_name == "direct-output-feasibility" then return run_direct_output_feasibility(done, json) end
+  if case_name == "source-undo-feasibility" then
+    return run_source_undo_feasibility(done, json)
+  end
   if case_name == "reopen-independent" then
     local song = renoise.song()
     local instrument_index = song.selected_instrument_index
@@ -4759,7 +6879,7 @@ function M.run(case_name, done, json)
     local store = require("renoise.pattern_store")
     local ownership = require("renoise.phrase_ownership")
     local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
-    local old_id, new_id, new_phrase, old_source
+    local old_id, new_id, new_phrase, old_source, independent_source
     local groups = ownership.inventory(song)
     if groups then
       for _, phrase in ipairs(instrument.phrases) do
@@ -4767,7 +6887,7 @@ function M.run(case_name, done, json)
         local source = id and store.read_entry(song, id)
         if source and source.pitch_events[FIRST_NOTE_LINE] then
           if source.pitch_events[FIRST_NOTE_LINE].note == sequence.BASE_NOTE + ACCEPTANCE_INDEPENDENT_NOTE then
-            new_id, new_phrase = id, phrase
+            new_id, new_phrase, independent_source = id, phrase, source
           elseif source.pitch_events[FIRST_NOTE_LINE].note == sequence.BASE_NOTE + ACCEPTANCE_GENERATED_NOTE then
             old_id, old_source = id, source
           end
@@ -4801,32 +6921,42 @@ function M.run(case_name, done, json)
       return true
     end
     local writer = require("writers.phrase_writer")
+    local terminal_delivered = false
     local accepted, start_error = writer.regenerate(request, function(result)
+      terminal_delivered = true
       if type(result) ~= "table" or result.kind ~= "success" or result.verified ~= true or
           not rawequal(result.phrase, new_phrase) then
         context:release_document()
         done({ status = "FAIL", case = "reopen-independent", reason = describe_failure(result or "Reloaded phrase regeneration failed") })
         return
       end
-      on_next_idle(function()
-        local saved_new = store.read_entry(song, new_id)
+        local regenerated_id = result.id
+        local saved_new = regenerated_id and store.read_entry(song, regenerated_id)
+        local historical_new = store.read_entry(song, new_id)
         local saved_old = store.read_entry(song, old_id)
         local after = ownership.inventory(song)
-        local passed = #instrument.phrases == 2 and ownership.id(new_phrase) == new_id and
+        local passed = #instrument.phrases == 2 and regenerated_id ~= nil and regenerated_id ~= new_id and
+          ownership.id(new_phrase) == regenerated_id and
           saved_new and sequence.same_source(saved_new, changed_source) and
+          historical_new and sequence.same_source(historical_new, independent_source) and
           saved_old and sequence.same_source(saved_old, old_source) and
           after and after[old_id] and #after[old_id] == 1 and
-          after[new_id] and #after[new_id] == 1
+          after[regenerated_id] and #after[regenerated_id] == 1 and after[new_id] == nil
         context:release_document()
         done({ status = passed and "PASS" or "FAIL", case = "reopen-independent",
-          old_id = old_id, new_id = new_id, phrase_count = #instrument.phrases,
+          old_id = old_id, previous_independent_id = new_id, regenerated_id = regenerated_id,
+          phrase_count = #instrument.phrases,
           regenerated_same_object = rawequal(result.phrase, new_phrase),
+          terminal_delivered = terminal_delivered,
           reloaded_sources_and_ids_preserved = passed == true })
-      end)
     end)
     if not accepted then
       context:release_document()
       done({ status = "FAIL", case = "reopen-independent", reason = describe_failure(start_error) })
+    elseif not terminal_delivered then
+      context:release_document()
+      done({ status = "FAIL", case = "reopen-independent",
+        reason = "Synchronous regeneration returned without terminal delivery" })
     end
     return true
   end

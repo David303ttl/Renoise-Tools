@@ -135,6 +135,14 @@ do
  local song,instrument,phrase=helper.fixture()
  local ctx=helper.runtime(song)
  local baseline=assert(ctx:bind_phrase(instrument,phrase).baseline)
+ local validator=require('writers.phrase_validator')
+ local profile=assert(require('renoise.target_capabilities').inspect(instrument))
+ local api=renoise.InstrumentPhrase
+ local candidate=assert(validator.classify(song,instrument,phrase,profile,{
+  max_lines=api.MAX_NUMBER_OF_LINES,max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
+  max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,play_pattern=api.PLAY_PATTERN,
+  key_tracking_none=api.KEY_TRACKING_NONE},{pitch_bend_delivery=true}))
+ baseline.snapshot=candidate.baseline
  local descriptor={revision=1}
  local current=true
  local checked=0
@@ -147,8 +155,13 @@ do
  assert(owner:record(report))
  baseline.source.length=9
  local first,stale=owner:status()
- assert(first.verified and stale and checked>0,'evidence baseline was not copied')
+ assert(first.verified and stale and checked>0,'evidence baseline was not copied: '..tostring(first.reason)..' checked='..tostring(checked))
  local fresh_baseline=assert(ctx:target_state().baseline)
+ local fresh_candidate=assert(validator.classify(song,instrument,phrase,profile,{
+  max_lines=api.MAX_NUMBER_OF_LINES,max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
+  max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,play_pattern=api.PLAY_PATTERN,
+  key_tracking_none=api.KEY_TRACKING_NONE},{pitch_bend_delivery=true}))
+ fresh_baseline.snapshot=fresh_candidate.baseline
  assert(owner:record(evidence(instrument,phrase,fresh_baseline)))
  assert(not owner:clear(stale),'older blocker proof cleared newer evidence')
  local valid,proof=owner:status()
@@ -245,12 +258,31 @@ do
  song.tool_data={}
  assert(not owner:capture_mutation(),'malformed store was captured')
 end
+-- Private global recovery captures retain hidden and inactive phrase values.
+do
+ local song,instrument,phrase=helper.fixture()
+ local owner=require('runtime.integrity').new(song,nil,function()return true end)
+ local captured=assert(owner:capture_mutation())
+ phrase.lines[20].note_columns[2].delay_value=1
+ assert(owner:record(captured))
+ assert(not owner:status().verified,'global recovery capture missed hidden tail data')
+ phrase.lines[20].note_columns[2].delay_value=0
+ local status,proof=owner:status()
+ assert(status.verified and owner:clear(proof),'restored hidden tail data did not verify')
+end
 -- A committed create is checked against its published baseline, not the
 -- pre-create empty destination/store, after native removal of recovery material.
 do
  local song,instrument,phrase=helper.fixture()
  local ctx=helper.runtime(song)
  local baseline=assert(ctx:bind_phrase(instrument,phrase).baseline)
+ local api=renoise.InstrumentPhrase
+ local profile=assert(require('renoise.target_capabilities').inspect(instrument))
+ local candidate=assert(require('writers.phrase_validator').classify(song,instrument,phrase,profile,{
+  max_lines=api.MAX_NUMBER_OF_LINES,max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
+  max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,play_pattern=api.PLAY_PATTERN,
+  key_tracking_none=api.KEY_TRACKING_NONE},{pitch_bend_delivery=true}))
+ baseline.snapshot=candidate.baseline
  local owner=require('runtime.integrity').new(song,nil,function()return true end)
  assert(owner:record{operation='create',committed=true,instrument=instrument,phrase=phrase,
   committed_baseline=baseline,pre_store='obsolete pre-create store',destination_phrases={}})
@@ -311,6 +343,13 @@ do
  song.selected_instrument,song.selected_phrase=instrument,phrase
  local ctx=helper.runtime(song)
  local baseline=assert(ctx:bind_phrase(instrument,phrase).baseline)
+  local api=renoise.InstrumentPhrase
+  local profile=assert(require('renoise.target_capabilities').inspect(instrument))
+  local candidate=assert(require('writers.phrase_validator').classify(song,instrument,phrase,profile,{
+   max_lines=api.MAX_NUMBER_OF_LINES,max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
+   max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,play_pattern=api.PLAY_PATTERN,
+   key_tracking_none=api.KEY_TRACKING_NONE},{pitch_bend_delivery=true}))
+  baseline.snapshot=candidate.baseline
  local owner=require('runtime.integrity').new(song,nil,function()return true end)
  local phrase_name=phrase.name
  local pre_evidence=assert(owner:capture_mutation())

@@ -102,6 +102,8 @@ $report = [ordered]@{
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $transportOnly = $Suite -eq 'Keyboard' -or $Scenario -ceq 'transport'
 $undoCallbackAcceptance = $AcceptanceCase -ceq 'independence-undo'
+$revisionLiveUndoAcceptance = $AcceptanceCase -ceq 'revision-live-undo'
+$revisionUndoAcceptance = $AcceptanceCase -cin @('revision-undo','revision-live-undo')
 
 function Add-Trace {
     param([string]$Operation, [string]$Status, [object]$Details = $null)
@@ -269,8 +271,11 @@ function Invoke-ColdProcessAcceptance {
         (ConvertTo-AcidCanonicalJson $ExpectedBaseline) -cne (ConvertTo-AcidCanonicalJson $result.reopened_baseline)) {
         throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' changed the independently captured persisted baseline.")
     }
-    if ($result.old_id -ne $ExpectedOldId -or $result.target_id -ne $ExpectedTargetId) {
-        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' changed the original or independent numeric identity.")
+    $targetRevisionMatches = if ($Case -ceq 'cold-reopen-regenerate') {
+        $result.previous_target_id -eq $ExpectedTargetId -and $null -ne $result.target_id -and $result.target_id -ne $ExpectedTargetId
+    } else { $result.target_id -eq $ExpectedTargetId }
+    if ($result.old_id -ne $ExpectedOldId -or -not $targetRevisionMatches) {
+        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' did not preserve the original identity and expected source revision transition.")
     }
     Add-Trace -Operation 'acceptance.persisted_baseline' -Status 'PASS' -Details @{
         case = $Case; expected = $ExpectedBaseline; actual = $result.reopened_baseline
@@ -306,7 +311,7 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }
@@ -316,8 +321,8 @@ try {
     if ($ColdProcessRoundTrip -and $RenoiseProcessId -gt 0) {
         throw '-ColdProcessRoundTrip requires the runner to launch and own the Renoise process; it cannot restart a selected PID.'
     }
-    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not $undoCallbackAcceptance) {
-        throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites, except the Native independence-undo acceptance.'
+    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not ($undoCallbackAcceptance -or $revisionUndoAcceptance)) {
+        throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites, except Native undo acceptance.'
     }
     if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
         throw '-VerifyScenarioOrder requires -Suite Native.'
@@ -404,7 +409,7 @@ try {
         $report.keyboard.negative_cases = @($keyboardNegativeCases)
         $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
     }
-    elseif ($undoCallbackAcceptance) {
+    elseif ($undoCallbackAcceptance -or $revisionUndoAcceptance) {
         $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment $environment
         $keyboardExecutable = Find-AutoHotkeyV2Executable -ConfiguredPath $keyboardConfiguration.AutoHotkeyPath
         if (-not (Test-Path -LiteralPath $keyboardHelperPath -PathType Leaf)) { throw "AutoHotkey helper does not exist: $keyboardHelperPath" }
@@ -819,35 +824,38 @@ try {
                 $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.new' `
                     -Arguments @{ timeout_ms = $resetTimeoutMs } -TimeoutSeconds $resetResponseTimeout -ProcessCheck $processCheck
             }
-            if ($undoCallbackAcceptance) {
+            if ($undoCallbackAcceptance -or $revisionUndoAcceptance) {
+                $undoFixtureCase = if ($revisionLiveUndoAcceptance) { 'revision-live-undo-fixture' } elseif ($revisionUndoAcceptance) { 'revision-undo-fixture' } else { 'independence-undo-fixture' }
+                $undoPrepareCase = if ($revisionLiveUndoAcceptance) { 'revision-live-undo-prepare' } elseif ($revisionUndoAcceptance) { 'revision-undo-prepare' } else { 'independence-undo-prepare' }
+                $undoFixtureName = if ($revisionUndoAcceptance) { 'acceptance-revision-undo.xrns' } else { 'acceptance-undo.xrns' }
                 $undoFixture = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-                    -Arguments @{ case = 'independence-undo-fixture' } -TimeoutSeconds 180 -ProcessCheck $processCheck
+                    -Arguments @{ case = $undoFixtureCase } -TimeoutSeconds 180 -ProcessCheck $processCheck
                 if ($undoFixture.status -cne 'PASS') { throw 'Native undo fixture could not be saved.' }
                 $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
                 $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.load_fixture' `
-                    -Arguments @{ root = 'fixtures'; name = 'acceptance-undo.xrns'; timeout_ms = 120000 } `
+                    -Arguments @{ root = 'fixtures'; name = $undoFixtureName; timeout_ms = 120000 } `
                     -TimeoutSeconds 123 -ProcessCheck $processCheck
                 $prepare = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-                    -Arguments @{ case = 'independence-undo-prepare' } `
+                    -Arguments @{ case = $undoPrepareCase } `
                     -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
-                if ($prepare.case -cne 'independence-undo-prepare' -or $prepare.status -cne 'PASS' -or $prepare.action_ready -ne $true) {
-                    throw [RenoiseRunnerAssertionException]::new('Native Make Independent callback dialog was not ready for the guarded Enter action.')
+                if ($prepare.case -cne $undoPrepareCase -or $prepare.status -cne 'PASS' -or $prepare.action_ready -ne $true) {
+                    throw [RenoiseRunnerAssertionException]::new("Native undo callback dialog was not ready for the guarded Enter action: $(ConvertTo-AcidCanonicalJson $prepare)")
                 }
-                Add-Trace -Operation 'acceptance.independence-undo-prepare' -Status 'PASS' -Details $prepare
+                Add-Trace -Operation "acceptance.$undoPrepareCase" -Status 'PASS' -Details $prepare
                 $focusGuard = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath `
                     -Mode SelfTestFocusMismatch -ProcessId $processIdentity.Id -ProcessCheck $processCheck
                 if ($focusGuard.ExitCode -ne 0 -or $focusGuard.StdOut -notmatch '^PASS self-test focus-mismatch:') {
                     throw "AutoHotkey focus-mismatch guard failed before native undo action: $($focusGuard.StdErr) $($focusGuard.StdOut)"
                 }
-                Add-Trace -Operation 'acceptance.independence-undo.focus_guard' -Status 'PASS' -Details @{ input_sent = $false; output = $focusGuard.StdOut }
+                Add-Trace -Operation "acceptance.$AcceptanceCase.focus_guard" -Status 'PASS' -Details @{ input_sent = $false; output = $focusGuard.StdOut }
                 $enterResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath `
                     -Mode Send -ProcessId $processIdentity.Id -Keys '{Enter}' -ProcessCheck $processCheck `
                     -AllowFocusActivation:$AllowKeyboardFocusActivation -TimeoutSeconds $keyboardConfiguration.TimeoutSeconds
                 if ($enterResult.ExitCode -ne 0) {
                     $enterError = if ($enterResult.StdErr) { $enterResult.StdErr } else { $enterResult.StdOut }
-                    throw "Guarded Enter action for Make Independent failed: $enterError"
+                    throw "Guarded Enter action for native undo acceptance failed: $enterError"
                 }
-                Add-Trace -Operation 'acceptance.independence-undo.enter' -Status 'PASS' -Details @{ pid = $processIdentity.Id; keys = '{Enter}'; output = $enterResult.StdOut }
+                Add-Trace -Operation "acceptance.$AcceptanceCase.enter" -Status 'PASS' -Details @{ pid = $processIdentity.Id; keys = '{Enter}'; output = $enterResult.StdOut }
             }
             $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments @{ case = $AcceptanceCase } -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
             $acceptanceStatus = [string]$acceptance.status
@@ -929,7 +937,7 @@ try {
                         throw [RenoiseRunnerAssertionException]::new('Cold-process round trip changed unexpected files in the temporary fixture directory.')
                     }
                     $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
-                    $null = Invoke-ColdProcessAcceptance -SongPath $coldRegeneratedPath -Case 'cold-reopen-verify' -ExpectedBaseline $coldRegeneration.saved_baseline -ExpectedOldId $acceptance.old_id -ExpectedTargetId $acceptance.new_id
+                    $null = Invoke-ColdProcessAcceptance -SongPath $coldRegeneratedPath -Case 'cold-reopen-verify' -ExpectedBaseline $coldRegeneration.saved_baseline -ExpectedOldId $acceptance.old_id -ExpectedTargetId $coldRegeneration.target_id
                     $verifiedColdFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
                     if ($verifiedColdFixturesHash -cne $installedFixturesHash) {
                         throw [RenoiseRunnerAssertionException]::new('Read-only cold-process verification changed the temporary fixture directory.')

@@ -123,10 +123,7 @@ context_module.new=original_context_new
 local independent=assert(builder.views.acid_make_independent)
 assert(independent.active,"a matching selected collision offers Make Independent")
 assert(writes==0,"opening a collision does not generate")
-local live
-for _,node in ipairs(builder.nodes)do
-  if node.kind=="checkbox" and not node.id then live=node end
-end
+local live=builder.views.acid_live_edit
 assert(live)
 live:fire(true)
 local duplicate_name,source_bytes=duplicate.name,song.tool_data

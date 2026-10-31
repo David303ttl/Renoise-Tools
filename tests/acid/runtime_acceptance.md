@@ -1,5 +1,37 @@
 # Runtime integration acceptance map
 
+Recorded reports below describe the implementation present at each dated
+checkpoint. Results involving staged rendering, render callbacks or two free
+regeneration slots are historical evidence for the former writer. They do not
+establish acceptance of the current direct writer; its native workflow checks
+remain under Gate 8 until explicitly recorded as passing.
+
+## Direct-writer cleanup verification (2026-11-01)
+
+The runtime has one synchronous materialization path. The former script writer
+and unused backup comparison are removed; renderer references remain test-only
+parity oracles. No migration, compatibility adapter, persisted-format change or
+manifest version change is introduced. Authorization checkpoints and explicit
+materializer outcomes are mandatory. Unknown write outcomes preserve native
+state and record an integrity blocker; rollback never overwrites a later edit.
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Repository Lua suite | `tmp/acid-clean-cutover-final-repository.log` | PASS: 72 specs after admission capture reuse; focused materializer and seal parity also pass. |
+| Manual native Undo/Redo | `tmp/interactive-fdf893b046cc4416b5b0b24f42ec63c4/report.json` | PASS: phrase, retained source/settings and GUI editor follow the native revision together. |
+| Live Edit native Undo/Redo | `tmp/interactive-5f2a72ce62484a1d84c537ef672c22d7/report.json` | PASS: one native user action restores/reapplies the coherent revision without idle regeneration. |
+| Three-process persistence | `tmp/interactive-48160072880d4aa7957434aa4ed04e69/report.json` | PASS: Make Independent, cold classification/regeneration, second cold reopen and negative source associations. |
+| Direct output parity and rollback | `tmp/interactive-9a3b069ca54e45cb99ff1fee3103377a/report.json` | PASS: full native cell, hidden/tail and metadata checks against the test renderer. |
+| Multi-instrument playback workflow | `tmp/interactive-37358246342d4d859b2397d007168cbd/report.json` | FAIL on timing only: 118.00 ms Live Edit callback. Twelve transactions across three instruments and twelve owned/foreign phrases preserve selection, source rows and persistence during four-track playback. |
+| Responsiveness | `tmp/interactive-7af349689168455d979bf8dfd757b95a/report.json` | FAIL: final Live Edit callback 107.72 ms against the unchanged 30 ms budget. The preceding run was 64.94 ms; neither meets the limit. |
+| Release package | `tmp/acid-clean-cutover-package.log` | PASS: 31 runtime files; root manifest/main and no test renderer dependencies. |
+
+The earlier cold-process failure in `interactive-85b6b75ec10541cc832d21dc51a05c82`
+was a harness precondition: invalid associations legitimately have no verified
+baseline. The corrected helper still requires rejection with exact native and
+persisted state preservation. Responsiveness remains open; functional passes do
+not close the 30 ms requirement or Gate 8.
+
 ## Gate 7 integration closeout (2026-10-31)
 
 | Check | Evidence | Result |
@@ -24,14 +56,132 @@ preservation and full Step 8 A–E acceptance remain OPEN.
 ## Gate 8 acceptance plan (2026-10-31)
 
 Gate 8 remains OPEN. The native diagnostic below reproduces a phrase-selection
-jump; its correction remains unresolved. Removal of an existing last phrase
+jump in the replaced script writer; direct-writer acceptance is in progress. Removal of an existing last phrase
 would also block acceptance but was not observed in this run. API 6.2 was checked directly in both
 `sdk/renoise-api-6.2/definitions/library/renoise/song.lua` and
 `sdk/renoise-api-6.2/docs/API/renoise/renoise.Song.html`: `selected_phrase_index`
 is explicitly READ-ONLY, as is `selected_phrase`. There is no selected-phrase
-index observable. Do not document or test assignment as a supported restoration
-mechanism. Selection stability must be assessed from independently read native
-state while respecting actual user navigation.
+index observable. The disposable native probe below resolves the runtime
+discrepancy: Renoise 3.5.4 accepted assignments to an existing phrase and to 0,
+and retained each value through two subsequent idle callbacks. This contradicts
+the pinned read-only annotation. No production selection restoration has been
+introduced; the direct writer eliminates regeneration's structural phrase-list
+edits. Selection stability must be assessed from independently read
+native state while respecting actual user navigation.
+
+The bounded investigations cover selection API behavior, direct planner output
+parity against the former renderer, and detached rollback feasibility. See
+[`renoise_selection_feasibility_probe_manual.md`](renoise_selection_feasibility_probe_manual.md)
+and [`renoise_direct_output_feasibility_probe_manual.md`](renoise_direct_output_feasibility_probe_manual.md).
+These are fixed development-driver cases, not a second production writer.
+Production cutover requires
+independent review of exact parity, restoration after partial failure, source
+preservation, playback safety, responsiveness, and complete undo/redo behavior.
+Regeneration must then preserve destination identity without phrase-list
+insertion/deletion; explicit Create may add exactly one permanent destination.
+The persisted formats and existing runtime/scheduler/request authority remain
+unchanged. A failed or incomplete feasibility proof leaves Gate 8 open.
+
+### Native feasibility follow-up (2026-10-31)
+
+The final direct-writer manual Generate undo/redo check passes in
+`tmp/interactive-015b4f2d22294e0b8f2836da54a5121d/report.json`: guarded Enter
+invokes the real production GUI callbacks with its dialog kept open, commits
+source revision 1 → 2, and one native Undo/Redo restores exact phrase cells,
+source/settings and GUI editor state. The exact phrase object and one-entry
+inventory are preserved; revision 1 remains available; no idle regeneration
+occurs. GUI hydration settles in two idle callbacks. The persistent test
+verifier preserves native notifier membership; earlier one-shot verification
+loops starved the GUI callback and are not production-failure evidence. Live
+Edit undo, multi-instrument playback and cold-process checks remain separate.
+
+Live Edit native undo/redo also passes in
+`tmp/interactive-926d5cddf7e0403dba0954cd0e0c9d27/report.json`. A real guarded
+Enter arms the production Live Edit control and changes the actual key control;
+its notifier commits synchronously without invoking manual Generate. The shared
+native one-step Undo/Redo checks verify exact phrase/source/settings/editor
+coherence, immutable source retention, stable phrase identity and no idle
+regeneration.
+
+Fresh native reruns after the request and draft-copy optimizations pass:
+manual Generate `tmp/interactive-90912e7008d74df2a772004935073c58/report.json`
+and Live Edit `tmp/interactive-6025a3ac5a274c0bafe0dd19d9d85a5e/report.json`.
+Both exercise real GUI actions and native one-step Undo/Redo with exact
+phrase/source/settings/editor coherence.
+
+The fresh three-process persistence run passes in
+`tmp/interactive-fba6e6180c0b4288886247b399468e7d/report.json`: Make Independent,
+same-session reload, cold read-only classification, regeneration, and a second
+cold reopen preserve the current revision/source/settings associations and the
+foreign sentinel. The test schedules consecutive generations after completion
+delivery returns and compares all phrase fields except the authorized revision
+name change.
+
+Current direct-writer local verification: `tmp/acid-direct-offline-final.log`
+passes all 18 offline groups, including 71 repository Lua specs (68 selected by
+the ACID suite), development/release package checks and audio analyzer fixtures.
+`./scripts/package.ps1 -Tool ACID` builds 31 runtime files; the former script
+renderer is test-only under `tests/acid/reference`. These checks do not close
+the native GUI, Undo/Redo, playback or responsiveness requirements below.
+
+The current responsiveness gate remains open:
+`tmp/interactive-27c06d8532ea421ba573e6a7137e730c/report.json` proves a coherent
+synchronous Live Edit commit but records 587 ms against the unchanged 30 ms
+budget. It observes five planning calls, twenty snapshot copies and three full
+classifications in that callback. The multi-instrument reproduction
+`tmp/interactive-83f9f0badc4e4ef9a4258826e6094a8f/report.json` similarly passes
+source/output, inventory and selection checks but fails timing at 761 ms. These
+are failed responsiveness results, not acceptance passes.
+
+The newer optimized run
+`tmp/interactive-785fb926847240beb08ca230a9fcfe87/report.json` still fails:
+Live Edit reports 140.64 ms against the unchanged 30 ms budget. Duplicate
+planning and the redundant ownership hash are removed (one plan, zero status
+calls). These are Renoise `os.clock()` measurements; the host timer's CPU versus
+elapsed-time semantics have not been independently established.
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Host and API constants | `tmp/interactive-c4074ea1040a4ebe9d68abadd7779ec6/report.json`, fresh Renoise 3.5.4 / API 6.2 | PASS |
+| Existing writer recovery | `tmp/interactive-2ef55d1e819a435783baa39a31dcbc3b/report.json` | PASS; existing writer only |
+| Selection setter and structural effects | `tmp/interactive-4c9418ed5bf14dfcbb8f9b020703540a/report.json`: assignments to 1 and 0 succeeded immediately and through two idle callbacks. Insertion/deletion with phrase 1 selected retained selection; deleting the second probe phrase after setting 0 changed selection to 1. Exact probe cleanup and unchanged tool data were verified. | Runtime discrepancy resolved; structural selection effect reproduced |
+| Direct output and detached rollback | `tmp/interactive-9d31097ae7234a289ae142007578ca19/report.json`: straight/triplet × sample capability false/true × play_once/repeat; all eight cases matched the existing script renderer plus gate writer across 10,240 native cell positions each. Visible/hidden/tail preimage sentinels restored exactly after faults following properties, early cells and late cells. | PASS for the recorded matrix; receiver/PB branches and acoustic behavior remain unverified |
+| Source-store transaction | Same eight-case report: one representative actual store candidate committed and read back, then phrase and guarded source candidate restored after an injected post-commit failure. Exact raw source bytes restored; false request guard rejected without a write. | PASS for this representative transaction; actual host setter-failure and failed-rollback cases remain open |
+| Native user-action undo | `tmp/interactive-14750c3d2b39487182340a6a291d8ff8/report.json`: real dialog action, one undo/redo state, prior phrase restored, newer tool data retained. Invalid regeneration was rejected without source repair; original fixture restored. | Safety PASS; `complete_logical_undo_grouped=false`, atomic undo remains FAIL |
+| Direct Song API undo variants | `tmp/interactive-23ea6b6ed64e4d5484df7489ed0add9e/report.json`: five variants covered source-only, synchronous phrase/source, and split callbacks using describe_undo or describe_batch_undo. None exposed an undo state from these idle-driven actions; inventory and original tool data restored. | FAIL to establish grouping; real user-action follow-up required. This is not proof that a final synchronous writer cannot participate in native undo. |
+
+The user-action undo row tests Make Independent, not a final direct writer.
+It establishes a real retained-source mismatch in the existing persistence
+mechanism. The idle-driven variants do not replace a final-writer GUI undo
+test. Neither safe blocking nor a passing materialization probe resolves the
+complete logical undo requirement. The user requires coherent native undo and
+redo; a blocked source/phrase mismatch is not an acceptable final workflow.
+
+The direct writer now assigns a fresh immutable source ID on every successful
+Create or Regenerate. Existing source rows are retained, using the unchanged
+source-store header and v3 phrase-name format. Native undo can therefore restore
+the old phrase name and cells while retained tool data still contains the exact
+old source and settings. Runtime reconciliation reloads the restored revision;
+it must not regenerate it or silently attach a newer dirty draft. The song's
+source data grows with committed revisions because the native undo stack does
+not expose a safe pruning boundary. No history browser or additional user step
+is introduced. Manual Generate and Live Edit production GUI undo/redo pass as
+recorded above; broader workflow verification remains required.
+
+Regenerate materializes the planner's expected image into the same phrase
+without inserting or deleting a phrase. Create inserts one permanent phrase.
+Both operations use the existing request and mutation authority, with full
+preimage validation, post-write verification, and detached rollback on failure.
+Live Edit flushes the existing scheduler from the user edit callback so the
+native operation participates in that user action's undo history.
+
+Harness development failures are retained locally as diagnostic evidence, not
+native feasibility results: `interactive-650234c50432485f95b2d928b3823bb6`
+(missing transport allowlist), `interactive-080352f9b8544f2a8ef3a7c5f809ffe0`
+(stale probe guard), `interactive-ff881f225195432c8302feb3cdf05485`
+(untagged JSON array), and `interactive-7f0ee17255f048be97939c25e04a0173`
+(incomplete TIME fixture), and `interactive-e987f4412fd34c67a1e735ddc1b03c6f`
+(invalid loop-end reset value). Those harness defects were corrected before reruns.
 
 The required sequence is T8.0 reproduce/classify, T8.1 correct ownership and
 temporary lifecycle, T8.2 single-target regression, T8.3 bounded multi-instrument

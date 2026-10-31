@@ -13,6 +13,7 @@ local PINNED_MAX_LINES = 512
 local PINNED_NOTE_COLUMNS = 12
 local PINNED_EFFECT_COLUMNS = 8
 local indexed_snapshots=setmetatable({},{__mode="k"})
+local recovery_captures=setmetatable({},{__mode="k"})
 local function hash(phrase)
   local acc=HASH_INITIAL
   local function feed(value)
@@ -77,6 +78,79 @@ function M.make_name(phrase,id)
   end
   local seal,err=hash(phrase)
   if not seal then return nil,err end
+  return string.format("%s%d [v3:%s]",PREFIX,id,seal)
+end
+
+function M.make_name_from_verified_snapshot(snapshot,id,seal_columns)
+  if type(id)~="number" or id%1~=0 or id<1 or id>MAX_PHRASE_ID then
+    return nil,"invalid ACID phrase ID"
+  end
+  if type(snapshot)~="table" or getmetatable(snapshot)~=nil or
+      type(snapshot.properties)~="table" or type(snapshot.columns)~="table" or
+      type(snapshot.lines)~="table" then
+    return nil,"invalid verified phrase snapshot"
+  end
+  local ok,seal=pcall(function()
+    local properties=snapshot.properties
+    local line_count=properties.number_of_lines
+    local note_columns=properties.visible_note_columns or 1
+    local effect_columns=properties.visible_effect_columns or 0
+    if type(line_count)~="number" or line_count%1~=0 or line_count<1 or
+        type(note_columns)~="number" or note_columns%1~=0 or note_columns<1 or note_columns>12 or
+        type(effect_columns)~="number" or effect_columns%1~=0 or effect_columns<0 or
+        #snapshot.lines<line_count then
+      error(string.format("invalid verified phrase snapshot dimensions (%s lines, %s note columns, %s effect columns)",
+        tostring(line_count),tostring(note_columns),tostring(effect_columns)),0)
+    end
+    if #snapshot.columns<12 and type(seal_columns)~="table" then
+      error("verified phrase snapshot lacks seal column metadata",0)
+    end
+    local acc=HASH_INITIAL
+    local function feed(value)
+      local text=tostring(value==nil and "_" or value)
+      for index=1,#text do acc=(acc*HASH_MULTIPLIER+text:byte(index))%HASH_MODULUS end
+      acc=(acc*HASH_MULTIPLIER+HASH_FIELD_SEPARATOR)%HASH_MODULUS
+    end
+    for _,key in ipairs({"number_of_lines","lpb","looping","loop_start","loop_end",
+        "playback_mode","key_tracking","base_note","shuffle","autoseek"}) do
+      feed(properties[key])
+    end
+    feed(note_columns);feed(effect_columns)
+    for _,key in ipairs({"instrument_column_visible","volume_column_visible",
+        "panning_column_visible","delay_column_visible","sample_effects_column_visible"}) do
+      feed(properties[key])
+    end
+    for column=1,12 do
+      local metadata=snapshot.columns[column]
+      local muted
+      if metadata then muted=metadata.muted
+      elseif type(seal_columns)=="table" then muted=seal_columns[column] end
+      if type(muted)~="boolean" then
+        error("invalid verified phrase column metadata",0)
+      end
+      feed(muted)
+    end
+    for line_index=1,line_count do
+      local line=snapshot.lines[line_index]
+      if type(line)~="table" or type(line.notes)~="table" or type(line.effects)~="table" then
+        error("invalid verified phrase line",0)
+      end
+      for column=1,note_columns do
+        local note=line.notes[column]
+        if type(note)~="table" then error("invalid verified phrase note",0) end
+        feed(note.note_value);feed(note.instrument_value);feed(note.volume_value)
+        feed(note.panning_value);feed(note.delay_value)
+        feed(note.effect_number_value);feed(note.effect_amount_value)
+      end
+      for column=1,effect_columns do
+        local effect=line.effects[column]
+        if type(effect)~="table" then error("invalid verified phrase effect",0) end
+        feed(effect.number_value);feed(effect.amount_value)
+      end
+    end
+    return string.format("%08X",acc)
+  end)
+  if not ok then return nil,tostring(seal) end
   return string.format("%s%d [v3:%s]",PREFIX,id,seal)
 end
 
@@ -278,9 +352,19 @@ local function snapshot_capacities(limits)
   return {max_lines=max_lines,note_columns=note_columns,effect_columns=effect_columns}
 end
 
-local function capture(phrase,capacities)
+local function capture(phrase,capacities,share_empty_cells)
   local result={name=value(phrase,"name","string"),properties={},columns={},lines={}}
   local empty_defaults=empty_column_defaults()
+  local shared_empty_note,shared_empty_effect
+  if share_empty_cells and empty_defaults then
+    shared_empty_note={note_value=empty_defaults.note.note_value,
+      instrument_value=empty_defaults.note.instrument_value,volume_value=empty_defaults.note.volume_value,
+      panning_value=empty_defaults.note.panning_value,delay_value=empty_defaults.note.delay_value,
+      effect_number_value=empty_defaults.note.effect_number_value,
+      effect_amount_value=empty_defaults.note.effect_amount_value,is_empty=true}
+    shared_empty_effect={number_value=empty_defaults.effect.number_value,
+      amount_value=empty_defaults.effect.amount_value,is_empty=true}
+  end
   for _,key in ipairs(numeric_properties) do result.properties[key]=value(phrase,key,"number") end
   for _,key in ipairs(boolean_properties) do result.properties[key]=value(phrase,key,"boolean") end
   if result.properties.number_of_lines>capacities.max_lines then
@@ -318,23 +402,26 @@ local function capture(phrase,capacities)
     local defaults=empty_defaults
     if empty_ok and is_empty==true and defaults then
       for column=1,capacities.note_columns do
-        captured.notes[column]={}
-        for _,key in ipairs(note_fields) do captured.notes[column][key]=defaults.note[key] end
-        captured.notes[column].is_empty=true
+        captured.notes[column]=shared_empty_note or {note_value=defaults.note.note_value,
+          instrument_value=defaults.note.instrument_value,volume_value=defaults.note.volume_value,
+          panning_value=defaults.note.panning_value,delay_value=defaults.note.delay_value,
+          effect_number_value=defaults.note.effect_number_value,
+          effect_amount_value=defaults.note.effect_amount_value,is_empty=true}
       end
       for column=1,capacities.effect_columns do
-        captured.effects[column]={}
-        for _,key in ipairs(effect_fields) do captured.effects[column][key]=defaults.effect[key] end
-        captured.effects[column].is_empty=true
+        captured.effects[column]=shared_empty_effect or {number_value=defaults.effect.number_value,
+          amount_value=defaults.effect.amount_value,is_empty=true}
       end
     else
       for column=1,capacities.note_columns do
         local cell=line:note_column(column)
         local empty_ok,cell_empty=pcall(function()return cell.is_empty end)
         if empty_ok and cell_empty==true and defaults then
-          captured.notes[column]={}
-          for _,key in ipairs(note_fields) do captured.notes[column][key]=defaults.note[key] end
-          captured.notes[column].is_empty=true
+          captured.notes[column]=shared_empty_note or {note_value=defaults.note.note_value,
+            instrument_value=defaults.note.instrument_value,volume_value=defaults.note.volume_value,
+            panning_value=defaults.note.panning_value,delay_value=defaults.note.delay_value,
+            effect_number_value=defaults.note.effect_number_value,
+            effect_amount_value=defaults.note.effect_amount_value,is_empty=true}
         else
           captured.notes[column]=fields(cell,note_fields,"number")
           captured.notes[column].is_empty=value(cell,"is_empty","boolean")
@@ -344,9 +431,8 @@ local function capture(phrase,capacities)
         local cell=line:effect_column(column)
         local empty_ok,cell_empty=pcall(function()return cell.is_empty end)
         if empty_ok and cell_empty==true and defaults then
-          captured.effects[column]={}
-          for _,key in ipairs(effect_fields) do captured.effects[column][key]=defaults.effect[key] end
-          captured.effects[column].is_empty=true
+          captured.effects[column]=shared_empty_effect or {number_value=defaults.effect.number_value,
+            amount_value=defaults.effect.amount_value,is_empty=true}
         else
           captured.effects[column]=fields(cell,effect_fields,"number")
           captured.effects[column].is_empty=value(cell,"is_empty","boolean")
@@ -361,12 +447,59 @@ end
 -- Snapshots contain detached values, including hidden columns and inactive lines.
 -- Optional limits are a validated workspace {max_lines,max_note_columns,
 -- max_effect_columns}; omitted limits use the live host phrase API when present.
-function M.snapshot(phrase,limits)
+local function snapshot_with_mode(phrase,limits,share_empty_cells)
   local capacities,capacity_error=snapshot_capacities(limits)
   if not capacities then return nil,capacity_error end
-  local ok,result=pcall(capture,phrase,capacities)
+  local ok,result=pcall(capture,phrase,capacities,share_empty_cells)
   if not ok then return nil,"Cannot inspect complete phrase: "..tostring(result) end
   return result
+end
+
+function M.snapshot(phrase,limits)
+  return snapshot_with_mode(phrase,limits,false)
+end
+
+-- Used only for a materializer's private postimage receipt. Shared canonical
+-- empty cells reduce allocation while all line and column slots stay present.
+function M.snapshot_for_verification(phrase,limits)
+  return snapshot_with_mode(phrase,limits,true)
+end
+
+local function valid_recovery_token(token)
+  return type(token)=="table" and getmetatable(token)==nil and next(token)==nil and
+    recovery_captures[token]~=nil
+end
+
+local function compare_recovery_image(image,snapshot,policy)
+  local ok,matches,reason=pcall(M.compare,image,snapshot,policy)
+  if not ok then return false,"Invalid phrase snapshot" end
+  return matches,reason
+end
+
+-- Recovery captures are private read-only comparison preimages. Unlike public
+-- snapshots, their canonical empty cell tables may be shared within one image.
+function M.capture_recovery(phrase,limits)
+  local capacities,capacity_error=snapshot_capacities(limits)
+  if not capacities then return nil,capacity_error end
+  local ok,image=pcall(capture,phrase,capacities,true)
+  if not ok then return nil,"Cannot inspect complete phrase: "..tostring(image) end
+  local token={}
+  recovery_captures[token]=image
+  return token
+end
+
+function M.recovery_matches_snapshot(token,snapshot,policy)
+  if not valid_recovery_token(token) then return false,"Invalid recovery capture" end
+  return compare_recovery_image(recovery_captures[token],snapshot,policy)
+end
+
+function M.matches_recovery(phrase,token,policy,limits)
+  if not valid_recovery_token(token) then return false,"Invalid recovery capture" end
+  local capacities,capacity_error=snapshot_capacities(limits)
+  if not capacities then return false,capacity_error end
+  local ok,current=pcall(capture,phrase,capacities,true)
+  if not ok then return false,"Cannot inspect complete phrase: "..tostring(current) end
+  return compare_recovery_image(recovery_captures[token],current,policy)
 end
 
 local function cell_is_default(snapshot,defaults,fields)
@@ -383,8 +516,12 @@ end
 function M.snapshot_index(snapshot,limits)
   local capacities,capacity_error=snapshot_capacities(limits)
   if not capacities then return nil,capacity_error end
-  if type(snapshot)~="table" or type(snapshot.lines)~="table" or
-      #snapshot.lines~=capacities.max_lines then
+  if type(snapshot)~="table" or getmetatable(snapshot)~=nil then
+    return nil,"Invalid phrase snapshot for native matching"
+  end
+  local lines=rawget(snapshot,"lines")
+  if type(lines)~="table" or getmetatable(lines)~=nil or
+      #lines~=capacities.max_lines then
     return nil,"Invalid phrase snapshot for native matching"
   end
   local defaults=empty_column_defaults()
@@ -392,10 +529,24 @@ function M.snapshot_index(snapshot,limits)
   local masks={max_lines=capacities.max_lines,note_columns=capacities.note_columns,
     effect_columns=capacities.effect_columns,empty_lines={},expected_empty_lines={},
     empty_notes={},empty_effects={}}
+  local note_cache,effect_cache={},{}
+  local function is_default(cell,expected,fields,cache)
+    if defaults==nil or type(cell)~="table" then return false end
+    local cached=cache[cell]
+    if cached~=nil then return cached end
+    local result=cell_is_default(cell,expected,fields)
+    cache[cell]=result
+    return result
+  end
   for line_index=1,capacities.max_lines do
-    local line=snapshot.lines[line_index]
-    if type(line)~="table" or type(line.notes)~="table" or type(line.effects)~="table" or
-        #line.notes~=capacities.note_columns or #line.effects~=capacities.effect_columns then
+    local line=lines[line_index]
+    if type(line)~="table" or getmetatable(line)~=nil then
+      return nil,"Invalid phrase snapshot line for native matching"
+    end
+    local notes,effects=rawget(line,"notes"),rawget(line,"effects")
+    if type(notes)~="table" or getmetatable(notes)~=nil or
+        type(effects)~="table" or getmetatable(effects)~=nil or
+        #notes~=capacities.note_columns or #effects~=capacities.effect_columns then
       return nil,"Invalid phrase snapshot line for native matching"
     end
     local empty=defaults~=nil
@@ -403,18 +554,18 @@ function M.snapshot_index(snapshot,limits)
     masks.empty_notes[line_index]={}
     masks.empty_effects[line_index]={}
     for column=1,capacities.note_columns do
-      local is_empty=defaults~=nil and cell_is_default(line.notes[column],defaults.note,note_fields)
+      local cell=notes[column]
+      local is_empty=is_default(cell,defaults and defaults.note,note_fields,note_cache)
       masks.empty_notes[line_index][column]=is_empty
       empty=empty and is_empty
-      expected_empty=expected_empty and type(line.notes[column])=="table" and
-        rawget(line.notes[column],"is_empty")==true
+      expected_empty=expected_empty and type(cell)=="table" and rawget(cell,"is_empty")==true
     end
     for column=1,capacities.effect_columns do
-      local is_empty=defaults~=nil and cell_is_default(line.effects[column],defaults.effect,effect_fields)
+      local cell=effects[column]
+      local is_empty=is_default(cell,defaults and defaults.effect,effect_fields,effect_cache)
       masks.empty_effects[line_index][column]=is_empty
       empty=empty and is_empty
-      expected_empty=expected_empty and type(line.effects[column])=="table" and
-        rawget(line.effects[column],"is_empty")==true
+      expected_empty=expected_empty and type(cell)=="table" and rawget(cell,"is_empty")==true
     end
     masks.empty_lines[line_index]=empty
     masks.expected_empty_lines[line_index]=expected_empty
@@ -433,15 +584,24 @@ end
 
 local function matches_cell(cell,expected,fields,known_empty)
   if type(expected)~="table" or getmetatable(expected)~=nil then return false end
-  local empty_ok,is_empty=pcall(function() return cell.is_empty end)
-  if known_empty and empty_ok and type(is_empty)=="boolean" then return is_empty end
-  if empty_ok and type(is_empty)=="boolean" and is_empty~=expected.is_empty then return false end
+  local is_empty=cell.is_empty
+  if known_empty and type(is_empty)=="boolean" then return is_empty end
+  if type(is_empty)=="boolean" and is_empty~=expected.is_empty then return false end
   if type(expected.is_empty)~="boolean" then return false end
-  for _,key in ipairs(fields) do
-    if not matches_field(cell,key,rawget(expected,key),"number") then return false end
+  for index=1,#fields do
+    local key=fields[index]
+    local wanted=rawget(expected,key)
+    if type(wanted)~="number" or wanted~=wanted or wanted==math.huge or wanted==-math.huge then
+      return false
+    end
+    local actual=cell[key]
+    if type(actual)~="number" or actual~=actual or actual==math.huge or actual==-math.huge then
+      error("unreadable "..key,0)
+    end
+    if actual~=wanted then return false end
   end
-  if not empty_ok or type(is_empty)~="boolean" then
-    return value(cell,"is_empty","boolean")==expected.is_empty
+  if type(is_empty)~="boolean" then
+    error("unreadable is_empty",0)
   end
   return true
 end
@@ -524,15 +684,13 @@ local function matches_snapshot(phrase,snapshot,capacities,index)
   for line_index=1,capacities.max_lines do
     local line=phrase:line(line_index)
     local saved=snapshot.lines[line_index]
-    local line_empty_ok,line_empty=pcall(function() return line.is_empty end)
-    if masks.expected_empty_lines[line_index] and line_empty_ok and
-        type(line_empty)=="boolean" and not line_empty then
+    local line_empty=line.is_empty
+    if masks.expected_empty_lines[line_index] and type(line_empty)=="boolean" and not line_empty then
       return false,"Phrase line changed"
-    elseif not masks.expected_empty_lines[line_index] and line_empty_ok and
-        type(line_empty)=="boolean" and line_empty then
+    elseif not masks.expected_empty_lines[line_index] and type(line_empty)=="boolean" and line_empty then
       return false,"Phrase line changed"
     else
-      if not (masks.empty_lines[line_index] and line_empty_ok and line_empty==true) then
+      if not (masks.empty_lines[line_index] and line_empty==true) then
         for column=1,capacities.note_columns do
           if not matches_cell(line:note_column(column),saved.notes[column],note_fields,
               masks.empty_notes[line_index][column]) then return false,"Phrase note cell changed" end
@@ -760,26 +918,6 @@ function M.compare(left,right,policy)
   end
   local changed=difference(left,right,"",allowed)
   if changed then return false,"Phrase differs at "..changed end
-  return true
-end
-
--- Native destination-to-backup copies omit phrase mappings. Verify everything
--- else exactly, require the backup mapping to be absent, and compare the
--- destination's own mapping separately after replacement.
-function M.compare_backup(destination, backup)
-  if type(destination) ~= "table" or type(backup) ~= "table" then
-    return false, "Missing phrase snapshot"
-  end
-  if type(backup.mapping) ~= "table" or backup.mapping.present ~= false then
-    return false, "Backup unexpectedly contains a phrase mapping"
-  end
-  local function allowed(path)
-    if path == "name" then return true end
-    if path == "mapping" or path:match("^mapping%.") then return true end
-    return false
-  end
-  local changed = difference(destination, backup, "", allowed)
-  if changed then return false, "Phrase differs at " .. changed end
   return true
 end
 

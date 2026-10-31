@@ -2,7 +2,7 @@ dofile('tests/bootstrap.lua')('acid')
 local timing=require('model.timing')
 local sequencer=require('model.sequencer')
 local compiler=require('model.cycle_interpreter')
-local pattrns=require('writers.pattrns_writer')
+local pattrns=require('reference.pattrns_writer')
 local output_planner=require('model.output_planner')
 
 -- Fixed musical examples: 12 straight steps span three beats, while 32

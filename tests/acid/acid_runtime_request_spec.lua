@@ -26,6 +26,7 @@ do
  assert(request.kind=='regenerate' and request.target_kind=='owned')
  assert(rawequal(request.instrument,instrument) and rawequal(request.phrase,phrase))
  assert(request.id==101 and request.baseline and request.planning_inputs)
+ assert(request.baseline.snapshot==nil,'request exposed a mutable full phrase snapshot')
  assert(request:is_current() and request:validate_checkpoint())
  assert(cache.is_current(song,request.draft_capture),'draft descriptor lost opaque identity')
  writer.status,writer.token='busy',request.token
@@ -35,6 +36,74 @@ do
  writer.status,writer.token='idle',nil
  source.pitch_events[1].accent=true
  assert(not request.source.pitch_events[1].accent,'captured source retained editor input')
+end
+
+-- Request capture freezes and validates the editor source without planning a
+-- second complete native phrase image; the writer owns output planning.
+do
+ local planner=require('model.output_planner')
+ local original_plan=planner.plan
+ planner.plan=function()error('request capture performed duplicate output planning')end
+ local ok,_,log=pcall(fixture,true)
+ planner.plan=original_plan
+ assert(ok,'request capture must not plan a complete native phrase output')
+ assert(log and log.request and seq.validate(log.request.source),
+  'request capture did not retain a validated source copy')
+end
+
+-- Regeneration can follow one fresh ID only after registering it within the
+-- captured request's mutation authority; admission and cache guards stay old-ID strict.
+do
+ local ctx,log,_,song,instrument,phrase,_,source=fixture()
+ local first=log.request
+ assert(not first:expect_revision(first.token,103),
+  'revision transition was accepted outside the request mutation scope')
+ log.done({kind='failure',status='failed',token=first.token,epoch=first.epoch,
+  request=first,reason='retired before revision check'})
+ local edited=seq.copy_source(source)
+ edited.pitch_events[1]=seq.new_pitch(6,0,false,false)
+ assert(ctx:transition('edit',{source=edited,output_policy='play_once',pb_range=0}))
+ assert(ctx:request_generation('manual'))
+ local request=log.request
+ local descriptor=request.draft_capture
+ assert(descriptor and cache.is_current(song,descriptor),'revision test requires an old-ID draft capture')
+ request:mutate(request.token,function()
+   local occupied,occupied_error=request:expect_revision(request.token,102)
+   assert(not occupied and occupied_error,'request accepted a revision ID held by another phrase')
+   assert(request:expect_revision(request.token,103))
+   local duplicate,reason=request:expect_revision(request.token,104)
+   assert(not duplicate and reason,'request accepted two fresh revisions')
+ end)
+ local ownership=require('renoise.phrase_ownership')
+ phrase.name=assert(ownership.make_name(phrase,103))
+ assert(request:is_current(),'authorized fresh ID did not keep the exact request current')
+ assert(not cache.is_current(song,descriptor),
+  'ordinary draft-current guard was weakened by the authorized request transition')
+ assert(store.save(song,103,edited,'play_once',0))
+ assert(cache.compare_and_clear_revision(song,descriptor,103),
+  'exact captured draft could not be cleared after the authorized revision commit')
+ assert(not cache.get(song,instrument,phrase),'committed captured draft remained attached')
+ ctx:release_document()
+end
+
+-- A clean committed editor has no draft descriptor but still receives the
+-- same request-scoped old-to-new identity guard.
+do
+ local song,instrument,phrase,_,source=helper.fixture()
+ local captured
+ local clean_writer={state=function()return 'idle',nil end,is_temporary=function()return false end}
+ local ctx=context.new{writer=clean_writer,
+  capture=function()error('runtime must own editor capture')end,
+  sink=function(request,done)captured={request=request,done=done};return true end}
+ ctx:attach_document(song);ctx:open_dialog();ctx:bind_phrase(instrument,phrase)
+ ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true})
+ assert(ctx:request_generation('manual'))
+ local request=captured.request
+ assert(request.draft_capture==nil,'clean committed source unexpectedly captured a draft')
+ request:mutate(request.token,function()assert(request:expect_revision(request.token,103))end)
+ phrase.name=assert(require('renoise.phrase_ownership').make_name(phrase,103))
+ assert(request:is_current(),'clean request lost its authorized fresh phrase revision')
+ ctx:release_document()
 end
 -- A newer captured draft revision revokes the exact request guard.
 do
@@ -47,7 +116,17 @@ end
 do
  local _,log=fixture(true)
  log.request.source.length=9
+ assert(not log.request:validate_authorization_checkpoint(),
+  'light authorization checkpoint accepted a mutated public source')
  assert(not log.request:validate_checkpoint(),'public request tampering escaped frozen comparison')
+end
+
+do
+ local _,log=fixture()
+ log.request.baseline.snapshot={}
+ assert(not log.request:validate_authorization_checkpoint(),
+  'light authorization checkpoint accepted an injected public baseline snapshot')
+ assert(not log.request:validate_checkpoint(),'public request exposed or accepted an injected phrase snapshot')
 end
 
 do
@@ -91,8 +170,12 @@ local mutations={
   assert(cache.put(song,instrument,phrase,seq.new_pattern(5),'play_once',0,ctx:draft_options()))
  end,
  blocker=function(ctx,log,writer,song,instrument,phrase)
-  assert(ctx:record_blocker(log.request.token,{reason='Recovery required',instrument=instrument,
-   phrase=phrase,baseline=log.request.baseline}))
+  local request=log.request
+  local reference=assert(request:retained_baseline_reference(request.token))
+  assert(request:record_blocker(request.token,{reason='Recovery required',instrument=instrument,
+   phrase=phrase,baseline={id=request.baseline.id,source=request.baseline.source,
+    settings=request.baseline.settings,planning_inputs=request.baseline.planning_inputs,
+    snapshot=reference}}))
  end,
 }
 -- Only destination-specific guards need the full owned-phrase baseline.
@@ -196,9 +279,13 @@ do
  assert(captured.request.draft_capture==nil,
    'clean committed source acquired a synthetic draft')
  writer.status,writer.token='busy',captured.request.token
+ local classified=assert(require('writers.phrase_validator').classify(song,instrument,phrase,
+  captured.request.capabilities,captured.request.capacities,captured.request.planning_inputs.options))
+ local committed_baseline={id=captured.request.id,source=classified.source,settings=classified.settings,
+  snapshot=classified.baseline,planning_inputs=classified.planning_inputs}
  assert(captured.done({kind='success',status='committed',verified=true,
    token=captured.request.token,epoch=captured.request.epoch,phrase=phrase,
-   baseline=captured.request.baseline}))
+  baseline=committed_baseline}))
  writer.status,writer.token='idle',nil
  assert(#results==1 and results[1].kind=='success')
  assert(ctx:target_state().kind=='owned')

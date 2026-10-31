@@ -1,6 +1,6 @@
 dofile('tests/bootstrap.lua')('acid')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
-local emitter = require('writers.pattrns_writer')
+local emitter = require('reference.pattrns_writer')
 local sequencer = require('model.sequencer')
 local planner = require('model.output_planner')
 

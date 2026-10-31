@@ -201,6 +201,17 @@ function M.new(song,writer)
     return target_state(true)
   end
 
+  function owner:retained_baseline_reference(instrument,phrase,snapshot)
+    local bucket=baselines[instrument]
+    local previous=bucket and bucket[phrase]
+    if not previous or previous.reason or not previous.proof_reference or
+        not previous.index or not previous.baseline or
+        not rawequal(previous.baseline.snapshot,snapshot) then
+      return nil,"Target does not have the requested retained baseline"
+    end
+    return previous.proof_reference
+  end
+
   -- Generation admission and explicit target validation always use a fresh native proof.
   function owner:edit_target_state()
     return target_state(false)
@@ -222,6 +233,13 @@ function M.new(song,writer)
   end
 
   function owner:invalidate_projection()
+    cached_projection=nil
+  end
+
+  -- Native undo/redo can restore an older immutable phrase revision. Drop the
+  -- session-local comparison baseline so the next full proof resolves its ID.
+  function owner:invalidate_native_revisions()
+    baselines={}
     cached_projection=nil
   end
 
@@ -291,13 +309,29 @@ function M.new(song,writer)
     if not member then return nil,membership_error end
     local id=ownership.validate_identity(song,instrument,phrase)
     if not id then return nil,"Committed destination identity is not unique" end
-    local copied,copy_error=ownership.copy_snapshot(baseline)
-    if not copied then return nil,copy_error end
-    if copied.id~=nil and copied.id~=id then return nil,"Committed baseline identity changed" end
-    copied.id=id
+    if type(baseline)~="table" or baseline.id~=id or type(baseline.snapshot)~="table" or
+        type(baseline.source)~="table" or type(baseline.settings)~="table" or
+        type(baseline.planning_inputs)~="table" then
+      return nil,"Committed destination baseline is incomplete"
+    end
+    local stored_source,stored_policy,stored_pb=store.read_entry(song,id)
+    if not stored_source or not sequencer.same_source(stored_source,baseline.source) or
+        stored_policy~=baseline.settings.output_policy or stored_pb~=baseline.settings.pb_range then
+      return nil,"Committed source baseline differs from the stored revision"
+    end
+    local retained,retained_index,retained_identity,proof_reference=validator.retained_baseline(baseline.snapshot)
+    if not retained or not retained_index or not proof_reference or
+        not validator.is_retained_baseline_identity(retained_identity,retained) then
+      return nil,"Committed destination proof is not retained and verified"
+    end
+    local metadata,copy_error=ownership.copy_snapshot({id=id,source=baseline.source,
+      settings=baseline.settings,planning_inputs=baseline.planning_inputs})
+    if not metadata then return nil,copy_error end
+    metadata.snapshot=retained
+    local copied=metadata
     local bucket=baselines[instrument]
     if not bucket then bucket={};baselines[instrument]=bucket end
-    bucket[phrase]={baseline=copied}
+    bucket[phrase]={baseline=copied,index=retained_index,proof_reference=proof_reference}
     if target and rawequal(target.instrument,instrument) and rawequal(target.phrase,phrase) then
       cached_projection=nil
     end

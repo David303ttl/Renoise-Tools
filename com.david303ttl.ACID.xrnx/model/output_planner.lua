@@ -271,42 +271,71 @@ local function command_value(text)
   return (first-1)*256+second-1
 end
 
-local function expected_output(plan,layout,native,operations,capacities,volumes)
+local function expected_output(plan,layout,native,operations,capacities,volumes,private_materialization)
   local expected={properties={number_of_lines=layout.number_of_lines,lpb=layout.lpb,
     shuffle=0,looping=layout.looping,loop_start=layout.loop_start,loop_end=layout.loop_end,
     playback_mode=capacities.play_pattern,key_tracking=capacities.key_tracking_none},
     lines={},empty_note=empty_note(),empty_effect=empty_effect()}
+  local canonical_note=private_materialization and expected.empty_note or nil
+  local canonical_effect=private_materialization and expected.empty_effect or nil
+  local touched={}
   for index=1,capacities.max_lines do
     local line={note_columns={},effect_columns={}}
     expected.lines[index]=line
-    for column=1,capacities.max_note_columns do line.note_columns[column]=empty_note() end
-    for column=1,capacities.max_effect_columns do line.effect_columns[column]=empty_effect() end
+    for column=1,capacities.max_note_columns do
+      line.note_columns[column]=canonical_note or empty_note()
+    end
+    for column=1,capacities.max_effect_columns do
+      line.effect_columns[column]=canonical_effect or empty_effect()
+    end
+  end
+  local function mutable_note(line,column)
+    local cell=expected.lines[line].note_columns[column]
+    if canonical_note and rawequal(cell,canonical_note) then
+      local copy={}
+      for key,value in pairs(cell) do copy[key]=value end
+      expected.lines[line].note_columns[column]=copy
+      touched[#touched+1]={cell=copy,column=column,note=true}
+      return copy
+    end
+    return cell
+  end
+  local function mutable_effect(line,column)
+    local cell=expected.lines[line].effect_columns[column]
+    if canonical_effect and rawequal(cell,canonical_effect) then
+      local copy={}
+      for key,value in pairs(cell) do copy[key]=value end
+      expected.lines[line].effect_columns[column]=copy
+      touched[#touched+1]={cell=copy,column=column,note=false}
+      return copy
+    end
+    return cell
   end
   if native then
     for line,columns in pairs(native.cells) do
       for column,values in pairs(columns) do
-        local cell=expected.lines[line].note_columns[column]
+        local cell=mutable_note(line,column)
         for field,value in pairs(values) do cell[field]=value end
       end
     end
     for line,command in pairs(native.midi_commands or {}) do
-      local carrier=expected.lines[line].note_columns[native.columns]
+      local carrier=mutable_note(line,native.columns)
       carrier.panning_value=command_value("M1")
       carrier.instrument_value=command.instrument_value
-      local effect=expected.lines[line].effect_columns[1]
+      local effect=mutable_effect(line,1)
       effect.number_value=command_value(command.number_string)
       effect.amount_value=command.amount_value
     end
   else
     for step,event in ipairs(plan.steps) do
       local line=(step-1)*layout.lines_per_step+1
-      local cell=expected.lines[line].note_columns[1]
+      local cell=mutable_note(line,1)
       if event.kind=="note" then cell.note_value=event.note
       elseif event.kind=="rest" and event.releases then cell.note_value=120 end
       cell.volume_value=volumes[line][1]
     end
     for _,op in ipairs(operations.operations) do
-      local cell=expected.lines[op.line].note_columns[1]
+      local cell=mutable_note(op.line,1)
       if op.kind=="release" then cell.note_value=120
       else
         cell.effect_number_value=command_value(op.command)
@@ -317,8 +346,7 @@ local function expected_output(plan,layout,native,operations,capacities,volumes)
   local visibility={visible_note_columns=1,visible_effect_columns=0,
     instrument_column_visible=false,volume_column_visible=false,panning_column_visible=false,
     delay_column_visible=false,sample_effects_column_visible=false}
-  for _,line in ipairs(expected.lines) do
-    for column,cell in ipairs(line.note_columns) do
+  local function finish_note(cell,column)
       cell.is_empty=cell.note_value==121 and cell.instrument_value==255 and
         cell.volume_value==255 and cell.panning_value==255 and cell.delay_value==0 and
         cell.effect_number_value==0 and cell.effect_amount_value==0
@@ -330,10 +358,20 @@ local function expected_output(plan,layout,native,operations,capacities,volumes)
       if cell.effect_number_value~=0 or cell.effect_amount_value~=0 then
         visibility.sample_effects_column_visible=true
       end
-    end
-    for column,cell in ipairs(line.effect_columns) do
+  end
+  local function finish_effect(cell,column)
       cell.is_empty=cell.number_value==0 and cell.amount_value==0
       if not cell.is_empty then visibility.visible_effect_columns=math.max(visibility.visible_effect_columns,column) end
+  end
+  if private_materialization then
+    for _,item in ipairs(touched) do
+      if item.note then finish_note(item.cell,item.column)
+      else finish_effect(item.cell,item.column) end
+    end
+  else
+    for _,line in ipairs(expected.lines) do
+      for column,cell in ipairs(line.note_columns) do finish_note(cell,column) end
+      for column,cell in ipairs(line.effect_columns) do finish_effect(cell,column) end
     end
   end
   if native and next(native.midi_commands or {}) then
@@ -344,7 +382,8 @@ local function expected_output(plan,layout,native,operations,capacities,volumes)
   return expected,visibility
 end
 
-function M.plan(source,output_policy,pb_range,capacities,capabilities,options)
+local function plan_internal(source,output_policy,pb_range,capacities,capabilities,options,
+    private_materialization)
   local fixture,source_error=sequencer.copy_source(source)
   if not fixture then return nil,source_error end
   output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
@@ -443,10 +482,23 @@ function M.plan(source,output_policy,pb_range,capacities,capabilities,options)
   local volumes,volume_error=M.expected_volumes(plan,layout.lines_per_step,
     layout.number_of_lines,capacities.max_note_columns)
   if not volumes then return nil,volume_error end
-  local expected,visibility=expected_output(plan,layout,native_notes,operations,capacities,volumes)
+  local expected,visibility=expected_output(plan,layout,native_notes,operations,capacities,volumes,
+    private_materialization)
   return {source=fixture,settings={output_policy=output_policy,pb_range=pb_range},plan=plan,
     layout=layout,timeline=timeline,operations=operations,native_notes=native_notes,
     approximations=approximations,volumes=volumes,expected=expected,required_visibility=visibility}
+end
+
+function M.plan(source,output_policy,pb_range,capacities,capabilities,options)
+  return plan_internal(source,output_policy,pb_range,capacities,capabilities,options,false)
+end
+
+-- The synchronous writer consumes this output privately and never returns it
+-- through request, UI, or completion values. Its expected tree is read-only
+-- after construction; canonical default cells are shared within that tree.
+-- Public plans remain fully mutable with independent cells.
+function M.plan_for_materialization(source,output_policy,pb_range,capacities,capabilities,options)
+  return plan_internal(source,output_policy,pb_range,capacities,capabilities,options,true)
 end
 
 return M

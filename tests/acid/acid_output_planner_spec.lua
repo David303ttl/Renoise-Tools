@@ -10,6 +10,30 @@ local function run(source,policy,profile,pb,limits,options)
   return planner.plan(source,policy or "play_once",pb or 0,limits or capacities,
     profile,options or {pitch_bend_delivery=true})
 end
+local function run_materialization(source,policy,profile,pb,limits,options)
+  return planner.plan_for_materialization(source,policy or "play_once",pb or 0,
+    limits or capacities,profile,options or {pitch_bend_delivery=true})
+end
+local function same_tree(left,right,seen)
+  if type(left)~=type(right) then return false end
+  if type(left)~="table" then return left==right end
+  if getmetatable(left)~=getmetatable(right) then return false end
+  seen=seen or {}
+  seen[left]=seen[left] or {}
+  if seen[left][right] then return true end
+  seen[left][right]=true
+  for key,value in pairs(left) do
+    if right[key]==nil or not same_tree(value,right[key],seen) then return false end
+  end
+  for key in pairs(right) do if left[key]==nil then return false end end
+  return true
+end
+local function assert_materialization_parity(pattern,policy,profile,pb,limits,options)
+  local public=assert(run(pattern,policy,profile,pb,limits,options))
+  local private=assert(run_materialization(pattern,policy,profile,pb,limits,options))
+  assert(same_tree(public,private),"private materialization plan differs from the public plan")
+  return public,private
+end
 local function source()
   local pattern=seq.new_pattern(4)
   pattern.pitch_length=2
@@ -26,6 +50,21 @@ for _,mode in ipairs({"straight","triplet"}) do
     local pattern=source()
     pattern.timing_mode=mode
     local output=assert(run(pattern,policy,{}))
+    local public,private=assert_materialization_parity(pattern,policy,{})
+    assert(not rawequal(public.expected.lines[512].note_columns[12],
+      public.expected.lines[512].note_columns[11]),"public plan aliases distinct note cells")
+    assert(not rawequal(public.expected.lines[512].effect_columns[8],
+      public.expected.lines[512].effect_columns[7]),"public plan aliases distinct effect cells")
+    assert(rawequal(private.expected.lines[512].note_columns[12],
+      private.expected.lines[512].note_columns[11]),"private blank note cells are not shared")
+    assert(rawequal(private.expected.lines[512].effect_columns[8],
+      private.expected.lines[512].effect_columns[7]),"private blank effect cells are not shared")
+    assert(not rawequal(private.expected.lines[1].note_columns[1],private.expected.empty_note),
+      "private written note cell was not copied from its canonical default")
+    local another_private=assert(run_materialization(pattern,policy,{}))
+    assert(not rawequal(private.expected.lines[512].note_columns[12],
+      another_private.expected.lines[512].note_columns[12]),
+      "private canonical defaults leaked across plans")
     assert(output.layout.lpb==(mode=="straight" and 16 or 12))
     assert(output.layout.number_of_lines==(policy=="repeat" and 33 or 16))
     assert(output.expected.properties.playback_mode==1 and output.expected.properties.key_tracking==1)
@@ -56,6 +95,8 @@ for _,mode in ipairs({"straight","triplet"}) do
     assert(not output.source.pitch_events[1].accent)
     lines[512].note_columns[12].note_value=1
     assert(lines[511].note_columns[12].note_value==121 and output.expected.empty_note.note_value==121)
+    assert(lines[512].note_columns[11].note_value==121,
+      "public per-cell mutation changed a neighboring note cell")
   end
 end
 local connected=seq.new_pattern(2)
@@ -63,6 +104,7 @@ connected.pitch_length=2
 connected.pitch_events[1]=seq.new_pitch(0,0,false,true)
 connected.pitch_events[2]=seq.new_pitch(7,0,false,false)
 local sampled=assert(run(connected,"play_once",sample))
+assert_materialization_parity(connected,"play_once",sample)
 assert(sampled.expected.lines[5].note_columns[1].effect_number_value==16)
 assert(sampled.required_visibility.sample_effects_column_visible)
 assert(sampled.expected.lines[7].note_columns[1].note_value==120)
@@ -70,15 +112,21 @@ local wide=assert(seq.copy_source(connected))
 wide.pitch_events[1]=seq.new_pitch(0,-1,false,true)
 wide.pitch_events[2]=seq.new_pitch(12,1,false,false)
 local instant=assert(run(wide,"play_once",sample))
+assert_materialization_parity(wide,"play_once",sample)
 assert(instant.expected.lines[5].note_columns[1].effect_amount_value==255)
 assert(instant.expected.lines[7].note_columns[1].note_value==120)
 assert(table.concat(instant.approximations," "):find("instant transitions",1,true))
 local overlap=assert(run(connected,"play_once",plugin))
+assert_materialization_parity(connected,"play_once",plugin)
 assert(overlap.native_notes and overlap.required_visibility.visible_note_columns==2)
 assert(overlap.expected.lines[5].note_columns[1].note_value==120)
 assert(overlap.expected.lines[5].note_columns[1].delay_value==1)
 assert(overlap.expected.lines[5].note_columns[2].note_value==43)
 local bent=assert(run(connected,"play_once",plugin,12))
+local bent_public,bent_private=assert_materialization_parity(connected,"play_once",plugin,12)
+assert(not rawequal(bent_private.expected.lines[1].note_columns[3],bent_private.expected.empty_note) and
+  not rawequal(bent_private.expected.lines[1].effect_columns[1],bent_private.expected.empty_effect),
+  "private native pitch-bend cells were not copied from canonical defaults")
 assert(bent.expected.lines[1].note_columns[3].panning_value==5633)
 assert(bent.expected.lines[1].effect_columns[1].number_value==1024)
 assert(bent.required_visibility.visible_note_columns==3 and bent.required_visibility.visible_effect_columns==1)

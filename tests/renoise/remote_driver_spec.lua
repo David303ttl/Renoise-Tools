@@ -949,8 +949,12 @@ local function test_fixed_native_acceptance_command()
         case_name == "integrity-observers" or case_name == "writer-recovery" or
         case_name == "editor-responsiveness" or case_name == "import-donor" or case_name == "ownership-negatives" or
         case_name == "independence-undo-fixture" or case_name == "independence-undo-prepare" or case_name == "independence-undo" or
+        case_name == "revision-undo-fixture" or case_name == "revision-undo-prepare" or case_name == "revision-undo" or
+        case_name == "revision-live-undo-fixture" or case_name == "revision-live-undo-prepare" or case_name == "revision-live-undo" or
         case_name == "cold-reopen-regenerate" or
-        case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow",
+        case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow" or
+        case_name == "selection-feasibility" or case_name == "direct-output-feasibility" or
+        case_name == "source-undo-feasibility",
         "fixed native acceptance case was not allowlisted")
       completion = done
       acceptance_json_codec = json_codec
@@ -1044,6 +1048,21 @@ local function test_fixed_native_acceptance_command()
   local negatives = find_response(take_responses(client), "acceptance-ownership-negatives")
   assert(negatives and negatives.ok)
   assert_equal(negatives.result.status, "PASS")
+  for _, case_name in ipairs({ "selection-feasibility", "direct-output-feasibility", "source-undo-feasibility",
+      "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
+      "revision-live-undo-fixture", "revision-live-undo-prepare", "revision-live-undo" }) do
+    local request_id = "acceptance-" .. case_name
+    send_request(host, client, request_id, "acid.acceptance.run", { case = case_name })
+    fire_idle(host)
+    assert_equal(find_response(take_responses(client), request_id), nil,
+      "native feasibility acceptance returned before its operation settled")
+    assert(completion, "native feasibility acceptance runner was not called")
+    assert(completion({ status = "PASS", case = case_name }))
+    fire_idle(host)
+    local accepted = find_response(take_responses(client), request_id)
+    assert(accepted and accepted.ok)
+    assert_equal(accepted.result.status, "PASS")
+  end
   driver.stop()
 end
 

@@ -308,14 +308,14 @@ function M.show()
     return copy
   end
   local function save_draft(kind)
-    local state,transition_error=runtime:transition(kind or "edit",{
+    local state,effects=runtime:transition(kind or "edit",{
       source=pattern,output_policy=output_policy,pb_range=pb_range})
     if not state then
-      return false,transition_error or "Editor state transition failed"
+      return false,effects or "Editor state transition failed"
     end
     render(source_state,"text","SOURCE DIRTY: Generate to apply this draft.")
-    if not bound_instrument() then return true end
-    return not state.draft_warning,state.draft_warning
+    if not bound_instrument() then return true,nil,effects end
+    return not state.draft_warning,state.draft_warning,effects
   end
   local loading=false
   local function default_pitch()
@@ -529,7 +529,7 @@ function M.show()
   end
   local function changed(request_live)
     if not history:record(pattern,output_policy,pb_range) then update();return end
-    local saved,save_error=save_draft(request_live==false and "reset" or "edit")
+    local saved,save_error,effects=save_draft(request_live==false and "reset" or "edit")
     update()
     update_live_state(saved==true)
     local state=runtime:generation_state()
@@ -542,6 +542,9 @@ function M.show()
     else
       render(status,"text",saved and "Draft saved; Generate applies it, or enable Live Edit for subsequent edits."
         or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error)))
+    end
+    if effects and effects.live_intent and current_session() then
+      runtime:flush_pending()
     end
   end
   timing_popup:add_notifier(function(value)
@@ -866,12 +869,38 @@ function M.show()
   apply_pending_selected_phrase_selection=function()
     if not current_session() then return false end
     local before=destination()
-    local target=runtime:reconcile()
+    local target,effects=runtime:reconcile()
     if native_projection_dirty then
       native_projection_dirty=false
       refresh_native_choices()
       invalidate_projection()
       if update_actions then update_actions() end
+    end
+    if target and effects and effects.native_revision_reconciled then
+      if target.instrument and not rawequal(instrument_targets[selected_instrument],target.instrument) then
+        for index,instrument in ipairs(instrument_targets) do
+          if rawequal(instrument,target.instrument) then
+            selected_instrument=index
+            loading=true
+            if instrument_choice then render(instrument_choice,"value",index) end
+            loading=false
+            break
+          end
+        end
+      end
+      if target.phrase then
+        refresh_phrase_choices(target.phrase)
+        for choice,phrase in ipairs(phrase_targets) do
+          if rawequal(phrase,target.phrase) then load_target(choice,true);return true end
+        end
+      elseif target.kind=="new" then
+        refresh_phrase_choices(nil)
+        for choice,phrase in ipairs(phrase_targets) do
+          if phrase==false then load_target(choice,true);return true end
+        end
+      end
+      status.text=target.reason or "Native destination is unavailable; select the destination again."
+      return false
     end
     if not target or (rawequal(before.instrument,target.instrument) and
         rawequal(before.phrase,target.phrase) and before.kind==target.kind) then return false end
@@ -969,7 +998,7 @@ function M.show()
     status.text=describe_result(result,prefix)
     update_live_state()
   end
-  live_checkbox=vb:checkbox{value=false,notifier=function(value)
+  live_checkbox=vb:checkbox{id="acid_live_edit",value=false,notifier=function(value)
     if value then
       apply_pending_selected_phrase_selection()
       runtime:transition("arm")

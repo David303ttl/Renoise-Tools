@@ -1,130 +1,79 @@
 -- SPDX-License-Identifier: GPL-3.0-only
--- Render native phrases with guarded replacement and source persistence.
---
--- Public musical operations are explicit:
---   create(request, done)     request.kind == "create", target_kind == "new"
---   regenerate(request, done) request.kind == "regenerate", target_kind == "owned"
--- Both return true once a job is accepted and false, rejection before any host
--- mutation. An accepted job calls done(result) exactly once. The result is a
--- native terminal value: kind "success" or "failure", token, epoch, request,
--- phrase, verified and reason (failure only), plus status/message/diagnostics.
-local pattrns = require("writers.pattrns_writer")
-local validator = require("writers.phrase_validator")
-local gates = require("writers.gate_writer")
+-- Synchronously materialize an ACID phrase revision and commit its source.
 local ownership = require("renoise.phrase_ownership")
 local store = require("renoise.pattern_store")
-local target_capabilities = require("renoise.target_capabilities")
+local capabilities_api = require("renoise.target_capabilities")
 local sequencer = require("model.sequencer")
-local legato_writer = require("writers.legato_writer")
-local phrase_pitch_bend = require("writers.phrase_pitch_bend")
-local script_runner = require("writers.script_runner")
 local output_planner = require("model.output_planner")
+local validator = require("writers.phrase_validator")
+local materializer = require("writers.phrase_materializer")
+local phrase_pitch_bend = require("writers.phrase_pitch_bend")
 local policies = require("model.policies")
+
 local M = {}
 
-M.PHRASE_NAME = "ACID 0.1 TEST"
-M.RECOVERY_STAGING_NAME = "ACID RECOVERY STAGING"
-M.TRANSACTION_BACKUP_NAME = "ACID TRANSACTION BACKUP"
-M.RECOVERY_BACKUP_NAME = "ACID RECOVERY BACKUP"
-M.EMPTY_SCRIPT_DIAGNOSTIC = "compile error: no script content present."
-
-local STATUS_IDLE = "idle"
-local STATUS_BUSY = "busy"
--- API 6.2 specifies no idle cadence. Allow 500 compile/clear opportunities;
--- during native rendering this count is diagnostic only, never cancellation.
-local COMMIT_WAIT_TICKS = 500
-local SCRIPT_SETTLE_TICKS = 500
-local RENDER_PENDING_TICKS = 500
-local UNDO_CREATE = "ACID: Generate phrase"
-local UNDO_REGENERATE = "ACID: Regenerate phrase"
-
-local busy = false
-local current = nil
-local released_token = nil
+local current
 local delivering = false
-local temporaries = {}
-local pending_cleanup_job = nil
-local last_diagnostic = nil
-local integrity_blocker_errors = setmetatable({}, { __mode = "k" })
-
-local function pack(...) return {n = select("#", ...), ...} end
-
-local function unpack_packed(value)
-  return (unpack or table.unpack)(value, 1, value.n)
-end
-
-local function failure(request, code, category, message, status)
-  message = tostring(message or "Phrase generation failed")
-  return {
-    kind = "failure", status = status or "failed", token = type(request) == "table" and rawget(request, "token") or nil,
-    epoch = type(request) == "table" and rawget(request, "epoch") or nil, request = request, phrase = nil,
-    verified = false, reason = message, code = code, category = category,
-    message = message, diagnostics = { message },
-  }
-end
+local last_diagnostic
+local temporary_phrases = {}
+local integrity_errors = setmetatable({}, { __mode = "k" })
+local CREATE_UNDO = "ACID: Generate phrase"
+local REGENERATE_UNDO = "ACID: Regenerate phrase"
 
 local function positive_integer(value)
-  return type(value) == "number" and value % 1 == 0 and value > 0
-end
-
-local function nonnegative_integer(value)
-  return type(value) == "number" and value % 1 == 0 and value >= 0
+  return type(value) == "number" and value == value and value % 1 == 0 and value > 0
 end
 
 local function phrase_limits()
-  local api_ok, api = pcall(function()
-    local host = rawget(_G, "renoise")
-    return host and host.InstrumentPhrase
-  end)
-  if not api_ok or api == nil then return nil, "Phrase API is unavailable" end
-  local function read(key)
-    local ok, value = pcall(function() return api[key] end)
-    return ok and value or nil
-  end
-  local max_lines = read("MAX_NUMBER_OF_LINES")
-  local max_note_columns = read("MAX_NUMBER_OF_NOTE_COLUMNS")
-  local max_effect_columns = read("MAX_NUMBER_OF_EFFECT_COLUMNS")
-  if max_lines == nil or max_note_columns == nil or max_effect_columns == nil then
-    return nil, "Native phrase limits are unavailable"
-  end
-  if not positive_integer(max_lines) or not positive_integer(max_note_columns) or
-      not nonnegative_integer(max_effect_columns) then
-    return nil, "Native phrase limits are invalid"
-  end
-  return {
-    max_lines = max_lines, max_note_columns = max_note_columns,
-    max_effect_columns = max_effect_columns,
-    play_pattern = read("PLAY_PATTERN"), key_tracking_none = read("KEY_TRACKING_NONE"),
+  local api = renoise.InstrumentPhrase
+  if not api then return nil, "Phrase API is unavailable" end
+  local limits = {
+    max_lines = api.MAX_NUMBER_OF_LINES,
+    max_note_columns = api.MAX_NUMBER_OF_NOTE_COLUMNS,
+    max_effect_columns = api.MAX_NUMBER_OF_EFFECT_COLUMNS,
+    play_pattern = api.PLAY_PATTERN,
+    key_tracking_none = api.KEY_TRACKING_NONE,
   }
-end
-
-local function phrase_capacity()
-  local api_ok, instrument_api = pcall(function()
-    local host = rawget(_G, "renoise")
-    return host and host.Instrument
-  end)
-  if not api_ok or instrument_api == nil then return nil, "Instrument API is unavailable" end
-  local value_ok, value = pcall(function() return instrument_api.MAX_NUMBER_OF_PHRASES end)
-  if not value_ok then return nil, "Native phrase capacity is unavailable" end
-  if value == nil then return nil, "Native phrase capacity is unavailable" end
-  if not positive_integer(value) then return nil, "Native phrase capacity is invalid" end
-  return value
-end
-
-local function lpb_timing(song)
-  local ok, valid = pcall(function()
-    local expected = renoise.Transport.TIMING_MODEL_LPB
-    return expected ~= nil and song.transport.timing_model == expected
-  end)
-  return ok and valid
-end
-
-local function phrase_occurrences(instrument, phrase)
-  local count = 0
-  for _, item in ipairs(instrument.phrases) do
-    if rawequal(item, phrase) then count = count + 1 end
+  if not positive_integer(limits.max_lines) or not positive_integer(limits.max_note_columns) or
+      type(limits.max_effect_columns) ~= "number" or limits.max_effect_columns < 0 or
+      limits.max_effect_columns % 1 ~= 0 or not positive_integer(limits.play_pattern) or
+      not positive_integer(limits.key_tracking_none) then
+    return nil, "Native phrase limits are unavailable or invalid"
   end
-  return count
+  return limits
+end
+
+local function same_inventory(left, right)
+  if type(left) ~= "table" or type(right) ~= "table" or #left ~= #right then return false end
+  for index = 1, #left do
+    if not rawequal(left[index], right[index]) then return false end
+  end
+  return true
+end
+
+local function inventory(instrument)
+  local ok, value = pcall(function()
+    local copy = {}
+    for index, phrase in ipairs(instrument.phrases) do copy[index] = phrase end
+    return copy
+  end)
+  return ok and value or nil
+end
+
+local function inventory_addition(before, after)
+  if type(before) ~= "table" or type(after) ~= "table" or #after ~= #before + 1 then return nil end
+  local added, old_index = nil, 1
+  for _, phrase in ipairs(after) do
+    if old_index <= #before and rawequal(phrase, before[old_index]) then
+      old_index = old_index + 1
+    elseif added == nil then
+      added = phrase
+    else
+      return nil
+    end
+  end
+  if old_index ~= #before + 1 then return nil end
+  return added
 end
 
 local function phrase_index(instrument, phrase)
@@ -138,54 +87,6 @@ local function phrase_index(instrument, phrase)
   return found
 end
 
-local function phrase_inventory(instrument)
-  local ok, inventory = pcall(function()
-    local phrases = instrument.phrases
-    local copy = {}
-    for index = 1, #phrases do copy[index] = phrases[index] end
-    return copy
-  end)
-  if not ok then return nil end
-  return inventory
-end
-
-local function same_inventory(left, right)
-  if type(left) ~= "table" or type(right) ~= "table" or #left ~= #right then return false end
-  for index = 1, #left do
-    if not rawequal(left[index], right[index]) then return false end
-  end
-  return true
-end
-
--- Recognize only a single addition that preserves the complete ordered inventory.
-local function inventory_addition(before, after)
-  if type(before) ~= "table" or type(after) ~= "table" or #after ~= #before + 1 then
-    return nil
-  end
-  local added, before_index = nil, 1
-  for _, phrase in ipairs(after) do
-    if before_index <= #before and rawequal(phrase, before[before_index]) then
-      before_index = before_index + 1
-    elseif added == nil then
-      added = phrase
-    else
-      return nil
-    end
-  end
-  if before_index ~= #before + 1 then return nil end
-  return added
-end
-
-local function membership(list, value)
-  local ok, found = pcall(function()
-    for _, item in ipairs(list) do
-      if rawequal(item, value) then return true end
-    end
-    return false
-  end)
-  return ok, ok and found == true
-end
-
 local function phrase_id_count(song, id)
   local count = 0
   for _, instrument in ipairs(song.instruments) do
@@ -196,43 +97,30 @@ local function phrase_id_count(song, id)
   return count
 end
 
-local function remember_temporary(job, phrase, role)
-  if phrase == nil or job.released then return end
-  temporaries[#temporaries + 1] = {
-    phrase = phrase, role = role, song = job.song, instrument = job.instrument, token = job.token,
+local function remember_temporary(song, instrument, phrase, token)
+  temporary_phrases[#temporary_phrases + 1] = {
+    song = song, instrument = instrument, phrase = phrase, token = token,
   }
 end
 
 local function forget_temporary(phrase)
-  for index = #temporaries, 1, -1 do
-    if rawequal(temporaries[index].phrase, phrase) then
-      table.remove(temporaries, index)
-    end
+  for index = #temporary_phrases, 1, -1 do
+    if rawequal(temporary_phrases[index].phrase, phrase) then table.remove(temporary_phrases, index) end
   end
 end
 
--- Read-only query for objects this writer inserted and still owns as temporary.
 function M.is_temporary(song, instrument, phrase)
   if song == nil or instrument == nil or phrase == nil then return false end
   local index = 1
-  while index <= #temporaries do
-    local record = temporaries[index]
-    if rawequal(record.phrase, phrase) and
-        rawequal(record.song, song) and rawequal(record.instrument, instrument) then
-      local phrase_ok, phrase_present = membership(instrument.phrases, phrase)
-      if not phrase_ok then
-        index = index + 1
-      elseif not phrase_present then
-        table.remove(temporaries, index)
+  while index <= #temporary_phrases do
+    local item = temporary_phrases[index]
+    if rawequal(item.song, song) and rawequal(item.instrument, instrument) and
+        rawequal(item.phrase, phrase) then
+      local present = phrase_index(instrument, phrase) ~= nil
+      if not present then
+        table.remove(temporary_phrases, index)
       else
-        local instrument_ok, instrument_present = membership(song.instruments, instrument)
-        if not instrument_ok then
-          index = index + 1
-        elseif not instrument_present then
-          table.remove(temporaries, index)
-        else
-          return true
-        end
+        return true
       end
     else
       index = index + 1
@@ -241,1578 +129,630 @@ function M.is_temporary(song, instrument, phrase)
   return false
 end
 
--- Read-only inspection: detached status ("idle" or "busy") and the exact
--- opaque operation token passed to create/regenerate, when one was supplied.
 function M.state()
-  local job = current
-  if not job then return STATUS_IDLE, nil end
-  if job.released then return STATUS_BUSY, released_token end
-  return STATUS_BUSY, job.token
+  return current and "busy" or "idle", current and current.token or nil
 end
 
--- Detached pending diagnostic. A still-running native render is not terminal.
 function M.diagnostic()
   if not last_diagnostic then return nil end
   return { code = last_diagnostic.code, message = last_diagnostic.message }
 end
 
 function M.clear_integrity_blocker(song)
-  if song ~= nil then integrity_blocker_errors[song] = nil end
-  if last_diagnostic and last_diagnostic.code == "transaction.blocker_recording" then
-    last_diagnostic = nil
-  end
+  if song ~= nil then integrity_errors[song] = nil end
+  if last_diagnostic and last_diagnostic.code == "transaction.blocker_recording" then last_diagnostic = nil end
 end
 
 local function set_diagnostic(code, message)
   last_diagnostic = { code = code, message = tostring(message) }
 end
 
-local function release_store_candidate(job)
-  local candidate = job.store_candidate
-  job.store_candidate = nil
-  store.release_candidate(candidate)
+local function failure(request, code, category, message, status)
+  message = tostring(message or "Phrase generation failed")
+  return {
+    kind = "failure", status = status or "failed",
+    token = type(request) == "table" and rawget(request, "token") or nil,
+    epoch = type(request) == "table" and rawget(request, "epoch") or nil,
+    request = request, phrase = nil, verified = false, reason = message,
+    code = code, category = category, message = message, diagnostics = { message },
+  }
 end
 
--- A create keeps its allocated ID only if no live phrase and no stored source
--- entry acquired that ID while generation was pending.
-local function allocated_id_available(job)
-  if job.replace then return true end
-  local inspected, count = pcall(phrase_id_count, job.song, job.id)
-  if not inspected then
-    return false, "Cannot inspect ACID phrase IDs before commit"
-  end
-  if count ~= 0 then
-    return false, "Allocated ACID phrase ID appeared in the instrument before commit"
-  end
-  local entries, store_error = store.read(job.song)
-  if not entries then
-    return false, "Cannot inspect stored ACID phrase IDs: " .. tostring(store_error)
-  end
-  if entries[job.id] ~= nil then
-    return false, "Allocated ACID phrase ID already has stored source data"
-  end
-  return true
-end
-
-local function token_current(job)
-  if job.token == nil then return false end
-  local ok, value = pcall(function() return job.token:is_current() end)
+local function token_current(request)
+  local ok, value = pcall(function()
+    if type(request.is_current) == "function" then return request:is_current() end
+    return request.token:is_current()
+  end)
   return ok and value == true
 end
 
-local function request_checkpoint(request)
-  if type(request) ~= "table" or type(request.validate_checkpoint) ~= "function" then
+local function checkpoint(request)
+  if type(request) ~= "table" then
     return false, "Request checkpoint is unavailable"
   end
-  local ok, valid, reason = pcall(function() return request:validate_checkpoint() end)
+  local validate=request.validate_authorization_checkpoint
+  if type(validate)~="function" then return false,"Request authorization checkpoint is unavailable" end
+  local ok, valid, reason = pcall(function() return validate(request) end)
   if not ok then return false, "Cannot inspect request checkpoint" end
   if valid ~= true then return false, reason or "Request checkpoint failed" end
   return true
 end
 
-local function checkpoint(job)
-  if job.settled or job.released or job.cancelled then
-    return false, job.cancel_reason or "Generation was invalidated"
-  end
-  if not token_current(job) then return false, "Generation was invalidated" end
-  return request_checkpoint(job.request)
-end
-
-local function mutate_host(job, action)
-  if job.released or type(job.request) ~= "table" or type(job.request.mutate) ~= "function" then
-    return nil, "Request mutation is unavailable"
-  end
-  local ok, values = pcall(function() return pack(job.request:mutate(job.token, action)) end)
-  if not ok then return nil, tostring(values) end
-  if values.n == 0 then return true end
-  return true, unpack_packed(values)
-end
-
-local function mutate_cleanup(job,action)
-  if job.released or type(job.request)~="table" or type(job.request.cleanup_mutate)~="function" then
-    return nil,"Cleanup mutation is unavailable"
-  end
-  local ok,values=pcall(function() return pack(job.request:cleanup_mutate(job.token,action)) end)
-  if not ok then return nil,tostring(values) end
-  if values.n==0 then return true end
-  return true,unpack_packed(values)
-end
-
-local function cleanup_authorized(job)
-  if job.released or type(job.request) ~= "table" or
-      type(job.request.cleanup_authorized) ~= "function" then
-    return false
-  end
-  local ok, allowed = pcall(function() return job.request:cleanup_authorized(job.token) end)
-  return ok and allowed == true
-end
-
-local function delete_phrase_direct(instrument, phrase)
-  local index = phrase_index(instrument, phrase)
-  if not index then return false end
-  instrument:delete_phrase_at(index)
-  return phrase_index(instrument, phrase) == nil
-end
-
-local function try_delete_temporary(job, phrase)
-  if type(job) ~= "table" or phrase == nil or
-      not M.is_temporary(job.song, job.instrument, phrase) then
-    return false
-  end
-  local instrument, song = job.instrument, job.song
-  local instrument_ok, instrument_present = membership(song.instruments, instrument)
-  if not instrument_ok or not instrument_present then return false end
-  local occurrence_ok, occurrences = pcall(phrase_occurrences, instrument, phrase)
-  if not occurrence_ok or occurrences ~= 1 then return false end
-  local ok, removed = pcall(delete_phrase_direct, instrument, phrase)
-  return ok and removed == true
-end
-
-local function set_recovery_name(phrase, label)
-  local ok, name_error = pcall(function() phrase.name = label end)
-  if not ok then return nil, tostring(name_error) end
-  local read_ok, name = pcall(function() return phrase.name end)
-  if not read_ok then return nil, "Cannot inspect recovery phrase name" end
-  if name ~= label then return nil, "Recovery phrase name did not persist" end
-  return true
-end
-
--- Capture a live temporary as explicit recovery evidence. The exact object and
--- its neutral name are checked rather than assumed from an index.
-local function capture_recovery(job, phrase, role, label)
-  if phrase == nil or job.instrument == nil or job.song == nil then
-    return nil, "Recovery phrase identity is unavailable"
-  end
-  local phrase_ok, phrase_present = membership(job.instrument.phrases, phrase)
-  if not phrase_ok then return nil, "Cannot inspect recovery phrase membership" end
-  if not phrase_present then return nil, "Recovery phrase is no longer in the instrument" end
-  local instrument_ok, instrument_present = membership(job.song.instruments, job.instrument)
-  if not instrument_ok then return nil, "Cannot inspect recovery instrument membership" end
-  if not instrument_present then return nil, "Recovery instrument is no longer in the song" end
-  local named, name_error = set_recovery_name(phrase, label)
-  if not named then
-    return {
-      instrument = job.instrument, phrase = phrase, role = role, label = label,
-      name = nil, token = job.token,
-    }, "could not set neutral recovery name: " .. tostring(name_error)
-  end
-  return {
-    instrument = job.instrument, phrase = phrase, role = role, label = label,
-    name = label, token = job.token,
-  }
-end
-
-local function remove_phrase(job, phrase)
-  if job.released or phrase == nil then return false end
-  local inspected, present = pcall(phrase_occurrences, job.instrument, phrase)
-  if not inspected then return false end
-  if present == 0 then
-    forget_temporary(phrase)
-    return true
-  end
-  if present > 1 then return false end
-  if not M.is_temporary(job.song, job.instrument, phrase) then return false end
-  local function action() return delete_phrase_direct(job.instrument, phrase) end
-  local ok, removed = mutate_host(job, action)
-  if ok and removed == true then
-    forget_temporary(phrase)
-    return true
-  end
-  -- Cancellation can revoke commit authorization while narrowly scoped cleanup
-  -- of this job's own objects remains permitted.
-  if cleanup_authorized(job) then
-    local cleaned,result=mutate_cleanup(job,action)
-    if cleaned and result==true then
-      forget_temporary(phrase)
-      return true
-    end
-  end
-  return false
-end
-
-local function cleanup_temporaries(job)
-  local recovery, errors = {}, {}
-  if job.released then return recovery, nil end
-  local function failed(phrase, role, label, message)
-    local captured, evidence, recovery_error = pcall(capture_recovery, job, phrase, role, label)
-    if not captured then recovery_error = tostring(evidence) end
-    if evidence and captured then recovery[#recovery + 1] = evidence end
-    job.keep_recovery = true
-    errors[#errors + 1] = message ..
-      (recovery_error and (": " .. recovery_error) or "")
-  end
-  if job.backup then
-    if remove_phrase(job, job.backup) then
-      job.backup = nil
-    else
-      failed(job.backup, "backup", M.RECOVERY_BACKUP_NAME, "backup cleanup failed")
-    end
-  end
-  if job.temporary and job.phrase then
-    if remove_phrase(job, job.phrase) then
-      job.temporary = false
-    else
-      failed(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
-    end
-  end
-  return recovery, #errors > 0 and table.concat(errors, " and ") or nil
-end
-
-local function inserted_identity(before, after, returned)
-  local addition = inventory_addition(before, after)
-  if addition == nil or returned == nil or not rawequal(addition, returned) then
-    return nil
-  end
-  local occurrences = 0
-  for _, phrase in ipairs(after) do
-    if rawequal(phrase, returned) then occurrences = occurrences + 1 end
-  end
-  if occurrences ~= 1 then return nil end
-  return addition
-end
-
-local function new_inventory_member_count(before, after)
-  if type(before) ~= "table" or type(after) ~= "table" then return 0 end
-  local count = 0
-  for _, phrase in ipairs(after) do
-    local existed = false
-    for _, original in ipairs(before) do
-      if rawequal(original, phrase) then existed = true; break end
-    end
-    if not existed then count = count + 1 end
-  end
-  return count
-end
-
-local function forget_job_temporaries(job)
-  if job.token == nil then return end
-  for index = #temporaries, 1, -1 do
-    if rawequal(temporaries[index].token, job.token) then
-      table.remove(temporaries, index)
-    end
-  end
-end
-
-local function remove_watch(job,observer_key,callback_key)
-  local observer,callback=job[observer_key],job[callback_key]
-  if not observer or not callback then return true end
-  if job.removing_watch then return false end
-  job.removing_watch=true
-  pcall(function() observer:remove_notifier(callback) end)
-  local probed,attached=pcall(function()
-    if type(observer.has_notifier)~="function" then return nil end
-    return observer:has_notifier(callback)
+local function lpb_timing(song)
+  local ok, valid = pcall(function()
+    return renoise.Transport.TIMING_MODEL_LPB ~= nil and
+      song.transport.timing_model == renoise.Transport.TIMING_MODEL_LPB
   end)
-  job.removing_watch=nil
-  if not probed or attached~=false then return false end
-  job[observer_key],job[callback_key]=nil,nil
-  return true
+  return ok and valid
 end
 
-local function unlink(job)
-  if job.unlinking then return false end
-  job.unlinking=true
-  local runner_removed=true
-  if job.runner then
-    local ok,removed=pcall(function() return job.runner:detach() end)
-    runner_removed=ok and removed~=false
-    if runner_removed then job.runner=nil end
-  end
-  local clear_removed=remove_watch(job,"clear_observer","on_clear_commit")
-  local removed=false
-  if runner_removed and clear_removed then
-    removed=remove_watch(job,"idle_observer","on_idle")
-  end
-  job.unlinking=nil
-  if not removed then
-    pending_cleanup_job=job
-    if current==job then
-      set_diagnostic("transaction.notifier_cleanup",
-        "Notifier cleanup is pending; the retained idle callback will retry removal.")
-      job.cleanup_diagnostic=last_diagnostic
-    end
-  elseif rawequal(last_diagnostic,job.cleanup_diagnostic) then
-    last_diagnostic=nil
-    job.cleanup_diagnostic=nil
-  end
-  if removed then
-    if rawequal(pending_cleanup_job,job) then pending_cleanup_job=nil end
-  end
-  return removed
+local function limits_for_writer(limits)
+  return { max_lines = limits.max_lines, max_note_columns = limits.max_note_columns,
+    max_effect_columns = limits.max_effect_columns }
 end
 
-local function retry_pending_cleanup()
-  if pending_cleanup_job then unlink(pending_cleanup_job) end
-  return pending_cleanup_job==nil
+local function snapshot(phrase, limits)
+  local ok, value, reason = pcall(ownership.snapshot, phrase, limits)
+  if not ok then return nil, tostring(value) end
+  if not value then return nil, reason or "Cannot capture complete phrase state" end
+  return value
 end
 
-local function settle(job, result)
-  if job.settled then return false end
-  job.settled = true
-  job.cancelled = true
-  if not job.blocker_record_failed then last_diagnostic = nil end
-  unlink(job)
-  current = nil
-  busy = false
-  released_token = nil
-  local done = job.done
-  delivering = true
-  if type(done) == "function" then
-    local ok, failure_message = pcall(done, result)
-    if not ok then print("[ACID] Writer completion delivery error: " .. tostring(failure_message)) end
-  end
-  delivering = false
-  job.done = nil
-  job.request = nil
-  job.song = nil
-  job.instrument = nil
-  job.phrase = nil
-  job.target_phrase = nil
-  job.backup = nil
-  release_store_candidate(job)
-  job.plan, job.layout, job.pattern, job.operations, job.native_notes = nil, nil, nil, nil, nil
-  job.capabilities, job.limits, job.draft_capture = nil, nil, nil
-  return true
+local function same_baseline_values(captured, verified)
+  if type(captured) ~= "table" or type(verified) ~= "table" or captured.id ~= verified.id or
+      not sequencer.same_source(captured.source, verified.source) then return false end
+  local settings_match = ownership.compare(captured.settings, verified.settings)
+  local inputs_match = ownership.compare(captured.planning_inputs, verified.planning_inputs)
+  return settings_match == true and inputs_match == true
 end
 
-local function failure_suffix(job)
-  if job.committed_baseline then
-    return "; phrase output and source were committed; revalidate integrity before retrying"
-  end
-  if job.swapped or job.keep_recovery then
-    return "; phrase output or recovery state may have changed; inspect the destination before retrying"
-  end
-  return "; previous ACID phrase remains unchanged"
-end
-
-local function record_blocker(job, reason, recovery)
-  if job.blocker_recorded then return true end
-  if job.released then return false end
-  local committed = job.committed_baseline ~= nil
-  local evidence = {
-    operation = job.replace and "regenerate" or "create",
-    instrument = job.instrument, phrase = job.target_phrase or job.phrase,
-    baseline = job.request and job.request.baseline, committed_baseline = job.committed_baseline,
-    draft_capture = job.draft_capture, recovery = recovery or {},
-    destination_phrases = (not committed or job.replace) and job.destination_phrases or nil,
-    committed = committed,
-    reason = reason,
-  }
-  if evidence.committed then evidence.draft_capture = nil end
-  if not job.replace then
-    evidence.pre_store = job.pre_store
-    evidence.pre_store_absent = job.pre_store == nil
-  end
-  local ok, recorded = pcall(function()
-    if type(job.request) ~= "table" or type(job.request.record_blocker) ~= "function" then
-      error("Integrity blocker hook is unavailable", 0)
-    end
-    job.blocker_recording = true
-    return job.request:record_blocker(job.token, evidence)
-  end)
-  job.blocker_recording = false
-  if ok and recorded == true then
-    job.blocker_recorded = true
-    return true
-  end
-  local blocker_error = "ACID integrity blocker could not be recorded; restart Renoise before generating again"
-  if job.song ~= nil then integrity_blocker_errors[job.song] = blocker_error end
-  job.blocker_record_failed = true
-  set_diagnostic("transaction.blocker_recording", blocker_error)
-  return false
-end
-
-local function terminal_failure(job, status, code, category, reason, extra)
-  extra = extra or {}
-  reason = tostring(reason or "Phrase generation failed")
-  local recovery, cleanup_error = nil, nil
-  if not extra.skip_cleanup then
-    recovery, cleanup_error = cleanup_temporaries(job)
-  end
-  local message = reason .. failure_suffix(job)
-  local diagnostics = {}
-  for _, item in ipairs(job.approximations or {}) do diagnostics[#diagnostics + 1] = item end
-  for _, item in ipairs(extra.diagnostics or {}) do diagnostics[#diagnostics + 1] = item end
-  local integrity_reason = job.integrity_reason
-  if cleanup_error then
-    status = "integrity_blocked"
-    code = code == "transaction.cancelled" and "transaction.cancelled_recovery" or code
-    category = "integrity"
-    job.keep_recovery = true
-    message = message .. "; " .. cleanup_error .. " and recovery material was retained"
-  elseif job.keep_recovery and extra.recovery_message then
-    message = message .. "; " .. extra.recovery_message
-  end
-  if integrity_reason then
-    status, category = "integrity_blocked", "integrity"
-    job.keep_recovery = true
-    message = message .. "; " .. integrity_reason .. "; instrument inventory requires inspection"
-  end
-  if extra.recovery then recovery = extra.recovery end
-  if next(recovery or {}) == nil and job.recovery then recovery = job.recovery end
-  if next(recovery or {}) == nil and job.recovery_evidence then recovery = job.recovery_evidence end
-  if cleanup_error or integrity_reason or status == "integrity_blocked" then
-    record_blocker(job, message, recovery or job.recovery_evidence)
-  end
-  local result = {
-    kind = "failure", status = status, token = job.token, epoch = job.epoch,
-    request = job.request, phrase = nil,
-    verified = false, reason = reason, code = code, category = category,
-    message = message, diagnostics = diagnostics,
-    target = { instrument_index = job.instrument_index, phrase_index = job.target_index },
-    committed = job.committed_baseline ~= nil, baseline = job.committed_baseline,
-    counts = extra.counts, recovery = recovery or extra.recovery, integrity_blocked = status == "integrity_blocked",
-  }
-  settle(job, result)
-end
-
-local function terminal_success(job, counts, diagnostics, approximation)
-  local message = string.format(
-    "Phrase %02d generated (%d notes, %d OFF; %d raw events). Instrument %02X.",
-    job.target_index, counts.notes, counts.offs, counts.raw_events, job.instrument_index - 1)
-  if job.target_warning then message = message .. "\n" .. job.target_warning end
-  if #diagnostics > 0 then
-    message = message .. "\nArticulation approximation: " .. table.concat(diagnostics, "; ")
-  end
-  if job.cleanup_warning then
-    message = message .. "\n" .. job.cleanup_warning
-    record_blocker(job, message, job.recovery)
-    local result = {
-      kind = "failure", status = "integrity_blocked", token = job.token, epoch = job.epoch,
-      request = job.request, phrase = nil, verified = false, committed = true,
-      reason = message, code = "transaction.cleanup", category = "integrity",
-      message = message, diagnostics = diagnostics,
-      target = { instrument_index = job.instrument_index, phrase_index = job.target_index },
-      counts = counts, id = job.id, baseline = job.committed_baseline,
-      recovery = job.recovery, integrity_blocked = true,
-    }
-    settle(job, result)
-    return
-  end
-  local result = {
-    kind = "success", status = approximation and "approximate" or "committed",
-    token = job.token, epoch = job.epoch, request = job.request, phrase = job.destination,
-    verified = true, committed = true, reason = nil,
-    code = approximation and "capability.approximate" or "phrase.committed",
-    category = approximation and "capability" or "transaction",
-    message = message, diagnostics = diagnostics,
-    target = { instrument_index = job.instrument_index, phrase_index = job.target_index },
-    counts = counts, id = job.id, baseline = job.committed_baseline,
-    recovery = job.recovery, integrity_blocked = job.cleanup_warning ~= nil,
-  }
-  settle(job, result)
-end
-
-local function script_is_empty(script)
-  if script == nil then return false, "Phrase script is unavailable" end
-  local ok, paragraphs, parameters, pending, visible = pcall(function()
-    return script.paragraphs, script.parameters, script.pending_changes, script.editor_visible
-  end)
-  if not ok or type(paragraphs) ~= "table" or type(parameters) ~= "table" then
-    return false, "Cannot inspect phrase script"
-  end
-  if next(paragraphs) ~= nil or next(parameters) ~= nil then return false end
-  if pending ~= 0 then return false end
-  if visible ~= true then return false, "Phrase script editor state is unreadable" end
-  return true
-end
-
-local function script_settled(job)
-  local empty = script_is_empty(job.phrase.script)
-  if not empty then return false end
-  local ok, compile_error, runtime_error = pcall(function()
-    return job.phrase.script.compile_error, job.phrase.script.runtime_error
-  end)
-  if not ok or type(compile_error) ~= "string" then return false end
-  if compile_error ~= M.EMPTY_SCRIPT_DIAGNOSTIC then return false end
-  if runtime_error ~= nil and runtime_error ~= "" then return false end
-  return true
-end
-
-local function describe_undo(job)
-  local song = job.song
-  if type(song.describe_undo) ~= "function" then return end
-  pcall(function()
-    song:describe_undo(job.replace and UNDO_REGENERATE or UNDO_CREATE)
-  end)
-end
-
-local function build_job(request, done, kind)
+local function prepare(request, done, kind)
   if type(request) ~= "table" then return nil, failure(request, "source.request", "source", "A runtime request is required") end
   if type(done) ~= "function" then return nil, failure(request, "source.callback", "source", "A terminal callback is required") end
-  if request.kind ~= kind then
-    return nil, failure(request, "source.request_kind", "source", "Request kind does not match the writer operation")
-  end
-  if request.token == nil then
-    return nil, failure(request, "source.token", "source", "A request token is required")
-  end
+  if request.kind ~= kind then return nil, failure(request, "source.request_kind", "source", "Request kind does not match the writer operation") end
+  if request.token == nil then return nil, failure(request, "source.token", "source", "A request token is required") end
   if not policies.valid_output_policy(request.output_policy) then
     return nil, failure(request, "source.output_policy", "source", "Invalid phrase output policy")
   end
   if not policies.valid_pb_range(request.pb_range) then
     return nil, failure(request, "source.pb_range", "source", "Invalid PB range")
   end
-  if type(request.source) ~= "table" then
-    return nil, failure(request, "source.missing", "source", "A canonical ACID source is required")
-  end
+  if type(request.source) ~= "table" then return nil, failure(request, "source.missing", "source", "A canonical ACID source is required") end
   local source_valid, source_error = sequencer.validate(request.source)
-  if not source_valid then
-    return nil, failure(request, "source.invalid", "source", source_error)
-  end
+  if not source_valid then return nil, failure(request, "source.invalid", "source", source_error) end
   local song = request.song
   if song == nil then return nil, failure(request, "safety.no_song", "safety", "Open a song first") end
-  local current_ok, current_song = pcall(renoise.song)
-  if not current_ok or not rawequal(current_song, song) then
+  local song_ok, current_song = pcall(renoise.song)
+  if not song_ok or not rawequal(current_song, song) then
     return nil, failure(request, "safety.song_changed", "safety", "Request song is no longer current")
   end
-  if not lpb_timing(song) then
-    return nil, failure(request, "safety.timing_model", "safety", "Phrase generation requires LPB transport timing")
-  end
+  if not lpb_timing(song) then return nil, failure(request, "safety.timing_model", "safety", "Phrase generation requires LPB transport timing") end
   local instrument = request.instrument
   local instrument_index = instrument and ownership.membership(song, instrument)
-  if not instrument_index then
-    return nil, failure(request, "safety.instrument_missing", "safety", "Choose a valid instrument slot")
-  end
+  if not instrument_index then return nil, failure(request, "safety.instrument_missing", "safety", "Choose a valid instrument slot") end
   local limits, limits_error = phrase_limits()
   if not limits then return nil, failure(request, "capability.limits", "capability", limits_error) end
-  local capabilities, capability_error = target_capabilities.inspect(instrument)
-  if not capabilities or capabilities.read_error then
-    return nil, failure(request, "capability.inspect", "capability", capability_error or capabilities.read_error)
+  local profile, profile_error = capabilities_api.inspect(instrument)
+  if not profile or profile.read_error then
+    return nil, failure(request, "capability.inspect", "capability", profile_error or profile.read_error)
   end
-  if type(request.capabilities) ~= "table" or not target_capabilities.same(request.capabilities, capabilities) then
+  if type(request.capabilities) ~= "table" or not capabilities_api.same(request.capabilities, profile) then
     return nil, failure(request, "safety.target_changed", "safety", "Target output capabilities changed before generation")
   end
-  local snapshot_id
-  local replace
-  local target_phrase, target_name
-  if kind == "create" then
-    if request.target_kind ~= "new" or request.phrase ~= nil then
-      return nil, failure(request, "safety.destination", "safety", "Create requires an explicit New Phrase destination")
-    end
-    snapshot_id = store.allocate(song)
-    if not snapshot_id then
-      return nil, failure(request, "transaction.id_allocation", "transaction", "Cannot allocate an ACID phrase ID")
-    end
-    if phrase_id_count(song, snapshot_id) ~= 0 then
-      return nil, failure(request, "safety.duplicate_id", "safety", "Allocated ACID phrase ID is not unique")
-    end
-    replace = false
-  else
+
+  local replace = kind == "regenerate"
+  local target_phrase, old_id, baseline, baseline_reference, baseline_index
+  if replace then
     if request.target_kind ~= "owned" or request.phrase == nil then
       return nil, failure(request, "safety.destination", "safety", "Regenerate requires an existing owned phrase")
     end
     target_phrase = request.phrase
-    local id, id_error = ownership.validate_live(song, instrument, target_phrase)
-    if not id then
-      return nil, failure(request, "safety.ownership", "safety",
-        "Selected phrase is not safely ACID-owned or was manually edited: " .. tostring(id_error))
+    if type(request.retained_baseline_reference) ~= "function" then
+      return nil, failure(request, "safety.ownership", "safety", "Request has no retained destination proof")
     end
-    if not positive_integer(request.id) or request.id ~= id then
+    local reference_ok, reference, reference_error = pcall(function()
+      return request:retained_baseline_reference(request.token)
+    end)
+    if not reference_ok then
+      return nil, failure(request, "safety.ownership", "safety", "Cannot inspect retained destination proof")
+    end
+    if not reference or reference == false then
+      return nil, failure(request, "safety.ownership", "safety",
+        "Selected phrase is not safely ACID-owned or was manually edited: " ..
+          tostring(reference_error or "retained verified baseline is unavailable"))
+    end
+    baseline_reference = reference
+    local classified, classify_error = validator.classify_against_reference(song, instrument,
+      target_phrase, profile, limits,
+      { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled }, reference)
+    if not classified then
+      return nil, failure(request, "safety.ownership", "safety",
+        "Selected phrase is not safely ACID-owned or was manually edited: " .. tostring(classify_error))
+    end
+    local retained_snapshot, retained_index = validator.retained_baseline(reference)
+    if not retained_snapshot or not retained_index or not rawequal(retained_snapshot,classified.baseline) then
+      return nil, failure(request, "safety.ownership", "safety",
+        "Retained destination proof does not match the classified phrase snapshot")
+    end
+    baseline_index=retained_index
+    local id = ownership.id(target_phrase)
+    if not positive_integer(request.id) or request.id ~= id or phrase_id_count(song, id) ~= 1 then
       return nil, failure(request, "safety.phrase_identity", "safety", "Request phrase identity does not match the live destination")
     end
-    if phrase_id_count(song, id) ~= 1 then
-      return nil, failure(request, "safety.duplicate_id", "safety", "Selected ACID phrase ID is duplicated")
+    baseline = { id = id, source = classified.source, settings = classified.settings,
+      snapshot = classified.baseline, planning_inputs = classified.planning_inputs }
+    if not same_baseline_values(request.baseline, baseline) then
+      return nil, failure(request, "safety.target_changed", "safety", "Committed target baseline changed before generation")
     end
-    local candidate, classify_error = validator.classify(song, instrument, target_phrase, capabilities, limits,
-      { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled })
-    if not candidate then return nil, failure(request, "safety.source_missing", "safety", classify_error) end
-    local baseline = {
-      id = id, source = candidate.source, settings = candidate.settings,
-      snapshot = candidate.baseline, planning_inputs = candidate.planning_inputs,
-    }
-    local same, difference = ownership.compare(request.baseline, baseline)
-    if not same then
-      return nil, failure(request, "safety.target_changed", "safety",
-        "Committed target baseline changed before generation: " .. tostring(difference))
+    old_id = id
+  else
+    if request.target_kind ~= "new" or request.phrase ~= nil then
+      return nil, failure(request, "safety.destination", "safety", "Create requires an explicit New Phrase destination")
     end
-    snapshot_id, replace = id, true
-    target_name = target_phrase.name
   end
-  local capacity, capacity_error = phrase_capacity()
-  if not capacity then return nil, failure(request, "capability.capacity", "capability", capacity_error) end
-  local required_slots = replace and 2 or 1
-  if #instrument.phrases + required_slots > capacity then
-    return nil, failure(request, "safety.phrase_capacity", "safety", "Not enough phrase slots for staging and rollback backup")
+
+  local capacity = renoise.Instrument.MAX_NUMBER_OF_PHRASES
+  if not positive_integer(capacity) then return nil, failure(request, "capability.capacity", "capability", "Native phrase capacity is unavailable") end
+  if not replace and #instrument.phrases + 1 > capacity then
+    return nil, failure(request, "safety.phrase_capacity", "safety", "No phrase slot is available for the new phrase")
   end
-  local planned, planning_error = output_planner.plan(request.source, request.output_policy, request.pb_range,
-    limits, capabilities, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled })
-  if not planned then return nil, failure(request, "phrase.unrepresentable", "phrase", planning_error) end
-  local fixture, plan, layout = planned.source, planned.plan, planned.layout
-  local native_notes, operations, approximations = planned.native_notes, planned.operations, planned.approximations
-  local script_source, meta = pattrns.emit(plan, { unit = layout.unit, resolution = layout.resolution })
-  if not script_source then return nil, failure(request, "phrase.unrepresentable", "phrase", meta) end
-  if song.transport.groove_enabled then
-    approximations[#approximations + 1] = "Song groove is active; its effect on phrase timing is unverified."
+  local output, planning_error = output_planner.plan_for_materialization(request.source, request.output_policy, request.pb_range,
+    limits, profile, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled })
+  if not output then return nil, failure(request, "phrase.unrepresentable", "phrase", planning_error) end
+  if replace then
+    local safe, preflight_error = validator.preflight_destination(baseline.snapshot, output)
+    if not safe then return nil, failure(request, "phrase.preflight", "phrase", preflight_error) end
   end
-  local pre_store = song.tool_data
-  if pre_store ~= nil and type(pre_store) ~= "string" then
+  local id, allocation_error = store.allocate(song)
+  if not id then return nil, failure(request, "transaction.id_allocation", "transaction", allocation_error) end
+  if id == old_id or phrase_id_count(song, id) ~= 0 then
+    return nil, failure(request, "safety.duplicate_id", "safety", "Allocated revision ID is not unique")
+  end
+  local raw_before = song.tool_data
+  if raw_before ~= nil and type(raw_before) ~= "string" then
     return nil, failure(request, "transaction.persistence_invalid", "transaction", "ACID song data is not text")
   end
-  local destination_phrases = {}
-  for index, phrase in ipairs(instrument.phrases) do destination_phrases[index] = phrase end
-  -- Store commit happens after the destination mutation and before the source
-  -- association exists, so a full target classification cannot be re-run here.
-  -- Authorization is the live request token; the full checkpoint runs before
-  -- and after this synchronous section.
   local guard = function()
-    local ok, valid = pcall(function()
-      if type(request.is_current) == "function" then return request.is_current() end
-      return request.token:is_current()
-    end)
-    return ok and valid == true
+    return token_current(request)
   end
-  local store_candidate, prepare_error = store.prepare(song, snapshot_id, fixture, request.output_policy,
+  local candidate, candidate_error = store.prepare_revision(song, id, output.source, request.output_policy,
     request.pb_range, guard, request.draft_capture)
-  if not store_candidate then
-    return nil, failure(request, "transaction.persistence_prepare", "transaction", prepare_error)
+  if not candidate then return nil, failure(request, "transaction.persistence_prepare", "transaction", candidate_error) end
+  local valid, checkpoint_error = checkpoint(request)
+  if not valid then
+    store.release_candidate(candidate)
+    return nil, failure(request, "safety.target_changed", "safety", checkpoint_error)
   end
   return {
     kind = kind, request = request, done = done, token = request.token, epoch = request.epoch,
     song = song, instrument = instrument, instrument_index = instrument_index,
-    capabilities = capabilities, limits = limits, id = snapshot_id,
-    store_candidate = store_candidate, pre_store = pre_store,
-    destination_phrases = destination_phrases,
-    target_phrase = target_phrase, target_name = target_name,
-    replace = replace, target_index = target_phrase and phrase_index(instrument, target_phrase) or nil,
-    expected_events = meta.note_count + meta.off_count,
-    plan = plan, layout = layout, pattern = fixture, script_source = script_source,
-    output_policy = request.output_policy, pb_range = request.pb_range, volumes = planned.volumes,
-    required_visibility = planned.required_visibility,
-    operations = operations, approximations = approximations, native_notes = native_notes,
-    target_warning = capabilities.diagnostic, temporary = false, cancelled = false, settled = false,
-    draft_capture = request.draft_capture, counts = nil,
+    target_phrase = target_phrase, target_index = target_phrase and phrase_index(instrument, target_phrase) or nil,
+    old_id = old_id, id = id, baseline = baseline, raw_before = raw_before,
+    baseline_reference = baseline_reference,
+    baseline_index = baseline_index,
+    profile = profile, limits = limits, output = output, store_candidate = candidate,
+    replace = replace, inventory_before = inventory(instrument), phrase = target_phrase,
+    mutating = false, cancel_requested = false, released = false, settled = false,
+    committed = false, preimage = nil, final_baseline = nil,
+    restore_phrase = false,apply_outcome_unknown=false,
+    rollback_guard_required=false,rollback_guard=nil,
   }
 end
 
-local function context_live(job)
-  if job.settled or job.released then return false,"Generation has settled" end
-  if job.cancelled then return false,job.cancel_reason or "Generation was cancelled" end
-  if not token_current(job) then return false,"generation was invalidated" end
-  local ok,song=pcall(renoise.song)
-  if not ok or not rawequal(song,job.song) then return false,"song changed during generation" end
-  local inspected,staged,target=pcall(function()
-    return phrase_index(job.instrument,job.phrase),
-      job.replace and phrase_index(job.instrument,job.target_phrase) or true
-  end)
-  if not inspected then return false,"target instrument changed during generation" end
-  if not staged then return false,"staging phrase was removed during generation" end
-  if job.replace and not target then
-    return false,"target phrase was removed or duplicated during generation"
+local function set_phrase_name(phrase, id, verified_output)
+  local name, name_error = materializer.name_for_verified_output(verified_output, id)
+  if not name then return nil, name_error end
+  phrase.name = name
+  if phrase.name ~= name or ownership.id(phrase) ~= id then
+    return nil, "Phrase revision seal did not persist"
   end
+  return name
+end
+
+local function safe_remove_created(job, phrase)
+  if not phrase or not rawequal(renoise.song(), job.song) or
+      not rawequal(job.song.instruments[job.instrument_index], job.instrument) then
+    return nil, "Created phrase identity is unavailable for rollback"
+  end
+  local before = job.inventory_before
+  local after = inventory(job.instrument)
+  if not after or not rawequal(inventory_addition(before, after), phrase) then
+    return nil, "Created phrase inventory changed ambiguously; phrase retained"
+  end
+  local index = phrase_index(job.instrument, phrase)
+  if not index then return nil, "Created phrase is not uniquely present" end
+  local ok, err = pcall(function() job.instrument:delete_phrase_at(index) end)
+  if not ok then return nil, "Could not remove created phrase: " .. tostring(err) end
+  local restored = inventory(job.instrument)
+  if not same_inventory(before, restored) then return nil, "Phrase inventory did not restore exactly" end
+  forget_temporary(phrase)
   return true
 end
 
-local after_clear
-
-local function begin_wait(job)
-  job.ticks = 0
-  job.on_idle = function()
-    if current ~= job or job.settled or job.released then unlink(job);return end
-    if job.unlinking or job.removing_watch then return end
-    if job.waiting_for_clear then
-      job.ticks = job.ticks + 1
-      if job.clear_committed and script_settled(job) then
-        job.waiting_for_clear = false
-        remove_watch(job,"clear_observer","on_clear_commit")
-        local completed, completion_error = pcall(after_clear, job)
-        if not completed and not job.settled then
-          terminal_failure(job, "failed", "phrase.publication", "phrase",
-            "Phrase publication failed: " .. tostring(completion_error))
-        end
-      elseif job.ticks >= SCRIPT_SETTLE_TICKS then
-        terminal_failure(job, "failed", "phrase.script_clear", "phrase",
-          "Timed out waiting for the generated stage script to clear")
+local function restore_source(job)
+  local status = store.candidate_status(job.store_candidate)
+  if status and status.written_verified then
+    local ok, current = pcall(function() return job.song.tool_data end)
+    job.committed = ok and current == status.written_raw
+  end
+  if status and status.write_attempted then
+    local restored, restore_error = store.restore(job.song, job.store_candidate)
+    if not restored then
+      if status.written_verified then
+        local ok, current = pcall(function() return job.song.tool_data end)
+        job.committed = ok and current == status.written_raw
       end
-      return
-    end
-    job.ticks = job.ticks + 1
-    local valid, reason = context_live(job)
-    if not valid then
-      if not job.cancelled then
-        job.cancel_reason = reason
-        job.cancelled = true
-      end
-      if not job.render_started then
-        if job.runner then job.runner:cancel() end
-        terminal_failure(job, "suspended", "safety.target_changed", "safety", reason)
-      end
-      return
-    end
-    if job.render_started then
-      if job.ticks == RENDER_PENDING_TICKS then
-        local message = (job.runner and job.runner.error and job.runner.error .. ". " or "") ..
-          "Native phrase rendering has not completed. New writes are blocked; restart Renoise if its callback never arrives."
-        set_diagnostic("transaction.render_pending", message)
-        job.diagnostic = M.diagnostic()
-      end
-    elseif job.ticks >= COMMIT_WAIT_TICKS then
-      if job.runner then job.runner:cancel() end
-      terminal_failure(job, "failed", "transaction.render", "transaction",
-        "Timed out waiting for script commitment")
+      return nil, restore_error
     end
   end
-  job.idle_observer = renoise.tool().app_idle_observable
-  local added=pcall(function() job.idle_observer:add_notifier(job.on_idle) end)
-  local probed,attached=pcall(function()
-    if type(job.idle_observer.has_notifier)~="function" then return nil end
-    return job.idle_observer:has_notifier(job.on_idle)
-  end)
-  if not added or not probed or attached~=true then
-    terminal_failure(job,"failed","transaction.idle_notifier","transaction",
-      "Could not register the required writer idle callback")
+  if job.song.tool_data ~= job.raw_before then
+    job.committed = false
+    return nil, "Song source bytes did not restore exactly"
   end
-end
-
-local function apply_layout(job)
-  local ok, error_message = mutate_host(job, function()
-    local phrase = job.phrase
-    phrase.number_of_lines = job.layout.number_of_lines
-    phrase.lpb = job.layout.lpb
-    phrase.shuffle = 0
-    phrase.looping = job.layout.looping
-    phrase.loop_end = job.layout.loop_end
-    phrase.loop_start = job.layout.loop_start
-  end)
-  if not ok then return nil, error_message end
-  if job.phrase.lpb ~= job.layout.lpb or job.phrase.shuffle ~= 0 then
-    return nil, "Phrase timing metadata verification failed"
-  end
+  job.committed = false
   return true
 end
 
-local function apply_articulation(job, expected_articulation)
-  if job.native_notes then
-    local ok, applied, apply_error = mutate_host(job, function()
-      return legato_writer.apply(job.phrase, job.native_notes)
-    end)
-    if not ok then return nil, applied end
-    if not applied then return nil, apply_error end
-    return { native_notes = job.native_notes }
-  elseif job.operations then
-    local ok, applied, apply_error = mutate_host(job, function()
-      return gates.apply_plan(job.phrase, job.operations)
-    end)
-    if not ok then return nil, applied end
-    if not applied then return nil, apply_error end
-    return expected_articulation
-  end
-  return expected_articulation or { effects = {}, release_lines = {}, volumes = job.volumes }
-end
-
-local function clear_stage_script(job, expected_articulation)
-  job.expected_articulation = expected_articulation
-  local valid, reason = context_live(job)
-  if not valid then
-    terminal_failure(job, "suspended", "safety.target_changed", "safety", reason)
-    return
-  end
-  job.clear_committed = false
-  local ok, error_message = mutate_host(job, function()
-    local script = job.phrase.script
-    job.clear_observer = script.committed_observable
-    if job.clear_observer == nil or type(job.clear_observer.add_notifier) ~= "function" then
-      error("Phrase script commit notification is unavailable", 0)
+local blocker_baseline
+local function rollback(job, phrase, preimage, reason,restore_phrase)
+  local errors = {}
+  local preserve_destination=false
+  if job.apply_outcome_unknown then
+    preserve_destination=true
+    errors[#errors+1]="materializer write outcome is unknown"
+  elseif job.rollback_guard_required then
+    local guard_ok,guard_matches,guard_error=false,nil,"Verified output rollback guard is unavailable"
+    if type(job.rollback_guard)=="function" then
+      guard_ok,guard_matches,guard_error=pcall(job.rollback_guard,phrase,
+        limits_for_writer(job.limits))
     end
-    job.on_clear_commit = function()
-      if job.unlinking or job.removing_watch then return end
-      if not job.clear_commit_started then return end
-      if current~=job or job.settled or job.released or job.clear_committed then
-        remove_watch(job,"clear_observer","on_clear_commit")
-        return
-      end
-      job.clear_committed = true
-      remove_watch(job,"clear_observer","on_clear_commit")
-    end
-    job.clear_observer:add_notifier(job.on_clear_commit)
-    local attached_ok,attached=pcall(function()
-      if type(job.clear_observer.has_notifier)~="function" then return nil end
-      return job.clear_observer:has_notifier(job.on_clear_commit)
-    end)
-    if not attached_ok or attached~=true then
-      error("Phrase script commit notification did not register",0)
-    end
-    script.paragraphs = {}
-    job.clear_commit_started=true
-    script:commit()
-  end)
-  if not ok then
-    terminal_failure(job, "failed", "phrase.script_clear", "phrase",
-      "Could not clear generated stage script: " .. tostring(error_message))
-    return
-  end
-  job.waiting_for_clear = true
-  job.ticks = 0
-end
-
-local PRESERVED_PROPERTIES = {
-  "visible_note_columns", "visible_effect_columns", "instrument_column_visible",
-  "volume_column_visible", "panning_column_visible", "delay_column_visible",
-  "sample_effects_column_visible", "base_note", "autoseek",
-}
-
-local function inspect_snapshot(phrase)
-  local ok, snapshot = pcall(ownership.snapshot, phrase)
-  if not ok then return nil, tostring(snapshot) end
-  if type(snapshot) ~= "table" then return nil, "Phrase snapshot is unavailable" end
-  return snapshot
-end
-
-local function snapshots_equal(left, right)
-  if type(left) ~= "table" or type(right) ~= "table" then
-    return false, "Missing phrase snapshot"
-  end
-  local ok, same, difference = pcall(ownership.compare, left, right)
-  if not ok then return false, tostring(same) end
-  return same == true, difference
-end
-
-local function preserved_property(properties,key,required_visibility)
-  local value=properties[key]
-  if required_visibility and (key=="visible_note_columns" or key=="visible_effect_columns") then
-    local required=required_visibility[key]
-    if type(required)=="number" then return math.max(value,required) end
-  elseif required_visibility and required_visibility[key]==true and
-      (key=="instrument_column_visible" or key=="volume_column_visible" or
-        key=="panning_column_visible" or key=="delay_column_visible" or
-        key=="sample_effects_column_visible") then
-    return true
-  end
-  return value
-end
-
-local function restore_preserved_metadata(destination, before, required_visibility)
-  local properties = before.properties
-  for _, key in ipairs(PRESERVED_PROPERTIES) do
-    destination[key] = preserved_property(properties,key,required_visibility)
-  end
-  for column = 1, #before.columns do
-    local metadata = before.columns[column]
-    if destination:column_name(column) ~= metadata.name then
-      if type(destination.set_column_name) ~= "function" then
-        return nil, "Cannot restore phrase column name " .. column
-      end
-      destination:set_column_name(column, metadata.name)
-    end
-    if destination:column_is_muted(column) ~= metadata.muted then
-      if type(destination.set_column_is_muted) ~= "function" then
-        return nil, "Cannot restore phrase column mute " .. column
-      end
-      destination:set_column_is_muted(column, metadata.muted)
+    if not guard_ok or guard_matches~=true then
+      preserve_destination=true
+      errors[#errors+1]="destination changed after verified materialization: "..tostring(guard_error)
     end
   end
-  return true
-end
-
--- Generated layout and cells change intentionally. Preserve destination settings
--- while allowing visibility to expand for the generated output.
-local function verify_preserved_snapshot(snapshot, before, required_visibility)
-  for _, key in ipairs(PRESERVED_PROPERTIES) do
-    local expected=preserved_property(before.properties,key,required_visibility)
-    if snapshot.properties[key] ~= expected then
-      return nil, "Destination property changed: " .. key
+  local source_restored, source_error
+  if preserve_destination then
+    job.final_baseline=nil
+    local status=store.candidate_status(job.store_candidate)
+    if status and status.written_verified then
+      local readable,current=pcall(function()return job.song.tool_data end)
+      job.committed=readable and current==status.written_raw
     end
-  end
-  local same_columns, column_difference = snapshots_equal(snapshot.columns, before.columns)
-  if not same_columns then
-    return nil, "Destination column metadata changed: " .. tostring(column_difference)
-  end
-  local same_mapping, mapping_difference = snapshots_equal(snapshot.mapping, before.mapping)
-  if not same_mapping then
-    return nil, "Destination phrase mapping changed: " .. tostring(mapping_difference)
-  end
-  local same_script, script_difference = snapshots_equal(snapshot.script, before.script)
-  if not same_script then
-    return nil, "Destination phrase script changed: " .. tostring(script_difference)
-  end
-  return true
-end
-
-local function snapshot_target_baseline(job, phrase)
-  local readable, baseline, baseline_error = pcall(function()
-    local candidate, classify_error = validator.classify(job.song, job.instrument, phrase,
-      job.capabilities, job.limits, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled })
-    if not candidate then return nil, classify_error end
-    return {
-      id = ownership.id(phrase), source = candidate.source, settings = candidate.settings,
-      snapshot = candidate.baseline, planning_inputs = candidate.planning_inputs,
-    }
-  end)
-  if not readable then return nil, tostring(baseline) end
-  if type(baseline) ~= "table" then
-    return nil, baseline_error or "Committed target baseline is unavailable"
-  end
-  if not positive_integer(baseline.id) then
-    return nil, "Committed target baseline has no valid identity"
-  end
-  return baseline
-end
-
-local function prepare_destination_backup(job, destination, capacity)
-  local captured, destination_before = pcall(ownership.snapshot, destination, job.limits)
-  if not captured or type(destination_before) ~= "table" then
-    return nil, job.backup, "Cannot capture destination before replacement"
-  end
-  if #job.instrument.phrases + 1 > capacity then
-    return destination_before, job.backup, "Not enough phrase slots for staging and rollback backup"
-  end
-  local inventory_before = phrase_inventory(job.instrument)
-  if not inventory_before then
-    return destination_before, job.backup, "Cannot inspect phrase inventory before backup insertion"
-  end
-  local inserted, returned = pcall(function()
-    return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
-  end)
-  local after = phrase_inventory(job.instrument)
-  if not after then
-    job.integrity_reason = "Cannot inspect inventory after backup insertion"
-    job.recovery_evidence = { { role = "backup-inventory", reason = job.integrity_reason } }
-    job.keep_recovery = true
-    return destination_before, job.backup, job.integrity_reason
-  end
-  local backup = inserted_identity(inventory_before, after, inserted and returned or nil)
-  local insertion_failed = not inserted or returned == nil
-  if not backup and insertion_failed then
-    backup = inventory_addition(inventory_before, after)
-  end
-  if insertion_failed and backup then
-    remember_temporary(job, backup, "backup")
-    job.backup = backup
-    return destination_before, backup,
-      "Could not insert destination backup: " .. tostring(inserted and "no phrase returned" or returned)
-  end
-  if not backup then
-    local addition_count = new_inventory_member_count(inventory_before, after)
-    if addition_count > 0 then
-      job.keep_recovery = true
-      job.integrity_reason = "Backup insertion changed inventory ambiguously"
-      job.recovery_evidence = { {
-        role = "backup-inventory", reason = job.integrity_reason, additions = addition_count,
-      } }
-    elseif not same_inventory(inventory_before, after) then
-      job.keep_recovery = true
-      job.integrity_reason = "Backup insertion changed inventory ambiguously"
-      job.recovery_evidence = { { role = "backup-inventory", reason = job.integrity_reason } }
-    end
-    return destination_before, job.backup,
-      "Could not insert destination backup: " .. tostring(inserted and
-        "returned phrase did not match the single inventory addition" or returned)
-  end
-  remember_temporary(job, backup, "backup")
-  job.backup = backup
-  local copied, copy_error = pcall(function()
-    backup:copy_from(destination)
-    backup.name = M.TRANSACTION_BACKUP_NAME
-  end)
-  if not copied then return destination_before, backup,
-    "Could not create destination backup: " .. tostring(copy_error) end
-  local captured_backup, backup_snapshot = pcall(ownership.snapshot, backup, job.limits)
-  if not captured_backup or type(backup_snapshot) ~= "table" then
-    return destination_before, backup, "Cannot inspect destination backup"
-  end
-  -- Phrase copies omit mappings; destination mapping is checked after replacement.
-  local compared, same, difference = pcall(ownership.compare_backup, destination_before, backup_snapshot)
-  if not compared or not same then
-    return destination_before, backup, "Destination backup coverage failed: " .. tostring(difference)
-  end
-  job.backup_verified = true
-  return destination_before, backup
-end
-
-local function write_destination(job, destination, destination_before)
-  local copied, copy_error = pcall(function()
-    if job.replace then
-      destination:copy_from(job.phrase)
-      local preserved, preserve_error = restore_preserved_metadata(destination, destination_before,
-        job.required_visibility)
-      if not preserved then error(preserve_error, 0) end
-    end
-    local name, name_error = ownership.make_name(destination, job.id)
-    if not name then error(name_error, 0) end
-    destination.name = name
-  end)
-  if not copied then return nil, "Phrase replacement failed: " .. tostring(copy_error) end
-  local written_ok, written_snapshot = pcall(ownership.snapshot, destination, job.limits)
-  if not written_ok or type(written_snapshot) ~= "table" then
-    return nil, "Cannot capture the written destination before commit"
-  end
-  if job.replace then
-    local preserved, preservation_error = verify_preserved_snapshot(written_snapshot,
-      destination_before, job.required_visibility)
-    if not preserved then
-      return written_snapshot, "Destination preservation failed: " .. tostring(preservation_error)
-    end
-  end
-  local checked, verified, validation_error = pcall(validator.verify, destination, job.plan,
-    job.layout.lines_per_step, job.layout, job.expected_articulation)
-  if not checked or not verified then
-    return written_snapshot,
-      "Copied phrase validation failed: " .. tostring(checked and validation_error or verified)
-  end
-  return written_snapshot
-end
-
-local function commit_source(job, destination)
-  local called, committed, store_error = pcall(store.commit, job.song, job.store_candidate)
-  if not called then store_error, committed = committed, nil end
-  if not committed then return nil, "Source commit failed: " .. tostring(store_error) end
-  local final_ok, final_error = pcall(function()
-    local status = ownership.status(destination)
-    if status ~= "owned" or ownership.id(destination) ~= job.id then
-      error("final phrase seal verification failed", 0)
-    end
-    local saved, saved_policy, saved_pb_range = store.load(job.song, job.instrument, destination)
-    if not saved then error("final phrase source association verification failed: " .. tostring(saved_policy), 0) end
-    if saved_policy ~= job.output_policy then error("final phrase output policy verification failed", 0) end
-    if saved_pb_range ~= job.pb_range then error("final phrase PB range verification failed", 0) end
-    if not sequencer.same_source(saved, job.pattern) then
-      error("final phrase source snapshot differs from frozen input", 0)
-    end
-  end)
-  if not final_ok then return nil,
-    "Final phrase/source verification failed: " .. tostring(final_error) end
-  local baseline, baseline_error = snapshot_target_baseline(job, destination)
-  if not baseline then return nil, "Postcommit baseline verification failed: " .. tostring(baseline_error) end
-  return baseline
-end
-
-local function cleanup_committed_temporaries(job, backup)
-  if backup then
-    if try_delete_temporary(job, backup) then
-      forget_temporary(backup)
-      job.backup = nil
-    else
-      job.cleanup_warning = "Committed output; recovery backup remains in the instrument."
-      local evidence, recovery_error = capture_recovery(job, backup, "backup", M.RECOVERY_BACKUP_NAME)
-      if evidence then
-        job.recovery = job.recovery or {}
-        job.recovery[#job.recovery + 1] = evidence
-      end
-      if recovery_error then job.cleanup_warning = job.cleanup_warning .. " " .. recovery_error end
-    end
-  end
-  if job.replace then
-    if try_delete_temporary(job, job.phrase) then
-      job.temporary = false
-      forget_temporary(job.phrase)
-    else
-      job.cleanup_warning = (job.cleanup_warning and job.cleanup_warning .. " " or "") ..
-        "Committed output; staging phrase remains in the instrument."
-      local evidence, recovery_error = capture_recovery(job, job.phrase, "staging", M.RECOVERY_STAGING_NAME)
-      if evidence then
-        job.recovery = job.recovery or {}
-        job.recovery[#job.recovery + 1] = evidence
-      end
-      if recovery_error then job.cleanup_warning = job.cleanup_warning .. " " .. recovery_error end
-    end
+    source_restored=false
   else
-    job.temporary = false
-    forget_temporary(job.phrase)
+    source_restored,source_error=restore_source(job)
   end
-end
-
-local function rollback_commit(job, result, destination, backup, destination_before,
-    destination_written, commit_attempted, cause)
-  local function append_message(message)
-    result.message = result.message and (result.message .. "; " .. message) or message
-  end
-  local function retain(phrase, role, label, message)
-    local evidence, recovery_error = capture_recovery(job, phrase, role, label)
-    if evidence then
-      job.recovery = job.recovery or {}
-      job.recovery[#job.recovery + 1] = evidence
-    end
-    job.keep_recovery = true
-    append_message(message .. (recovery_error and (": " .. recovery_error) or ""))
-  end
-  local phrase_restored = true
-  if job.replace and backup then
-    local current_ok, current = pcall(ownership.snapshot, destination, job.limits)
-    if not current_ok or type(current) ~= "table" then
-      phrase_restored = false
-      job.keep_recovery = true
-      job.swapped = true
-      append_message("destination rollback refused: cannot inspect destination")
-    else
-      local same_before = snapshots_equal(current, destination_before)
-      local same_written = destination_written ~= nil and snapshots_equal(current, destination_written)
-      if same_before then
-        -- The destination was never replaced; no copy back is needed.
-      elseif not same_written then
-        phrase_restored = false
-        job.keep_recovery = true
-        job.swapped = true
-        append_message("destination rollback refused: destination changed outside the transaction")
-      elseif not job.backup_verified then
-        phrase_restored = false
-        job.keep_recovery = true
-        job.swapped = true
-        append_message("destination rollback refused: backup was not verified before mutation")
-      else
-        local restored, restore_error = pcall(function()
-          destination:copy_from(backup)
-          local preserved, preserve_error = restore_preserved_metadata(destination, destination_before)
-          if not preserved then error(preserve_error, 0) end
-          destination.name = job.target_name
-        end)
-        local restored_ok, restored_snapshot = pcall(ownership.snapshot, destination, job.limits)
-        local exact, difference
-        if restored_ok and type(restored_snapshot) == "table" then
-          exact, difference = snapshots_equal(restored_snapshot, destination_before)
-        end
-        if not restored or not restored_ok or not exact then
-          phrase_restored = false
-          job.keep_recovery = true
-          job.swapped = true
-          append_message("destination rollback failed: " ..
-            tostring(restored and (difference or restored_snapshot) or restore_error))
-        end
-      end
+  if not source_restored and not preserve_destination then
+    errors[#errors + 1] = "source restore failed: " .. tostring(source_error)
+  elseif source_restored then
+    job.committed = false
+    job.final_baseline = nil
+    if phrase and preimage and restore_phrase then
+      local restored, restore_error = materializer.restore(phrase, preimage, limits_for_writer(job.limits))
+      if not restored then errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error) end
     end
   end
-  local store_restored = true
-  if commit_attempted then
-    local called, restored, restore_error = pcall(store.restore, job.song, job.store_candidate)
-    if not called or not restored then
-      store_restored = false
-      append_message("source rollback failed: " .. tostring(called and restore_error or restored))
+  if source_restored and not job.replace and phrase then
+    local removed, remove_error = safe_remove_created(job, phrase)
+    if not removed then errors[#errors + 1] = tostring(remove_error) end
+  elseif source_restored and job.replace then
+    local after = inventory(job.instrument)
+    if not same_inventory(job.inventory_before, after) then errors[#errors + 1] = "regeneration changed phrase inventory" end
+  end
+  if #errors == 0 then return true end
+  if not job.replace and phrase and phrase_index(job.instrument, phrase) then
+    remember_temporary(job.song, job.instrument, phrase, job.token)
+  end
+  local message = tostring(reason) .. "; rollback failed: " .. table.concat(errors, "; ")
+  local evidence = {
+    operation = job.kind, instrument = job.instrument, phrase = job.target_phrase or phrase,
+    baseline = blocker_baseline(job), committed_baseline = job.final_baseline,
+    draft_capture = job.request.draft_capture,
+    committed = job.committed == true,
+    pre_store = job.raw_before, pre_store_absent = job.raw_before == nil,
+    destination_phrases = job.inventory_before, reason = message,
+    recovery = phrase and phrase_index(job.instrument, phrase) and
+      { { instrument = job.instrument, phrase = phrase, role = job.replace and "destination" or "created phrase" } } or {},
+  }
+  local recorded, record_error = false, nil
+  if type(job.request.record_blocker) == "function" then
+    local ok, result, detail = pcall(function() return job.request:record_blocker(job.token, evidence) end)
+    recorded, record_error = ok and result == true, ok and detail or result
+  end
+  if not recorded then
+    integrity_errors[job.song] = "Phrase rollback failed and its recovery blocker could not be recorded"
+    set_diagnostic("transaction.blocker_recording", integrity_errors[job.song] ..
+      ": " .. tostring(record_error or "blocker hook unavailable"))
+  end
+  return nil, message
+end
+
+local function mutation_body(job)
+  local request, phrase = job.request, job.target_phrase
+  if job.replace and type(request.expect_revision) == "function" then
+    local expected, revision_error = request:expect_revision(job.token, job.id)
+    if expected ~= true then
+      error(revision_error or "Request rejected the authorized phrase revision", 0)
     end
   end
-  if job.replace and backup and phrase_restored then
-    if remove_phrase(job, backup) then
-      job.backup = nil
-    else
-      retain(backup, "backup", M.RECOVERY_BACKUP_NAME, "backup cleanup failed")
-    end
+  if job.cancel_requested or not token_current(request) then
+    error("Generation was invalidated before phrase mutation", 0)
   end
-  if job.temporary then
-    if remove_phrase(job, job.phrase) then
-      job.temporary = false
-    else
-      retain(job.phrase, "staging", M.RECOVERY_STAGING_NAME, "staging cleanup failed")
-    end
+  if not rawequal(renoise.song(), job.song) or
+      not rawequal(job.song.instruments[job.instrument_index], job.instrument) then
+    error("Target instrument identity changed before phrase mutation", 0)
   end
-  if type(job.destination_phrases) == "table" then
-    local actual = phrase_inventory(job.instrument)
-    if not same_inventory(actual, job.destination_phrases) then
-      phrase_restored = false
-      job.keep_recovery = true
-      append_message("phrase inventory rollback verification failed")
-    end
-  else
-    phrase_restored = false
-    job.keep_recovery = true
-    append_message("phrase inventory rollback verification unavailable")
-  end
-  result.integrity_blocked = not phrase_restored or not store_restored or job.keep_recovery == true
-  result.message = result.message or cause
-end
-
-local function has_recovery_phrase(evidence, phrase)
-  for _, prior in ipairs(evidence) do
-    if type(prior) == "table" and rawequal(prior.phrase, phrase) then return true end
-  end
-  return false
-end
-
-local function append_recovery(evidence, item)
-  if type(item) == "table" and item.phrase ~= nil and has_recovery_phrase(evidence, item.phrase) then return end
-  evidence[#evidence + 1] = item
-end
-
-local function collect_recovery(job)
-  local evidence = {}
-  for _, source in ipairs({ job.recovery_evidence or {}, job.recovery or {} }) do
-    for _, item in ipairs(source) do append_recovery(evidence, item) end
-  end
-  for _, item in ipairs({ { job.backup, "backup", M.RECOVERY_BACKUP_NAME },
-      { not (job.committed_baseline and not job.replace) and job.phrase or nil, "staging", M.RECOVERY_STAGING_NAME } }) do
-    local phrase = item[1]
-    if phrase and not job.released then
-      if not has_recovery_phrase(evidence, phrase) then
-        local inspected, captured = pcall(capture_recovery, job, phrase, item[2], item[3])
-        if inspected and captured then append_recovery(evidence, captured) end
-      end
-      job.keep_recovery = true
-    end
-  end
-  return evidence
-end
-
-local function commit_destination(job)
-  local valid, reason = checkpoint(job)
-  if not valid then
-    terminal_failure(job, "suspended", "safety.target_changed", "safety", reason)
-    return
-  end
-  local capacity, capacity_error = phrase_capacity()
-  if not capacity then
-    terminal_failure(job, "failed", "capability.capacity", "capability", capacity_error)
-    return
-  end
-  -- The staging phrase already exists here. A create promotes it in place and
-  -- needs no further slot; a regenerate needs one free slot for its backup.
-  local required_after_stage = job.replace and 1 or 0
-  if #job.instrument.phrases + required_after_stage > capacity then
-    terminal_failure(job, "failed", "safety.phrase_capacity", "safety",
-      "Not enough phrase slots for staging and rollback backup")
-    return
-  end
-  local unique, unique_error = allocated_id_available(job)
-  if not unique then
-    terminal_failure(job, "suspended", "safety.duplicate_id", "safety", unique_error)
-    return
-  end
-  local outcome
-  local ok, error_message = pcall(function()
-    outcome = job.request:mutate(job.token, function()
-      local result = { committed = false, integrity_blocked = false, message = nil }
-      local backup = job.backup
-      local destination = job.replace and job.target_phrase or job.phrase
-      local destination_before, destination_written
-      local function rollback(commit_attempted, cause)
-        rollback_commit(job, result, destination, backup, destination_before,
-          destination_written, commit_attempted, cause)
-      end
-      if job.replace then
-        local backup_error
-        destination_before, backup, backup_error = prepare_destination_backup(job, destination, capacity)
-        if backup_error then
-          rollback(false, backup_error)
-          return result
-        end
-      end
-      local write_error
-      destination_written, write_error = write_destination(job, destination, destination_before)
-      if write_error then
-        rollback(false, write_error)
-        return result
-      end
-      -- A thrown setter may already have changed song data; always inspect and
-      -- roll the guarded candidate back after any commit attempt.
-      local committed_baseline, source_error = commit_source(job, destination)
-      if not committed_baseline then
-        rollback(true, source_error)
-        return result
-      end
-      job.committed_baseline = committed_baseline
-      job.destination = destination
-      job.target_index = phrase_index(job.instrument, destination) or job.target_index
-      job.swapped = job.replace
-      cleanup_committed_temporaries(job, backup)
-      result.committed = true
-      return result
-    end)
-  end)
-  if not ok then
-    local recovery = collect_recovery(job)
-    record_blocker(job, "Synchronous commit raised an exception", recovery)
-    terminal_failure(job, "integrity_blocked", "transaction.commit", "integrity",
-      "Phrase commit raised an exception: " .. tostring(error_message),
-      { skip_cleanup = true, recovery = recovery })
-    return
-  end
-  if outcome and outcome.committed then
-    job.recovery = job.recovery or {}
-    terminal_success(job, job.counts, job.diagnostics or {}, job.approximation)
-    return
-  end
-  local message = outcome and outcome.message or "Phrase commit failed"
-  if outcome and outcome.integrity_blocked then
-    local evidence = collect_recovery(job)
-    job.recovery = evidence
-    if #evidence > 0 then message = message .. "; recovery phrase retained" end
-    record_blocker(job, message, evidence)
-    terminal_failure(job, "integrity_blocked", "transaction.rollback", "integrity", message,
-      { skip_cleanup = true, recovery = evidence })
-  else
-    terminal_failure(job, "failed", "transaction.commit", "transaction", message)
-  end
-end
-
-after_clear = function(job)
-  if job.settled or job.released then return end
-  local valid, reason = context_live(job)
-  if not valid then
-    terminal_failure(job, "suspended", "safety.target_changed", "safety", reason)
-    return
-  end
-  local mutated, mutation_error = mutate_host(job, function()
-    job.phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
-    job.phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-  end)
-  if not mutated then
-    terminal_failure(job, "failed", "phrase.publication", "phrase",
-      "Could not finalize generated phrase: " .. tostring(mutation_error))
-    return
-  end
-  local empty, script_error = script_is_empty(job.phrase.script)
-  if not empty then
-    terminal_failure(job, "failed", "phrase.script_clear", "phrase", script_error)
-    return
-  end
-  local verified, validation_error = validator.verify(job.phrase, job.plan,
-    job.layout.lines_per_step, job.layout, job.expected_articulation)
-  if not verified then
-    terminal_failure(job, "failed", "phrase.validation", "phrase", validation_error)
-    return
-  end
-  commit_destination(job)
-end
-
-local function finalize(job, event_count, skipped)
-  if current ~= job or job.settled or job.released then return end
-  job.render_started = false
-  local live, live_error = context_live(job)
-  if not live then
-    terminal_failure(job, "suspended", "safety.target_changed", "safety", live_error)
-    return
-  end
-  local valid, reason = checkpoint(job)
-  if not valid then
-    terminal_failure(job, "suspended", "safety.target_changed", "safety", reason)
-    return
-  end
-  if skipped ~= 0 then
-    terminal_failure(job, "failed", "phrase.render_count", "phrase",
-      "Renoise skipped " .. tostring(skipped) .. " event(s)")
-    return
-  end
-  if type(event_count) ~= "number" or event_count < job.expected_events then
-    terminal_failure(job, "failed", "phrase.render_count", "phrase", string.format(
-      "Too few raw events: expected at least %d, received %s", job.expected_events, tostring(event_count)))
-    return
-  end
-  local staged, layout_error = apply_layout(job)
-  if not staged then
-    terminal_failure(job, "failed", "phrase.layout", "phrase", layout_error)
-    return
-  end
-  local first_verified, first_error = validator.verify(job.phrase, job.plan,
-    job.layout.lines_per_step, job.layout, { volumes = job.volumes })
-  if not first_verified then
-    terminal_failure(job, "failed", "phrase.validation", "phrase", first_error)
-    return
-  end
-  local expected = job.operations or { effects = {}, release_lines = {}, volumes = job.volumes }
-  expected.volumes = job.volumes
-  local applied, articulation_error = apply_articulation(job, expected)
-  if not applied then
-    terminal_failure(job, "failed", "phrase.validation", "phrase", articulation_error)
-    return
-  end
-  local final_verified, final_error = validator.verify(job.phrase, job.plan,
-    job.layout.lines_per_step, job.layout, applied)
-  if not final_verified then
-    terminal_failure(job, "failed", "phrase.validation", "phrase", final_error)
-    return
-  end
-  job.counts = { notes = final_verified.notes, offs = final_verified.offs,
-    lines = final_verified.lines, raw_events = event_count }
-  job.diagnostics = {}
-  if job.target_warning then job.diagnostics[#job.diagnostics + 1] = job.target_warning end
-  for _, item in ipairs(job.approximations or {}) do job.diagnostics[#job.diagnostics + 1] = item end
-  job.approximation = #job.diagnostics > 0
-  clear_stage_script(job, applied)
-end
-
-local function render_done(job, error_message, rendered_events, skipped_events)
-  if current ~= job or job.settled then return end
-  if job.released then
-    local result = {
-      kind = "failure", status = "cancelled", token = job.token, epoch = job.epoch,
-      request = nil, phrase = nil, verified = false,
-      reason = job.cancel_reason or "Document released during native rendering",
-      code = "transaction.released", category = "transaction",
-      message = "Document released during native rendering; retained recovery material requires inspection",
-      diagnostics = {},
-    }
-    settle(job, result)
-    set_diagnostic("transaction.released_settled",
-      "Native rendering finished after document release. The neutral phrase '" .. M.PHRASE_NAME ..
-      "' remains as recovery material and requires inspection before reuse.")
-    return
-  end
-  job.render_started = false
-  if job.cancelled then
-    terminal_failure(job, "cancelled", "transaction.cancelled", "transaction",
-      job.cancel_reason or "Generation cancelled")
-    return
-  end
-  local safe, callback_error = pcall(function()
-    if error_message and error_message ~= "" then
-      terminal_failure(job, "failed", "transaction.render", "transaction",
-        "Phrase rendering: " .. tostring(error_message))
-      return
-    end
-    finalize(job, rendered_events, skipped_events)
-  end)
-  if not safe then
-    terminal_failure(job, "failed", "transaction.render", "transaction",
-      "Phrase render completion failed: " .. tostring(callback_error))
-  end
-end
-
-local function stage(job)
-  local valid, reason = checkpoint(job)
-  if not valid then
-    terminal_failure(job, "suspended", "safety.target_changed", "safety", reason)
-    return
-  end
-  describe_undo(job)
-  local inserted, insertion_error = mutate_host(job, function()
-    local capacity, capacity_error = phrase_capacity()
-    if not capacity then error(capacity_error, 0) end
-    if #job.instrument.phrases + (job.replace and 2 or 1) > capacity then
-      error("Not enough phrase slots for staging and rollback backup", 0)
-    end
-    local before = phrase_inventory(job.instrument)
-    if not before then error("Cannot inspect phrase inventory before staging insertion", 0) end
-    local inserted, returned = pcall(function()
+  local preimage = job.replace and job.baseline.snapshot or nil
+  local returned, insert_error
+  if not job.replace then
+    local before = inventory(job.instrument)
+    if not same_inventory(job.inventory_before, before) then error("Instrument phrase inventory changed before create", 0) end
+    local inserted
+    inserted, returned = pcall(function()
       return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
     end)
-    local after = phrase_inventory(job.instrument)
-    if not after then
-      job.keep_recovery = true
-      job.integrity_reason = "Cannot inspect instrument inventory after staging insertion"
-      job.recovery_evidence = { {
-        role = "staging-inventory", reason = job.integrity_reason,
-      } }
-      error(job.integrity_reason, 0)
-    end
-    local phrase = inserted_identity(before, after, inserted and returned or nil)
-    local insertion_failed = not inserted or returned == nil
-    if not phrase and insertion_failed then
+    local after = inventory(job.instrument)
+    if not inserted or returned == nil then
+      insert_error = inserted and "Insertion returned no phrase" or tostring(returned)
       phrase = inventory_addition(before, after)
+      if phrase then job.phrase = phrase; remember_temporary(job.song, job.instrument, phrase, job.token) end
+      error("Could not insert new phrase: " .. insert_error, 0)
     end
-    if not phrase then
-      local addition_count = new_inventory_member_count(before, after)
-      if addition_count > 0 then
-        job.keep_recovery = true
-        job.integrity_reason = "Staging insertion changed inventory ambiguously"
-        job.recovery_evidence = { {
-          role = "staging-inventory", reason = job.integrity_reason,
-          additions = addition_count,
-        } }
-      elseif not same_inventory(before, after) then
-        job.keep_recovery = true
-        job.integrity_reason = "Staging insertion changed inventory ambiguously"
-        job.recovery_evidence = { {
-          role = "staging-inventory", reason = job.integrity_reason,
-        } }
-      end
-      error("Staging insertion did not return the single new inventory member", 0)
+    phrase = returned
+    if not rawequal(inventory_addition(before, after), phrase) then
+      phrase = inventory_addition(before, after)
+      if phrase then job.phrase = phrase; remember_temporary(job.song, job.instrument, phrase, job.token) end
+      error("Phrase insertion did not create exactly one appended object", 0)
     end
     job.phrase = phrase
-    job.temporary = true
-    remember_temporary(job, phrase, "staging")
-    if insertion_failed then
-      error("Staging insertion failed: " .. tostring(inserted and "no phrase returned" or returned), 0)
+    remember_temporary(job.song, job.instrument, phrase, job.token)
+    preimage = snapshot(phrase, job.limits)
+    if not preimage then error("Cannot capture new phrase preimage", 0) end
+  else
+    if not phrase or phrase_index(job.instrument, phrase) ~= job.target_index or
+        ownership.id(phrase) ~= job.old_id then
+      error("Regeneration phrase identity changed before mutation", 0)
     end
-    phrase.name = M.PHRASE_NAME
-    phrase.playback_mode = renoise.InstrumentPhrase.PLAY_SCRIPT
-    local visibility = job.required_visibility
-    if type(visibility) == "table" then
-      for _, key in ipairs({ "visible_note_columns", "visible_effect_columns" }) do
-        if type(visibility[key]) == "number" then
-          local existing = type(phrase[key]) == "number" and phrase[key] or 0
-          phrase[key] = math.max(existing, visibility[key])
-        end
-      end
-      for _, key in ipairs({ "instrument_column_visible", "volume_column_visible",
-          "panning_column_visible", "delay_column_visible", "sample_effects_column_visible" }) do
-        if visibility[key] == true then phrase[key] = true end
-      end
+    preimage = job.baseline.snapshot
+  end
+  job.preimage = preimage
+  if job.cancel_requested or not token_current(request) then error("Generation was invalidated before phrase write", 0) end
+  job.apply_outcome_unknown=true
+  local applied, after_or_error,write_attempted = materializer.apply(phrase, job.output.expected,
+    job.output.required_visibility, preimage, limits_for_writer(job.limits),
+    job.output, request.planning_inputs,job.replace and job.baseline_index or nil)
+  if (applied~=nil and applied~=true) or type(write_attempted)~="boolean" or
+      (applied==true and write_attempted~=true) then
+    error("Materializer returned an invalid write-attempt outcome",0)
+  end
+  job.apply_outcome_unknown=false
+  job.restore_phrase=write_attempted
+  if applied~=true then
+    error(after_or_error or "Phrase materialization failed", 0)
+  end
+  job.rollback_guard_required=true
+  local rollback_guard,guard_error=materializer.rollback_guard(after_or_error)
+  if type(rollback_guard)~="function" then
+    error(guard_error or "Materializer returned no rollback guard",0)
+  end
+  job.rollback_guard=rollback_guard
+  local counts = { notes = 0, offs = 0, lines = job.output.expected.properties.number_of_lines }
+  for line_index = 1, counts.lines do
+    for column = 1, job.limits.max_note_columns do
+      local note = job.output.expected.lines[line_index].note_columns[column].note_value
+      if note < 120 then counts.notes = counts.notes + 1
+      elseif note == 120 then counts.offs = counts.offs + 1 end
     end
-    phrase.script.paragraphs = { job.script_source }
-    return phrase
-  end)
-  if not inserted then
-    terminal_failure(job, "failed", "transaction.stage", "transaction",
-      "Could not create staging phrase: " .. tostring(insertion_error))
-    return
   end
-  job.script = job.phrase.script
-  local runner, runner_error = script_runner.new(job.script, {
-    lpb = job.layout.lpb, max_events = job.plan.length,
-  }, {
-    rendering = function()
-      if current ~= job or job.settled then return end
-      local ready, checkpoint_error = context_live(job)
-      if not ready then
-        job.suspended_reason = checkpoint_error
-        error(checkpoint_error, 0)
-      end
-      job.render_started = true
-      job.ticks = 0
-    end,
-    done = function(render_error, rendered_events, skipped_events)
-      render_done(job, render_error, rendered_events, skipped_events)
-    end,
-  })
-  if not runner then
-    terminal_failure(job, "failed", "transaction.render", "transaction", runner_error)
-    return
+  if job.cancel_requested or not token_current(request) then error("Generation was invalidated after phrase write", 0) end
+  local verified_output = after_or_error
+  if type(verified_output) ~= "table" then error("Materializer returned no verified output receipt", 0) end
+  local named, name_error = set_phrase_name(phrase, job.id, verified_output)
+  if not named then error(name_error, 0) end
+  local final_index = phrase_index(job.instrument, phrase)
+  if not final_index then error("Committed phrase object is no longer uniquely present", 0) end
+  local inventory_after = inventory(job.instrument)
+  if job.replace then
+    if not same_inventory(job.inventory_before, inventory_after) then error("Regeneration changed phrase inventory", 0) end
+  elseif not rawequal(inventory_addition(job.inventory_before, inventory_after), phrase) then
+    error("Create inventory no longer contains only the generated phrase addition", 0)
   end
-  job.runner = runner
-  begin_wait(job)
-  if job.settled then return end
-  local started, start_error = runner:start()
-  if not started then
-    terminal_failure(job, "failed", "transaction.render", "transaction", start_error)
+  if job.cancel_requested or not token_current(request) then error("Generation was invalidated before source commit", 0) end
+  local committed, commit_error = store.commit(job.song, job.store_candidate)
+  if not committed then error("Source revision commit failed: " .. tostring(commit_error), 0) end
+  job.committed = true
+  local classified, classify_error = validator.classify_verified_postimage(job.song,
+    job.instrument, phrase, job.profile, job.limits,
+    { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled }, verified_output, job.id, named,
+    job.output, request.planning_inputs)
+  if not classified then error("Committed source baseline verification failed: " .. tostring(classify_error), 0) end
+  if classified.settings.output_policy ~= job.request.output_policy then
+    error("final phrase output policy verification failed", 0)
   end
+  if classified.settings.pb_range ~= job.request.pb_range then
+    error("final phrase PB range verification failed", 0)
+  end
+  if not sequencer.same_source(classified.source, job.output.source) then
+    error("final phrase source snapshot differs from frozen input", 0)
+  end
+  local baseline = { id = job.id, source = classified.source, settings = classified.settings,
+    snapshot = classified.baseline, planning_inputs = classified.planning_inputs }
+  if job.cancel_requested or not token_current(request) then error("Generation was invalidated during source commit", 0) end
+  job.final_baseline = baseline
+  job.final_index = final_index
+  counts.raw_events = counts.notes + counts.offs
+  job.counts = counts
+  if not job.replace then forget_temporary(phrase) end
+  return { phrase = phrase, baseline = baseline, counts = counts }
 end
 
-local function start(request, done, kind)
-  if pending_cleanup_job and not retry_pending_cleanup() then
-    return false, failure(request, "transaction.notifier_cleanup", "transaction",
-      "ACID notifier cleanup is unresolved; new phrase generation is blocked")
+local function finish_job(job, result)
+  if job.settled then return false end
+  job.settled = true
+  if current == job then current = nil end
+  if job.store_candidate then
+    store.release_candidate(job.store_candidate)
+    job.store_candidate = nil
   end
-  if busy or current or delivering then
-    local message = current and current.released and
-      "Native phrase rendering is still pending; restart Renoise if its callback never arrives." or
-      "ACID is already generating a phrase"
-    return false, failure(request, "transaction.busy", "transaction", message)
-  end
-  local song_ok, request_song = pcall(function() return request and request.song end)
-  local blocker_error = song_ok and request_song and integrity_blocker_errors[request_song]
-  if blocker_error then
-    return false, failure(request, "transaction.integrity_blocked", "integrity", blocker_error,
-      "integrity_blocked")
-  end
-  local built, job, rejection = pcall(build_job, request, done, kind)
-  if not built then
-    return false, failure(request, "safety.preflight", "safety",
-      "Cannot inspect the phrase destination safely: " .. tostring(job))
-  end
-  if not job then return false, rejection end
-  last_diagnostic = nil
-  current, busy, released_token = job, true, nil
-  local ok, error_message = pcall(stage, job)
-  if not ok then
-    if current == job then
-      terminal_failure(job, "failed", "transaction.stage", "transaction", tostring(error_message))
-    else
-      pcall(function()
-        if job.phrase and job.instrument then try_delete_temporary(job, job.phrase) end
-      end)
-    end
-    return true
+  local callback = job.done
+  job.done, job.request, job.song, job.instrument = nil, nil, nil, nil
+  job.target_phrase, job.phrase, job.output, job.baseline = nil, nil, nil, nil
+  job.baseline_reference,job.baseline_index=nil,nil
+  job.profile, job.limits, job.preimage = nil, nil, nil
+  job.rollback_guard,job.rollback_guard_required,job.apply_outcome_unknown=nil,nil,nil
+  if type(callback) == "function" then
+    delivering = true
+    local ok, err = pcall(callback, result)
+    if not ok then print("[ACID] Writer completion delivery error: " .. tostring(err)) end
+    delivering = false
   end
   return true
+end
+
+local function target_result(job, phrase, index)
+  return { instrument_index = job.instrument_index, phrase_index = index,
+    phrase_name = phrase and phrase.name or nil }
+end
+
+blocker_baseline=function(job)
+  local baseline=job.baseline
+  if type(baseline)~="table" or not job.baseline_reference then return nil end
+  return {id=baseline.id,source=baseline.source,settings=baseline.settings,
+    planning_inputs=baseline.planning_inputs,snapshot=job.baseline_reference}
+end
+
+local function execute(job)
+  current = job
+  last_diagnostic = nil
+  local undo_ok, undo_error = pcall(function()
+    if type(job.song.describe_undo) == "function" then
+      job.song:describe_undo(job.replace and REGENERATE_UNDO or CREATE_UNDO)
+    end
+  end)
+  if not undo_ok then
+    finish_job(job, failure(job.request, "transaction.undo_description", "transaction", undo_error))
+    return
+  end
+  job.mutating = true
+  local mutation_ok, mutation_result = pcall(function()
+    return job.request:mutate(job.token, function()
+      job.action_started = true
+      local body_ok, body_result = pcall(mutation_body, job)
+      if body_ok then return { success = true, value = body_result } end
+      local reason = tostring(body_result)
+      local rollback_ok, restored, rollback_error = pcall(rollback, job, job.phrase,
+        job.preimage, reason,job.restore_phrase)
+      if not rollback_ok then
+        rollback_error = "Rollback raised an error: " .. tostring(restored)
+        restored = nil
+        local evidence = {
+          operation = job.kind, instrument = job.instrument,
+          phrase = job.target_phrase or job.phrase,
+          baseline = blocker_baseline(job), committed_baseline = job.final_baseline,
+          draft_capture = job.request.draft_capture,
+          committed = job.committed == true,
+          pre_store = job.raw_before, pre_store_absent = job.raw_before == nil,
+          destination_phrases = job.inventory_before, reason = rollback_error,
+          recovery = job.phrase and phrase_index(job.instrument, job.phrase) and
+            { { instrument = job.instrument, phrase = job.phrase,
+              role = job.replace and "destination" or "created phrase" } } or {},
+        }
+        local recorded = false
+        if type(job.request.record_blocker) == "function" then
+          local ok, result = pcall(function()
+            return job.request:record_blocker(job.token, evidence)
+          end)
+          recorded = ok and result == true
+        end
+        if not recorded then
+          integrity_errors[job.song] = "Phrase rollback raised an error and its recovery blocker could not be recorded"
+          set_diagnostic("transaction.blocker_recording", integrity_errors[job.song])
+        end
+      end
+      if not restored then return { success = false, blocked = true, reason = rollback_error } end
+      return { success = false, cancelled = job.cancel_requested,
+        reason = job.cancel_requested and (job.cancel_reason or reason) or reason }
+    end)
+  end)
+  job.mutating = false
+  local outcome = mutation_ok and mutation_result or nil
+  if not mutation_ok then
+    local reason = tostring(mutation_result)
+    local status = job.action_started and "integrity_blocked" or "failed"
+    if job.action_started and type(job.request.record_blocker) == "function" then
+      local evidence = { operation = job.kind, instrument = job.instrument,
+        phrase = job.target_phrase or job.phrase, baseline = blocker_baseline(job),
+        committed_baseline = job.final_baseline, committed = job.committed == true,
+        pre_store = job.raw_before, pre_store_absent = job.raw_before == nil,
+        destination_phrases = job.inventory_before, reason = reason,
+        recovery = job.phrase and phrase_index(job.instrument, job.phrase) and
+          { { instrument = job.instrument, phrase = job.phrase, role = job.replace and "destination" or "created phrase" } } or {} }
+      pcall(function() job.request:record_blocker(job.token, evidence) end)
+    end
+    local result = failure(job.request, status == "integrity_blocked" and
+      "transaction.rollback" or "safety.mutation", status == "integrity_blocked" and
+      "integrity" or "safety", reason, status)
+    result.target = target_result(job, job.target_phrase or job.phrase, job.target_index or job.final_index)
+    result.committed = job.committed == true
+    result.baseline = job.final_baseline
+    result.recovery = job.phrase and phrase_index(job.instrument, job.phrase) and
+      { { instrument = job.instrument, phrase = job.phrase,
+        role = job.replace and "destination" or "created phrase" } } or {}
+    result.integrity_blocked = status == "integrity_blocked"
+    finish_job(job, result)
+    return
+  end
+  if type(outcome) ~= "table" then
+    finish_job(job, failure(job.request, "transaction.mutation_result", "transaction",
+      "Synchronous mutation returned no transaction result", "integrity_blocked"))
+    return
+  end
+  if not outcome.success then
+    local cancelled = outcome.cancelled == true and not outcome.blocked
+    local result = failure(job.request,
+      outcome.blocked and "transaction.rollback" or cancelled and "safety.cancelled" or "transaction.commit",
+      outcome.blocked and "integrity" or cancelled and "safety" or "transaction",
+      outcome.reason, outcome.blocked and "integrity_blocked" or cancelled and "cancelled" or "failed")
+    result.target = target_result(job, job.target_phrase, job.target_index)
+    result.committed = job.committed == true
+    result.baseline = job.final_baseline
+    result.recovery = job.phrase and phrase_index(job.instrument, job.phrase) and
+      { { instrument = job.instrument, phrase = job.phrase, role = "destination" } } or {}
+    result.integrity_blocked = outcome.blocked == true
+    finish_job(job, result)
+    return
+  end
+  local value = outcome.value
+  local diagnostics = job.output.approximations
+  if job.profile.diagnostic then diagnostics[#diagnostics + 1] = job.profile.diagnostic end
+  local message = string.format("Phrase %02d generated (%d notes, %d OFF). Instrument %02X.",
+    job.final_index, value.counts.notes, value.counts.offs, job.instrument_index - 1)
+  local result = {
+    kind = "success", status = #diagnostics > 0 and "approximate" or "committed",
+    token = job.token, epoch = job.epoch, request = job.request, phrase = value.phrase,
+    verified = true, committed = true, reason = nil,
+    code = #diagnostics > 0 and "capability.approximate" or "phrase.committed",
+    category = #diagnostics > 0 and "capability" or "transaction",
+    message = message, diagnostics = diagnostics,
+    target = target_result(job, value.phrase, job.final_index), counts = value.counts,
+    id = job.id, baseline = value.baseline, recovery = {}, integrity_blocked = false,
+  }
+  finish_job(job, result)
 end
 
 local function admit(request, done, kind)
-  local ok, accepted, rejection = pcall(function()
-    if type(request) == "table" and request.kind ~= kind then
-      return false, failure(request, "source.request_kind", "source", "Request kind does not match " .. kind)
-    end
-    return start(request, done, kind)
-  end)
-  if not ok then
-    return false, failure(request, "safety.preflight", "safety",
-      "Cannot inspect the phrase request safely: " .. tostring(accepted))
+  if current or delivering then return false, failure(request, "transaction.busy", "transaction", "ACID is already generating a phrase") end
+  local requested_song = type(request) == "table" and request.song or nil
+  if integrity_errors[requested_song] then
+    return false, failure(request, "transaction.integrity_blocked", "integrity", integrity_errors[requested_song], "integrity_blocked")
   end
-  return accepted, rejection
+  local built, job, rejection = pcall(prepare, request, done, kind)
+  if not built then return false, failure(request, "safety.preflight", "safety", "Cannot inspect the phrase request safely: " .. tostring(job)) end
+  if not job then return false, rejection end
+  current = job
+  execute(job)
+  return true
 end
 
 function M.create(request, done)
@@ -1823,59 +763,21 @@ function M.regenerate(request, done)
   return admit(request, done, "regenerate")
 end
 
--- Cancellation invalidates commit authorization. Returning true only reports a
--- matching known job; it never retires the writer slot. A compile-wait or
--- clear-wait job can settle synchronously. An in-flight native render remains
--- occupied until its callback arrives.
 function M.cancel(token, reason)
   local job = current
-  if not job then return false end
-  local job_token = job.released and released_token or job.token
-  if not rawequal(job_token, token) then return false end
-  if job.blocker_recording then return true end
-  job.cancelled = true
+  if not job or not rawequal(job.token, token) then return false end
+  job.cancel_requested = true
   job.cancel_reason = reason or "Generation cancelled"
-  -- Recording recovery evidence invalidates the request from inside the writer;
-  -- that revocation must not settle the job before its terminal evidence.
-  if job.blocker_recorded or job.released then return true end
-  if job.render_started then return true end
-  if job.runner then job.runner:cancel() end
-  terminal_failure(job, "cancelled", "transaction.cancelled", "transaction", job.cancel_reason)
   return true
 end
 
--- Release drops musical host references, temporary registrations and GUI delivery.
--- Failed notifier removal retains only exact subscription refs for cleanup retry.
--- The neutral stage remains as explicitly reported recovery material.
 function M.release()
   local job = current
-  if not job then return end
-  if job.released then return end
-  if not job.render_started then
-    M.cancel(job.token, "Document released")
-    return
-  end
-  local token, epoch = job.token, job.epoch
-  local diagnostics = job.diagnostic and job.diagnostic.message or nil
-  release_store_candidate(job)
-  job.released,job.cancelled=true,true
-  unlink(job)
-  forget_job_temporaries(job)
-  local cleanup={runner=job.runner,idle_observer=job.idle_observer,on_idle=job.on_idle,
-    clear_observer=job.clear_observer,on_clear_commit=job.on_clear_commit,
-    cleanup_diagnostic=job.cleanup_diagnostic}
-  for key in pairs(job) do job[key] = nil end
-  for key,value in pairs(cleanup) do job[key]=value end
-  job.token, job.epoch = token, epoch
-  job.released, job.cancelled = true, true
-  job.cancel_reason = "Document released during native rendering"
-  job.diagnostic = diagnostics and { code = "transaction.released", message = diagnostics } or nil
-  released_token = token
-  set_diagnostic("transaction.released",
-    "Document released during native rendering. The neutral phrase '" .. M.PHRASE_NAME ..
-    "' remains in the released song as recovery material. Do not edit or delete it while rendering may still use it. " ..
-    "If the callback never arrives, restart Renoise before generating again.")
-  return last_diagnostic.message
+  if not job then return nil end
+  job.released = true
+  job.cancel_requested = true
+  job.cancel_reason = "Document released"
+  return "The synchronous phrase operation will roll back before it settles."
 end
 
 return M

@@ -28,7 +28,7 @@ local lines=assert(signals.release_lines(tl,4))
 assert(#lines==1 and lines[1]==19)
 assert(not signals.compile(p,{gate_fraction=0}))
 assert(not signals.release_lines(tl,3))
-local gate_writer=require("writers.gate_writer")
+local gate_writer=require("reference.gate_writer")
 local cells={}
 for i=1,32 do cells[i]={note_value=121} end
 local phrase={}

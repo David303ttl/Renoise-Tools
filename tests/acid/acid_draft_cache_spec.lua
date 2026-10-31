@@ -5,6 +5,14 @@ local ownership=require("renoise.phrase_ownership")
 ownership.id=function(phrase) return phrase and phrase.id end
 ownership.status=function(phrase)return phrase and phrase.id and "owned" or "foreign" end
 dofile("tests/acid/draft_baseline_stub.lua")
+local validator=require("writers.phrase_validator")
+local retained_snapshots=setmetatable({},{__mode="k"})
+local retain_baseline=validator.retained_baseline
+validator.retained_baseline=function(snapshot)
+  local sealed,index,identity,reference=retain_baseline(snapshot)
+  if sealed then retained_snapshots[sealed]=true end
+  return sealed,index,identity,reference
+end
 local cache = require("runtime.draft_cache")
 
 local instrument_a, instrument_b = {name="A",phrases={}}, {name="B",phrases={}}
@@ -45,6 +53,28 @@ restored.pitch_events[3].accent = false
 local pristine,_,pristine_pb = cache.get(song_a, instrument_a, phrase_a)
 assert(pristine.time_events[17] == "R" and pristine.pitch_events[3].accent)
 assert(pristine_pb==24)
+
+-- A sealed native baseline remains private even when exposed through recovery.
+local private_instrument={name="Private baseline",phrases={}}
+local private_phrase={id=56,baseline_revision=911}
+private_instrument.phrases[1]=private_phrase
+local private_song={instruments={private_instrument}}
+assert(pattern_store.save(private_song,private_phrase.id,sequencer.new_pattern(2),"repeat",0))
+assert(cache.put(private_song,private_instrument,private_phrase,sequencer.new_pattern(2),"repeat",0))
+local private_snapshot
+for snapshot in pairs(retained_snapshots) do
+  if snapshot.content==911 then private_snapshot=snapshot end
+end
+assert(private_snapshot and private_snapshot.content==911,
+  "draft proof retains the validator-sealed native snapshot")
+assert(cache.detach(private_song,private_instrument,private_phrase,"Private snapshot check"))
+local recovery_copy=assert(cache.list(private_song)[1])
+assert(recovery_copy.baseline and recovery_copy.baseline.snapshot and
+  not rawequal(recovery_copy.baseline.snapshot,private_snapshot),
+  "recovery callers receive a detached snapshot copy")
+recovery_copy.baseline.snapshot.content=-1
+assert(private_snapshot.content==911,
+  "mutating a recovery result cannot alter the retained native proof")
 
 -- All three host object identities scope a draft independently.
 assert(cache.put(song_a, instrument_a, phrase_b, sequencer.new_pattern(8), "repeat"))

@@ -7,81 +7,16 @@ local CAPACITY_LINES=257
 local CAPACITY_NOTE_COLUMNS=4
 local CAPACITY_EFFECT_COLUMNS=2
 
-local idle_handlers={}
-local committed_handlers={}
-local function observable(handlers)
-  return {
-    add_notifier=function(_,callback) handlers[callback]=true end,
-    remove_notifier=function(_,callback) handlers[callback]=nil end,
-    has_notifier=function(_,callback) return handlers[callback]==true end,
-    fire=function()
-      local pending={}
-      for callback in pairs(handlers) do pending[#pending+1]=callback end
-      for _,callback in ipairs(pending) do callback() end
-    end
-  }
-end
-local idle,committed=observable(idle_handlers),observable(committed_handlers)
 local instrument
-local render_calls={}
-local EMPTY_SCRIPT_DIAGNOSTIC="compile error: no script content present."
-local script={paragraphs={},compile_error='',runtime_error='',
-  parameters={},pending_changes=0,editor_visible=true,committed_observable=committed}
-function script:commit()
-  self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
-  self.runtime_error=""
-  local on_idle
-  on_idle=function()
-    idle:remove_notifier(on_idle)
-    committed:fire()
-  end
-  idle:add_notifier(on_idle)
-end
-local function make_script()
-  return setmetatable({paragraphs={},compile_error='',runtime_error='',parameters={},
-    pending_changes=0,editor_visible=true},{__index=script})
-end
-function script:render_to_pattern(options,callback)
-  local source=assert(self.paragraphs[1])
-  local values=assert(source:match('local values = { (.-) }\nreturn pattern'))
-  local phrase=instrument.phrases[#instrument.phrases]
-  local total_steps,notes,offs=0,0,0
-  for token in (values..','):gmatch('(.-),') do
-    local volume=tonumber(token:match('volume = ([%d.]+)'))
-    local note=token:match('key = (%d+)')
-    if volume then
-      phrase.cells[(total_steps-1)*4+1].volume_value=volume==1 and 255 or 89
-    end
-    if note then
-      total_steps=total_steps+1;notes=notes+1
-      local line=(total_steps-1)*4+1
-      phrase.cells[line].note_value=tonumber(note)
-    elseif token:find('"off"',1,true) then
-      total_steps=total_steps+1;offs=offs+1
-      phrase.cells[(total_steps-1)*4+1].note_value=120
-    elseif token:match('^%s*false%s*$') then
-      total_steps=total_steps+1
-    end
-  end
-  if options.lpb==12 then
-    assert(source:find('unit = "1/8"',1,true) and source:find('resolution = 2/3',1,true))
-  else
-    assert(options.lpb==16 and source:find('unit = "1/16"',1,true))
-  end
-  assert(options.max_events==total_steps)
-  render_calls[#render_calls+1]={max_events=options.max_events,steps=total_steps,
-    notes=notes,offs=offs}
-  callback(nil,notes+offs,0)
-  return true
-end
 
 local function make_phrase()
-  local phrase={script=make_script(),name='',number_of_lines=16,lpb=16,shuffle=0,
+  local phrase={name='',number_of_lines=16,lpb=16,shuffle=0,
     playback_mode=1,key_tracking=1,base_note=48,autoseek=false,
     visible_note_columns=1,visible_effect_columns=0,loop_start=1,loop_end=16,looping=false,
     instrument_column_visible=false,volume_column_visible=false,
     panning_column_visible=false,delay_column_visible=false,
-    sample_effects_column_visible=false,cells={}}
+    sample_effects_column_visible=false,
+    script={paragraphs={},parameters={},pending_changes=0,editor_visible=true},cells={}}
   local function blank()
     return {note_value=121,instrument_value=255,volume_value=255,
       panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}
@@ -126,8 +61,7 @@ _G.renoise={
     MAX_NUMBER_OF_NOTE_COLUMNS=CAPACITY_NOTE_COLUMNS,
     MAX_NUMBER_OF_EFFECT_COLUMNS=CAPACITY_EFFECT_COLUMNS},
   Instrument={PHRASES_PLAY_SELECTIVE=2,MAX_NUMBER_OF_PHRASES=126},
-  song=function() return song end,
-  tool=function() return {app_idle_observable=idle} end
+  song=function() return song end
 }
 
 local writer=require('writers.phrase_writer')
@@ -159,7 +93,6 @@ end
 local function generate(pattern,policy,target_index,options,instrument_index)
   local ok,err=start(pattern,policy,target_index,options,instrument_index)
   assert(ok,type(err)=='table' and (tostring(err.code)..': '..tostring(err.message)) or err)
-  for _=1,6 do idle:fire() end
   local status=messages[#messages]
   assert(type(status)=='table' and (status.kind=='success' or status.kind=='failure'),
     'missing typed terminal result')
@@ -168,8 +101,8 @@ local function generate(pattern,policy,target_index,options,instrument_index)
   return instrument.phrases[target_index],status
 end
 
--- End-to-end source -> cycle plan -> pattrns render -> native phrase layout ->
--- ownership seal and transaction -> exact source round-trip at all grid lengths.
+-- End-to-end source -> output plan -> native phrase layout -> ownership seal
+-- and transaction -> exact source round-trip at all grid lengths.
 for _,length in ipairs({1,16,17,32}) do
   local pattern=source(length)
   local physical,layout=assert(output_planner.plan_output(pattern,'repeat',512))
@@ -207,9 +140,6 @@ for _,length in ipairs({1,16,17,32}) do
   assert(instrument.phrase_playback_mode==1 and instrument.phrase_program==3
     and instrument.phrase_editor_visible==false,
     'phrase generation changed instrument-wide trigger settings')
-  local render=render_calls[#render_calls]
-  assert(render.max_events==2*length and render.steps==2*length)
-  assert(render.notes==2*length and render.offs==0)
 end
 
 -- Mixed source semantics are carried across both the cold and steady cycle.
@@ -235,8 +165,6 @@ for line=1,137 do assert(rest_phrase.cells[line].note_value==121) end
 local rest_source,rest_policy=store.load(song,instrument,rest_phrase)
 assert(rest_source and rest_policy=='repeat' and rest_source.length==17)
 for step=1,17 do assert(rest_source.time_events[step]=='R') end
-local rest_render=render_calls[#render_calls]
-assert(rest_render.steps==34 and rest_render.notes==0 and rest_render.offs==0)
 
 -- Malformed over-limit input is refused before phrase insertion or persistence.
 local too_long=source(32)
@@ -307,7 +235,7 @@ local slide_target=#instrument.phrases+1
 local slide_phrase,slide_status=generate(slide,'repeat',slide_target)
 assert(ownership.status(slide_phrase)=='owned')
 assert(slide_phrase.cells[1].note_value==35 and slide_phrase.cells[9].note_value==60)
-assert(slide_status.message:find('Articulation approximation:',1,true),
+assert(slide_status.status=='approximate' and #slide_status.diagnostics>0,
   'slide or connected accent limitations must be reported as nonfatal')
 
 -- Capability inspection is read-only and all target classes receive a native phrase.
@@ -346,7 +274,8 @@ for _,item in ipairs(targets) do
     item.name..' target settings were changed')
   if item.name=='empty' then
     assert(phrase.cells[9].note_value==60)
-    assert(status.message:find('silent',1,true), 'empty target must report that playback is silent')
+    assert(status.status=='approximate' and #status.diagnostics>0,
+      'empty target must report its reduced playback fidelity')
   elseif item.name~='sample' then
     local onset=phrase:line(9).note_columns
     assert(onset[2].note_value==60 and onset[2].delay_value==0,
@@ -355,9 +284,9 @@ for _,item in ipairs(targets) do
       'preceding note must release after the target NOTE')
     assert(phrase:line(13).note_columns[2].note_value==120,
       'REST must release the actual sounding column')
-    assert(not phrase.cells[9].effect_number_string,
+    assert(phrase.cells[9].effect_number_value==0,
       item.name..' target received a sample-only glide command')
-    assert(status.message:find('Articulation approximation:',1,true),
+    assert(status.status=='approximate' and #status.diagnostics>0,
       item.name..' target did not report reduced glide fidelity')
 
     -- A connected odd-length loop must preserve voice columns at both seams.
@@ -375,18 +304,19 @@ for _,item in ipairs(targets) do
     assert(ownership.status(looped)=='owned')
 
     -- Failure after native mutation cannot damage a sealed destination.
-    local emitter=require('writers.legato_writer')
-    local original_apply=emitter.apply
+    local materializer=require('writers.phrase_materializer')
+    local original_apply=materializer.apply
     local before_name,before_data=looped.name,song.tool_data
-    emitter.apply=function(destination,plan)
-      assert(original_apply(destination,plan))
-      return nil,'injected legato emission failure'
+    materializer.apply=function(destination,...)
+      local ok,actual,attempted=original_apply(destination,...)
+      if not ok then return ok,actual,attempted end
+      destination:line(1).note_columns[1].volume_value=1
+      return nil,'injected legato materialization failure',true
     end
     local failed
     assert(start(connected,'repeat',#instrument.phrases,nil,target_instrument,
       function(value)failed=value end))
-    for _=1,6 do idle:fire() end
-    emitter.apply=original_apply
+    materializer.apply=original_apply
     assert(failed.kind=='failure' and failed.status=='failed',failed.message)
     assert(looped.name==before_name and song.tool_data==before_data)
     assert(ownership.status(looped)=='owned' and #instrument.phrases==2,
@@ -407,7 +337,8 @@ phrase_pitch_bend.delivery_enabled=false
 local fallback,fallback_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
 assert(fallback:line(9).note_columns[2].note_value==43,
   'unverified phrase delivery must retain the target NOTE')
-assert(fallback_status.message:find('delivery is unavailable',1,true))
+assert(fallback_status.status=='approximate' and
+  table.concat(fallback_status.diagnostics,' '):find('delivery is unavailable',1,true))
 local _,_,fallback_range=store.load(song,instrument,fallback)
 assert(fallback_range==12,'fallback discarded the selected receiver range')
 for line=1,fallback.number_of_lines do
@@ -423,7 +354,8 @@ phrase_pitch_bend.delivery_enabled=true
 -- New destination instead of reinterpreting that committed baseline.
 bend_target=#instrument.phrases+1
 local bent,bent_status=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
-assert(bent_status.message:find('depends on the receiver and routing',1,true),
+assert(bent_status.status=='approximate' and
+  table.concat(bent_status.diagnostics,' '):find('depends on the receiver and routing',1,true),
   'enabled phrase commands must not imply receiver delivery is verified')
 assert(ownership.status(bent)=='owned')
 local saved_bend,saved_policy,saved_range=store.load(song,instrument,bent)
@@ -453,111 +385,87 @@ assert(ownership.status(bent)=='owned')
 
 local bend_id=ownership.id(bent)
 local off=generate(bend_source,'repeat',bend_target,{pb_range=0},2)
-assert(off==bent and ownership.id(off)==bend_id and ownership.status(off)=='owned')
+local off_id=assert(ownership.id(off))
+assert(rawequal(off,bent) and off_id~=bend_id and ownership.status(off)=='owned')
 local off_source,_,off_range=store.load(song,instrument,off)
 assert(off_range==0 and same_source(off_source,bend_source))
 assert(off:line(9).note_columns[2].note_value==43,'PB Off lost the overlap route')
 bent=generate(bend_source,'repeat',bend_target,{pb_range=12},2)
-assert(bent==off and ownership.id(bent)==bend_id)
+assert(rawequal(bent,off) and ownership.id(bent)~=off_id)
+local revisions=assert(store.read(song))
+assert(revisions[bend_id] and revisions[off_id] and revisions[ownership.id(bent)],
+  'PB range regeneration did not retain each immutable source revision')
 
--- Corrupting a staged MIDI payload must fail verification and preserve last-good output.
-local bend_emitter=require('writers.legato_writer')
-local original_bend_apply=bend_emitter.apply
+-- Corrupting direct MIDI materialization must fail verification and preserve
+-- the last-good phrase and source.
+local bend_materializer=require('writers.phrase_materializer')
+local original_bend_apply=bend_materializer.apply
 local bend_name,bend_data,bend_count=bent.name,song.tool_data,#instrument.phrases
-bend_emitter.apply=function(destination,plan)
-  local ok,err=original_bend_apply(destination,plan)
-  if not ok then return ok,err end
-  for line in pairs(plan.midi_commands or {}) do
-    local effect=destination:line(line).effect_columns[1]
-    effect.amount_value=(effect.amount_value+1)%128
-    break
+bend_materializer.apply=function(destination,...)
+  local ok,actual,attempted=original_bend_apply(destination,...)
+  if not ok then return ok,actual,attempted end
+  for line=1,destination.number_of_lines do
+    local carrier=destination:line(line).note_columns[destination.visible_note_columns]
+    if carrier.panning_string=='M1' then
+      local effect=destination:line(line).effect_columns[1]
+      effect.amount_value=(effect.amount_value+1)%128
+      return nil,'Pitch-bend command mismatch',true
+    end
   end
-  return true
+  return nil,'Expected pitch-bend command was not materialized',true
 end
 local bend_failure
 assert(start(bend_source,'repeat',bend_target,{pb_range=12},2,
   function(value)bend_failure=value end))
-for _=1,6 do idle:fire() end
-bend_emitter.apply=original_bend_apply
+bend_materializer.apply=original_bend_apply
 assert(bend_failure.kind=='failure' and bend_failure.status=='failed',bend_failure.message)
 assert(bend_failure.message:find('Pitch-bend command mismatch',1,true),bend_failure.message)
 assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
-assert(ownership.status(bent)=='owned','corrupted staged M1 damaged the last-good destination')
--- In-flight receiver movement must preserve the last-good phrase.
-local reorder_failure
-assert(start(bend_source,'repeat',bend_target,{pb_range=12},2,
-  function(value)reorder_failure=value end))
+-- A receiver moved after capture invalidates the frozen request before it can
+-- touch the phrase, source store, or phrase inventory.
+local reorder_request=assert(writer_request.build(song,2,bend_source,bend_target,
+  {output_policy='repeat',pb_range=12}))
+local reorder_calls=0
 song.instruments[1],song.instruments[2]=song.instruments[2],song.instruments[1]
-for _=1,6 do idle:fire() end
+local reorder_ok,reorder_failure=writer.regenerate(reorder_request,function()reorder_calls=reorder_calls+1 end)
 song.instruments[1],song.instruments[2]=song.instruments[2],song.instruments[1]
-assert(reorder_failure and reorder_failure.status=='suspended')
-assert(reorder_failure.message:find('target instrument changed',1,true),reorder_failure.message)
+assert(not reorder_ok and reorder_calls==0 and reorder_failure.status=='failed')
 assert(#instrument.phrases==bend_count and song.tool_data==bend_data and bent.name==bend_name)
-assert(ownership.status(bent)=='owned','instrument reorder damaged the last-good phrase')
+assert(ownership.status(bent)=='owned','receiver movement damaged the last-good phrase')
 phrase_pitch_bend.delivery_enabled=true
 instrument=original_instrument
--- An edit saved during asynchronous rendering must not reject the source commit
--- or discard the newer draft that Live Edit will apply next.
-local original_render=script.render_to_pattern
-local delayed_options,delayed_callback
-function script:render_to_pattern(options,callback)
-  delayed_options,delayed_callback=options,callback
-  return true
-end
-local render_status
-local rendering_source=source(4)
-local latest_source=source(5)
-local count_before=#instrument.phrases
-dofile("tests/acid/draft_baseline_stub.lua")
--- The shared draft stub pins full-size API bounds; keep this fixture's explicit
--- capacities so native snapshots match its bounded cells.
-renoise.InstrumentPhrase.MAX_NUMBER_OF_LINES=CAPACITY_LINES
-renoise.InstrumentPhrase.MAX_NUMBER_OF_NOTE_COLUMNS=CAPACITY_NOTE_COLUMNS
-renoise.InstrumentPhrase.MAX_NUMBER_OF_EFFECT_COLUMNS=CAPACITY_EFFECT_COLUMNS
-assert(start(rendering_source,'repeat',1,nil,1,function(value)render_status=value end))
-for _=1,6 do idle:fire() end
-assert(delayed_callback,'native render did not start')
-local draft_cache=require('runtime.draft_cache')
-assert(draft_cache.put(song,instrument,instrument.phrases[1],latest_source,'repeat'))
-script.render_to_pattern=original_render
-local pending_stage=instrument.phrases[#instrument.phrases]
-original_render(pending_stage.script,delayed_options,delayed_callback)
-for _=1,6 do idle:fire() end
-assert((render_status.kind=='success' or render_status.kind=='failure') and
-  (render_status.status=='committed' or render_status.status=='approximate'),render_status.message)
-assert(store.load(song,instrument,instrument.phrases[1]).length==4)
-assert(not draft_cache.get(song,instrument,instrument.phrases[1]),
-  'a changed committed baseline cannot restore the newer source edit automatically')
-assert(draft_cache.list(song)[1].pattern.length==5,
-  'a changed committed baseline preserves the newer source edit for recovery')
-assert(#instrument.phrases==count_before and ownership.status(instrument.phrases[1])=='owned',
-  'ordinary in-flight editing left a recovery or staging phrase')
--- A transport change while the native renderer runs cannot replace last-good output.
-local timing_destination=instrument.phrases[1]
-local timing_name,timing_data=timing_destination.name,song.tool_data
-delayed_callback=nil
-function script:render_to_pattern(options,callback)
-  delayed_options,delayed_callback=options,callback
-  return true
-end
-assert(start(source(6),'repeat',1,nil,1,function(value)render_status=value end))
-for _=1,6 do idle:fire() end
-assert(delayed_callback,'native render did not start for timing change')
-song.transport.timing_model=renoise.Transport.TIMING_MODEL_SPEED
-script.render_to_pattern=original_render
-local timing_stage=instrument.phrases[#instrument.phrases]
-original_render(timing_stage.script,delayed_options,delayed_callback)
-for _=1,6 do idle:fire() end
-assert(render_status.status=='suspended' and
-  render_status.message:find('unsupported timing',1,true),render_status.message)
-assert(instrument.phrases[1]==timing_destination and timing_destination.name==timing_name)
-assert(song.tool_data==timing_data and #instrument.phrases==count_before)
-assert(ownership.status(timing_destination)=='owned')
-assert(song.transport.timing_model==renoise.Transport.TIMING_MODEL_SPEED)
-song.transport.timing_model=renoise.Transport.TIMING_MODEL_LPB
-print('ACID Repeat end-to-end mocked integration checks passed (playback checked separately in Renoise)')
 
--- Exercise both pulse modes through rendering and protected replacement.
+-- A newer durable draft written at the mutation boundary survives the exact
+-- captured source revision commit.
+local draft_source=source(4)
+local newer_draft=source(5)
+assert(store.write_draft(song,instrument,instrument.phrases[1],draft_source,'repeat',0))
+local draft_phrase_count=#instrument.phrases
+local draft_target=instrument.phrases[1]
+local draft_descriptor={kind='existing',instrument=instrument,phrase=draft_target,
+  token={},revision=1}
+local draft_request=assert(writer_request.build(song,1,source(6),1,
+  {output_policy='repeat',draft_capture=draft_descriptor}))
+local mutate=draft_request.mutate
+local newer_draft_row
+function draft_request:mutate(token,action)
+  assert(store.write_draft(song,instrument,draft_target,newer_draft,'repeat',0))
+  newer_draft_row=assert(song.tool_data:match("DRAFT|[^\r\n]+"))
+  return mutate(self,token,action)
+end
+local draft_result,captured_calls
+captured_calls=0
+assert(writer.regenerate(draft_request,function(value)draft_result=value;captured_calls=captured_calls+1 end))
+assert(captured_calls==1 and
+  (draft_result.status=='committed' or draft_result.status=='approximate'))
+assert(newer_draft_row and song.tool_data:find(newer_draft_row,1,true),
+  'revision commit removed a newer draft bound to the old immutable source ID')
+assert(store.read_draft(song,instrument,draft_target)==nil,
+  'old-revision draft was attached to the phrase’s new immutable ID')
+assert(#instrument.phrases==draft_phrase_count and ownership.status(draft_target)=='owned')
+print('ACID Repeat end-to-end direct output checks passed (playback checked separately in Renoise)')
+
+-- Exercise both pulse modes through direct materialization and replacement.
 for _,policy in ipairs({'play_once','repeat'}) do
   for _,length in ipairs({1,17}) do
     local timed=source(length)
@@ -589,7 +497,7 @@ for _,policy in ipairs({'play_once','repeat'}) do
   end
 end
 local saved_data=song.tool_data
-local saved_count,saved_renders=#instrument.phrases,#render_calls
+local saved_count=#instrument.phrases
 local allocate=store.allocate
 store.allocate=function() error('unsupported timing must not allocate an ID') end
 for _,case in ipairs({{renoise.Transport.TIMING_MODEL_SPEED},{99},{}}) do
@@ -599,7 +507,6 @@ for _,case in ipairs({{renoise.Transport.TIMING_MODEL_SPEED},{99},{}}) do
     local started,detail=start(source(4),'repeat',target)
     assert(not started and detail.code=='safety.timing_model')
     assert(song.tool_data==saved_data and #instrument.phrases==saved_count)
-    assert(#render_calls==saved_renders and song.transport.timing_model==model)
   end
 end
 local lpb_model=renoise.Transport.TIMING_MODEL_LPB
@@ -607,11 +514,8 @@ renoise.Transport.TIMING_MODEL_LPB=nil
 song.transport.timing_model=nil
 local missing_started,missing_detail=start(source(4),'repeat',#instrument.phrases+1)
 assert(not missing_started and missing_detail.code=='safety.timing_model')
-assert(song.tool_data==saved_data and #instrument.phrases==saved_count and #render_calls==saved_renders)
+assert(song.tool_data==saved_data and #instrument.phrases==saved_count)
 renoise.Transport.TIMING_MODEL_LPB=lpb_model
 store.allocate=allocate
 song.transport.timing_model=renoise.Transport.TIMING_MODEL_LPB
 song.transport.groove_enabled=true
-local _,timing_status=generate(source(4),'repeat',#instrument.phrases+1)
-assert(timing_status.message:find('Song groove',1,true))
-assert(song.transport.timing_model==renoise.Transport.TIMING_MODEL_LPB and song.transport.groove_enabled)

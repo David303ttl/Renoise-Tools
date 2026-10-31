@@ -15,7 +15,7 @@ return function(capacities)
     volume_column_visible=true,panning_column_visible=false,delay_column_visible=false,
     sample_effects_column_visible=false,script={paragraphs={},parameters={},pending_changes=0,editor_visible=true},
     mapping=nil,lines={},column_names={},column_mutes={}}
-  for column=1,max_note_columns do phrase.column_names[column]='column '..column;phrase.column_mutes[column]=false end
+  for column=1,12 do phrase.column_names[column]='column '..column;phrase.column_mutes[column]=false end
   function phrase:column_name(column)return self.column_names[column]end
   function phrase:column_is_muted(column)return self.column_mutes[column]end
   function phrase:line(index)return self.lines[index]end

@@ -65,8 +65,8 @@ song tool data and recover after saving and reopening the XRNS. If a new draft
 has an ambiguous destination or persistence fails, it remains available in the
 open session and ACID reports the unsaved state. Give a new draft's instrument
 a unique name or generate its phrase before closing the song. ACID protects
-foreign or modified phrases and uses staged rendering, ownership checks, source persistence and
-rollback before replacing an owned phrase. The current WIP source schema is
+foreign or modified phrases and uses ownership checks, source persistence and
+verified rollback when updating an owned phrase in place. The current WIP source schema is
 `ACID-PITCH-TIME-1`. With Live Edit off,
 the source is marked dirty until a successful Generate applies the draft.
 
@@ -86,12 +86,18 @@ The original recovery entry remains until that exact copied revision creates a
 phrase or you explicitly discard it. Detached recovery entries are session-only;
 save or generate wanted drafts before closing the song.
 
-Create needs one free phrase slot; regenerate needs two for staging and a
-verified backup. An in-flight native render retains its slot until its callback
-settles, including after cancellation. If cleanup or rollback cannot be verified,
+Create needs one free phrase slot. Regenerate updates the exact existing phrase
+without inserting, deleting or reordering phrases, including when its instrument
+has no free phrase slots. The write completes inside the initiating user action.
+Each successful generation receives a fresh source revision ID; older source
+rows remain in the song so native Undo and Redo can restore matching music,
+source and settings. The revision number in the phrase name changes while its
+position and native phrase object stay the same. This increases stored source
+data with committed revisions.
+If cleanup or rollback cannot be verified,
 ACID blocks further writes and retains recovery evidence. **Revalidate** checks
 consistency without rendering, repairing ownership or deleting recovery objects.
-It requires the native render to have settled and recorded recovery objects to
+It requires the writer to be idle and recorded recovery objects to
 be absent. Use native undo or a known-good saved song when consistency cannot be
 established, then explicitly Generate or edit after successful revalidation.
 

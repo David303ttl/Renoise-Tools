@@ -40,7 +40,7 @@ io.open = function(path, mode)
   end
   return original_open(path, mode)
 end
-local active, last_done, last_request
+local active, last_done, last_request, committed_baseline
 local mock = assert((loadstring or load)([[
   local module={}
   function module.create(request,done)
@@ -81,12 +81,10 @@ local function terminal(kind, status, message)
   local request = assert(last_request or (active and active.request))
   if kind == "success" then
     local phrase = instrument.phrases[#instrument.phrases]
+    local baseline = assert(committed_baseline, "successful capture fixture has no retained baseline")
     return { kind = "success", status = status or "committed", verified = true,
       token = request.token, epoch = request.epoch, request = request, phrase = phrase,
-      message = message, diagnostics = {},
-      baseline = { source = request.source,
-        settings = { output_policy = request.output_policy, pb_range = request.pb_range },
-        snapshot = {}, planning_inputs = request.planning_inputs } }
+      id = baseline.id, message = message, diagnostics = {}, baseline = baseline }
   end
   return { kind = "failure", status = status or "failed", verified = false,
     token = request.token, epoch = request.epoch, request = request, phrase = nil,
@@ -149,12 +147,58 @@ for _, id in ipairs({"one_shot_note_tail_bpm_120", "one_shot_tie_tail_bpm_120",
 end
 run("isolated_note")
 assert(received.output_policy == "play_once")
-local phrase = { name = "ACID 0.1 #8 [v3:00000000]", number_of_lines = 1 }
-function phrase:line()
-  return { note_columns = {{note_value=48,instrument_value=255,volume_value=89,
-    panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}} }
+local phrase = dofile("tests/acid/complete_phrase_fixture.lua")()
+local fixture_line=phrase.line
+function phrase:line(line_index)
+  local line=fixture_line(self,line_index)
+  if not line then return nil end
+  for _,cell in ipairs(line.note_columns) do
+    cell.is_empty=(cell.note_value==121 or cell.note_value==nil) and
+      (cell.instrument_value or 255)==255 and (cell.volume_value or 255)==255 and
+      (cell.panning_value or 255)==255 and (cell.delay_value or 0)==0 and
+      (cell.effect_number_value or 0)==0 and (cell.effect_amount_value or 0)==0
+  end
+  for _,cell in ipairs(line.effect_columns) do
+    cell.is_empty=(cell.number_value or 0)==0 and (cell.amount_value or 0)==0
+  end
+  return line
 end
+local phrase_request = received.request
+local phrase_ownership = require("renoise.phrase_ownership")
+local pattern_store = require("renoise.pattern_store")
+local phrase_capabilities = require("renoise.target_capabilities")
+local output_planner = require("model.output_planner")
+local phrase_materializer = require("writers.phrase_materializer")
+local phrase_validator = require("writers.phrase_validator")
+local phrase_pitch_bend = require("writers.phrase_pitch_bend")
+local capacities = phrase_request.capacities
+local profile = assert(phrase_capabilities.inspect(instrument))
+local plan = assert(output_planner.plan(phrase_request.source, phrase_request.output_policy,
+  phrase_request.pb_range, capacities, profile,
+  {pitch_bend_delivery=phrase_pitch_bend.delivery_enabled}))
+local before = assert(phrase_ownership.snapshot(phrase, capacities))
+assert(phrase_materializer.apply(phrase, plan.expected, plan.required_visibility, before, capacities))
+for line_index=1,capacities.max_lines do
+  local line=phrase:line(line_index)
+  for column=1,capacities.max_note_columns do
+    local cell=line:note_column(column)
+    cell.is_empty=(cell.note_value==121 or cell.note_value==nil) and
+      (cell.instrument_value or 255)==255 and (cell.volume_value or 255)==255 and
+      (cell.panning_value or 255)==255 and (cell.delay_value or 0)==0 and
+      (cell.effect_number_value or 0)==0 and (cell.effect_amount_value or 0)==0
+  end
+  for column=1,capacities.max_effect_columns do
+    local cell=line:effect_column(column)
+    cell.is_empty=(cell.number_value or 0)==0 and (cell.amount_value or 0)==0
+  end
+end
+phrase.name = assert(phrase_ownership.make_name(phrase, 8))
 instrument.phrases[8] = phrase
+assert(pattern_store.save(song, 8, phrase_request.source, phrase_request.output_policy, phrase_request.pb_range))
+local classified = assert(phrase_validator.classify(song, instrument, phrase, profile, capacities,
+  {pitch_bend_delivery=phrase_pitch_bend.delivery_enabled}))
+committed_baseline = {id=8, source=classified.source, settings=classified.settings,
+  snapshot=classified.baseline, planning_inputs=classified.planning_inputs}
 complete("committed", "Phrase 08 generated (1 notes, 0 OFF; 1 raw events). Instrument 00.")
 assert(closed and instrument.phrase_program == 8)
 assert(output:find("phrase.line.1=48,255,89,255,0,0,0", 1, true),

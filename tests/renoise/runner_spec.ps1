@@ -649,7 +649,10 @@ $coldAcceptanceFunction = $runnerAst.Find({ param($node)
 Assert ($null -ne $coldAcceptanceFunction -and $coldAcceptanceFunction.Extent.Text -match "Invoke-RenoiseDriverBootstrap" -and
     $coldAcceptanceFunction.Extent.Text -match "Assert-RenoiseProcessIdentity") 'cold-process flow does not bootstrap and identity-check the newly launched host'
 Assert ($runnerAst.Extent.Text -match "-Case 'cold-reopen-regenerate'" -and $runnerAst.Extent.Text -match "-Case 'cold-reopen-verify'") 'cold-process round trip does not regenerate and reopen its saved generation'
-Assert ($runnerAst.Extent.Text -match "case = 'independence-undo-prepare'" -and
+Assert ($runnerAst.Extent.Text -match "'independence-undo-prepare'" -and
+    $runnerAst.Extent.Text -match "'revision-undo-prepare'" -and
+    $runnerAst.Extent.Text -match "'revision-live-undo-prepare'" -and
+    $runnerAst.Extent.Text -match 'case = \$undoPrepareCase' -and
     $runnerAst.Extent.Text -match "-Keys '\{Enter\}'" -and
     $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'

@@ -166,7 +166,10 @@ for path in files:lines() do
   file:close()
 end
 assert(files:close())
-assert(sources.main and sources["model.articulation"] and sources["writers.gate_writer"], "runtime inventory is incomplete")
+assert(sources.main and sources["model.articulation"], "runtime inventory is incomplete")
+for _, name in ipairs({ "writers.script_runner", "writers.pattrns_writer", "writers.gate_writer", "writers.legato_writer" }) do
+  assert(not sources[name], name .. " must remain outside the release runtime")
+end
 assert(sources["runtime.context"], "runtime context interface is missing")
 assert(not sources["runtime.legacy_writer_adapter"], "obsolete writer adapter remains")
 assert(not sources["model.live_regen"], "competing Live Edit scheduler remains")
@@ -177,7 +180,7 @@ end
 validate(sources)
 dofile('tests/bootstrap.lua')('acid')
 local articulation = require("model.articulation")
-local gates = require("writers.gate_writer")
+local gates = require("reference.gate_writer")
 assert(articulation.apply == nil, "articulation must expose planning only")
 assert(gates.apply == nil and gates.plan == nil and gates.location == nil, "gate writer must expose planned application only")
 local writer = require("writers.phrase_writer")

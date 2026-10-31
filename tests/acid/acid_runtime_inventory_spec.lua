@@ -42,53 +42,87 @@ do
  assert(helper.eq_calls()==0,'inventory/drafts must use raw phrase identity')
 end
 
--- Native undo can restore a valid old phrase seal/content while the newer
--- committed source remains in song data. Reconciliation and Revalidate must
--- leave that association unavailable and preserve the phrase's draft.
+-- Native undo restores the phrase's immutable revision ID, which resolves its
+-- retained source row and detaches drafts from the newer revision.
 do
  local song,inst,a,_,source=fixture()
- song.selected_instrument,song.selected_phrase=inst,a
- local ctx=runtime(song)
- local draft=seq.copy_source(source)
- draft.pitch_events[1]=seq.new_pitch(5,0,false,false)
- assert(cache.put(song,inst,a,draft,'play_once',0,ctx:draft_options()))
- assert(ctx:bind_phrase(inst,a).kind=='owned')
-
+ local old_native=phrase(source,101)
  local newer=seq.copy_source(source)
  newer.pitch_events[1]=seq.new_pitch(8,0,false,false)
- assert(store.save(song,101,newer,'play_once',0))
- local saved_store=song.tool_data
+ local new_native=phrase(newer,103)
+ for key,value in pairs(new_native)do a[key]=value end
+ assert(store.save(song,103,newer,'play_once',0))
+ song.selected_instrument,song.selected_phrase=inst,a
+ local ctx=runtime(song)
+ assert(ctx:bind_phrase(inst,a).kind=='owned')
+ assert(ctx:target_state().baseline.id==103)
+ local draft=seq.copy_source(newer)
+ draft.pitch_events[1]=seq.new_pitch(5,0,false,false)
+ assert(cache.put(song,inst,a,draft,'play_once',0,ctx:draft_options()))
  local observer=observers.new()
  local host_observers=dofile('tests/acid/observer_host_fixture.lua')
  host_observers.attach(song)
+ song.is_undo_redoing=function(self)return self.undoing==true end
  assert(observer:attach(song,ctx))
 
- -- The phrase remains at its pre-edit state, matching its old valid seal.
+ -- Native undo restores the old name, ID and output in place.
+ for key,value in pairs(old_native)do a[key]=value end
  song.undoing=true
  a:fire_line_notifier()
  song.undoing=false
  observer:refresh()
- local reconciled=ctx:reconcile()
- assert(reconciled.kind=='unavailable',
-  'undo-restored phrase was accepted against the newer committed source')
- assert(rawequal(ctx:target_state().phrase,a),
-  'undo reconciliation replaced the explicit phrase target')
- assert(not cache.get(song,inst,a,ctx:draft_options()),
-  'mismatched committed baseline kept its old draft attached to the phrase')
+ local reconciled,effects=ctx:reconcile()
+ assert(reconciled.kind=='owned' and reconciled.baseline.id==101,
+  'undo did not resolve the restored immutable phrase revision: '..tostring(reconciled.kind)..' '..tostring(reconciled.reason)..' id='..tostring(reconciled.baseline and reconciled.baseline.id))
+ assert(effects and effects.native_revision_reconciled,
+  'undo reconciliation did not request editor hydration')
+ assert(rawequal(reconciled.phrase,a),'undo reconciliation replaced phrase object identity')
+ assert(ctx:editor_state()==nil,'stale editor values remained visible before revision hydration')
+ local restored,restore_error=ctx:restore_editor_target(inst,a,true)
+ assert(restored,tostring(restore_error))
+ assert(restored.source_available and seq.same_source(restored.source,source) and
+   restored.output_policy=='play_once' and restored.pb_range==0,
+   'restored ID did not hydrate the matching old source and settings')
+ assert(not restored.draft and seq.same_source(restored.source,ctx:editor_state().source),
+  'newer revision draft was attached to the restored phrase')
  local recovery=cache.list(song)
  assert(#recovery==1 and seq.same_source(recovery[1].pattern,draft),
-  'undo reconciliation did not retain the detached draft for recovery')
- assert(song.tool_data==saved_store,'undo reconciliation rewrote committed source data')
- assert(not ctx:request_generation('manual'),'incompatible undo association allowed generation')
- local status,proof=ctx:revalidation_status()
- assert(not status.verified and not proof and not status.blocked,
-  'Revalidate must not issue a proof when no integrity blocker exists')
- assert(not ctx:revalidate(proof),'Revalidate accepted missing recovery evidence')
- assert(song.tool_data==saved_store,
-  'Revalidate mutated committed source data')
- assert(ctx:bind_phrase(inst,a).kind=='unavailable',
-  'Revalidate made the mismatched phrase eligible')
+  'undo did not retain the newer revision draft as detached recovery')
+ assert(store.read_entry(song,101) and store.read_entry(song,103),
+  'native reconciliation removed an immutable source revision')
+ assert(ctx:generation_state().last_commit==nil,
+  'undo reconciliation unexpectedly committed a generated phrase')
  observer:detach()
+end
+
+-- Unrelated undo leaves the current editor draft attached; matching undo
+-- detaches it once, while a clean committed editor creates no recovery copy.
+do
+ local song,inst,a,b,source=fixture()
+ local ctx=runtime(song)
+ assert(ctx:restore_editor_target(inst,a))
+ local edited=seq.copy_source(source)
+ edited.pitch_events[1]=seq.new_pitch(7,0,false,false)
+ assert(ctx:transition('edit',{source=edited,output_policy='play_once',pb_range=0}))
+ assert(ctx:notify_native_change('undo',b))
+ assert(ctx:editor_state() and #cache.list(song)==0,
+  'an unrelated phrase undo detached or hid the current editor draft')
+ assert(ctx:notify_native_change('undo',a))
+ assert(ctx:editor_state()==nil,'undo of the edited phrase left its stale editor visible')
+ local recovery=cache.list(song)
+ assert(#recovery==1 and seq.same_source(recovery[1].pattern,edited),
+  'matching undo did not preserve the dirty editor values for recovery')
+ assert(ctx:notify_native_change('undo',a) and #cache.list(song)==1,
+  'duplicate undo notifications created duplicate recovery entries')
+ ctx:release_document()
+
+ local clean_song,clean_inst,clean_phrase=fixture()
+ local clean=runtime(clean_song)
+ assert(clean:restore_editor_target(clean_inst,clean_phrase))
+ assert(clean:notify_native_change('undo',clean_phrase))
+ assert(#cache.list(clean_song)==0,
+  'undo of a clean committed editor created a spurious recovery draft')
+ clean:release_document()
 end
 
 -- Clean editor edits persist against the retained draft baseline without

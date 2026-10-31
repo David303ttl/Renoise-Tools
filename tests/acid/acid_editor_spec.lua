@@ -2,7 +2,7 @@ dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local editor=require("model.editor_state")
 local interpreter=require("model.cycle_interpreter")
-local pattrns=require("writers.pattrns_writer")
+local pattrns=require("reference.pattrns_writer")
 
 assert(editor.MAX_PAGES==seq.MAX_STEPS/seq.PAGE_SIZE)
 for index=1,seq.MAX_STEPS do

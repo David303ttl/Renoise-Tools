@@ -1,5 +1,5 @@
 dofile("tests/bootstrap.lua")("acid")
-local runner_module = require("writers.script_runner")
+local runner_module = require("reference.script_runner")
 local function fixture(mode)
   local listeners = {}
   local observable = {}

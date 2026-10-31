@@ -67,11 +67,29 @@ function app:show_warning(message) warnings[#warnings+1]=message end
 
 local persisted_drafts={}
 local fail_draft_persistence=false
+local committed_entries={}
+local next_revision_id=100
+local sequencer=require("model.sequencer")
+local function store_entry(id,source,policy,pb_range)
+  local copied=assert(sequencer.copy_source(source))
+  committed_entries[id]={source=copied,policy=policy,pb_range=pb_range}
+end
+local function read_entry(_,id)
+  local entry=committed_entries[id]
+  if not entry then return nil,"test source revision is missing" end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
+end
 package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
-  local source=require("model.sequencer").new_pattern(16)
-  if phrase.id==12 then source.timing_mode="triplet" end
-  return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
+  local entry=committed_entries[phrase.id]
+  if not entry then
+    local source=sequencer.new_pattern(16)
+    if phrase.id==12 then source.timing_mode="triplet" end
+    store_entry(phrase.id,source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0)
+    entry=committed_entries[phrase.id]
+  end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end,
+  read_entry=read_entry,
   write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
@@ -98,7 +116,10 @@ end,
 package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
-  snapshot_index=function()return nil end
+  snapshot_index=function()return nil end,
+  capture_recovery=function()return {} end,
+  matches_recovery=function(_,token)return type(token)=="table" end,
+  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
@@ -107,15 +128,36 @@ local active_request
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
   local phrase=call.phrase or call.request.phrase
+  if success and call.request.kind=="regenerate" then
+    next_revision_id=next_revision_id+1
+    local revision_id=next_revision_id
+    call.request:mutate(call.request.token,function()
+      local accepted,revision_error=call.request:expect_revision(call.request.token,revision_id)
+      assert(accepted,revision_error)
+      phrase.id=revision_id
+      phrase.baseline_revision=(phrase.baseline_revision or 0)+1
+    end)
+  end
   local result={kind=success and "success" or "failure",status=status or (success and "committed" or "failed"),
     verified=success,token=call.request.token,epoch=call.request.epoch,request=call.request,
     phrase=success and phrase or nil,reason=success and nil or (message or "invalidated"),
     message=message or "invalidated"}
   if success then
-    result.baseline=call.request.baseline or {
-      id=phrase and phrase.id,source=call.request.source,
-      settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
-      snapshot={},planning_inputs=call.request.planning_inputs}
+    if phrase and phrase.id then
+      store_entry(phrase.id,call.request.source,call.request.output_policy,call.request.pb_range)
+    end
+    local ok,candidate=pcall(function()
+      return require("writers.phrase_validator").classify(call.request.song,
+        call.request.instrument,phrase,{},{},{})
+    end)
+    if ok and candidate then
+      result.baseline={id=phrase.id,source=candidate.source,settings=candidate.settings,
+        snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
+    else
+      result.baseline={id=phrase and phrase.id,source=call.request.source,
+        settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
+        snapshot={content=phrase and phrase.baseline_revision or 0},planning_inputs={}}
+    end
   end
   return result
 end

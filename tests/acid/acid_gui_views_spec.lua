@@ -109,31 +109,53 @@ function app:show_warning(message) error(message) end
 
 local render_calls=0
 local writer_releases=0
+local synchronous_writes=false
+local next_revision_id=100
 local generation_request,generation_callback
 local active_request
+local committed_entries={}
+local sequencer=require("model.sequencer")
+local function store_entry(id,source,policy,pb_range)
+  local copied=assert(sequencer.copy_source(source))
+  committed_entries[id]={source=copied,policy=policy,pb_range=pb_range}
+end
+local function read_entry(_,id)
+  local entry=committed_entries[id]
+  if not entry then return nil,"test source revision is missing" end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
+end
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
   local phrase=call.phrase or call.request.phrase
+  if success and call.request.kind=="regenerate" then
+    next_revision_id=next_revision_id+1
+    local revision_id=next_revision_id
+    call.request:mutate(call.request.token,function()
+      local accepted,revision_error=call.request:expect_revision(call.request.token,revision_id)
+      assert(accepted,revision_error)
+      phrase.id=revision_id
+      phrase.baseline_revision=(phrase.baseline_revision or 0)+1
+    end)
+  end
   local result={kind=success and "success" or "failure",status=status or (success and "committed" or "failed"),
     verified=success,token=call.request.token,epoch=call.request.epoch,request=call.request,
     phrase=success and phrase or nil,reason=success and nil or (message or "invalidated"),
     message=message or "invalidated"}
   if success then
-    if call.request.kind=="regenerate" then
-      result.baseline=call.request.baseline
+    if phrase and phrase.id then
+      store_entry(phrase.id,call.request.source,call.request.output_policy,call.request.pb_range)
+    end
+    local ok,candidate=pcall(function()
+      return require("writers.phrase_validator").classify(call.request.song,
+        call.request.instrument,phrase,{},{},{})
+    end)
+    if ok and candidate then
+      result.baseline={id=phrase.id,source=candidate.source,settings=candidate.settings,
+        snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
     else
-      local ok,candidate=pcall(function()
-        return require("writers.phrase_validator").classify(call.request.song,
-          call.request.instrument,phrase,{},{},{})
-      end)
-      if ok and candidate then
-        result.baseline={id=phrase.id,source=candidate.source,settings=candidate.settings,
-          snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
-      else
-        result.baseline={id=phrase and phrase.id,source=call.request.source,
-          settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
-          snapshot={content=0},planning_inputs={}}
-      end
+      result.baseline={id=phrase and phrase.id,source=call.request.source,
+        settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
+        snapshot={content=phrase and phrase.baseline_revision or 0},planning_inputs={}}
     end
   end
   return result
@@ -177,6 +199,10 @@ local function start(kind,request,done)
     done(result)
     tool.app_idle_observable:fire()
   end
+  if synchronous_writes then
+    synchronous_writes=false
+    generation_callback(terminal_result(call,"committed","Synchronous Live Edit committed."))
+  end
   return true
 end
 package.loaded["writers.phrase_writer"]={
@@ -195,14 +221,23 @@ package.loaded["writers.phrase_writer"]={
 package.loaded["renoise.phrase_ownership"]={
   status=function() return "owned" end,
   id=function(phrase) if phrase.foreign then return nil end;return phrase.id end,
-  snapshot_index=function()return nil end
+  snapshot_index=function()return nil end,
+  capture_recovery=function()return {} end,
+  matches_recovery=function(_,token)return type(token)=="table" end,
+  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 local persisted_drafts={}
 package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
-  local source=require("model.sequencer").new_pattern(16)
-  for i=1,source.length do source.time_events[i]="N" end
-  return source,"repeat",phrase.id==22 and 24 or 0
+  local entry=committed_entries[phrase.id]
+  if not entry then
+    local source=sequencer.new_pattern(16)
+    for i=1,source.length do source.time_events[i]="N" end
+    store_entry(phrase.id,source,"repeat",phrase.id==22 and 24 or 0)
+    entry=committed_entries[phrase.id]
+  end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end,
+  read_entry=read_entry,
   write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
@@ -545,11 +580,13 @@ generation_request.options.phrase_mutation(function()
 end)
 generation_callback(terminal_result(generation_request,"committed","Live append committed."))
 assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
+synchronous_writes=true
 builder.views.acid_program_key_popup:fire(5)
+assert(render_calls==5 and active_request==nil,
+  "a synchronous writer completes inside the native source-edit callback")
 tool.app_idle_observable:fire()
 assert(render_calls==5 and generation_request.target_index==4,
-  "the next edit regenerates the same appended phrase in place")
-generation_callback(terminal_result(generation_request,"committed","Live regeneration committed."))
+  "the idle callback does not duplicate the same in-place Live Edit write")
 assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
 
 instrument.phrase_program=2
@@ -575,20 +612,27 @@ builder.views.acid_program_key_popup:fire(5)
 tool.app_idle_observable:fire()
 assert(render_calls==6 and generation_request.target_index==2,
   "an edit after a native phrase switch targets the selected phrase")
+assert(generation_request.options.token:is_current(),
+  "the request is current before the playback-program change")
+local pending_revision_id=generation_request.request.phrase.id
 instrument.phrase_program=2
 instrument.phrase_program_observable:fire()
-generation_callback(terminal_result(generation_request,"committed","Native phrase selection regenerated."))
-assert(song.selected_phrase==nil and instrument.phrase_program==2,
-  "Live Edit preserves a playback program change made during rendering")
+assert(not generation_request.options.token:is_current(),
+  "a playback-program change revokes an in-flight phrase mutation")
+generation_callback(terminal_result(generation_request,"suspended","playback program changed"))
+assert(generation_request.request.phrase.id==pending_revision_id and instrument.phrase_program==2,
+  "a revoked request leaves the phrase revision untouched and keeps the playback program")
 builder.views.acid_program_key_popup:fire(6)
 tool.app_idle_observable:fire()
 assert(render_calls==7 and generation_request.target_index==2,
-  "subsequent PITCH edits keep regenerating the phrase selected in Renoise")
+  "a fresh edit still targets the ACID-selected phrase after playback changes")
+generation_callback(terminal_result(generation_request,"committed","Phrase regenerated with program 02 selected."))
+assert(song.selected_phrase==nil and instrument.phrase_program==2,
+  "the fresh synchronous regeneration preserves the changed playback program")
 instrument.phrase_program=1
 instrument.phrase_program_observable:fire()
-generation_callback(terminal_result(generation_request,"committed","Selected phrase regenerated again."))
-assert(instrument.phrase_program==1,
-  "Live Edit also preserves a playback program change back to phrase 01")
+assert(instrument.phrase_program==1 and phrase_popup.value==2 and render_calls==7,
+  "a playback-program notification alone preserves the ACID destination without writing")
 assert(#instrument.phrases==4,"native phrase selection must not create another destination")
 
 live_checkbox:fire(false)

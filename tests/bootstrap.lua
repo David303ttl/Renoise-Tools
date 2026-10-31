@@ -7,6 +7,10 @@ return function(tool)
   }
   local root = assert(roots[tool], "unknown Renoise tool: " .. tostring(tool))
   local paths = { root .. "/?.lua", root .. "/?/init.lua" }
+  if tool == "acid" then
+    paths[#paths + 1] = "tests/acid/?.lua"
+    paths[#paths + 1] = "tests/acid/?/init.lua"
+  end
   package.path = table.concat(paths, ";") .. ";" .. package.path
   return root
 end

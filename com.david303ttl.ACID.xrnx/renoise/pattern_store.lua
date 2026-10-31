@@ -372,7 +372,7 @@ local function same_draft(left,right)
     sequencer.same_source(left.pattern,right.pattern)
 end
 
-local function capture_removal(song,id,entries,drafts,descriptor)
+local function capture_removal(song,id,entries,drafts,descriptor,revision)
   if descriptor==nil then return nil end
   if type(descriptor)~="table" or getmetatable(descriptor)~=nil or
       (descriptor.kind~="new" and descriptor.kind~="existing") or
@@ -389,7 +389,7 @@ local function capture_removal(song,id,entries,drafts,descriptor)
   end
   local index,phrase_id,name=draft_target(song,descriptor.instrument,descriptor.phrase,entries)
   if not index then return nil,phrase_id end
-  if descriptor.kind=="existing" and phrase_id~=id then
+  if descriptor.kind=="existing" and phrase_id~=id and not revision then
     return nil,"Draft removal must match the prepared source identity"
   end
   local item
@@ -403,10 +403,12 @@ local function capture_removal(song,id,entries,drafts,descriptor)
   end
   return {kind=descriptor.kind,instrument=descriptor.instrument,phrase=descriptor.phrase,
     token=descriptor.token,revision=descriptor.revision,instrument_index=index,
-    instrument_name=name,phrase_id=phrase_id,draft=copy_draft(item),present=item~=nil}
+    instrument_name=name,phrase_id=phrase_id,
+    candidate_id=revision and descriptor.kind=="existing" and id or nil,
+    draft=copy_draft(item),present=item~=nil}
 end
 
-function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
+local function prepare(song,id,pattern,output_policy,pb_range,guard,removal,revision)
   if not valid_id(id) then return nil,"invalid ACID phrase ID" end
   if type(guard)~="function" then return nil,"An ACID request guard is required" end
   local current,current_error=ownership.is_current(song)
@@ -421,7 +423,15 @@ function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
   if previous==nil and err then return nil,err end
   local entries,drafts=decode(previous or "")
   if not entries then return nil,drafts end
-  local captured,removal_error=capture_removal(song,id,entries,drafts,removal)
+  if revision and entries[id]~=nil then
+    return nil,"ACID revision ID is already committed"
+  end
+  if revision then
+    local inventory,inventory_error=ownership.inventory(song)
+    if not inventory then return nil,inventory_error end
+    if inventory[id] then return nil,"ACID revision ID is already used by a live phrase" end
+  end
+  local captured,removal_error=capture_removal(song,id,entries,drafts,removal,revision)
   if removal_error then return nil,removal_error end
   local captured_sources,source_error=encode(entries,{})
   if not captured_sources then return nil,source_error end
@@ -435,6 +445,14 @@ function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
     proposed_sources=proposed_sources,guard=guard,removal=captured,
     write_attempted=false,written_verified=false,restore_verified=false,integrity_uncertain=false}
   return candidate
+end
+
+function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
+  return prepare(song,id,pattern,output_policy,pb_range,guard,removal,false)
+end
+
+function M.prepare_revision(song,id,pattern,output_policy,pb_range,guard,removal)
+  return prepare(song,id,pattern,output_policy,pb_range,guard,removal,true)
 end
 
 local function candidate_state(song,candidate)
@@ -459,15 +477,33 @@ function M.release_candidate(candidate)
 end
 
 local function remove_captured_draft(song,entries,drafts,removal)
-  if not removal or not removal.present then return end
-  local index,id,name=draft_target(song,removal.instrument,removal.phrase,entries)
-  if not index or id~=removal.phrase_id then return end
+  if not removal then return true end
+  local index,id,name
+  if removal.candidate_id then
+    index=ownership.membership(song,removal.instrument,removal.phrase)
+    if not index then return nil,"ACID revision target is no longer in its captured instrument" end
+    local instrument_ok,instrument_name=pcall(function() return removal.instrument.name end)
+    local identity_error
+    id,identity_error=ownership.validate_identity(song,removal.instrument,removal.phrase)
+    if not instrument_ok or instrument_name~=removal.instrument_name or
+        index~=removal.instrument_index or id~=removal.candidate_id then
+      return nil,"ACID revision target changed before source commit"
+    end
+    name=instrument_name
+  else
+    if not removal.present then return true end
+    index,id,name=draft_target(song,removal.instrument,removal.phrase,entries)
+  end
+  if not removal.candidate_id and not removal.present then return true end
+  if not removal.candidate_id and (not index or id~=removal.phrase_id) then return true end
   if removal.kind=="new" and
-      (index~=removal.instrument_index or name~=removal.instrument_name) then return end
+      (index~=removal.instrument_index or name~=removal.instrument_name) then return true end
   local item,key,err
-  if id>0 then item,key,err=saved_phrase_draft(drafts,id)
+  local draft_id=removal.candidate_id and removal.phrase_id or id
+  if draft_id>0 then item,key,err=saved_phrase_draft(drafts,draft_id)
   else key=draft_key(index,0);item=drafts[key] end
   if not err and same_draft(item,removal.draft) then drafts[key]=nil end
+  return true
 end
 
 function M.commit(song,candidate)
@@ -492,7 +528,8 @@ function M.commit(song,candidate)
   if sources~=state.captured_sources then return nil,"ACID song data changed during generation" end
   local proposed,decode_error=decode(state.proposed_sources)
   if not proposed then return nil,decode_error end
-  remove_captured_draft(song,entries,drafts,removal)
+  local removed,remove_error=remove_captured_draft(song,entries,drafts,removal)
+  if not removed then return nil,remove_error end
   local next_raw,encode_error=encode(proposed,drafts)
   if not next_raw then return nil,encode_error end
   local latest,latest_error=raw_data(song)

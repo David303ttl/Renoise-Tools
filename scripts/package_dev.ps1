@@ -43,6 +43,11 @@ $driverSource = Join-Path $driverDirectory 'remote_driver.lua'
 $codecSource = Join-Path $driverDirectory 'json.lua'
 $acceptanceSource = Join-Path $driverDirectory 'acceptance_cases.lua'
 $writerRequestSource = Join-Path $repoRoot 'tests/acid/writer_request.lua'
+$referenceSources = [ordered]@{
+  'pattrns_writer.lua' = Join-Path $repoRoot 'tests/acid/reference/pattrns_writer.lua'
+  'script_runner.lua' = Join-Path $repoRoot 'tests/acid/reference/script_runner.lua'
+  'gate_writer.lua' = Join-Path $repoRoot 'tests/acid/reference/gate_writer.lua'
+}
 $fixtureDirectory = Join-Path $repoRoot 'tests/renoise/acid/fixtures'
 $repoTempRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'tmp'))
 $relativeOutputPath = $OutputDirectory.Replace('\', '/')
@@ -324,6 +329,10 @@ Assert-NoReparsePoint -Path $codecSource
 Assert-NoReparsePoint -Path $acceptanceSource
 if (-not (Test-Path -LiteralPath $writerRequestSource -PathType Leaf)) { throw 'Native acceptance request factory is missing.' }
 Assert-NoReparsePoint -Path $writerRequestSource
+foreach ($referenceSource in $referenceSources.Values) {
+  if (-not (Test-Path -LiteralPath $referenceSource -PathType Leaf)) { throw "Native reference module '$referenceSource' is missing." }
+  Assert-NoReparsePoint -Path $referenceSource
+}
 $sourceFixtures = if ($TransportOnly) { $null } else { Get-SourceFixtures -Root $fixtureDirectory }
 
 if (-not $outputFullPath.StartsWith($repoTempPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -390,6 +399,11 @@ try {
   Copy-Item -LiteralPath $codecSource -Destination (Join-Path $driverDirectoryInTool 'json.lua')
   Copy-Item -LiteralPath $acceptanceSource -Destination (Join-Path $driverDirectoryInTool 'acceptance_cases.lua')
   Copy-Item -LiteralPath $writerRequestSource -Destination (Join-Path $driverDirectoryInTool 'writer_request.lua')
+  $referenceDirectoryInTool = Join-Path $driverDirectoryInTool 'reference'
+  New-Item -ItemType Directory -Path $referenceDirectoryInTool | Out-Null
+  foreach ($referenceName in $referenceSources.Keys) {
+    Copy-Item -LiteralPath $referenceSources[$referenceName] -Destination (Join-Path $referenceDirectoryInTool $referenceName)
+  }
 
   $sessionPath = Join-Path $outputFullPath 'acid-test-session.conf'
   $port = Get-FreeLoopbackPort
@@ -468,6 +482,7 @@ try {
   [void]$expectedDevFiles.Add('__dev/json.lua')
   [void]$expectedDevFiles.Add('__dev/acceptance_cases.lua')
   [void]$expectedDevFiles.Add('__dev/writer_request.lua')
+  foreach ($referenceName in $referenceSources.Keys) { [void]$expectedDevFiles.Add("__dev/reference/$referenceName") }
   $actualDevFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   $stagePrefix = [System.IO.Path]::GetFullPath($stagedToolPath).TrimEnd([char[]]@([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)) + [System.IO.Path]::DirectorySeparatorChar
   foreach ($file in @(Get-ChildItem -LiteralPath $stagedToolPath -File -Recurse)) {
@@ -499,6 +514,11 @@ try {
       }
       elseif ($relative -eq '__dev/writer_request.lua') {
         $expectedHash = (Get-FileHash -LiteralPath $writerRequestSource -Algorithm SHA256).Hash.ToLowerInvariant()
+      }
+      elseif ($relative.StartsWith('__dev/reference/', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $referenceName = $relative.Substring('__dev/reference/'.Length)
+        if (-not $referenceSources.Contains($referenceName)) { throw "Staged dev bundle contains unapproved test reference '$relative'." }
+        $expectedHash = (Get-FileHash -LiteralPath $referenceSources[$referenceName] -Algorithm SHA256).Hash.ToLowerInvariant()
       }
       else { $expectedHash = $sourcePayload[$relative] }
       $actualHash = (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant()

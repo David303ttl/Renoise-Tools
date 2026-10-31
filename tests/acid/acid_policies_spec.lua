@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local policies=require("model.policies")
 local planner=require("model.output_planner")
-local emitter=require("writers.pattrns_writer")
+local emitter=require("reference.pattrns_writer")
 assert(policies.DEFAULT_PB_RANGE==0 and policies.DEFAULT_OUTPUT_POLICY=="repeat")
 for _,value in ipairs({0,2,12,24,48}) do assert(policies.valid_pb_range(value)) end
 for _,value in ipairs({-1,1,2.5,49,"2",false,math.huge,0/0}) do

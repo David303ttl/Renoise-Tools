@@ -86,15 +86,31 @@ local function proof(song,instrument,phrase,options,previous_baseline,previous_i
   end)
   if not ok then return nil,"Cannot validate draft baseline" end
   if not result then return nil,err or "Draft target is unavailable" end
+  if type(result)~="table" or type(result.baseline)~="table" then
+    return nil,"Draft validator did not provide a verified phrase baseline"
+  end
   local id_ok,id=pcall(ownership.id,phrase)
   if not id_ok or not policies.is_integer(id) or id<MIN_OWNERSHIP_ID then
     return nil,"Cannot inspect draft phrase identity"
   end
   local identity=result.baseline_identity
-  local identity_ok=validator.is_retained_baseline_identity(identity,result.baseline)
-  if not identity_ok then identity=nil end
+  local retained_snapshot,retained_identity
+  if validator.is_retained_baseline_identity(identity,result.baseline) then
+    retained_snapshot=result.baseline
+    retained_identity=identity
+  else
+    local retained_ok,retained,_,resolved_identity=pcall(validator.retained_baseline,result.baseline)
+    if retained_ok and retained then
+      retained_snapshot=retained
+      retained_identity=resolved_identity
+    end
+  end
+  if not validator.is_retained_baseline_identity(retained_identity,retained_snapshot) then
+    return nil,"Draft validator did not provide a retained verified baseline"
+  end
+  identity=retained_identity
   local candidate={id=id,source=result.source,settings=result.settings,
-    snapshot=result.baseline,planning_inputs=result.planning_inputs}
+    snapshot=retained_snapshot,planning_inputs=result.planning_inputs}
   if previous_baseline then
     local previous_identity_ok=validator.is_retained_baseline_identity(previous_identity,previous_snapshot)
     if identity and previous_identity_ok and rawequal(identity,previous_identity) and
@@ -114,9 +130,10 @@ local function proof(song,instrument,phrase,options,previous_baseline,previous_i
     local source,source_error=sequencer.copy_source(result.source)
     if not source then return nil,source_error end
     local detached,copy_error=copied({id=id,settings=result.settings,
-      snapshot=result.baseline,planning_inputs=result.planning_inputs})
+      planning_inputs=result.planning_inputs})
     if not detached then return nil,copy_error end
     detached.source=source
+    detached.snapshot=retained_snapshot
     return detached
   end)
   if not readable then return nil,"Cannot inspect verified draft baseline" end
@@ -164,19 +181,51 @@ local function scratch_warning(current)
   return "New Phrase scratch is session-only because its saved instrument position or name changed"
 end
 
-function M.detach(song,instrument,phrase,reason)
+function M.detach(song,instrument,phrase,reason,source,output_policy,pb_range)
   local valid,err=valid_target(song,instrument,phrase)
   if not valid then return nil,err end
   local records=bucket(song,instrument,false)
   local record=records and records[phrase or NEW]
-  if not record or record.detached then return false end
-  local entry=assert(copied({token=next_token(),pattern=record.pattern,
-    output_policy=record.output_policy,pb_range=record.pb_range,baseline=record.baseline,
-    labels=record.labels,reason=type(reason)=="string" and reason or "Draft target changed",
+  if record and record.detached then return false end
+  if not record and source==nil then return false end
+  local pattern=source or record.pattern
+  local copied_pattern,pattern_error=sequencer.copy_source(pattern)
+  if not copied_pattern then return nil,pattern_error end
+  local entry=assert(copied({token=next_token(),pattern=copied_pattern,
+    output_policy=record and record.output_policy or output_policy,
+    pb_range=record and record.pb_range or pb_range,
+    baseline=record and record.baseline or nil,
+    labels=record and record.labels or labels(instrument,phrase),
+    reason=type(reason)=="string" and reason or "Draft target changed",
     revision=next_token(),session_only=true}))
+  entry.pattern=copied_pattern
+  if source~=nil then entry.output_policy=output_policy;entry.pb_range=pb_range end
   state(song,true).recovery[entry.token]=entry
+  records=records or bucket(song,instrument,true)
   records[phrase or NEW]={detached=true,reason=entry.reason}
   return entry.token
+end
+
+function M.detach_for_native_revision(song,phrase,reason,instrument,source,output_policy,pb_range)
+  if not object(song,"Song") or not object(phrase,"InstrumentPhrase") then return false end
+  local session=state(song,instrument~=nil and source~=nil)
+  if not session then return false end
+  local detached=false
+  local found=false
+  for owner,records in pairs(session.instruments) do
+    if records[phrase] and not records[phrase].detached then
+      local token=M.detach(song,owner,phrase,reason or "Native phrase revision changed",
+        instrument and rawequal(owner,instrument) and source or nil,output_policy,pb_range)
+      detached=token~=false and token~=nil or detached
+      found=true
+    end
+  end
+  if not found and instrument and source then
+    local token=M.detach(song,instrument,phrase,reason or "Native phrase revision changed",
+      source,output_policy,pb_range)
+    detached=token~=false and token~=nil or detached
+  end
+  return detached
 end
 
 function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
@@ -376,7 +425,7 @@ local function same_capture_descriptor(descriptor,captured)
     descriptor.phrase_id==captured.phrase_id
 end
 
-local function current_capture(song,captured)
+local function current_capture(song,captured,authorized_revision)
   if not rawequal(song,captured.song) or not valid_target(song,captured.instrument,captured.phrase) or
       not ownership.membership(song,captured.instrument,captured.phrase) then return false end
   local records=bucket(song,captured.instrument,false)
@@ -390,7 +439,8 @@ local function current_capture(song,captured)
       destination.durable==captured.instrument_name_unique
   end
   local id=ownership.validate_identity(song,captured.instrument,captured.phrase)
-  return id~=nil and id==captured.phrase_id
+  return id~=nil and (id==captured.phrase_id or
+    (authorized_revision~=nil and id==authorized_revision))
 end
 
 function M.capture(song,instrument,phrase,options)
@@ -419,9 +469,9 @@ function M.capture(song,instrument,phrase,options)
     descriptor.phrase_id=id
   end
   captures[descriptor]=captured
-  return descriptor,function(token,revision)
+  return descriptor,function(token,revision,authorized_revision)
     return captured.song~=nil and token==captured.token and revision==captured.revision and
-      current_capture(captured.song,captured)
+      current_capture(captured.song,captured,authorized_revision)
   end,"session"
 end
 
@@ -442,6 +492,23 @@ function M.compare_and_clear(song,descriptor,created)
     state(song,true).recovery[record.origin.token]=nil
   end
   records[key]=nil
+  return true
+end
+
+-- The writer may clear a captured draft after a request-authorized immutable
+-- revision transition. The ordinary guard remains strict on the captured ID.
+function M.compare_and_clear_revision(song,descriptor,revision_id)
+  local captured=type(descriptor)=="table" and captures[descriptor]
+  if not captured or not same_capture_descriptor(descriptor,captured) or
+      captured.kind~="existing" or not policies.is_integer(revision_id) or
+      not current_capture(song,captured,revision_id) then return false end
+  local current_id=ownership.validate_identity(song,captured.instrument,captured.phrase)
+  if current_id~=revision_id then return false end
+  local records=bucket(song,captured.instrument,false)
+  local record=records and records[captured.phrase]
+  if not record or record.detached or record.token~=captured.token or
+      record.revision~=captured.revision then return false end
+  records[captured.phrase]=nil
   return true
 end
 

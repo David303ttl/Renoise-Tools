@@ -1,5 +1,5 @@
 dofile("tests/bootstrap.lua")("acid")
-local gates=require("writers.gate_writer")
+local gates=require("reference.gate_writer")
 local planner=require("model.output_planner")
 local signals=require("model.control_signals")
 local seq=require("model.sequencer")

@@ -1,7 +1,7 @@
 dofile("tests/bootstrap.lua")("acid")
 local timing=require("model.timing")
 local signals=require("model.control_signals")
-local gate_writer=require("writers.gate_writer")
+local gate_writer=require("reference.gate_writer")
 local planner=require("model.output_planner")
 local articulation=require("model.articulation")
 local legato=require("model.legato")

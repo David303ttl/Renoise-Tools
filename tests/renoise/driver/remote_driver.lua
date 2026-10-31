@@ -390,8 +390,12 @@ local function valid_args_for_operation(current, request)
         args.case == "integrity-observers" or args.case == "writer-recovery" or
         args.case == "editor-responsiveness" or args.case == "import-donor" or args.case == "ownership-negatives" or
         args.case == "independence-undo-fixture" or args.case == "independence-undo-prepare" or args.case == "independence-undo" or
+        args.case == "revision-undo-fixture" or args.case == "revision-undo-prepare" or args.case == "revision-undo" or
+        args.case == "revision-live-undo-fixture" or args.case == "revision-live-undo-prepare" or args.case == "revision-live-undo" or
         args.case == "cold-reopen-regenerate" or
-        args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow")
+        args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow" or
+        args.case == "selection-feasibility" or args.case == "direct-output-feasibility" or
+        args.case == "source-undo-feasibility")
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end

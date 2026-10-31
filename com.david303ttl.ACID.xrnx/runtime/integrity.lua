@@ -11,6 +11,28 @@ local function label(object,fallback)
   return ok and type(value)=="string" and value or fallback
 end
 
+local function normalize_baseline(baseline)
+  if type(baseline)~="table" or type(baseline.snapshot)~="table" or
+      type(baseline.source)~="table" or type(baseline.settings)~="table" or
+      type(baseline.planning_inputs)~="table" then
+    return nil,"Recovery baseline is incomplete"
+  end
+  local snapshot=baseline.snapshot
+  local identity=validator.retained_baseline_identity(snapshot)
+  if not identity or not validator.is_retained_baseline_identity(identity,snapshot) then
+    local resolved,_,resolved_identity=validator.retained_baseline(baseline.snapshot)
+    snapshot,identity=resolved,resolved_identity
+  end
+  if not snapshot or not identity or not validator.is_retained_baseline_identity(identity,snapshot) then
+    return nil,"Recovery baseline proof is unavailable"
+  end
+  local normalized,copy_error=ownership.copy_snapshot({id=baseline.id,source=baseline.source,
+    settings=baseline.settings,planning_inputs=baseline.planning_inputs})
+  if not normalized then return nil,copy_error end
+  normalized.snapshot=snapshot
+  return normalized
+end
+
 function M.new(song,drafts,idle)
   local entries={}
   local serial=0
@@ -29,7 +51,7 @@ function M.new(song,drafts,idle)
         local item={instrument=instrument,phrases={}}
         for _,phrase in ipairs(instrument.phrases) do
           item.phrases[#item.phrases+1]={phrase=phrase,name=phrase.name,
-            snapshot=assert(ownership.snapshot(phrase))}
+            snapshot=assert(ownership.capture_recovery(phrase))}
         end
         result.instruments[#result.instruments+1]=item
       end
@@ -57,13 +79,13 @@ function M.new(song,drafts,idle)
           local current_phrase=current_instrument.phrases[phrase_index]
           if not rawequal(current_phrase,saved_phrase.phrase) then return false end
           local comparison=rawequal(current_phrase,phrase) and "name" or "exact"
-          if not ownership.compare(saved_phrase.snapshot,assert(ownership.snapshot(current_phrase)),comparison) then
+          if not ownership.matches_recovery(current_phrase,saved_phrase.snapshot,comparison) then
             return false
           end
           if rawequal(current_phrase,phrase) then
             if target_seen or not rawequal(current_instrument,instrument) or
                 not ownership.membership(song,instrument,phrase) or
-                not ownership.compare(saved_phrase.snapshot,baseline.snapshot,"name") then
+                not ownership.recovery_matches_snapshot(saved_phrase.snapshot,baseline.snapshot,"name") then
               return false
             end
             target_seen=true
@@ -82,14 +104,16 @@ function M.new(song,drafts,idle)
     if not rawequal(song,original_song[1]) or not instrument or not phrase or type(baseline)~="table" then
       return nil,"Committed recovery target is incomplete"
     end
-    local delta_matches,delta_error=committed_delta_matches(instrument,phrase,baseline,
+    local normalized,baseline_error=normalize_baseline(baseline)
+    if not normalized then return nil,baseline_error end
+    local delta_matches,delta_error=committed_delta_matches(instrument,phrase,normalized,
       pre_evidence,committed_store)
     if pre_evidence then captures[pre_evidence]=nil end
     if not delta_matches then return nil,delta_error end
     local descriptor,capture_error=self:capture_mutation()
     if not descriptor then return nil,capture_error end
     committed_captures[descriptor]={instrument=instrument,phrase=phrase,
-      baseline=ownership.copy_snapshot(baseline),reason=reason}
+      baseline=normalized,reason=reason}
     if not committed_captures[descriptor].baseline then
       captures[descriptor]=nil
       committed_captures[descriptor]=nil
@@ -110,7 +134,7 @@ function M.new(song,drafts,idle)
       captures[evidence]=nil
       committed_captures[evidence]=nil
     end
-    local ok=pcall(function()
+    local ok,record_error=pcall(function()
       if record.mutation then return end
       if type(evidence)~="table" or getmetatable(evidence)~=nil then error("Invalid recovery evidence") end
       record.operation=evidence.operation or "regenerate"
@@ -137,8 +161,16 @@ function M.new(song,drafts,idle)
       end
       record.instrument=evidence.instrument
       record.phrase=evidence.phrase
-      record.baseline=ownership.copy_snapshot(evidence.baseline)
-      record.committed_baseline=ownership.copy_snapshot(evidence.committed_baseline)
+      if evidence.baseline~=nil then
+        local baseline,baseline_error=normalize_baseline(evidence.baseline)
+        if not baseline then error(baseline_error,0) end
+        record.baseline=baseline
+      end
+      if evidence.committed_baseline~=nil then
+        local baseline,baseline_error=normalize_baseline(evidence.committed_baseline)
+        if not baseline then error(baseline_error,0) end
+        record.committed_baseline=baseline
+      end
       if evidence.draft_capture~=nil then
         record.draft_capture=evidence.draft_capture
       end
@@ -200,7 +232,7 @@ function M.new(song,drafts,idle)
           end
           for j,saved in ipairs(item.phrases) do
             if not rawequal(item.instrument.phrases[j],saved.phrase) or saved.phrase.name~=saved.name
-              or not ownership.compare(saved.snapshot,assert(ownership.snapshot(saved.phrase))) then
+              or not ownership.matches_recovery(saved.phrase,saved.snapshot,"exact") then
               return nil,"Mutation phrase state has not been restored"
             end
           end

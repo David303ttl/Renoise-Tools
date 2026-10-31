@@ -319,8 +319,10 @@ do
  local ctx,log,song,instrument,phrase,_,source=fixture()
  assert(ctx:request_generation('manual'))
  local request=log.requests[1]
+  local baseline=validated_baseline(song,instrument,phrase,
+    require('renoise.phrase_ownership').id(phrase))
  log.done[1]({kind='success',status='committed',verified=true,token=request.token,
-   epoch=request.epoch,request=request,phrase=phrase,baseline=request.baseline})
+    epoch=request.epoch,request=request,phrase=phrase,baseline=baseline})
  assert(ctx:generation_state().last_commit,'verified success was not recorded')
  assert(ctx:target_state().kind=='owned' and ctx:request_generation('manual'),
    'adopted baseline did not support the next request')

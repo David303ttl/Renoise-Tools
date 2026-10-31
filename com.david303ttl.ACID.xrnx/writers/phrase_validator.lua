@@ -6,6 +6,7 @@ local ownership=require("renoise.phrase_ownership")
 local planner=require("model.output_planner")
 local policies=require("model.policies")
 local store=require("renoise.pattern_store")
+local materializer=require("writers.phrase_materializer")
 local verified_baselines=setmetatable({},{__mode="k"})
 local retained_proofs=setmetatable({},{__mode="k"})
 local baseline_identities=setmetatable({},{__mode="kv"})
@@ -225,11 +226,13 @@ local function visibility(snapshot,output)
   return true
 end
 
-local function preflight(snapshot,output)
+local function preflight(snapshot,output,allow_visibility_expansion)
   local empty,script_error=ownership.empty_script(snapshot)
   if not empty then return nil,script_error end
-  local visible,visibility_error=visibility(snapshot,output)
-  if not visible then return nil,visibility_error end
+  if not allow_visibility_expansion then
+    local visible,visibility_error=visibility(snapshot,output)
+    if not visible then return nil,visibility_error end
+  end
   local properties=snapshot.properties
   if snapshot.mapping.present and properties.number_of_lines~=output.expected.properties.number_of_lines then
     return nil,"Mapped phrase length changes are unsupported"
@@ -254,7 +257,12 @@ end
 
 -- Preflight consumes a detached baseline and a plan derived from the proposed source.
 function M.preflight(snapshot,output)
-  return protected(preflight,snapshot,output)
+  return protected(preflight,snapshot,output,false)
+end
+
+-- Destination writes may raise visibility to the planner's requirements.
+function M.preflight_destination(snapshot,output)
+  return protected(preflight,snapshot,output,true)
 end
 
 local function same_note_output(actual,expected)
@@ -312,7 +320,8 @@ local function compatibility_inputs(capabilities,capacities,options)
   end
   return ownership.copy_snapshot({capabilities=profile,capacities=limits,
     options={pitch_bend_delivery=options and options.pitch_bend_delivery,
-      normal_volume=options and options.normal_volume,accent_volume=options and options.accent_volume}})
+      normal_volume=options and options.normal_volume or policies.NORMAL_VOLUME,
+      accent_volume=options and options.accent_volume or policies.ACCENT_VOLUME}})
 end
 
 local function cache_compatibility(retained,candidate)
@@ -329,7 +338,8 @@ local function same_compatibility_inputs(retained,source,policy,pb_range,inputs)
     ownership.compare(cached.planning_inputs,inputs)==true
 end
 
-local function compatibility(phrase,committed,capabilities,capacities,options,verified_snapshot,verified_index)
+local function compatibility(phrase,committed,capabilities,capacities,options,verified_snapshot,verified_index,
+    live_match_verified,trusted_output,expected_inputs)
   if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
     return nil,"Invalid compatibility options"
   end
@@ -349,8 +359,10 @@ local function compatibility(phrase,committed,capabilities,capacities,options,ve
     if not rawequal(verified_index,retained.index) then
       return nil,"Phrase snapshot index is not a retained verified index"
     end
-    local same,snapshot_error=ownership.matches_snapshot(phrase,retained.snapshot,capacities,retained.index)
-    if not same then return nil,snapshot_error or "Phrase differs from its verified baseline" end
+    if not live_match_verified then
+      local same,snapshot_error=ownership.matches_snapshot(phrase,retained.snapshot,capacities,retained.index)
+      if not same then return nil,snapshot_error or "Phrase differs from its verified baseline" end
+    end
     baseline=retained.snapshot
   else
     local snapshot_error
@@ -361,20 +373,35 @@ local function compatibility(phrase,committed,capabilities,capacities,options,ve
   end
   local inputs,input_error=compatibility_inputs(capabilities,capacities,options)
   if not inputs then return nil,input_error end
+  if expected_inputs and ownership.compare(inputs,expected_inputs)~=true then
+    return nil,"Phrase planning inputs differ from the authorized request"
+  end
   local retained=verified_snapshot and retained_record(verified_snapshot)
-  if retained and same_compatibility_inputs(retained,committed.pattern,
+  if retained and not trusted_output and same_compatibility_inputs(retained,committed.pattern,
       committed.output_policy,committed.pb_range,inputs) then
     return {kind="owned",baseline=baseline,source=committed.pattern,
       settings={output_policy=committed.output_policy,pb_range=committed.pb_range},
       planning_inputs=inputs}
   end
-  local output,planning_error=planner.plan(committed.pattern,committed.output_policy,
-    committed.pb_range,capacities,capabilities,options)
-  if not output then return nil,planning_error end
-  local safe,preflight_error=preflight(baseline,output)
-  if not safe then return nil,preflight_error end
-  local matches,output_error=expected_output(baseline,output)
-  if not matches then return nil,output_error end
+  local output,planning_error=trusted_output
+  if output then
+    if type(output)~="table" or type(output.settings)~="table" or
+        output.settings.output_policy~=committed.output_policy or
+        output.settings.pb_range~=committed.pb_range or
+        ownership.compare(output.source,committed.pattern)~=true then
+      return nil,"Committed source or settings differ from the authorized output plan"
+    end
+  else
+    output,planning_error=planner.plan(committed.pattern,committed.output_policy,
+      committed.pb_range,capacities,capabilities,options)
+    if not output then return nil,planning_error end
+  end
+  if not trusted_output or not live_match_verified then
+    local safe,preflight_error=preflight(baseline,output,false)
+    if not safe then return nil,preflight_error end
+    local matches,output_error=expected_output(baseline,output)
+    if not matches then return nil,output_error end
+  end
   return {kind="owned",baseline=baseline,output=output,source=output.source,settings=output.settings,
     planning_inputs=inputs}
 end
@@ -386,7 +413,8 @@ function M.compatibility(phrase,committed,capabilities,capacities,options,...)
   return protected(compatibility,phrase,committed,capabilities,capacities,options)
 end
 
-local function classify(song,instrument,phrase,capabilities,capacities,options,verified_snapshot,verified_index)
+local function classify(song,instrument,phrase,capabilities,capacities,options,verified_snapshot,verified_index,
+    expected_postimage)
   if options~=nil and (type(options)~="table" or getmetatable(options)~=nil) then
     return nil,"Invalid classification options","unavailable"
   end
@@ -403,6 +431,20 @@ local function classify(song,instrument,phrase,capabilities,capacities,options,v
   end
   if not readable then return nil,"Cannot inspect phrase identity","unavailable" end
   if not id then return nil,"Phrase has no recognized ACID identity","foreign" end
+  if expected_postimage then
+    local retained=retained_record(verified_snapshot)
+    if id~=expected_postimage.id or phrase.name~=expected_postimage.name or not retained or
+        retained.snapshot.name~=expected_postimage.name then
+      return nil,"Phrase revision name differs from the authorized postimage","unavailable"
+    end
+    if not retained or not rawequal(verified_index,retained.index) then
+      return nil,"Postimage is not a retained verified snapshot","unavailable"
+    end
+    local matches,match_error=ownership.matches_snapshot(phrase,retained.snapshot,capacities,retained.index)
+    if matches~=true then
+      return nil,match_error or "Phrase differs from its verified postimage","unavailable"
+    end
+  end
   local ok,source,policy,pb_range
   if verified_snapshot then
     ok,source,policy,pb_range=pcall(store.read_entry,song,id)
@@ -413,7 +455,9 @@ local function classify(song,instrument,phrase,capabilities,capacities,options,v
   if not source then return nil,policy,"unavailable" end
   local candidate,err=protected(compatibility,phrase,
     {pattern=source,output_policy=policy,pb_range=pb_range},capabilities,capacities,options,
-    verified_snapshot,verified_index)
+    verified_snapshot,verified_index,expected_postimage~=nil,
+    expected_postimage and expected_postimage.output,
+    expected_postimage and expected_postimage.planning_inputs)
   if not candidate then return nil,err,"unavailable" end
   if not verified_snapshot then
     local sealed,copy_error=ownership.copy_snapshot(candidate.baseline)
@@ -438,6 +482,44 @@ function M.classify(song,instrument,phrase,capabilities,capacities,options,...)
   return classify(song,instrument,phrase,capabilities,capacities,options)
 end
 
+-- Consume a materializer's opaque receipt and freshly match its private image
+-- after the writer assigns the authorized revision name.
+function M.classify_verified_postimage(song,instrument,phrase,capabilities,capacities,options,
+    token,expected_id,expected_name,planned_output,expected_planning_inputs)
+  if type(token)~="table" or getmetatable(token)~=nil or type(expected_name)~="string" or
+      type(expected_id)~="number" or expected_id%1~=0 or expected_id<1 or
+      type(planned_output)~="table" or type(expected_planning_inputs)~="table" then
+    return nil,"Invalid verified postimage request","unavailable"
+  end
+  local parsed_ok,parsed_id=pcall(ownership.id,{name=expected_name})
+  if not parsed_ok or parsed_id~=expected_id then
+    return nil,"Authorized phrase name does not encode the expected revision ID","unavailable"
+  end
+  local sealed,index,canonical=materializer.consume_verified_output(token,expected_id,
+    expected_name,capacities,planned_output,expected_planning_inputs)
+  if not sealed then
+    return nil,index or "Postimage has no unconsumed materializer verification receipt","unavailable"
+  end
+  if type(canonical)~="table" or
+      ownership.compare(canonical.source,planned_output.source)~=true or
+      ownership.compare(canonical.settings,planned_output.settings)~=true or
+      ownership.compare(canonical.planning_inputs,expected_planning_inputs)~=true then
+    return nil,"Verified postimage planning inputs changed","unavailable"
+  end
+  sealed.name=expected_name
+  local identity={}
+  local retained={snapshot=sealed,index=index,identity=identity}
+  verified_baselines[token]=retained
+  baseline_identities[sealed]=identity
+  identity_baselines[identity]=sealed
+  local candidate,reason,kind=classify(song,instrument,phrase,capabilities,capacities,options,
+    token,index,{id=expected_id,name=expected_name,output=planned_output,
+      planning_inputs=expected_planning_inputs,output_verified=true})
+  if not candidate then return nil,reason,kind end
+  candidate.baseline=token
+  return candidate
+end
+
 -- Internal fresh revalidation against an inventory-owned, previously verified
 -- baseline. The native phrase is read field by field before the cached snapshot
 -- is reused; this avoids building a duplicate tree for unchanged targets.
@@ -449,7 +531,26 @@ function M.classify_against(song,instrument,phrase,capabilities,capacities,optio
   if not rawequal(index,retained.index) then
     return nil,"Phrase snapshot index is not a retained verified index","unavailable"
   end
+  if phrase==nil or phrase.name~=retained.snapshot.name then
+    return nil,"Phrase name differs from its retained verified baseline","unavailable"
+  end
   return classify(song,instrument,phrase,capabilities,capacities,options,snapshot,index)
+end
+
+-- Resolve an opaque runtime-held reference to its private retained image. The
+-- reference carries no freshness claim; native phrase state is still matched.
+function M.classify_against_reference(song,instrument,phrase,capabilities,capacities,options,reference)
+  local retained=retained_proofs[reference]
+  if not retained then
+    return nil,"Phrase proof reference is unavailable","unavailable"
+  end
+  if phrase==nil or phrase.name~=retained.snapshot.name then
+    return nil,"Phrase name differs from its retained verified baseline","unavailable"
+  end
+  local readable,id=pcall(ownership.id,phrase)
+  if not readable or not id then return nil,"Phrase has no readable ACID identity","unavailable" end
+  return classify(song,instrument,phrase,capabilities,capacities,options,reference,retained.index,
+    {id=id,name=retained.snapshot.name})
 end
 
 -- Runtime inventory retains a small opaque reference alongside the sealed

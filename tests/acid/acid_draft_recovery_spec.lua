@@ -246,14 +246,42 @@ local invalid={validate=function()return nil,"unverified"end}
 assert(not cache.put(song,instrument,a,dirty,"repeat",0,invalid))
 assert(not cache.get(song,instrument,a,invalid))
 assert(cache.list(song)[1].reason=="unverified")
+local raw_before_unsealed=song.tool_data
 local calls=0
-local proof={source=committed,settings={output_policy="play_once",pb_range=0},
+local unsealed_proof={source=committed,settings={output_policy="play_once",pb_range=0},
   baseline={value=1},planning_inputs={value=1}}
-local stub={validate=function()calls=calls+1;return proof end}
-assert(cache.put(song,instrument,a,dirty,"repeat",0,stub))
-proof.baseline.value=2
-assert(not cache.get(song,instrument,a,stub))
-assert(calls==2,"stub validation is current for every access")
+local unsealed={validate=function()calls=calls+1;return unsealed_proof end}
+local unsealed_saved,unsealed_error=cache.put(song,instrument,a,dirty,"repeat",0,unsealed)
+assert(not unsealed_saved and unsealed_error:find("retained verified baseline",1,true),
+  "drafts cannot accept a callback-provided baseline without validator provenance")
+assert(song.tool_data==raw_before_unsealed,"unsealed draft proof changed persisted state")
+
+local capabilities=require("renoise.target_capabilities")
+local profile=assert(capabilities.inspect(instrument))
+local capacities={max_lines=512,max_note_columns=12,max_effect_columns=8,
+  play_pattern=1,key_tracking_none=1}
+local canonical_calls=0
+local public_classifier={validate=function(target_song,target_instrument,target_phrase)
+  canonical_calls=canonical_calls+1
+  return original_classify(target_song,target_instrument,target_phrase,profile,capacities,
+    {pitch_bend_delivery=true})
+end}
+assert(cache.put(song,instrument,b,dirty,"repeat",0,public_classifier))
+assert(cache.get(song,instrument,b,public_classifier))
+assert(canonical_calls==2,"public classifier snapshots are revalidated on every access")
+assert(cache.clear(song,instrument,b))
+local sealed_calls=0
+local sealed_classifier={validate=function(target_song,target_instrument,target_phrase)
+  sealed_calls=sealed_calls+1
+  local candidate=assert(original_classify(target_song,target_instrument,target_phrase,
+    profile,capacities,{pitch_bend_delivery=true}))
+  local sealed,_,identity=validator.retained_baseline(candidate.baseline)
+  return {source=candidate.source,settings=candidate.settings,baseline=sealed,
+    planning_inputs=candidate.planning_inputs,baseline_identity=identity}
+end}
+assert(cache.put(song,instrument,b,dirty,"repeat",12,sealed_classifier))
+assert(cache.get(song,instrument,b,sealed_classifier))
+assert(sealed_calls==2,"sealed baseline identities are revalidated on every access")
 
 -- False and other invalid existing targets never alias the New Phrase scratch.
 assert(cache.put(song,other,nil,seq.new_pattern(9),"repeat",0))
@@ -269,7 +297,7 @@ for _,target in ipairs({false,0,"phrase"}) do
 end
 local original_id=own.id
 own.id=function()error("required ID read failed")end
-assert(not cache.put(song,instrument,a,dirty,"repeat",0,stub))
+assert(not cache.put(song,instrument,a,dirty,"repeat",0,unsealed))
 own.id=original_id
 
 -- Raw instrument identity keeps session scratches through native reorder/rename.

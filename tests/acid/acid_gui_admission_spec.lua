@@ -100,12 +100,16 @@ end,
 package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
-  snapshot_index=function()return nil end
+  snapshot_index=function()return nil end,
+  capture_recovery=function()return {} end,
+  matches_recovery=function(_,token)return type(token)=="table" end,
+  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 local active_request
+local sync_next_result
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
   local phrase=call.phrase or call.request.phrase
@@ -114,16 +118,16 @@ local function terminal_result(call,status,message)
     phrase=success and phrase or nil,reason=success and nil or (message or "fixture complete"),
     message=message or "fixture complete"}
   if success then
-    result.baseline=call.request.baseline or {
-      id=phrase and phrase.id,source=call.request.source,
+    result.baseline={id=phrase and phrase.id,source=call.request.source,
       settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
-      snapshot={},planning_inputs=call.request.planning_inputs}
+      snapshot=call.request.baseline and call.request.baseline.snapshot or {},
+      planning_inputs=call.request.planning_inputs or {capabilities={},capacities={},options={}}}
   end
   return result
 end
 local function start(kind,request,done)
   local call={kind=kind,request=request,token=request.token,source=request.source,
-    pb_range=request.pb_range}
+    pb_range=request.pb_range,token_current_at_start=request.token:is_current()}
   call.pattern=request.source
   call.options={token=request.token,pb_range=request.pb_range,
     phrase_mutation=function(action) return request:mutate(request.token,action) end}
@@ -143,9 +147,20 @@ local function start(kind,request,done)
     assert(request.token:is_current(),"internal selection notification preserves authorization")
   end
   active_request=request
-  render_callbacks[#render_callbacks+1]=function(result)
+  local callback_index=#render_callbacks+1
+  call.completed=false
+  render_callbacks[callback_index]=function(result)
     active_request=nil
+    call.completed=true
     done(result)
+  end
+  if sync_next_result then
+    local status=sync_next_result
+    sync_next_result=nil
+    if status=="committed" and kind=="regenerate" then
+      request:mutate(request.token,function() request.phrase.id=request.phrase.id+100 end)
+    end
+    render_callbacks[callback_index](terminal_result(call,status))
   end
   return true
 end
@@ -240,21 +255,22 @@ builder.views.acid_pb_range:fire(builder.views.acid_pb_range.value)
 assert(#admissions==0 and #tool.writer_calls==0,
   "arming, target/source restoration, view navigation, reset and no-op edits must make zero requests")
 
+sync_next_result="error"
 button(builder,"Generate / Regenerate ACID Phrase"):fire()
 assert(#tool.writer_calls==1 and #admissions==1 and admissions[1].trigger=="manual",
   "manual Generate must enter runtime admission: "..tostring(admissions[#admissions] and admissions[#admissions].reason))
 local manual=tool.writer_calls[1]
-assert(manual.options.token:is_current() and manual.target==1)
+assert(manual.token_current_at_start and manual.target==1)
+assert(manual.completed,"manual write and completion finish inside the Generate callback")
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
-assert(#admissions==1 and manual.options.token:is_current(),
-  "an in-flight no-op edit neither enqueues nor revokes the admitted request")
-complete(1)
+assert(#admissions==1 and manual.completed,
+  "a no-op edit neither enqueues a duplicate nor changes completed state")
 builder.views.acid_program_key_popup:fire(2)
-assert(#tool.writer_calls==1 and #admissions==1,
-  "armed edit must persist and queue before the idle admission")
-tool.app_idle_observable:fire()
 assert(#tool.writer_calls==2 and #admissions==2 and admissions[2].trigger=="live",
-  "armed real edits must enter the same runtime admission")
+  "armed edit must enter runtime admission inside the user edit callback")
+tool.app_idle_observable:fire()
+assert(#tool.writer_calls==2 and #admissions==2,
+  "idle must not start a duplicate admission after the synchronous edit callback")
 assert(rawequal(admissions[1].context,admissions[2].context),"manual and live share one runtime authority")
 local stale=tool.writer_calls[2]
 assert(stale.options.token:is_current() and not rawequal(manual.options.token,stale.options.token),

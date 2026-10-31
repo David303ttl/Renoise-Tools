@@ -4,6 +4,13 @@ local command_fields={panning_string="panning_value",number_string="number_value
 local command_strings={panning_value="panning_string",number_value="number_string",
   effect_number_value="effect_number_string"}
 local digits="0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+local function base36_string(value)
+  if type(value)~="number" or value<0 or value%1~=0 then return nil end
+  local high=math.floor(value/256)+1
+  local low=value%256+1
+  if high>#digits or low>#digits then return nil end
+  return digits:sub(high,high)..digits:sub(low,low)
+end
 local function base36(text)
   if type(text)~="string" or #text<2 then return nil end
   local high=digits:find(text:sub(1,1),1,true)
@@ -16,6 +23,9 @@ local command_cell_metatable={
     local field=command_strings[key]
     local text=field and rawget(value,field)
     if text then return base36(text) end
+    if key=="number_string" then return base36_string(rawget(value,"number_value")) end
+    if key=="effect_number_string" then return base36_string(rawget(value,"effect_number_value")) end
+    if key=="panning_string" then return base36_string(rawget(value,"panning_value")) end
   end,
   __newindex=function(value,key,item)
     local numeric=command_fields[key]

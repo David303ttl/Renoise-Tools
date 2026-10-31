@@ -4,6 +4,8 @@ local ownership=require("renoise.phrase_ownership")
 local store=require("renoise.pattern_store")
 local eligibility=require("runtime.eligibility")
 local capabilities=require("renoise.target_capabilities")
+local validator=require("writers.phrase_validator")
+local pitch_bend=require("writers.phrase_pitch_bend")
 local M={}
 
 local MINIMUM_COLLISION_SIZE=2
@@ -78,10 +80,26 @@ end
 local function verify_committed_baseline(song,target,id,source,policy,pb_range)
   local profile,profile_error=capabilities.inspect(target.instrument)
   if not profile then return nil,profile_error end
-  local compatible,reason=eligibility.compatibility(target.phrase,source,policy,pb_range,profile)
-  if not compatible then return nil,reason end
-  return ownership.copy_snapshot({id=id,source=compatible.source,settings=compatible.settings,
-    snapshot=compatible.baseline,planning_inputs=compatible.planning_inputs})
+  local api=renoise.InstrumentPhrase
+  local limits={max_lines=api.MAX_NUMBER_OF_LINES,
+    max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
+    max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,
+    play_pattern=api.PLAY_PATTERN,key_tracking_none=api.KEY_TRACKING_NONE}
+  local classified,reason=validator.classify(song,target.instrument,target.phrase,profile,limits,
+    {pitch_bend_delivery=pitch_bend.delivery_enabled})
+  if not classified or not classified.baseline then
+    return nil,reason or "Independent phrase baseline could not be verified"
+  end
+  local baseline=classified.baseline
+  if ownership.id({name=baseline.name})~=id or not ownership.compare(classified.source,source) or
+      classified.settings.output_policy~=policy or classified.settings.pb_range~=pb_range then
+    return nil,"Independent phrase baseline differs from its cloned source revision"
+  end
+  local committed,copy_error=ownership.copy_snapshot({id=id,source=classified.source,
+    settings=classified.settings,planning_inputs=classified.planning_inputs})
+  if not committed then return nil,copy_error end
+  committed.snapshot=baseline
+  return committed
 end
 
 function M.run(song,target,options)
