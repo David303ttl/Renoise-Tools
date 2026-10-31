@@ -52,6 +52,26 @@ do
   assert(#assert(ctx:recovery_entries())==0)
 end
 
+-- Receiver changes during the guarded mutation window invalidate the captured
+-- capability proof before the song store or phrase name can commit.
+do
+  local ctx,song,instrument,selected,_,_,holders=setup(2)
+  local raw,name=song.tool_data,selected.name
+  local snapshots={assert(ownership.snapshot(selected)),assert(ownership.snapshot(holders[2]))}
+  song.describe_undo=function()
+    instrument.midi_output_properties.channel=2
+  end
+  local changed=ctx:make_independent()
+  assert(not changed,'receiver profile drift during mutation was accepted')
+  assert(song.tool_data==raw and selected.name==name,
+    'receiver profile drift committed source or ownership metadata')
+  assert(instrument.midi_output_properties.channel==2,
+    'receiver profile rollback overwrote an external change')
+  assert(ownership.compare(snapshots[1],assert(ownership.snapshot(selected))) and
+    ownership.compare(snapshots[2],assert(ownership.snapshot(holders[2]))),
+    'receiver profile drift changed phrase content')
+end
+
 -- Resolves only the selected holder, clones committed source/settings, and leaves music intact.
 do
   local ctx,song,instrument,selected,other,source,holders,_,log=setup(2)
@@ -140,6 +160,194 @@ for _,fault in ipairs({'missing_source','corrupt_source','changed_holder','busy_
   assert(ownership.compare(revisions,ctx:revision_state()),fault..' changed runtime intent during failed preflight')
   assert(selected.name==names[1] and holders[2].name==names[2],fault..' rekeyed a phrase')
   if fault~='missing_source' then assert(song.tool_data==raw,fault..' changed song data') end
+end
+
+-- Collision eligibility accepts complete matching groups and treats every
+-- phrase as a separate object even when native equality compares contents.
+for _,count in ipairs({2,3}) do
+  local ctx,song,_,selected,_,source,holders=setup(1)
+  local draft=seq.new_pattern(6)
+  assert(store.write_draft(song,song.instruments[1],selected,draft,'play_once',0))
+  for index=2,count do
+    local instrument=helper.instrument({helper.phrase(source,101)})
+    song.instruments[#song.instruments+1]=instrument
+    holders[index]=instrument.phrases[1]
+  end
+  local raw=song.tool_data
+  local snapshots={}
+  for index=1,count do snapshots[index]=assert(ownership.snapshot(holders[index])) end
+  local eligible,reason=ctx:independence_eligibility()
+  assert(eligible,reason)
+  assert(song.tool_data==raw,'read-only collision eligibility changed source or draft bytes')
+  for index=1,count do
+    assert(ownership.compare(snapshots[index],assert(ownership.snapshot(holders[index]))),
+      'read-only collision eligibility changed a holder')
+  end
+end
+
+-- Valid seals do not make unlike complete snapshots or receivers compatible.
+for _,fault in ipairs({'different_seal','hidden_tail','metadata','incompatible_holder',
+    'phrase_getter','receiver_getter','phrase_api_getter','missing_source'}) do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  local draft=seq.new_pattern(6)
+  assert(store.write_draft(song,instrument,selected,draft,'play_once',0))
+  local other_instrument=helper.instrument({helper.phrase(source,101)})
+  local other=other_instrument.phrases[1]
+  song.instruments[#song.instruments+1]=other_instrument
+  local selected_snapshot,other_snapshot
+  local restore_fault
+  if fault=='different_seal' then
+    other.lines[1].note_columns[1].note_value=61
+    other.lines[1].note_columns[1].is_empty=false
+    other.name=assert(ownership.make_name(other,101))
+  elseif fault=='hidden_tail' then
+    local cell=other.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns]
+    cell.instrument_value=1;cell.is_empty=false
+    other.name=assert(ownership.make_name(other,101))
+  elseif fault=='metadata' then
+    other.column_names[1]='different protected mapping name'
+    other.name=assert(ownership.make_name(other,101))
+  elseif fault=='incompatible_holder' then
+    other.number_of_lines=source.length+1
+    other.name=assert(ownership.make_name(other,101))
+  elseif fault=='phrase_getter' then
+    selected_snapshot=assert(ownership.snapshot(selected))
+    other_snapshot=assert(ownership.snapshot(other))
+    local loop_start,old_meta=other.loop_start,getmetatable(other)
+    other.loop_start=nil
+    setmetatable(other,{__index=function(_,key)
+      if key=='loop_start' then error('phrase getter failed') end
+    end})
+    restore_fault=function()
+      setmetatable(other,old_meta);other.loop_start=loop_start
+    end
+  elseif fault=='receiver_getter' then
+    other_instrument.samples=nil
+    setmetatable(other_instrument,{__index=function(_,key)
+      if key=='samples' then error('receiver getter failed') end
+    end})
+  elseif fault=='phrase_api_getter' then
+    local api=renoise.InstrumentPhrase
+    local old_limit,old_meta=api.MAX_NUMBER_OF_LINES,getmetatable(api)
+    selected_snapshot=assert(ownership.snapshot(selected))
+    other_snapshot=assert(ownership.snapshot(other))
+    rawset(api,'MAX_NUMBER_OF_LINES',nil)
+    setmetatable(api,{__index=function(_,key)
+      if key=='MAX_NUMBER_OF_LINES' then error('phrase API getter failed') end
+    end})
+    restore_fault=function()
+      setmetatable(api,old_meta);rawset(api,'MAX_NUMBER_OF_LINES',old_limit)
+    end
+  elseif fault=='missing_source' then
+    song.tool_data=''
+  end
+  selected_snapshot=selected_snapshot or assert(ownership.snapshot(selected))
+  other_snapshot=other_snapshot or assert(ownership.snapshot(other))
+  local raw=song.tool_data
+  local names={selected.name,other.name}
+  local rejected=ctx:independence_eligibility()
+  if restore_fault then restore_fault() end
+  assert(not rejected,fault..' collision was eligible')
+  assert(song.tool_data==raw,fault..' eligibility changed source or durable draft bytes')
+  assert(selected.name==names[1] and other.name==names[2],fault..' eligibility changed ownership names')
+  assert(ownership.compare(selected_snapshot,assert(ownership.snapshot(selected))),
+    fault..' eligibility changed the selected phrase')
+  assert(ownership.compare(other_snapshot,assert(ownership.snapshot(other))),
+    fault..' eligibility changed the colliding phrase')
+end
+
+-- A mutation between read-only proof construction and transaction capture
+-- invalidates the proof without committing either ownership or store changes.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  local draft=seq.new_pattern(6)
+  assert(store.write_draft(song,instrument,selected,draft,'play_once',0))
+  local other_instrument=helper.instrument({helper.phrase(source,101)})
+  local other=other_instrument.phrases[1]
+  song.instruments[#song.instruments+1]=other_instrument
+  local raw,name=song.tool_data,selected.name
+  local selected_before=assert(ownership.snapshot(selected))
+  local eligibility=require('runtime.eligibility')
+  local original=eligibility.independence
+  local calls=0
+  eligibility.independence=function(...)
+    local proof,reason=original(...)
+    calls=calls+1
+    if calls==3 then
+      assert(proof,reason)
+      other.column_names[1]='external change after eligibility proof'
+      other.name=assert(ownership.make_name(other,101))
+    end
+    return proof
+  end
+  local changed=ctx:make_independent()
+  eligibility.independence=original
+  assert(not changed,'stale eligibility proof committed after an external holder change')
+  assert(song.tool_data==raw and selected.name==name,'stale proof changed ownership or durable draft bytes')
+  assert(ownership.compare(selected_before,assert(ownership.snapshot(selected))),
+    'stale proof changed selected phrase content')
+  assert(other.column_names[1]=='external change after eligibility proof',
+    'stale proof rollback overwrote the external change')
+end
+
+-- A later receiver inspection that changes the committed source invalidates
+-- the whole proof, even though earlier holders already passed compatibility.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  local other_instrument=helper.instrument({helper.phrase(source,101)})
+  song.instruments[#song.instruments+1]=other_instrument
+  local other=other_instrument.phrases[1]
+  local before={assert(ownership.snapshot(selected)),assert(ownership.snapshot(other))}
+  local capabilities=require('renoise.target_capabilities')
+  local original=capabilities.inspect
+  local injected_bytes
+  capabilities.inspect=function(target)
+    local profile,reason=original(target)
+    if rawequal(target,other_instrument) then
+      local changed_source=seq.copy_source(source)
+      changed_source.pitch_events[1]=seq.new_pitch(12,0,false,false)
+      assert(store.save(song,101,changed_source,'play_once',0))
+      injected_bytes=song.tool_data
+    end
+    return profile,reason
+  end
+  local eligible=ctx:independence_eligibility()
+  capabilities.inspect=original
+  assert(not eligible,'eligibility accepted a source changed during later-holder inspection')
+  assert(song.tool_data==injected_bytes,'eligibility overwrote or further changed external source data')
+  assert(ownership.compare(before[1],assert(ownership.snapshot(selected))) and
+    ownership.compare(before[2],assert(ownership.snapshot(other))),
+    'eligibility changed phrase data while rejecting source drift')
+end
+
+-- Imported copies with matching names but no local source record cannot enter
+-- the transaction; unrelated committed data and a durable scratch draft stay exact.
+do
+  local song,instrument,_,_,source=helper.fixture('new')
+  local selected=helper.phrase(source,101)
+  local imported=helper.phrase(source,101)
+  local unrelated=helper.phrase(source,200)
+  instrument.phrases={selected}
+  local imported_instrument=helper.instrument({imported,unrelated})
+  song.instruments[#song.instruments+1]=imported_instrument
+  assert(store.save(song,200,source,'repeat',12))
+  local draft=seq.new_pattern(6)
+  assert(store.write_draft(song,imported_instrument,unrelated,draft,'play_once',0))
+  local raw=song.tool_data
+  local selected_before=assert(ownership.snapshot(selected))
+  local imported_before=assert(ownership.snapshot(imported))
+  local mutations=0
+  local changed=require('runtime.independence').run(song,
+    {instrument=instrument,phrase=selected},{
+      guard=function()return true end,
+      mutate=function(action)mutations=mutations+1;return action()end,
+    })
+  assert(not changed,'source-less imported collision entered the identity transaction')
+  assert(mutations==0,'source-less imported collision entered the mutation scope')
+  assert(song.tool_data==raw,'source-less rejection changed unrelated source or durable draft')
+  assert(ownership.compare(selected_before,assert(ownership.snapshot(selected))) and
+    ownership.compare(imported_before,assert(ownership.snapshot(imported))),
+    'source-less rejection changed imported phrase content')
 end
 
 -- A holder changed after candidate preparation invalidates the captured guard

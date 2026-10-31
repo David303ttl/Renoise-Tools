@@ -48,11 +48,11 @@ unresolved.
 | --- | --- |
 | Outcome reconciliation / T4.5–T4.6 | Inject post-commit adoption, reconciliation, editor restoration and draft-rebinding failures. Distinguish verified commit from rejection; preserve committed identity and recoverable drafts, and block unsafe writes when reconciliation fails. |
 | Writer exclusion / T4.2 | Reject active/unsettled writer occupancy without cancellation or queued identity retry; independently recheck current session and target before commit. |
-| R24 / T4.1, T4.8 | Focused cross-song/imported-copy transaction negatives, plus native source-less imported-copy rejection without adoption or mutation. |
+| R24 / T4.8 | Local imported-copy transaction rejection is verified in T4.1 below; native source-less imported-copy rejection without adoption or mutation remains required. |
 | R28 / T4.5–T4.6 | Selected dirty source/settings and exact revision/recovery origin survive injected transaction rollback and post-commit failure; ambiguous old-ID durable drafts remain unclaimed. Existing successful dirty-draft rebinding does not prove this. |
 | R29 / T4.8 | Actual native Make Independent undo/redo states and grouping, including partial phrase/store associations; every inconsistent state blocks regeneration after undo settles, with no repair writes. |
 | R36 / T4.8 | Save, terminate Renoise, open the song in a fresh process, reclassify read-only and explicitly regenerate the exact independent target; repeat negative persisted-association checks. |
-| Architectural debt / T4.1, T4.7–T4.8 | Identify concrete duplicate policy removed, preserve independent live checks, and verify the existing dependency graph, single mutation guard, musical pipeline, queue and ownership/store/draft authorities. No new compatibility path, persistence format or unrelated M5 change. |
+| Architectural debt / T4.7–T4.8 | T4.1 shares compatibility-proof construction while preserving independent live checks. Verify the integrated dependency graph, single mutation guard, musical pipeline, queue and ownership/store/draft authorities. No new compatibility path, persistence format or unrelated M5 change. |
 
 The [native host record](../renoise/host_verification.md#exceptional-writer-recovery-verification-2026-10-31)
 records a passing Make Independent and saved-song reload/regenerate scenario.
@@ -61,6 +61,23 @@ It does not establish cold-process acceptance or native undo/redo safety. The
 observed restored phrase content/seal with newer `song.tool_data`; retain this
 negative evidence when designing the native checks. Gate 4's targeted native
 results contribute to Gate 8 without closing its broader acceptance.
+
+### T4.1 collision eligibility (2026-10-31)
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Matching groups and read-only rejection | `acid_runtime_independence_spec.lua`: two/three holders; different valid seals, hidden/tail cells, metadata, incompatible output, corrupt/missing source, getter failures and source drift; complete phrase snapshots and store/draft bytes checked | PASS |
+| Live identity and transaction boundary | Same spec: distinct content-equal objects; changed holder after proof/preparation; receiver drift during undo description; direct imported collision with no local source retains unrelated committed source and draft | PASS |
+| Compatibility policy | `runtime.eligibility.compatibility` supplies admission and committed-baseline proof construction; executor independently checks live holder objects, content, source/settings and retained receiver profiles | Single policy; no adapter or format change |
+| ACID suite | PowerShell 7: `./scripts/run_tests.ps1 -Tool ACID`, Lua 5.1 | 64 specs passed, 0 failed |
+| Repository suite | PowerShell 7: `./scripts/run_tests.ps1`, Lua 5.1; isolated independence rerun after tightening getter-state equality | 67 specs passed, 0 failed; isolated rerun passed |
+| Native E2E | `./scripts/run_interactive_tests.ps1 -Suite Native -AcceptanceCase make-independent -Install -ApproveDisposableSong`; `interactive-cd87dee421e748ed8e2776833167005b/report.json`, Renoise 3.5.4 / API 6.2 | PASS: exact selected content/source/settings preserved, other holder unchanged, same-object regeneration, saved-song reload and regeneration; installation restored |
+| Package | `./scripts/package.ps1 -Tool ACID`; archive root and entry inspection | PASS: 34 runtime files, root manifest/main, private modules retained; no SDK/tests/docs |
+| Fresh second pass | Independent final diff review, isolated independence spec, `git diff --check` | PASS; no remaining T4.1 finding |
+
+T4.1 is locally verified. Native source-less import, native undo/redo and
+cold-process reopen remain T4.8 obligations; Gate 4 remains open. The native
+round trip reloads within one process and reports undo unavailable.
 
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform
@@ -93,8 +110,8 @@ rejection remain verified.
 | R20 | `acid_runtime_independence_spec.lua`: two holders in different instruments resolve by explicit selected object; only the selected phrase ID changes. | Save/reopen and independent regeneration remain Step 8. |
 | R21 | `acid_runtime_independence_spec.lua`: three matching holders are resolved one at a time; a selected holder can resolve in an instrument containing a foreign phrase while other matching holders remain intact and blocked. | Native Make Independent passed in Renoise 3.5.4; undo/redo and cold-process checks remain pending. |
 | R22 | `acid_runtime_independence_spec.lua`, `acid_runtime_writer_integration_spec.lua`: source cloning and selected object binding are checked; a three-holder same-instrument collision is resolved, the unique selected phrase regenerates while the remaining collision stays blocked, and regeneration is repeated after runtime release/reopen. Focused specs pass. | Cold-process Renoise save/reopen/regenerate remains pending. |
-| R23 | `acid_runtime_independence_spec.lua`: two- and three-holder resolution and a re-sealed holder with changed hidden content are rejected. | Native collision revalidation beyond the completed Make Independent check remains pending. |
-| R24 | `acid_runtime_inventory_spec.lua`, `acid_output_compatibility_spec.lua`, `acid_runtime_independence_spec.lua`: missing/corrupt sources do not authorize adoption or resolution. | Cross-song/imported copy transaction cases need focused coverage; native source-less copy remains Step 8. |
+| R23 | `acid_runtime_independence_spec.lua`: matching two/three-holder groups qualify; different valid seals, hidden/tail content, metadata, incompatible output and inspection/transaction drift reject without changing phrase/store/draft data. | Native collision revalidation beyond the completed Make Independent check remains pending. |
+| R24 | `acid_runtime_inventory_spec.lua`, `acid_output_compatibility_spec.lua`, `acid_runtime_independence_spec.lua`: missing/corrupt sources reject; a direct imported collision with no local source cannot enter mutation and preserves unrelated committed source and durable draft bytes. | Native source-less copy remains Step 8. |
 | R25 | `acid_writer_safety_spec.lua`: create requires one free phrase slot; regenerate requires two and rejects before insertion when short. | Capacity boundary is mocked. |
 | R26 | `acid_runtime_mutation_spec.lua`, `acid_runtime_observers_spec.lua`, `acid_writer_inspection_spec.lua`: scoped mutations, temporary neutrality, observer re-entry, and column-name/mute notifications during editing and generation are exercised. | Renoise notifier ordering remains Step 8. |
 | R27 | `acid_runtime_context_spec.lua`, `acid_runtime_writer_integration_spec.lua`, `acid_gui_timing_race_spec.lua`: newest intent supersedes safely and no second writer starts before terminal retirement. | Async callback ordering is mocked. |

@@ -4,9 +4,9 @@ local ownership=require("renoise.phrase_ownership")
 local store=require("renoise.pattern_store")
 local eligibility=require("runtime.eligibility")
 local capabilities=require("renoise.target_capabilities")
-local validator=require("writers.phrase_validator")
-local pitch_bend=require("writers.phrase_pitch_bend")
 local M={}
+
+local MINIMUM_COLLISION_SIZE=2
 
 local function read_name(phrase)
   local ok,name=pcall(function() return phrase.name end)
@@ -18,7 +18,9 @@ local function capture_group(song,id)
   local groups,reason=ownership.inventory(song)
   if not groups then return nil,reason end
   local holders=groups[id]
-  if type(holders)~="table" or #holders<2 then return nil,"Select a colliding ACID phrase" end
+  if type(holders)~="table" or #holders<MINIMUM_COLLISION_SIZE then
+    return nil,"Select a colliding ACID phrase"
+  end
   local result={}
   for _,holder in ipairs(holders) do
     local name,name_error=read_name(holder.phrase)
@@ -57,32 +59,35 @@ local function same_record(song,id,source,policy,pb_range)
   return true
 end
 
+local function same_eligibility(song,target,expected)
+  local current,reason=eligibility.independence(song,target)
+  if not current then return false,reason end
+  if current.id~=expected.id or current.name~=expected.name or
+      current.policy~=expected.policy or current.pb_range~=expected.pb_range or
+      not ownership.compare(current.source,expected.source) or
+      #current.proofs~=#expected.proofs then
+    return false,"Collision eligibility changed before identity resolution"
+  end
+  for _,saved in ipairs(expected.proofs) do
+    local found
+    for _,item in ipairs(current.proofs) do
+      if rawequal(item.instrument,saved.instrument) and rawequal(item.phrase,saved.phrase) then
+        found=item;break
+      end
+    end
+    if not found or found.name~=saved.name or
+        not ownership.compare(found.baseline,saved.baseline) or
+        not capabilities.same(found.profile,saved.profile) then
+      return false,"A colliding holder changed before identity resolution"
+    end
+  end
+  return true
+end
+
 local function verify_committed_baseline(song,target,id,source,policy,pb_range)
   local profile,profile_error=capabilities.inspect(target.instrument)
   if not profile then return nil,profile_error end
-  local api_ok,api=pcall(function()
-    local host=rawget(_G,"renoise")
-    return host and host.InstrumentPhrase
-  end)
-  if not api_ok or api==nil then return nil,"Phrase API is unavailable" end
-  local function read(key)
-    local ok,value=pcall(function()return api[key]end)
-    if not ok then return nil,false end
-    return value,true
-  end
-  local max_lines,lines_ok=read("MAX_NUMBER_OF_LINES")
-  local max_notes,notes_ok=read("MAX_NUMBER_OF_NOTE_COLUMNS")
-  local max_effects,effects_ok=read("MAX_NUMBER_OF_EFFECT_COLUMNS")
-  local play_pattern,play_ok=read("PLAY_PATTERN")
-  local key_tracking,key_ok=read("KEY_TRACKING_NONE")
-  if not lines_ok or not notes_ok or not effects_ok or not play_ok or not key_ok then
-    return nil,"Cannot inspect phrase API limits"
-  end
-  local compatible,reason=validator.compatibility(target.phrase,
-    {pattern=source,output_policy=policy,pb_range=pb_range},profile,
-    {max_lines=max_lines,max_note_columns=max_notes,max_effect_columns=max_effects,
-      play_pattern=play_pattern,key_tracking_none=key_tracking},
-    {pitch_bend_delivery=pitch_bend.delivery_enabled})
+  local compatible,reason=eligibility.compatibility(target.phrase,source,policy,pb_range,profile)
   if not compatible then return nil,reason end
   return ownership.copy_snapshot({id=id,source=compatible.source,settings=compatible.settings,
     snapshot=compatible.baseline,planning_inputs=compatible.planning_inputs})
@@ -98,6 +103,19 @@ function M.run(song,target,options)
   local id=proof.id
   local expected,group_error=capture_group(song,id)
   if not expected then return false,group_error end
+  if #expected~=#proof.proofs then return false,"Collision group changed" end
+  for _,item in ipairs(expected) do
+    local matched
+    for _,verified in ipairs(proof.proofs) do
+      if rawequal(item.instrument,verified.instrument) and rawequal(item.phrase,verified.phrase) then
+        matched=verified;break
+      end
+    end
+    if not matched or item.name~=matched.name or
+        not ownership.compare(item.snapshot,matched.baseline) then
+      return false,"A colliding holder changed during eligibility inspection"
+    end
+  end
   local selected
   for _,item in ipairs(expected) do
     if rawequal(item.instrument,target.instrument) and rawequal(item.phrase,target.phrase) then
@@ -107,6 +125,9 @@ function M.run(song,target,options)
   if not selected then return false,"Selected phrase is not in the collision group" end
   local source,policy,pb_range=store.read_entry(song,id)
   if not source then return false,policy end
+  if not ownership.compare(source,proof.source) or policy~=proof.policy or pb_range~=proof.pb_range then
+    return false,"Committed source/settings changed during eligibility inspection"
+  end
   local original_entries,entries_error=store.read(song)
   if not original_entries then return false,entries_error end
   original_entries=assert(ownership.copy_snapshot(original_entries))
@@ -120,6 +141,8 @@ function M.run(song,target,options)
   local candidate,prepare_error=store.prepare(song,fresh_id,source,policy,pb_range,function()
     local valid,guard_error=options.guard()
     if not valid then return false,guard_error end
+    local eligible,eligibility_error=same_eligibility(song,target,proof)
+    if not eligible then return false,eligibility_error end
     local same,same_error=same_group(song,id,expected)
     if not same then return false,same_error end
     local record_ok,record_error=same_record(song,id,source,policy,pb_range)
@@ -138,6 +161,8 @@ function M.run(song,target,options)
     return options.mutate(function()
       local valid,guard_error=options.guard()
       if not valid then return false,guard_error end
+      local eligible,eligibility_error=same_eligibility(song,target,proof)
+      if not eligible then return false,eligibility_error end
       local same,same_error=same_group(song,id,expected)
       if not same then return false,same_error end
       local record_ok,record_error=same_record(song,id,source,policy,pb_range)

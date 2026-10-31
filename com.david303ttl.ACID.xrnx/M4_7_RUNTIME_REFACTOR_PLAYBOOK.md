@@ -1535,6 +1535,21 @@ does not close the post-commit reconciliation gap or any native obligation.
   remain distinct. No inferred original, excluded holder or adoption from notes.
 - **Stop:** any ambiguous group qualifies or read-only inspection mutates state.
 
+**T4.1 implementation:** eligibility retains every holder's raw object pair,
+exact name, complete snapshot and receiver profile, plus committed source/settings.
+Read-only inspection rechecks that evidence; the executor independently verifies
+live membership/content and repeats compatibility at preparation and commit.
+Shared compatibility-proof construction serves admission and committed-baseline
+verification. No ownership/store format or manifest version changes.
+
+**T4.1 verification:** ACID/all suites: 64/67 specs passed (Lua 5.1); fresh independent
+review and focused spec passed. Native Make Independent/content/source preservation,
+same-object regeneration and same-process save/reload passed in
+`interactive-cd87dee421e748ed8e2776833167005b`. Release package checks passed.
+Assertions and remaining native limits are in
+[runtime acceptance](../tests/acid/runtime_acceptance.md#t41-collision-eligibility-2026-10-31).
+T4.1 complete; Gate 4 remains open.
+
 ### T4.2 — Harden session and writer exclusion
 
 - **Scope:** check current song, runtime epoch/session/revision, bound object pair,
