@@ -794,8 +794,8 @@ end
 -- the transaction; unrelated committed data and a durable scratch draft stay exact.
 do
   local song,instrument,_,_,source=helper.fixture('new')
-  local selected=helper.phrase(source,101)
-  local imported=helper.phrase(source,101)
+  local selected=helper.phrase(source,INDEPENDENCE_COLLISION_ID)
+  local imported=helper.phrase(source,INDEPENDENCE_COLLISION_ID)
   local unrelated=helper.phrase(source,200)
   instrument.phrases={selected}
   local imported_instrument=helper.instrument({imported,unrelated})
@@ -818,6 +818,33 @@ do
   assert(ownership.compare(selected_before,assert(ownership.snapshot(selected))) and
     ownership.compare(imported_before,assert(ownership.snapshot(imported))),
     'source-less rejection changed imported phrase content')
+end
+
+-- Cross-song copies retain the donor seal but cannot borrow its source record.
+do
+  local donor_song,_,_,_,source=helper.fixture()
+  local target_song,target_instrument=helper.fixture('new')
+  local selected=helper.phrase(source,INDEPENDENCE_COLLISION_ID)
+  local imported=helper.phrase(source,INDEPENDENCE_COLLISION_ID)
+  target_instrument.phrases={selected}
+  target_song.instruments[#target_song.instruments+1]=helper.instrument({imported})
+  local target_bytes=target_song.tool_data
+  local donor_bytes=donor_song.tool_data
+  local selected_before=assert(ownership.snapshot(selected))
+  local imported_before=assert(ownership.snapshot(imported))
+  local mutations=0
+  local changed,reason=require('runtime.independence').run(target_song,
+    {instrument=target_instrument,phrase=selected},{
+      guard=function()return true end,
+      mutate=function(action)mutations=mutations+1;return action()end,
+    })
+  assert(not changed and reason,'cross-song copies without a target source record were accepted')
+  assert(mutations==0,'cross-song rejection entered the identity transaction')
+  assert(target_song.tool_data==target_bytes and donor_song.tool_data==donor_bytes,
+    'cross-song rejection changed target or donor song data')
+  assert(ownership.compare(selected_before,assert(ownership.snapshot(selected))) and
+    ownership.compare(imported_before,assert(ownership.snapshot(imported))),
+    'cross-song rejection changed imported phrase content')
 end
 
 -- A holder changed after candidate preparation invalidates the captured guard

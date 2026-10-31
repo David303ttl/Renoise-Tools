@@ -222,7 +222,14 @@ local function queue_response(current, client, id, ok, result, err, options)
     error = err or current.json.null
   }
   local encoded_ok, encoded = pcall(current.json.encode, response)
-  if not encoded_ok or #encoded + 1 > LIMITS.max_response_bytes then
+  if not encoded_ok then
+    encoded = current.json.encode({
+      id = id or current.json.null,
+      ok = false,
+      result = current.json.null,
+      error = error_value("response_encoding_failed", "response could not be encoded")
+    })
+  elseif #encoded + 1 > LIMITS.max_response_bytes then
     encoded = current.json.encode({
       id = id or current.json.null,
       ok = false,
@@ -380,7 +387,11 @@ local function valid_args_for_operation(current, request)
     return object_has_only_keys(args, {case = true}, {"case"}) and
       (args.case == "make-independent" or args.case == "draft-recovery" or
         args.case == "reopen-independent" or args.case == "api-probe" or
-        args.case == "integrity-observers" or args.case == "writer-recovery" or args.case == "editor-responsiveness")
+        args.case == "integrity-observers" or args.case == "writer-recovery" or
+        args.case == "editor-responsiveness" or args.case == "ownership-negatives" or
+        args.case == "independence-undo-prepare" or args.case == "independence-undo" or
+        args.case == "cold-reopen-regenerate" or
+        args.case == "cold-reopen-verify")
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end

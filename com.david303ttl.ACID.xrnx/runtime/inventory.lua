@@ -214,7 +214,7 @@ function M.new(song,writer)
 
   -- UI projections may be reused until a native change or target transition invalidates them.
   function owner:target_projection()
-    if not cached_projection then self:target_state() end
+    if not cached_projection then target_state(false) end
     local projection={}
     for key,value in pairs(cached_projection or {}) do projection[key]=value end
     if next(projection)==nil then return {kind="unavailable",reason="No target is selected"} end

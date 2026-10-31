@@ -1,5 +1,15 @@
 #Requires -Version 7.0
 $ErrorActionPreference = 'Stop'
+class DelayedConnectClient {
+    [int]$DelayMilliseconds
+    [bool]$NoDelay
+    [bool]$Disposed
+    DelayedConnectClient([int]$delayMilliseconds) { $this.DelayMilliseconds = $delayMilliseconds }
+    [System.Threading.Tasks.Task] ConnectAsync([System.Net.IPAddress]$address, [int]$port) {
+        return [System.Threading.Tasks.Task]::Delay($this.DelayMilliseconds)
+    }
+    [void] Dispose() { $this.Disposed = $true }
+}
 Import-Module "$PSScriptRoot/runner.psm1" -Force
 function Assert($Condition, $Message) { if (-not $Condition) { throw $Message } }
 function Reject([scriptblock]$Action, [string]$Pattern) {
@@ -74,6 +84,32 @@ $closedListener.Stop()
 $checkCounter = [pscustomobject]@{ Count = 0 }
 Reject { Connect-RenoiseDriver -Session ([pscustomobject]@{Port=$closedPort}) -TimeoutSeconds 1 -ProcessCheck { $checkCounter.Count++ } } 'Timed out.*loopback listener'
 Assert ($checkCounter.Count -gt 0) 'startup retry did not revalidate the selected Renoise process'
+$delayedConnectState = [pscustomobject]@{ Count = 0; Client = $null }
+$delayedConnectChecks = [pscustomobject]@{ Count = 0 }
+$connectTimer = [Diagnostics.Stopwatch]::StartNew()
+$delayedConnectClient = Connect-RenoiseDriver -Session ([pscustomobject]@{ Port = 12345 }) -TimeoutSeconds 2 -ProcessCheck { $delayedConnectChecks.Count++ } -CreateClient {
+    $delayedConnectState.Count++
+    $delayedConnectState.Client = [DelayedConnectClient]::new(650)
+    $delayedConnectState.Client
+}
+$connectTimer.Stop()
+Assert ($delayedConnectState.Count -eq 1 -and $connectTimer.ElapsedMilliseconds -ge 600) 'connector abandoned a pending handshake and created another client'
+Assert ($delayedConnectClient -eq $delayedConnectState.Client -and $delayedConnectClient.NoDelay -and -not $delayedConnectClient.Disposed) 'connector did not return the completed handshake client'
+Assert ($delayedConnectChecks.Count -eq 2) 'connector skipped process identity checks around the pending handshake'
+$delayedConnectClient.Dispose()
+$invalidatedConnectState = [pscustomobject]@{ Count = 0; Client = $null }
+$invalidatedConnectChecks = [pscustomobject]@{ Count = 0 }
+Reject {
+    Connect-RenoiseDriver -Session ([pscustomobject]@{ Port = 12345 }) -TimeoutSeconds 2 -ProcessCheck {
+        $invalidatedConnectChecks.Count++
+        if ($invalidatedConnectChecks.Count -eq 2) { throw 'process identity changed after connect' }
+    } -CreateClient {
+        $invalidatedConnectState.Count++
+        $invalidatedConnectState.Client = [DelayedConnectClient]::new(20)
+        $invalidatedConnectState.Client
+    }
+} 'process identity changed after connect'
+Assert ($invalidatedConnectState.Count -eq 1 -and $invalidatedConnectState.Client.Disposed) 'connector retained a client after post-connect identity failure'
 $bootstrapListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $bootstrapListener.Start()
 $bootstrapNonce = 'bootstrap-test-nonce'
@@ -118,12 +154,13 @@ try {
 $timeoutBootstrapListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
 $timeoutBootstrapListener.Start()
 $timeoutBootstrapWorker = [PowerShell]::Create()
-$timeoutBootstrapState = [pscustomobject]@{ Connections = 0; FirstClosed = $false }
+$timeoutBootstrapState = [pscustomobject]@{ Connections = 0; FirstClosed = $false; OwnerVerified = $false; CredentialsBeforeOwner = $false }
 [void]$timeoutBootstrapWorker.AddScript({ param($Listener,$State,$Nonce)
     $first = $Listener.AcceptTcpClient()
     $State.Connections++
     $firstReader = [IO.StreamReader]::new($first.GetStream())
     [void]$firstReader.ReadLine()
+    $State.CredentialsBeforeOwner = -not $State.OwnerVerified
     Start-Sleep -Milliseconds 1300
     $State.FirstClosed = $first.Client.Poll(0, [Net.Sockets.SelectMode]::SelectRead) -and $first.Client.Available -eq 0
     $first.Dispose()
@@ -144,15 +181,54 @@ try {
     $timeoutBootstrap = Invoke-RenoiseDriverBootstrap -Session ([pscustomobject]@{ Port = $timeoutBootstrapListener.LocalEndpoint.Port; Token = 'bootstrap-token'; Nonce = $bootstrapNonce }) `
         -Identity $bootstrapIdentity -StartupTimeoutSeconds 6 -CommandTimeoutSeconds 1 `
         -ProcessCheck {} -CheckIdentity { param($Identity) } `
-        -GetListeners { param($Port) [pscustomobject]@{ LocalAddress = '127.0.0.1'; OwningProcess = 123 } }
+        -GetListeners { param($Port) $timeoutBootstrapState.OwnerVerified = $true; [pscustomobject]@{ LocalAddress = '127.0.0.1'; OwningProcess = 123 } }
     $timeoutBootstrapClient = $timeoutBootstrap.Client
     Assert ($timeoutBootstrap.Attempts -eq 2 -and $timeoutBootstrap.Ping.session -ceq $bootstrapNonce) 'bootstrap did not retry a stalled first ping within its startup budget'
     Assert ($timeoutBootstrapState.Connections -eq 2 -and $timeoutBootstrapState.FirstClosed) 'bootstrap did not dispose the timed-out ping connection before retrying'
+    Assert (-not $timeoutBootstrapState.CredentialsBeforeOwner) 'bootstrap sent credentials before verifying the listener owner'
+    Assert ($timeoutBootstrap.AttemptDiagnostics.Count -eq 2 -and
+        $timeoutBootstrap.AttemptDiagnostics[0].outcome -eq 'ping_failed' -and
+        $timeoutBootstrap.AttemptDiagnostics[0].connect_ms -ge 0 -and
+        $timeoutBootstrap.AttemptDiagnostics[0].listener_owner_ms -ge 0 -and
+        $timeoutBootstrap.AttemptDiagnostics[0].ping_ms -ge 0 -and
+        $timeoutBootstrap.AttemptDiagnostics[1].outcome -eq 'passed' -and
+        $timeoutBootstrap.AttemptDiagnostics[1].post_ping_owner_ms -ge 0) 'bootstrap omitted per-attempt stage timings'
 } finally {
     if ($timeoutBootstrapClient) { $timeoutBootstrapClient.Dispose() }
     $timeoutBootstrapListener.Stop()
     $timeoutBootstrapWorker.EndInvoke($timeoutBootstrapPending)
     $timeoutBootstrapWorker.Dispose()
+}
+$failedBootstrapListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$failedBootstrapListener.Start()
+$failedBootstrapWorker = [PowerShell]::Create()
+$failedBootstrapState = [pscustomobject]@{ Connections = 0 }
+[void]$failedBootstrapWorker.AddScript({ param($Listener,$State)
+    for ($attempt = 0; $attempt -lt 2; $attempt++) {
+        $peer = $Listener.AcceptTcpClient()
+        $State.Connections++
+        $reader = [IO.StreamReader]::new($peer.GetStream())
+        [void]$reader.ReadLine()
+        Start-Sleep -Milliseconds 1150
+        $peer.Dispose()
+    }
+}).AddArgument($failedBootstrapListener).AddArgument($failedBootstrapState)
+$failedBootstrapPending = $failedBootstrapWorker.BeginInvoke()
+try {
+    $failure = $null
+    try {
+        $null = Invoke-RenoiseDriverBootstrap -Session ([pscustomobject]@{ Port = $failedBootstrapListener.LocalEndpoint.Port; Token = 'bootstrap-token'; Nonce = $bootstrapNonce }) `
+            -Identity $bootstrapIdentity -StartupTimeoutSeconds 5 -CommandTimeoutSeconds 1 -MaximumAttempts 2 `
+            -ProcessCheck {} -CheckIdentity { param($Identity) } `
+            -GetListeners { param($Port) [pscustomobject]@{ LocalAddress = '127.0.0.1'; OwningProcess = 123 } }
+    } catch { $failure = $_.Exception }
+    Assert ($failure -is [TimeoutException]) 'exhausted bootstrap changed the startup timeout exception type'
+    Assert ($failure.Message -match 'Bootstrap attempts: attempt 1 ping_failed: connect=.* listener_owner=.* ping=.*; attempt 2 ping_failed: connect=.* listener_owner=.* ping=') 'startup timeout omitted per-stage retry timings'
+    Assert ($failure.Data['bootstrap_attempt_diagnostics'].Count -eq 2 -and $failedBootstrapState.Connections -eq 2) ("startup timeout omitted structured retry diagnostics: records=$($failure.Data['bootstrap_attempt_diagnostics'].Count), connections=$($failedBootstrapState.Connections), message=$($failure.Message)")
+} finally {
+    $failedBootstrapListener.Stop()
+    $failedBootstrapWorker.EndInvoke($failedBootstrapPending)
+    $failedBootstrapWorker.Dispose()
 }
 $scenarioRoot = Join-Path ([IO.Path]::GetTempPath()) ('runner-scenarios-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $scenarioRoot | Out-Null
@@ -432,7 +508,12 @@ try {
 } finally { $guardClient.Dispose(); $guardPeer.Dispose(); $guardListener.Stop() }
 $root = Join-Path ([IO.Path]::GetTempPath()) ('runner-spec-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory $root | Out-Null
-function Add-Trace { param($Operation,$Status,$Details) }
+function Add-Trace {
+    param($Operation,$Status,$Details)
+    if ($null -ne $script:runnerTestTrace) {
+        $script:runnerTestTrace += [pscustomobject]@{ Operation = $Operation; Status = $Status; Details = $Details }
+    }
+}
 function Set-UserOnlyFileAcl { param($Path) }
 try {
     $hashRoot = Join-Path $root 'hash-inventory'
@@ -550,11 +631,116 @@ Assert ($reportLine.Count -eq 1) 'runner failed to emit a report'
 $runReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($runReport.status -eq 'ERROR' -and $runReport.error -match 'TestEnvironment.Keyboard.ShowShortcut') 'missing shortcut did not fail clearly'
 Assert ($runReport.keyboard.negative_cases[0].name -eq 'missing_mapping' -and $runReport.keyboard.negative_cases[0].input_sent -eq $false) 'missing mapping guard did not report a no-input negative case'
+$coldPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase make-independent -ColdProcessRoundTrip -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'cold-process run accepted a selected Renoise PID'
+$coldPidReportLine = @($coldPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($coldPidReportLine.Count -eq 1) 'cold-process PID rejection did not emit a report'
+$coldPidReport = Get-Content -LiteralPath $coldPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($coldPidReport.error -match 'requires the runner to launch and own') 'cold-process PID rejection was not explicit'
 # Execute reporting branches from the real runner without launching Renoise or deploying files.
 $runnerTokens = $null
 $runnerErrors = $null
 $runnerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'scripts/run_interactive_tests.ps1'), [ref]$runnerTokens, [ref]$runnerErrors)
 Assert ($runnerErrors.Count -eq 0) 'interactive runner did not parse'
+$coldAcceptanceFunction = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-ColdProcessAcceptance'
+}, $true)
+Assert ($null -ne $coldAcceptanceFunction -and $coldAcceptanceFunction.Extent.Text -match "Invoke-RenoiseDriverBootstrap" -and
+    $coldAcceptanceFunction.Extent.Text -match "Assert-RenoiseProcessIdentity") 'cold-process flow does not bootstrap and identity-check the newly launched host'
+Assert ($runnerAst.Extent.Text -match "-Case 'cold-reopen-regenerate'" -and $runnerAst.Extent.Text -match "-Case 'cold-reopen-verify'") 'cold-process round trip does not regenerate and reopen its saved generation'
+Assert ($runnerAst.Extent.Text -match "case = 'independence-undo-prepare'" -and
+    $runnerAst.Extent.Text -match "-Keys '\{Enter\}'" -and
+    $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
+    $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
+$startProcessFunction = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-RunnerOwnedProcess'
+}, $true)
+Assert ($null -ne $startProcessFunction -and $startProcessFunction.Extent.Text -match '\[AllowEmptyString\(\)\]') 'runner launch helper rejects the empty initial-song argument'
+$unverifiedProcessGuard = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.IfStatementAst] -and
+    $node.Extent.Text -match '\$deploymentStarted -and \(-not \$driverMayBeLoaded -or \(\$startedProcess -and -not \$startedIdentity\)\)'
+}, $true)
+Assert ($null -ne $unverifiedProcessGuard) 'runner cleanup ignores an unverified process from a failed second launch'
+$mockProcess = Get-Process -Id $PID
+$script:resolvedExe = $mockProcess.Path
+$script:runnerProcessIdentityWaitMilliseconds = 1
+$script:runnerLaunchArguments = $null
+$script:identityPathOverride = $null
+$script:startedProcessClosed = $false
+$script:safeToRestore = $true
+function Start-Process {
+    param([string]$FilePath, [string[]]$ArgumentList, [string]$WindowStyle, [switch]$PassThru)
+    $script:runnerLaunchArguments = $ArgumentList
+    return Get-Process -Id $PID
+}
+function Get-RenoiseProcessIdentity {
+    param([int]$Id, [int]$WaitMilliseconds)
+    $process = Get-Process -Id $Id
+    $path = if ($script:identityPathOverride) { $script:identityPathOverride } else { $process.Path }
+    return [pscustomobject]@{ Id = $Id; Path = $path; StartTimeUtc = $process.StartTime.ToUniversalTime() }
+}
+Invoke-Expression $startProcessFunction.Extent.Text
+$initialLaunch = Start-RunnerOwnedProcess -SongPath ''
+Assert ($initialLaunch.Identity.Id -eq $PID -and $null -eq $script:runnerLaunchArguments) 'empty initial-song argument did not bind and launch without arguments'
+$script:startedIdentity = [pscustomobject]@{ Id = $PID; Path = $mockProcess.Path; StartTimeUtc = $mockProcess.StartTime.ToUniversalTime() }
+$script:startedProcessClosed = $true
+$script:safeToRestore = $true
+$script:identityPathOverride = 'C:\wrong\Renoise.exe'
+Reject { Start-RunnerOwnedProcess -SongPath '' } 'does not match the verified executable'
+Assert ($script:startedProcess.Id -eq $PID) 'runner lost the launched process handle after identity validation failed'
+Assert ($null -eq $script:startedIdentity -and -not $script:startedProcessClosed -and -not $script:safeToRestore) 'failed second launch retained the prior PID identity or allowed restoration'
+$script:deploymentStarted = $true
+$script:driverMayBeLoaded = $true
+$script:runnerTestTrace = @()
+Invoke-Expression $unverifiedProcessGuard.Extent.Text
+Assert (-not $script:safeToRestore -and @($script:runnerTestTrace | Where-Object Operation -eq 'install.restore_deferred').Count -eq 1) 'live unverified second process did not defer restoration explicitly'
+$songPath = Join-Path ([IO.Path]::GetTempPath()) ('runner song ' + [guid]::NewGuid().ToString('N') + '.xrns')
+try {
+    [IO.File]::WriteAllText($songPath, 'fixture')
+    $script:identityPathOverride = $null
+    $null = Start-RunnerOwnedProcess -SongPath $songPath
+    Assert ($script:runnerLaunchArguments.Count -eq 1 -and
+        $script:runnerLaunchArguments[0] -ceq ('"' + [IO.Path]::GetFullPath($songPath) + '"')) 'cold-process launch did not quote a song path containing spaces'
+} finally {
+    if (Test-Path -LiteralPath $songPath) { Remove-Item -LiteralPath $songPath -Force }
+    Remove-Item Function:\Start-Process, Function:\Get-RenoiseProcessIdentity
+    Remove-Variable resolvedExe, runnerProcessIdentityWaitMilliseconds, runnerLaunchArguments, identityPathOverride, startedProcess, startedIdentity, startedProcessClosed, safeToRestore -Scope Script
+}
+$stopProcessFunction = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Stop-RunnerOwnedProcess'
+}, $true)
+Assert ($null -ne $stopProcessFunction -and $stopProcessFunction.Extent.Text -match '\$Process\.Refresh\(\)\s*if \(\$Process\.HasExited\) \{ return \$false \}') 'process cleanup does not check the retained handle before identity lookup'
+$childStart = [Diagnostics.ProcessStartInfo]::new()
+$childStart.FileName = $mockProcess.Path
+$childStart.ArgumentList.Add('-NoProfile')
+$childStart.ArgumentList.Add('-Command')
+$childStart.ArgumentList.Add('exit 0')
+$exitedProcess = [Diagnostics.Process]::Start($childStart)
+$processExitWaitMilliseconds = 10000
+if (-not $exitedProcess.WaitForExit($processExitWaitMilliseconds)) {
+    $exitedProcess.Kill($true)
+    throw 'Runner spec child process did not exit for process-cleanup verification.'
+}
+Invoke-Expression $stopProcessFunction.Extent.Text
+function Assert-RenoiseProcessIdentity { throw 'Exited-process cleanup attempted a process identity lookup.' }
+$script:runnerProcessGracefulShutdownMilliseconds = 1
+$script:runnerProcessForcedShutdownMilliseconds = 1
+$alreadyExitedResult = Stop-RunnerOwnedProcess -Process $exitedProcess `
+    -Identity ([pscustomobject]@{ Id = $exitedProcess.Id }) -Context 'already-exited-test'
+Assert (-not $alreadyExitedResult) 'already-exited runner process was not accepted as safely closed'
+$script:startedProcess = $exitedProcess
+$script:startedIdentity = $null
+$script:startedProcessClosed = $false
+$script:driverMayBeLoaded = $true
+$script:deploymentStarted = $true
+$script:safeToRestore = $false
+$script:runnerTestTrace = @()
+Invoke-Expression $unverifiedProcessGuard.Extent.Text
+Assert ($script:safeToRestore -and @($script:runnerTestTrace | Where-Object Operation -eq 'process.shutdown').Count -eq 1) 'exited unverified second process did not permit safe restoration'
+Remove-Item Function:\Assert-RenoiseProcessIdentity
+$exitedProcess.Dispose()
+Remove-Variable runnerProcessGracefulShutdownMilliseconds, runnerProcessForcedShutdownMilliseconds, deploymentStarted, driverMayBeLoaded, runnerTestTrace -Scope Script
 $assertionClass = $runnerAst.Find({ param($node) $node -is [Management.Automation.Language.TypeDefinitionAst] -and $node.Name -eq 'RenoiseRunnerAssertionException' }, $true)
 Assert ($null -ne $assertionClass) 'runner assertion exception type was not defined'
 Invoke-Expression $assertionClass.Extent.Text

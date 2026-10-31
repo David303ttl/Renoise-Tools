@@ -362,3 +362,24 @@ These runs establish the listed native recovery, persistence and UI behavior.
 Synthetic audio controls do not establish acoustic acceptance. Audible playback
 and native song undo/redo grouping remain separate manual Step 8 acceptance;
 this follow-up does not close those broader requirements.
+
+## T4.8 ownership end-to-end (2026-10-31)
+
+Environment: PowerShell 7, Renoise 3.5.4 / API 6.2. Report source revision
+`60fe5a8bca3730c4c1a415116047feac7f81b773` plus the working tree.
+
+| Native report under ignored `tmp/` | Result |
+| --- | --- |
+| `interactive-8d48c04d9b894b8a8cd84e0263a40a58/report.json` | PASS: three Renoise process IDs (12588 → 14756 → 18728); cold reopen, read-only Owned classification, exact-target regeneration, second reopen, and persisted duplicate/missing-source/modified-association rejection. Foreign sentinel and unrelated phrase/source remain unchanged. |
+| `interactive-2da536d79a394909a2bd7ef8fca15349/report.json` | PASS: native Make Independent undo restores pre-action phrase state while `song.tool_data` retains the exact post-action bytes; both duplicate holders block and regeneration rejects without repair. Redo restores the new identity and cloned source, in one native undo action. |
+| `interactive-715d1ec981e3445a878c399fb4da1b27/report.json` | PASS: source-less foreign, missing-source, mismatching and two/three-holder associations remain blocked. |
+| `interactive-1ce5271935564fa2ae996fcd10ae3949/report.json` | PASS: draft source/output settings restore; Copy to New preserves the draft; recovery remains until explicit discard. |
+| `interactive-4b2a150014864a7e8a44ba9d8cc1d638/report.json` | PASS: native integrity and column observers. |
+| `interactive-9dad16b556ef4d5fae182cb64bcc60af/report.json` | PASS: native writer-recovery acceptance. |
+| `interactive-a3f03bf3576d4c4b88b2a36e658252e9`, `interactive-d3a9fdcb06e14324a81d6b3eebb949de` | PASS: busy edits 4.18 / 5.07 ms; all 30 GUI actions meet the unchanged 30 ms budget; discarded baseline clone removed. |
+| `interactive-8bc1ad14982a40a0891e73462d5c26a9`, `interactive-c4dbcf0027594961bf433c03d16f80ae` | PASS: Native/Keyboard suite and scenario-order checks; installation restored. |
+| `tmp/t48-offline-verified.log` | PASS: 18/18 offline groups, 67/67 Lua specs and package checks; release archive has 34 source-identical entries. Runner/driver regressions cover shared-session rejection, selected PID/process ownership, bounded connection handling and transport failure diagnostics. |
+
+Gate 4 CLOSED. Fresh local suites (64 ACID / 67 total), projection ownership
+regressions, package verification and independent review pass. Acoustic playback
+and broader Step 8 A–E acceptance remain open.

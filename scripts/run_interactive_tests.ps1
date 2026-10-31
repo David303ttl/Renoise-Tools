@@ -13,6 +13,7 @@ param(
     [ValidateRange(1,300)][int]$CommandTimeoutSeconds = 30,
     [switch]$ApproveDisposableSong,
     [switch]$Install,
+    [switch]$ColdProcessRoundTrip,
     [switch]$VerifyScenarioOrder,
     [switch]$AllowKeyboardFocusActivation
 )
@@ -24,6 +25,13 @@ class RenoiseRunnerAssertionException : System.Exception {
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$runnerProcessGracefulShutdownMilliseconds = 10000
+$runnerProcessForcedShutdownMilliseconds = 5000
+$runnerProcessIdentityWaitMilliseconds = 5000
+$coldRegenerationFixtureName = 'acceptance-cold-regenerated.xrns'
+$independentFixtureInstrumentCount = 10
+$independentPrimaryPhraseCount = 2
+$independentForeignSentinelCount = 1
 $artifactId = [guid]::NewGuid().ToString('N')
 $repoTemp = Join-Path $repoRoot 'tmp'
 $null = New-Item -ItemType Directory -Path $repoTemp -Force
@@ -93,6 +101,7 @@ $report = [ordered]@{
 }
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $transportOnly = $Suite -eq 'Keyboard' -or $Scenario -ceq 'transport'
+$undoCallbackAcceptance = $AcceptanceCase -ceq 'independence-undo'
 
 function Add-Trace {
     param([string]$Operation, [string]$Status, [object]$Details = $null)
@@ -144,6 +153,130 @@ function Assert-RunnerProcess {
     elseif ($null -ne $script:selectedIdentity) { Assert-RenoiseProcessIdentity -Identity $script:selectedIdentity }
 }
 
+function Stop-RunnerOwnedProcess {
+    param(
+        [Parameter(Mandatory)][Diagnostics.Process]$Process,
+        [Parameter(Mandatory)][pscustomobject]$Identity,
+        [Parameter(Mandatory)][string]$Context
+    )
+    $Process.Refresh()
+    if ($Process.HasExited) { return $false }
+    Assert-RenoiseProcessIdentity -Identity $Identity
+    [void]$Process.CloseMainWindow()
+    if (-not $Process.WaitForExit($script:runnerProcessGracefulShutdownMilliseconds)) {
+        Assert-RenoiseProcessIdentity -Identity $Identity
+        Stop-Process -Id $Identity.Id -Force -ErrorAction Stop
+        if (-not $Process.WaitForExit($script:runnerProcessForcedShutdownMilliseconds)) {
+            throw "Runner-launched Renoise did not terminate after identity-checked $Context cleanup."
+        }
+        Add-Trace -Operation 'process.force_stop' -Status 'PASS' -Details @{
+            runner_launched_process_only = $true
+            disposable_song_approved = $true
+            context = $Context
+            after_error = $Context -ceq 'after-error'
+        }
+        return $true
+    }
+    return $false
+}
+
+function Start-RunnerOwnedProcess {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$SongPath)
+    $arguments = @()
+    if ($SongPath) {
+        $songItem = Get-Item -LiteralPath $SongPath -Force -ErrorAction Stop
+        if ($songItem.PSIsContainer -or ($songItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'Cold-process input song is not a plain file.'
+        }
+        $arguments = @('"' + $songItem.FullName + '"')
+    }
+    $process = if ($arguments.Count -gt 0) {
+        Start-Process -FilePath $script:resolvedExe -ArgumentList $arguments -WindowStyle Normal -PassThru
+    } else {
+        Start-Process -FilePath $script:resolvedExe -WindowStyle Normal -PassThru
+    }
+    $script:startedProcess = $process
+    $script:startedIdentity = $null
+    $script:startedProcessClosed = $false
+    $script:safeToRestore = $false
+    $startedAt = $process.StartTime.ToUniversalTime()
+    $identity = Get-RenoiseProcessIdentity -Id $process.Id -WaitMilliseconds $script:runnerProcessIdentityWaitMilliseconds
+    if (-not [string]::Equals($identity.Path, $script:resolvedExe, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Started Renoise process does not match the verified executable.'
+    }
+    if ($identity.StartTimeUtc -ne $startedAt) {
+        throw 'Started Renoise process changed identity before metadata became available.'
+    }
+    return [pscustomobject]@{ Process = $process; Identity = $identity }
+}
+
+function Invoke-ColdProcessAcceptance {
+    param(
+        [Parameter(Mandatory)][string]$SongPath,
+        [Parameter(Mandatory)][string]$Case,
+        [string]$ExpectedFixture
+    )
+    $oldIdentity = $script:processIdentity
+    $processCheck = { Assert-RenoiseProcessIdentity -Identity $script:processIdentity }
+    $null = Stop-RenoiseDriver -Client $script:client -Session $script:session `
+        -SessionPath $script:sessionTargetPath -TimeoutSeconds $script:CommandTimeoutSeconds -ProcessCheck $processCheck
+    Add-Trace -Operation 'driver.shutdown' -Status 'PASS' -Details @{ cold_process = $true; pid = $oldIdentity.Id }
+    $script:client.Dispose()
+    $script:client = $null
+    $forceStopped = Stop-RunnerOwnedProcess -Process $script:startedProcess -Identity $oldIdentity -Context 'cold-process'
+    $script:startedProcessForceStopped = $script:startedProcessForceStopped -or $forceStopped
+    $script:startedProcessClosed = $true
+    $script:safeToRestore = $true
+    Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{ cold_process = $true; pid = $oldIdentity.Id; force_stopped = $forceStopped }
+
+    $script:safeToRestore = $false
+    $launched = Start-RunnerOwnedProcess -SongPath $SongPath
+    $script:startedProcess = $launched.Process
+    $script:startedIdentity = $launched.Identity
+    $script:processIdentity = $launched.Identity
+    $script:startedProcessClosed = $false
+    $script:driverMayBeLoaded = $true
+    $script:report.host.process_id = $launched.Identity.Id
+    $script:report.host.process_start_time_utc = $launched.Identity.StartTimeUtc.ToString('o')
+    $processCheck = { Assert-RenoiseProcessIdentity -Identity $script:processIdentity }
+    Add-Trace -Operation 'process.cold_start' -Status 'PASS' -Details @{
+        pid = $launched.Identity.Id
+        start_time_utc = $launched.Identity.StartTimeUtc.ToString('o')
+        previous_pid = $oldIdentity.Id
+        song = [IO.Path]::GetFileName($SongPath)
+    }
+    $null = Get-Preflight -SelectedId $launched.Identity.Id
+    $bootstrap = Invoke-RenoiseDriverBootstrap -Session $script:session -Identity $launched.Identity `
+        -StartupTimeoutSeconds $script:StartupTimeoutSeconds -CommandTimeoutSeconds $script:CommandTimeoutSeconds `
+        -ProcessCheck $processCheck
+    $script:client = $bootstrap.Client
+    Add-Trace -Operation 'driver.bootstrap' -Status 'PASS' -Details @{
+        cold_process = $true; attempts = $bootstrap.Attempts; stages = @($bootstrap.AttemptDiagnostics)
+    }
+    if ($bootstrap.Ping.protocol_version -ne 1 -or $bootstrap.Ping.session -cne $script:session.Nonce) {
+        throw [RenoiseRunnerAssertionException]::new('Cold-process authenticated handshake reported the wrong protocol or run nonce.')
+    }
+    $result = Invoke-RenoiseDriverRequest -Client $script:client -Session $script:session `
+        -Operation 'acid.acceptance.run' -Arguments @{ case = $Case } `
+        -TimeoutSeconds ([Math]::Max($script:CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
+    if ($result.case -cne $Case -or [string]$result.status -cne 'PASS') {
+        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' did not pass: $(ConvertTo-AcidCanonicalJson $result)")
+    }
+    if ($ExpectedFixture -and $result.roundtrip_fixture -cne $ExpectedFixture) {
+        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' returned an unexpected saved fixture name.")
+    }
+    $script:scenarioResults.Add([pscustomobject]@{
+        name = "acceptance.$Case"
+        suite = 'Native'
+        status = 'PASS'
+        expected = if ($ExpectedFixture) { "Cold reopened song passes read-only checks, then regenerates and saves '$ExpectedFixture'" } else { 'Cold reopened regenerated song passes read-only association checks' }
+        actual = ConvertTo-AcidCanonicalJson $result
+        diff = $null
+    })
+    Add-Trace -Operation "acceptance.$Case" -Status 'PASS' -Details $result
+    return $result
+}
+
 function Get-Preflight {
     param([int]$SelectedId)
     $configuration = [pscustomobject]@{
@@ -160,12 +293,18 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }
-    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native') {
-        throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites.'
+    if ($ColdProcessRoundTrip -and ($Suite -ne 'Native' -or $AcceptanceCase -cne 'make-independent')) {
+        throw '-ColdProcessRoundTrip requires -Suite Native -AcceptanceCase make-independent.'
+    }
+    if ($ColdProcessRoundTrip -and $RenoiseProcessId -gt 0) {
+        throw '-ColdProcessRoundTrip requires the runner to launch and own the Renoise process; it cannot restart a selected PID.'
+    }
+    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not $undoCallbackAcceptance) {
+        throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites, except the Native independence-undo acceptance.'
     }
     if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
         throw '-VerifyScenarioOrder requires -Suite Native.'
@@ -252,6 +391,17 @@ try {
         $report.keyboard.negative_cases = @($keyboardNegativeCases)
         $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
     }
+    elseif ($undoCallbackAcceptance) {
+        $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment $environment
+        $keyboardExecutable = Find-AutoHotkeyV2Executable -ConfiguredPath $keyboardConfiguration.AutoHotkeyPath
+        if (-not (Test-Path -LiteralPath $keyboardHelperPath -PathType Leaf)) { throw "AutoHotkey helper does not exist: $keyboardHelperPath" }
+        $emptyProcessCheck = {}
+        $versionResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath -Mode Version -ProcessCheck $emptyProcessCheck
+        if ($versionResult.ExitCode -ne 0 -or $versionResult.StdOut -cnotmatch '^2\.\d+\.\d+$') {
+            throw "AutoHotkey v2 is required; helper reported '$($versionResult.StdOut)' with exit code $($versionResult.ExitCode)."
+        }
+        Add-Trace -Operation 'keyboard.callback_configuration' -Status 'PASS' -Details @{ auto_hotkey_version = $versionResult.StdOut; keys = '{Enter}' }
+    }
     $environmentExe = if ($environment.PSObject.Properties['RenoiseExe']) { [string]$environment.RenoiseExe } else { '' }
     if ($RenoiseExe -and $environmentExe -and
         -not [string]::Equals([IO.Path]::GetFullPath($RenoiseExe), [IO.Path]::GetFullPath($environmentExe), [StringComparison]::OrdinalIgnoreCase)) {
@@ -336,12 +486,9 @@ try {
         $processIdentity = $selectedIdentity
     }
     else {
-        $startedProcess = Start-Process -FilePath $script:resolvedExe -WindowStyle Normal -PassThru
-        $startedAt = $startedProcess.StartTime.ToUniversalTime()
-        $capturedStartedIdentity = Get-RenoiseProcessIdentity -Id $startedProcess.Id -WaitMilliseconds 5000
-        if (-not [string]::Equals($capturedStartedIdentity.Path, $script:resolvedExe, [StringComparison]::OrdinalIgnoreCase)) { throw 'Started Renoise process does not match the verified executable.' }
-        if ($capturedStartedIdentity.StartTimeUtc -ne $startedAt) { throw 'Started Renoise process changed identity before metadata became available.' }
-        $startedIdentity = $capturedStartedIdentity
+        $launched = Start-RunnerOwnedProcess -SongPath ''
+        $startedProcess = $launched.Process
+        $startedIdentity = $launched.Identity
         $driverMayBeLoaded = $true
         $processIdentity = $startedIdentity
         $report.host.process_id = $startedIdentity.Id
@@ -355,6 +502,9 @@ try {
         -StartupTimeoutSeconds $StartupTimeoutSeconds -CommandTimeoutSeconds $CommandTimeoutSeconds `
         -ProcessCheck $processCheck
     $client = $bootstrap.Client
+    Add-Trace -Operation 'driver.bootstrap' -Status 'PASS' -Details @{
+        cold_process = $false; attempts = $bootstrap.Attempts; stages = @($bootstrap.AttemptDiagnostics)
+    }
     try {
         $ping = $bootstrap.Ping
         $lastExpected = 'Authenticated ping uses protocol version 1 and the current run nonce'
@@ -647,6 +797,29 @@ try {
             $lastExpected = "Fixed native acceptance case '$AcceptanceCase' completes with independent postconditions"
             $lastActual = $null
             $lastDiff = $null
+            if ($undoCallbackAcceptance) {
+                $prepare = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
+                    -Arguments @{ case = 'independence-undo-prepare' } `
+                    -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
+                if ($prepare.case -cne 'independence-undo-prepare' -or $prepare.status -cne 'PASS' -or $prepare.action_ready -ne $true) {
+                    throw [RenoiseRunnerAssertionException]::new('Native Make Independent callback dialog was not ready for the guarded Enter action.')
+                }
+                Add-Trace -Operation 'acceptance.independence-undo-prepare' -Status 'PASS' -Details $prepare
+                $focusGuard = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath `
+                    -Mode SelfTestFocusMismatch -ProcessId $processIdentity.Id -ProcessCheck $processCheck
+                if ($focusGuard.ExitCode -ne 0 -or $focusGuard.StdOut -notmatch '^PASS self-test focus-mismatch:') {
+                    throw "AutoHotkey focus-mismatch guard failed before native undo action: $($focusGuard.StdErr) $($focusGuard.StdOut)"
+                }
+                Add-Trace -Operation 'acceptance.independence-undo.focus_guard' -Status 'PASS' -Details @{ input_sent = $false; output = $focusGuard.StdOut }
+                $enterResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath `
+                    -Mode Send -ProcessId $processIdentity.Id -Keys '{Enter}' -ProcessCheck $processCheck `
+                    -AllowFocusActivation:$AllowKeyboardFocusActivation -TimeoutSeconds $keyboardConfiguration.TimeoutSeconds
+                if ($enterResult.ExitCode -ne 0) {
+                    $enterError = if ($enterResult.StdErr) { $enterResult.StdErr } else { $enterResult.StdOut }
+                    throw "Guarded Enter action for Make Independent failed: $enterError"
+                }
+                Add-Trace -Operation 'acceptance.independence-undo.enter' -Status 'PASS' -Details @{ pid = $processIdentity.Id; keys = '{Enter}'; output = $enterResult.StdOut }
+            }
             $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments @{ case = $AcceptanceCase } -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
             $acceptanceStatus = [string]$acceptance.status
             if ($acceptanceStatus -cnotin @('PASS','FAIL','ERROR') -or $acceptance.case -cne $AcceptanceCase) {
@@ -688,7 +861,10 @@ try {
                 Add-Trace -Operation 'acceptance.roundtrip_reload' -Status 'PASS' -Details @{ fixture = $acceptance.roundtrip_fixture; document_epoch = $roundTrip.document_epoch }
                 $reloadedSnapshot = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'song.snapshot' -Arguments @{} -TimeoutSeconds $CommandTimeoutSeconds -ProcessCheck $processCheck
                 if ($reloadedSnapshot.document_epoch -ne $roundTrip.document_epoch -or
-                    $reloadedSnapshot.instrument_count -ne 10 -or $reloadedSnapshot.phrase_count -ne 2) {
+                    $reloadedSnapshot.instrument_count -ne $independentFixtureInstrumentCount -or
+                    $reloadedSnapshot.phrase_count -ne ($independentPrimaryPhraseCount + $independentForeignSentinelCount) -or
+                    $acceptance.primary_instrument_phrase_count -ne $independentPrimaryPhraseCount -or
+                    $acceptance.foreign_sentinel_saved -ne $true) {
                     throw 'Reloaded Make Independent inventory did not match the saved native result.'
                 }
                 Add-Trace -Operation 'acceptance.roundtrip_snapshot' -Status 'PASS' -Details @{ instrument_count = $reloadedSnapshot.instrument_count; phrase_count = $reloadedSnapshot.phrase_count }
@@ -705,6 +881,26 @@ try {
                     diff = if ([string]$reopened.status -ceq 'PASS') { $null } else { $reopened }
                 })
                 Add-Trace -Operation 'acceptance.reopen-independent' -Status ([string]$reopened.status) -Details $reopened
+                if ($ColdProcessRoundTrip) {
+                    $coldFirstPath = Join-Path $installedFixturesPath 'acceptance-independent.xrns'
+                    $null = Invoke-ColdProcessAcceptance -SongPath $coldFirstPath -Case 'cold-reopen-regenerate' -ExpectedFixture $coldRegenerationFixtureName
+                    $coldRegeneratedPath = Join-Path $installedFixturesPath $coldRegenerationFixtureName
+                    $coldRegeneratedItem = Get-Item -LiteralPath $coldRegeneratedPath -Force -ErrorAction Stop
+                    if ($coldRegeneratedItem.PSIsContainer -or ($coldRegeneratedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $coldRegeneratedItem.Length -le 0) {
+                        throw [RenoiseRunnerAssertionException]::new('Cold-process regeneration did not save a plain, nonempty XRNS fixture.')
+                    }
+                    $expectedColdFixtureNames = @($sourceFixtureNames + @('acceptance-independent.xrns', $coldRegenerationFixtureName) | Sort-Object -Unique)
+                    $installedColdFixtureNames = @(Get-ChildItem -LiteralPath $installedFixturesPath -File | ForEach-Object Name | Sort-Object -Unique)
+                    if (($installedColdFixtureNames -join '|') -cne ($expectedColdFixtureNames -join '|')) {
+                        throw [RenoiseRunnerAssertionException]::new('Cold-process round trip changed unexpected files in the temporary fixture directory.')
+                    }
+                    $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
+                    $null = Invoke-ColdProcessAcceptance -SongPath $coldRegeneratedPath -Case 'cold-reopen-verify'
+                    $verifiedColdFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
+                    if ($verifiedColdFixturesHash -cne $installedFixturesHash) {
+                        throw [RenoiseRunnerAssertionException]::new('Read-only cold-process verification changed the temporary fixture directory.')
+                    }
+                }
             }
         }
         $report.scenarios = @($scenarioResults)
@@ -756,21 +952,11 @@ try {
     }
 
     if ($startedIdentity) {
-        Assert-RenoiseProcessIdentity -Identity $startedIdentity
-        $startedProcess.Refresh()
-        if (-not $startedProcess.HasExited) {
-            [void]$startedProcess.CloseMainWindow()
-            if (-not $startedProcess.WaitForExit(10000)) {
-                Assert-RenoiseProcessIdentity -Identity $startedIdentity
-                Stop-Process -Id $startedIdentity.Id -Force -ErrorAction Stop
-                if (-not $startedProcess.WaitForExit(5000)) { throw 'Runner-launched Renoise did not terminate after identity-checked cleanup.' }
-                $startedProcessForceStopped = $true
-                Add-Trace -Operation 'process.force_stop' -Status 'PASS' -Details @{ runner_launched_process_only = $true; disposable_song_approved = $true }
-            }
-        }
+        $finalProcessForceStopped = Stop-RunnerOwnedProcess -Process $startedProcess -Identity $startedIdentity -Context 'cleanup'
+        $startedProcessForceStopped = $startedProcessForceStopped -or $finalProcessForceStopped
         $safeToRestore = $true
         $startedProcessClosed = $true
-        Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{ launched_process_closed_cleanly = (-not $startedProcessForceStopped); force_stopped = $startedProcessForceStopped }
+        Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{ launched_process_closed_cleanly = (-not $finalProcessForceStopped); force_stopped = $finalProcessForceStopped }
     }
 
 }
@@ -804,7 +990,7 @@ catch {
     Add-Trace -Operation 'runner' -Status $failureStatus -Details @{ message = $failureMessage }
 }
 finally {
-    if ($deploymentStarted -and -not $driverMayBeLoaded) {
+    if ($deploymentStarted -and (-not $driverMayBeLoaded -or ($startedProcess -and -not $startedIdentity))) {
         if (-not $startedProcess) { $safeToRestore = $true }
         else {
             try {
@@ -824,26 +1010,14 @@ finally {
     }
     if ($startedIdentity -and -not $startedProcessClosed) {
         try {
-            $startedProcess.Refresh()
-            if ($startedProcess.HasExited) {
-                $safeToRestore = $true
-                Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{ runner_launched_process_exited = $true }
-            }
-            else {
-                Assert-RenoiseProcessIdentity -Identity $startedIdentity
-                [void]$startedProcess.CloseMainWindow()
-                if ($startedProcess.WaitForExit(10000)) {
-                    $safeToRestore = $true
-                    Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{ launched_process_closed_cleanly_after_error = $true }
-                }
-                else {
-                    Assert-RenoiseProcessIdentity -Identity $startedIdentity
-                    Stop-Process -Id $startedIdentity.Id -Force -ErrorAction Stop
-                    if (-not $startedProcess.WaitForExit(5000)) { throw 'Runner-launched Renoise did not terminate after identity-checked error cleanup.' }
-                    $safeToRestore = $true
-                    $startedProcessForceStopped = $true
-                    Add-Trace -Operation 'process.force_stop' -Status 'PASS' -Details @{ runner_launched_process_only = $true; disposable_song_approved = $true; after_error = $true }
-                }
+            $errorForceStopped = Stop-RunnerOwnedProcess -Process $startedProcess -Identity $startedIdentity -Context 'after-error'
+            $startedProcessForceStopped = $startedProcessForceStopped -or $errorForceStopped
+            $safeToRestore = $true
+            $startedProcessClosed = $true
+            Add-Trace -Operation 'process.shutdown' -Status 'PASS' -Details @{
+                after_error = $true
+                launched_process_closed_cleanly = (-not $errorForceStopped)
+                force_stopped = $errorForceStopped
             }
         }
         catch { Add-Trace -Operation 'process.shutdown' -Status 'ERROR' -Details @{ message = $_.Exception.Message } }

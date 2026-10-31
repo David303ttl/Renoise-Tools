@@ -1249,7 +1249,7 @@ Spec names below are under `tests/acid/` unless an explicit path is shown.
 
 | Open obligation | Owning gate |
 | --- | --- |
-| Metadata-only Make Independent against the same store/ownership contract | Step 4 / Gate 4 (open) |
+| Metadata-only Make Independent against the same store/ownership contract | Step 4 / Gate 4 (closed) |
 | Independent scheduler/recovery acceptance and final full-suite verification | Step 5 / Gate 5 (open) |
 | Native observer attachment, document/session lifetime and late-callback behavior | Step 6 / Gate 6 (open) |
 | Complete 36-case integration closeout, including copied-ID/recovery flows; final local/package reruns pending | Step 7 / Gate 7 (open) |
@@ -1388,11 +1388,9 @@ this does not establish acoustic playback or native undo grouping.
 
 ## Step 4 — Harden existing explicit Make Independent
 
-**Status: Gate 4 OPEN.** Runtime and GUI implementation already exist, with local
-coverage and a native Make Independent/save-reload round trip. Complete and
-harden that implementation; do not create a second path. Gate 3 direct writer
-acceptance is closed; its delivered interfaces are the baseline, not evidence
-that identity resolution or Gate 8 is complete.
+**Status: Gate 4 CLOSED.** T4.0–T4.8 local and targeted native acceptance pass.
+Make Independent retains one identity-only executor and the existing mutation
+guard. Gate 8's broader A–E acceptance and M4 remain open.
 
 **Authority and admission contract:** `runtime.independence` is the sole
 identity-only mutation executor. `runtime.context` authorizes the explicitly
@@ -1707,8 +1705,18 @@ blocked writes until revalidation, and exact-target regeneration with unrelated
 phrase/source/settings preservation.
 No extra scheduler, compatibility path, persisted format or manifest change.
 
+**Projection contract:** `runtime/inventory.lua` refreshes UI identity/status
+through the shared target resolver without cloning a discarded phrase baseline.
+Public `target_state()` still returns a detached baseline. The focused assertion
+in `tests/acid/acid_runtime_inventory_spec.lua` covers both boundaries; this spec
+is included in T4.7's scope. Keep the native callback budget at 30 ms.
+
 ### T4.8 — Independent acceptance and debt closeout
 
+- **Host coverage:** extend the existing interactive runner and driver allowlist,
+  with runner regressions, to restart only runner-owned Renoise processes and
+  verify the saved association in a fresh process. Same-process fixture loading
+  cannot establish R36. Keep session, installation and process-identity checks.
 - **Scope / allowed files:** existing `tests/acid/` focused specs/manual guides,
   `tests/renoise/driver/acceptance_cases.lua`, `tests/renoise/host_verification.md`
   and the two evidence documents; runtime fixes return to their owning subgate.
@@ -1740,6 +1748,24 @@ No extra scheduler, compatibility path, persisted format or manifest change.
   Any additional persistent state requires necessity and an explicit lifecycle.
 - **Stop:** failed assertion, missing native requirement or unexplained debt growth.
 
+**T4.8 evidence (2026-10-31):** source revision `60fe5a8bca3730c4c1a415116047feac7f81b773` plus the working tree; Renoise 3.5.4 / API 6.2.
+
+| Assertion | Evidence | Result |
+| --- | --- | --- |
+| R24 source-less and invalid ownership | `interactive-715d1ec981e3445a878c399fb4da1b27/report.json` | PASS: source-less foreign, missing-source, mismatching and two/three-holder groups remain blocked. |
+| R29 native undo/redo | `interactive-2da536d79a394909a2bd7ef8fca15349/report.json` | PASS: undo blocks both holders and regeneration without source repair while `song.tool_data` retains exact post-action bytes; redo restores the exact new association in one native undo action. |
+| R36 cold reopen and regeneration | `interactive-8d48c04d9b894b8a8cd84e0263a40a58/report.json` | PASS: three process IDs; read-only classification, exact-target regeneration, second reopen and persisted duplicate/missing/modified rejection. |
+| Draft recovery | `interactive-1ce5271935564fa2ae996fcd10ae3949/report.json` | PASS: source/output policy retained on Copy to New; recovery cleared only by explicit discard. |
+| Integrity observers | `interactive-4b2a150014864a7e8a44ba9d8cc1d638/report.json` | PASS: native integrity and column observers. |
+| Writer recovery | `interactive-9dad16b556ef4d5fae182cb64bcc60af/report.json` | PASS: native writer-recovery acceptance. |
+| Responsiveness | `interactive-a3f03bf3576d4c4b88b2a36e658252e9`, `interactive-d3a9fdcb06e14324a81d6b3eebb949de` | PASS: all 30 GUI actions meet the unchanged 30 ms budget; busy edits 4.18 / 5.07 ms. Projection refresh performs no discarded baseline clone. |
+| Native and Keyboard | `interactive-8bc1ad14982a40a0891e73462d5c26a9/report.json` | PASS: native inventory, production shortcut, dialog close and native navigation; installation restored. |
+| Scenario order | `interactive-c4dbcf0027594961bf433c03d16f80ae/report.json` | PASS: independent/reversed catalog snapshots and idle settlement. |
+| Projection ownership | `acid_runtime_inventory_spec.lua`; fresh independent review | PASS: projection refresh omits baseline detachment; full target reads remain isolated and hidden phrase changes block ownership. |
+| Offline, package and harness | `tmp/t48-offline-verified.log` | PASS: 18 groups, 67 Lua specs, 34 source-identical release entries; shared-session rejection, PID ownership/shutdown, bounded connection and transport diagnostics checked. |
+| Debt and compatibility | Integrated dependency/ownership review | PASS: shared compatibility-proof construction; existing runtime mutation, musical writer, queue, ownership, store and draft authorities retained. No added production state or entry point; persistence formats and versions unchanged. |
+
+**T4.8 complete; Gate 4 CLOSED.** Fresh local, package and independent review checks pass. Acoustic playback and broader Step 8 A–E acceptance remain open.
 **Gate 4:** close only when all nine subgates have evidence and no unresolved
 correctness defects or required native blockers. Record local/mocked and native
 results separately; do not infer success from case labels, previous Gate 3 results
@@ -1750,7 +1776,7 @@ Step 8 but do not close Gate 8's broader A–E requirements or M4.
 
 **Status:** cutover landed at `6413e5f`: one runtime scheduler and direct GUI dispatch replace the obsolete scheduler/adapter path. Recovery chooser/copy/discard and Make Independent are wired through the runtime context and covered by focused local tests. Gate 5 remains OPEN for independent scheduler/recovery acceptance, current full-suite verification, and its complete checklist; native acceptance is tracked separately in Step 8.
 
-**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 writer acceptance is closed; Gate 4 remains open independent acceptance for Make Independent and does not gate the already-landed cutover. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
+**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 writer acceptance is closed; Gate 4 acceptance is closed; its identity-only action remains separate from the musical scheduler. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
 
 **Ordered work:**
 

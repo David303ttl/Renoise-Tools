@@ -3,7 +3,26 @@ local M = {}
 local MILLISECONDS_PER_SECOND = 1000
 local TWO_HOLDER_COUNT = 2
 local THREE_HOLDER_COUNT = 3
+local THREE_EMPTY_INSTRUMENTS = 3
 local MAXIMUM_ELIGIBILITY_PROOFS = 2
+local ACCEPTANCE_PATTERN_LENGTH = 8
+local ACCEPTANCE_KEY = 0
+local ACCEPTANCE_GENERATED_NOTE = 4
+local ACCEPTANCE_INDEPENDENT_NOTE = 5
+local ACCEPTANCE_REGENERATED_NOTE = 6
+local ACCEPTANCE_NOTE_VALUE_LOW = 48
+local ACCEPTANCE_NOTE_VALUE_HIGH = 49
+local COLD_SENTINEL_PHRASE_NAME = "Imported sentinel"
+local FIRST_PHRASE_POSITION = 1
+local FIRST_NOTE_LINE = 1
+local FIRST_NOTE_COLUMN = 1
+local UNDO_ACTION_WAIT_TIMEOUT_SECONDS = 10
+local UNDO_PREPARATION_TIMEOUT_SECONDS = 30
+local prepared_independence_undo = nil
+
+local function has_eligibility(value)
+  return value ~= nil and value ~= false
+end
 
 local function describe_failure(value)
   if type(value) == "table" then
@@ -29,6 +48,35 @@ local function context_for(song)
   return context
 end
 
+local function classify_write_eligibility(song, instrument, phrase)
+  local context = context_for(song)
+  local bound = context:bind_phrase(instrument, phrase)
+  local target = context:target_state()
+  local eligible, reason = context:musical_eligibility()
+  local result = {
+    bound = bound ~= nil and rawequal(bound.instrument, instrument) and rawequal(bound.phrase, phrase),
+    classification = target and target.kind or "unavailable",
+    reason = target and target.reason or reason,
+    eligible = has_eligibility(eligible),
+  }
+  context:release_document()
+  return result
+end
+
+local function source_record_removed(raw, id)
+  if type(raw) ~= "string" then return nil end
+  local retained, removed = {}, false
+  for line in raw:gmatch("([^\n]*)\n") do
+    if line:match("^" .. tostring(id) .. "|") then
+      removed = true
+    else
+      retained[#retained + 1] = line
+    end
+  end
+  if not removed then return nil end
+  return table.concat(retained, "\n") .. "\n"
+end
+
 local function on_next_idle(callback)
   local idle = renoise.tool().app_idle_observable
   local notifier
@@ -39,8 +87,8 @@ local function on_next_idle(callback)
   idle:add_notifier(notifier)
 end
 
-local function save_independent_fixture(song)
-  local name = "acceptance-independent.xrns"
+local function save_independent_fixture(song, fixture_name)
+  local name = fixture_name or "acceptance-independent.xrns"
   local path = renoise.tool().bundle_path .. "\\..\\fixtures\\" .. name
   pcall(os.remove, path)
   local saved, save_error = pcall(function() renoise.app():save_song_as(path) end)
@@ -51,6 +99,127 @@ local function save_independent_fixture(song)
   pcall(function() file:close() end)
   if type(size) ~= "number" or size <= 0 then return nil, "Saved round-trip song is empty" end
   return { fixture = name, bytes = size }
+end
+
+local function add_cold_foreign_sentinel(song, source_phrase)
+  local ownership = require("renoise.phrase_ownership")
+  for instrument_index, instrument in ipairs(song.instruments) do
+    if not rawequal(instrument, song.instruments[song.selected_instrument_index]) and
+        #instrument.phrases == 0 then
+      local phrase
+      local created, create_error = pcall(function()
+        phrase = instrument:insert_phrase_at(FIRST_PHRASE_POSITION)
+        phrase:copy_from(source_phrase)
+        phrase.name = COLD_SENTINEL_PHRASE_NAME
+      end)
+      if not created then
+        if phrase then pcall(instrument.delete_phrase_at, instrument, FIRST_PHRASE_POSITION) end
+        return nil, tostring(create_error)
+      end
+      local snapshot = ownership.snapshot(phrase)
+      if not snapshot or ownership.id(phrase) or ownership.status(phrase) ~= "foreign" then
+        pcall(instrument.delete_phrase_at, instrument, FIRST_PHRASE_POSITION)
+        return nil, "Cold foreign sentinel did not remain source-less"
+      end
+      return {
+        instrument = instrument,
+        instrument_index = instrument_index,
+        phrase = phrase,
+        snapshot = snapshot,
+      }
+    end
+  end
+  return nil, "Cold fixture has no empty instrument for the foreign sentinel"
+end
+
+local function cleanup_independence_fixture(state)
+  if not state then return end
+  pcall(function() if state.context then state.context:release_document() end end)
+  pcall(function()
+    local instrument = state.instrument
+    for _, phrase in ipairs({ state.original, state.duplicate }) do
+      if phrase then
+        for index, candidate in ipairs(instrument.phrases) do
+          if rawequal(candidate, phrase) then
+            instrument:delete_phrase_at(index)
+            break
+          end
+        end
+      end
+    end
+    while state.phrase_count_before and #instrument.phrases > state.phrase_count_before do
+      instrument:delete_phrase_at(#instrument.phrases)
+    end
+  end)
+  pcall(function() state.song.tool_data = state.data_before end)
+end
+
+local function group_contains_exact_phrases(group, expected_phrases)
+  if type(group) ~= "table" or #group ~= #expected_phrases then return false end
+  local matched = {}
+  for _, holder in ipairs(group) do
+    local found
+    for index, phrase in ipairs(expected_phrases) do
+      if rawequal(holder.phrase, phrase) and not matched[index] then
+        matched[index] = true
+        found = true
+        break
+      end
+    end
+    if not found then return false end
+  end
+  return true
+end
+
+local function writer_rejects_regeneration_without_mutation(song, instrument_index, source,
+    phrase, factory, writer, ownership)
+  local instrument = song.instruments[instrument_index]
+  local phrase_index
+  for index, candidate in ipairs(instrument.phrases) do
+    if rawequal(candidate, phrase) then phrase_index = index; break end
+  end
+  if not phrase_index then return false end
+  local raw_before = song.tool_data
+  local snapshot_before = ownership.snapshot(phrase)
+  local build_ok, request = pcall(factory.build, song, instrument_index, source, phrase_index)
+  if not build_ok or type(request) ~= "table" or request.kind ~= "regenerate" or request.baseline ~= nil then
+    return false
+  end
+  local callback_called = false
+  local writer_called, accepted = pcall(writer.regenerate, request, function() callback_called = true end)
+  local snapshot_after = ownership.snapshot(phrase)
+  return writer_called and accepted == false and not callback_called and song.tool_data == raw_before and
+    snapshot_before and snapshot_after and
+    ownership.compare(snapshot_before, snapshot_after)
+end
+
+local function remove_undo_idle_notifier(state, field)
+  local notifier = state and state[field]
+  if not notifier then return end
+  pcall(function() renoise.tool().app_idle_observable:remove_notifier(notifier) end)
+  state[field] = nil
+end
+
+local function watch_prepared_independence(state)
+  local idle = renoise.tool().app_idle_observable
+  local deadline = os.time() + UNDO_PREPARATION_TIMEOUT_SECONDS
+  local notifier
+  notifier = function()
+    if not rawequal(prepared_independence_undo, state) then
+      remove_undo_idle_notifier(state, "watch_notifier")
+      return
+    end
+    local current_ok, current_song = pcall(renoise.song)
+    if not current_ok or not rawequal(current_song, state.song) or os.time() >= deadline then
+      remove_undo_idle_notifier(state, "watch_notifier")
+      prepared_independence_undo = nil
+      if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+      cleanup_independence_fixture(state)
+      return
+    end
+  end
+  state.watch_notifier = notifier
+  idle:add_notifier(notifier)
 end
 
 local function profile_independence_action(context, eligibility, ownership)
@@ -194,8 +363,8 @@ local function run_make_independent(done)
   local store = require("renoise.pattern_store")
   local ownership = require("renoise.phrase_ownership")
   local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
-  local source = sequence.new_pattern(8)
-  source.pitch_events[1] = sequence.new_pitch(4, 0, true, false)
+  local source = sequence.new_pattern(ACCEPTANCE_PATTERN_LENGTH)
+  source.pitch_events[1] = sequence.new_pitch(ACCEPTANCE_GENERATED_NOTE, ACCEPTANCE_KEY, true, false)
   local request, request_error = factory.build(song, instrument_index, source)
   if not request then
     done({ status = "FAIL", case = "make-independent", reason = describe_failure(request_error) })
@@ -382,7 +551,8 @@ local function run_make_independent(done)
       details["two_holder_" .. metric] = value
     end
     local changed_source = sequence.copy_source(source)
-    changed_source.pitch_events[1] = sequence.new_pitch(5,0,true,false)
+    changed_source.pitch_events[FIRST_NOTE_LINE] = sequence.new_pitch(
+      ACCEPTANCE_INDEPENDENT_NOTE, ACCEPTANCE_KEY, true, false)
     local duplicate_index
     for index, phrase in ipairs(instrument.phrases) do
       if rawequal(phrase, duplicate) then duplicate_index = index; break end
@@ -433,97 +603,108 @@ local function run_make_independent(done)
           done(details)
           return
         end
-        local saved, save_error = save_independent_fixture(song)
-        if not saved then
-          details.status = "FAIL"
-          details.save_error = save_error
-        else
-          details.roundtrip_fixture = saved.fixture
-          details.roundtrip_bytes = saved.bytes
+        local function finish_save()
+          local sentinel, sentinel_error = add_cold_foreign_sentinel(song, duplicate)
+          if not sentinel then
+            details.status = "FAIL"
+            details.sentinel_error = sentinel_error
+            release_context()
+            done(details)
+            return
+          end
+          local saved, save_error = save_independent_fixture(song)
+          if not saved then
+            details.status = "FAIL"
+            details.save_error = save_error
+          else
+            details.roundtrip_fixture = saved.fixture
+            details.roundtrip_bytes = saved.bytes
+            details.foreign_sentinel_saved = true
+            details.foreign_sentinel_instrument_index = sentinel.instrument_index
+            details.foreign_sentinel_phrase_name = sentinel.phrase.name
+            details.primary_instrument_phrase_count = #instrument.phrases
+          end
+          context:close_dialog()
+          context:release_document()
+          observer:detach()
+          details.observer_detached_after_release = not observer:state().attached and observer:refresh() == false
+          if not details.observer_detached_after_release then
+            details.status = "FAIL"
+            details.reason = "native observer remained active after document release"
+          end
+          done(details)
         end
-        context:close_dialog()
-        context:release_document()
-        observer:detach()
-        details.observer_detached_after_release = not observer:state().attached and observer:refresh() == false
-        if not details.observer_detached_after_release then
-          details.status = "FAIL"
-          details.reason = "native observer remained active after document release"
+
+        local original_index
+        for index, phrase in ipairs(instrument.phrases) do
+          if rawequal(phrase, original) then original_index = index; break end
         end
-        local function inspect_history(expected_source, expected_snapshot)
-          local data_before = song.tool_data
-          local check_context = context_for(song)
-          check_context:bind_phrase(instrument, duplicate)
-          local classification = check_context:target_state()
-          local eligible, eligibility_error = check_context:musical_eligibility()
-          local stored_source = store.read_entry(song, outcome.id)
-          local actual_snapshot = ownership.snapshot(duplicate)
-          local actual_id = ownership.id(duplicate)
-          local source_matches = stored_source and sequence.same_source(stored_source, expected_source) or false
-          local phrase_matches = actual_snapshot and ownership.compare(expected_snapshot, actual_snapshot) or false
-          local fully_compatible = source_matches and phrase_matches and actual_id == outcome.id and
-            classification.kind == "owned" and eligible ~= nil
-          local mismatch = not source_matches or not phrase_matches or actual_id ~= outcome.id
-          local safely_blocked = mismatch and
-            (classification.kind ~= "owned" or eligible == nil)
-          local data_unchanged = song.tool_data == data_before
-          check_context:release_document()
-          return {
-            classification = classification.kind,
-            reason = classification.reason or eligibility_error,
-            source_matches = source_matches == true,
-            phrase_matches = phrase_matches == true,
-            id_matches = actual_id == outcome.id,
-            safe = fully_compatible or safely_blocked,
-            safely_blocked = safely_blocked == true,
-            tool_data_unchanged = data_unchanged == true
-          }
-        end
-    on_next_idle(function()
-      local can_undo, can_redo = song:can_undo(), song:can_redo()
-      details.song_can_undo_after_idle = can_undo
-      details.song_can_redo_after_idle = can_redo
-      details.undo_available = can_undo
-      if not can_undo then
-        details.undo_consistency = "unavailable"
-        done(details)
-        return
-      end
-      local undo_called, undo_error = pcall(function() song:undo() end)
-      if not undo_called then
-        details.undo_consistency = "FAIL"
-        details.undo_error = tostring(undo_error)
-        details.status = "FAIL"
-        done(details)
-        return
-      end
-      on_next_idle(function()
-        local undo_observation = inspect_history(changed_source, regenerated_snapshot)
-        details.undo_observation = undo_observation
-        details.song_can_redo_after_undo = song:can_redo()
-        if not details.song_can_redo_after_undo then
-          details.undo_consistency = "FAIL"
+        local original_request, original_request_error = factory.build(song, instrument_index, source, original_index)
+        if not original_request or original_request.kind ~= "regenerate" then
           details.status = "FAIL"
+          details.original_regenerate_error = describe_failure(original_request_error or
+            "original owned phrase did not build a regenerate request")
+          release_context()
           done(details)
           return
         end
-        local redo_called, redo_error = pcall(function() song:redo() end)
-        if not redo_called then
-          details.undo_consistency = "FAIL"
-          details.redo_error = tostring(redo_error)
+        local original_data_before = song.tool_data
+        local original_snapshot_before = ownership.snapshot(original)
+        local duplicate_snapshot_before = ownership.snapshot(duplicate)
+        local original_accepted, original_start_error = writer.regenerate(original_request, function(original_result)
+          on_next_idle(function()
+            local original_source_after, original_policy_after, original_pb_after = store.read_entry(song, old_id)
+            local duplicate_source_after, duplicate_policy_after, duplicate_pb_after = store.read_entry(song, outcome.id)
+            local original_snapshot_after = ownership.snapshot(original)
+            local duplicate_snapshot_after = ownership.snapshot(duplicate)
+            local original_groups = ownership.inventory(song)
+            local original_regenerated = type(original_result) == "table" and
+              original_result.kind == "success" and original_result.verified == true and
+              rawequal(original_result.phrase, original)
+            local original_unchanged = original_snapshot_before and original_snapshot_after and
+              ownership.compare(original_snapshot_before, original_snapshot_after)
+            local independent_duplicate_unchanged = duplicate_snapshot_before and duplicate_snapshot_after and
+              ownership.compare(duplicate_snapshot_before, duplicate_snapshot_after) and
+              duplicate_source_after and sequence.same_source(duplicate_source_after, changed_source) and
+              duplicate_policy_after == request.output_policy and duplicate_pb_after == request.pb_range
+            local original_source_preserved = original_source_after and
+              sequence.same_source(original_source_after, source) and
+              original_policy_after == request.output_policy and original_pb_after == request.pb_range
+            local original_groups_preserved = original_groups and original_groups[old_id] and
+              #original_groups[old_id] == 1 and rawequal(original_groups[old_id][1].phrase, original) and
+              original_groups[outcome.id] and #original_groups[outcome.id] == 1 and
+              rawequal(original_groups[outcome.id][1].phrase, duplicate)
+            local original_store_unchanged = song.tool_data == original_data_before
+            local original_count_unchanged = #instrument.phrases == TWO_HOLDER_COUNT
+            local original_regeneration_passed = original_regenerated and original_unchanged and
+              independent_duplicate_unchanged and original_source_preserved and original_groups_preserved and
+              original_store_unchanged and original_count_unchanged
+            details.original_regenerated_same_object = original_regenerated == true
+            details.original_regenerated_content_unchanged = original_unchanged == true
+            details.duplicate_unchanged_during_original_regeneration = independent_duplicate_unchanged == true
+            details.original_source_and_settings_preserved = original_source_preserved == true
+            details.original_regeneration_preserved_independent_associations = original_groups_preserved == true
+            details.original_regeneration_store_unchanged = original_store_unchanged
+            details.original_regeneration_phrase_count_unchanged = original_count_unchanged
+            if not original_regeneration_passed then
+              details.status = "FAIL"
+              details.original_regenerate_error = original_regenerated and
+                "Original regeneration changed its peer, source association, store, or phrase inventory" or
+                describe_failure(original_result or "original regeneration did not succeed")
+              release_context()
+              done(details)
+              return
+            end
+            finish_save()
+          end)
+        end)
+        if not original_accepted then
           details.status = "FAIL"
+          details.original_regenerate_error = describe_failure(original_start_error)
+          release_context()
           done(details)
           return
         end
-        on_next_idle(function()
-          local redo_observation = inspect_history(changed_source, regenerated_snapshot)
-          details.redo_observation = redo_observation
-          details.undo_consistency = undo_observation.safe and undo_observation.tool_data_unchanged and
-            redo_observation.safe and redo_observation.tool_data_unchanged and "PASS" or "FAIL"
-          if details.undo_consistency ~= "PASS" then details.status = "FAIL" end
-          done(details)
-        end)
-        end)
-      end)
     end)
     if not regenerate_accepted then
       details.status = "FAIL"
@@ -546,6 +727,475 @@ local function run_make_independent(done)
     called = true
     done({ status = "FAIL", case = "make-independent", reason = describe_failure(start_error) })
   end
+  return true
+end
+
+local function run_ownership_negatives(done)
+  local song = renoise.song()
+  local instrument_index = song.selected_instrument_index
+  local instrument = song.instruments[instrument_index]
+  local sequence = require("model.sequencer")
+  local store = require("renoise.pattern_store")
+  local ownership = require("renoise.phrase_ownership")
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local writer = require("writers.phrase_writer")
+  local source = sequence.new_pattern(ACCEPTANCE_PATTERN_LENGTH)
+  source.pitch_events[1] = sequence.new_pitch(ACCEPTANCE_GENERATED_NOTE, ACCEPTANCE_KEY, true, false)
+  local request, request_error = factory.build(song, instrument_index, source)
+  if not request then
+    done({ status = "FAIL", case = "ownership-negatives", reason = describe_failure(request_error) })
+    return true
+  end
+
+  local phrase_count_before = #instrument.phrases
+  local store_before = song.tool_data
+  local test_phrases = {}
+  local function reject_regeneration(phrase)
+    return writer_rejects_regeneration_without_mutation(song, instrument_index, source,
+      phrase, factory, writer, ownership)
+  end
+  local function cleanup()
+    for _, phrase in ipairs(test_phrases) do
+      local phrase_index
+      for index, candidate in ipairs(instrument.phrases) do
+        if rawequal(candidate, phrase) then phrase_index = index; break end
+      end
+      if phrase_index then pcall(instrument.delete_phrase_at, instrument, phrase_index) end
+    end
+    pcall(function() song.tool_data = store_before end)
+  end
+  local function finish(passed, details)
+    cleanup()
+    local restored = #instrument.phrases == phrase_count_before and song.tool_data == store_before
+    details.cleanup_restored_fixture = restored
+    if not restored then passed = false end
+    details.status = passed and "PASS" or "FAIL"
+    details.case = "ownership-negatives"
+    done(details)
+  end
+
+  local accepted, start_error = writer.create(request, function(result)
+    on_next_idle(function()
+      local case_ok, case_error = pcall(function()
+      if type(result) ~= "table" or result.kind ~= "success" or result.verified ~= true or
+          not result.phrase then
+        finish(false, { reason = describe_failure(result or "writer create failed") })
+        return
+      end
+      local original = result.phrase
+      test_phrases[#test_phrases + 1] = original
+      local original_id = ownership.id(original)
+      local original_snapshot = ownership.snapshot(original)
+      if not original_id or not original_snapshot then
+        finish(false, { reason = "created phrase identity or snapshot is unavailable" })
+        return
+      end
+
+      local function copy_holder(name)
+        local phrase = instrument:insert_phrase_at(#instrument.phrases + 1)
+        test_phrases[#test_phrases + 1] = phrase
+        phrase:copy_from(original)
+        phrase.name = name or original.name
+        return phrase
+      end
+
+      local duplicate = copy_holder()
+      local pair_groups = ownership.inventory(song)
+      local duplicate_state = classify_write_eligibility(song, instrument, duplicate)
+      local original_pair_state = classify_write_eligibility(song, instrument, original)
+      local pair_blocked = pair_groups and pair_groups[original_id] and
+        #pair_groups[original_id] == TWO_HOLDER_COUNT and
+        duplicate_state.classification == "unavailable" and not duplicate_state.eligible and
+        original_pair_state.classification == "unavailable" and not original_pair_state.eligible and
+        reject_regeneration(original) and reject_regeneration(duplicate)
+
+      local third = copy_holder()
+      local third_groups = ownership.inventory(song)
+      local third_state = classify_write_eligibility(song, instrument, third)
+      local three_blocked = third_groups and third_groups[original_id] and
+        #third_groups[original_id] == THREE_HOLDER_COUNT and
+        third_state.classification == "unavailable" and not third_state.eligible and
+        reject_regeneration(third)
+
+      local note = duplicate:line(FIRST_NOTE_LINE):note_column(FIRST_NOTE_COLUMN)
+      note.note_value = note.note_value == ACCEPTANCE_NOTE_VALUE_LOW and
+        ACCEPTANCE_NOTE_VALUE_HIGH or ACCEPTANCE_NOTE_VALUE_LOW
+      local mismatch_snapshot = ownership.snapshot(duplicate)
+      local mismatched_groups = ownership.inventory(song)
+      local mismatch_states = {
+        original = classify_write_eligibility(song, instrument, original),
+        duplicate = classify_write_eligibility(song, instrument, duplicate),
+        third = classify_write_eligibility(song, instrument, third),
+      }
+      local mismatch_blocked = mismatch_snapshot and
+        not ownership.compare(original_snapshot, mismatch_snapshot, "exact") and
+        mismatched_groups and mismatched_groups[original_id] and
+        #mismatched_groups[original_id] == THREE_HOLDER_COUNT and
+        mismatch_states.original.classification == "unavailable" and not mismatch_states.original.eligible and
+        mismatch_states.duplicate.classification == "unavailable" and not mismatch_states.duplicate.eligible and
+        mismatch_states.third.classification == "unavailable" and not mismatch_states.third.eligible and
+        reject_regeneration(original) and reject_regeneration(duplicate) and reject_regeneration(third)
+
+      local foreign = copy_holder("Imported phrase")
+      local foreign_state = classify_write_eligibility(song, instrument, foreign)
+      local foreign_blocked = ownership.id(foreign) == nil and
+        foreign_state.classification == "foreign" and not foreign_state.eligible and
+        reject_regeneration(foreign)
+
+      for _, phrase in ipairs({ third, duplicate, foreign }) do
+        for index, candidate in ipairs(instrument.phrases) do
+          if rawequal(candidate, phrase) then
+            instrument:delete_phrase_at(index)
+            break
+          end
+        end
+      end
+
+      local raw_before_missing = song.tool_data
+      local without_source = source_record_removed(raw_before_missing, original_id)
+      local missing_set = without_source and pcall(function() song.tool_data = without_source end)
+      local missing_state = missing_set and classify_write_eligibility(song, instrument, original) or nil
+      local source_less_blocked = missing_set and not store.read_entry(song, original_id) and
+        missing_state and missing_state.classification == "unavailable" and
+        not missing_state.eligible and reject_regeneration(original)
+      local source_restored = pcall(function() song.tool_data = raw_before_missing end)
+
+      finish(pair_blocked and three_blocked and mismatch_blocked and foreign_blocked and source_less_blocked and source_restored, {
+        original_id = original_id,
+        pair_holder_count = pair_groups and #pair_groups[original_id] or 0,
+        pair_blocked = pair_blocked == true,
+        three_holder_count = third_groups and #third_groups[original_id] or 0,
+        three_holder_blocked = three_blocked == true,
+        mismatching_holder_blocked = mismatch_blocked == true,
+        mismatch_classifications = {
+          original = mismatch_states.original.classification,
+          duplicate = mismatch_states.duplicate.classification,
+          third = mismatch_states.third.classification,
+        },
+        source_less_foreign_blocked = foreign_blocked == true,
+        missing_source_record_blocked = source_less_blocked == true,
+        missing_source_record_restored = source_restored == true,
+      })
+      end)
+      if not case_ok then finish(false, { reason = tostring(case_error) }) end
+    end)
+  end)
+  if not accepted then
+    finish(false, { reason = describe_failure(start_error) })
+  end
+  return true
+end
+
+local function run_independence_undo_prepare(done)
+  if prepared_independence_undo then
+    remove_undo_idle_notifier(prepared_independence_undo, "watch_notifier")
+    if prepared_independence_undo.dialog and prepared_independence_undo.dialog.visible then
+      pcall(prepared_independence_undo.dialog.close, prepared_independence_undo.dialog)
+    end
+    cleanup_independence_fixture(prepared_independence_undo)
+    prepared_independence_undo = nil
+  end
+  local song = renoise.song()
+  local instrument_index = song.selected_instrument_index
+  local instrument = song.instruments[instrument_index]
+  local sequence = require("model.sequencer")
+  local store = require("renoise.pattern_store")
+  local ownership = require("renoise.phrase_ownership")
+  local writer = require("writers.phrase_writer")
+  local source = sequence.new_pattern(ACCEPTANCE_PATTERN_LENGTH)
+  source.pitch_events[1] = sequence.new_pitch(ACCEPTANCE_GENERATED_NOTE, ACCEPTANCE_KEY, true, false)
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local request, request_error = factory.build(song, instrument_index, source)
+  if not request then
+    done({ status = "FAIL", case = "independence-undo-prepare", reason = describe_failure(request_error) })
+    return true
+  end
+  local phrase_count_before = #instrument.phrases
+  local data_before = song.tool_data
+  local accepted, start_error = writer.create(request, function(result)
+    on_next_idle(function()
+      if type(result) ~= "table" or result.kind ~= "success" or result.verified ~= true or not result.phrase then
+        cleanup_independence_fixture({ song = song, instrument = instrument,
+          phrase_count_before = phrase_count_before, data_before = data_before })
+        done({ status = "FAIL", case = "independence-undo-prepare", reason = describe_failure(result) })
+        return
+      end
+      local original = result.phrase
+      local duplicate = instrument:insert_phrase_at(#instrument.phrases + 1)
+      duplicate:copy_from(original)
+      duplicate.name = original.name
+      local context = context_for(song)
+      local bound = context:bind_phrase(instrument, duplicate)
+      local proof = bound and context:independence_eligibility()
+      local old_id = ownership.id(original)
+      local before_source, before_policy, before_pb = store.read_entry(song, old_id)
+      local state = {
+        song = song,
+        instrument = instrument,
+        instrument_index = instrument_index,
+        original = original,
+        duplicate = duplicate,
+        source = source,
+        factory = factory,
+        context = context,
+        phrase_count_before = phrase_count_before,
+        data_before = data_before,
+        pre_resolution_data = song.tool_data,
+        old_id = old_id,
+        old_name = duplicate.name,
+        before_snapshot = ownership.snapshot(duplicate),
+        before_source = before_source,
+        before_policy = before_policy,
+        before_pb = before_pb,
+        key_event_summary = "",
+      }
+      if not proof then
+        cleanup_independence_fixture(state)
+        done({ status = "FAIL", case = "independence-undo-prepare",
+          reason = "Native collision was not eligible for Make Independent" })
+        return
+      end
+      local dialog
+      local function perform_from_user_action()
+        if state.action_result then return end
+        local called, changed, outcome = pcall(context.make_independent, context)
+        state.action_result = { called = called, changed = changed, outcome = outcome }
+        if dialog and dialog.visible then pcall(dialog.close, dialog) end
+      end
+      local vb = renoise.ViewBuilder()
+      local content = vb:column {
+        margin = renoise.ViewBuilder.DEFAULT_DIALOG_MARGIN,
+        spacing = renoise.ViewBuilder.DEFAULT_DIALOG_SPACING,
+      }
+      content:add_view(vb:text { text = "Press Enter or click the button to resolve the selected collision." })
+      content:add_view(vb:button { text = "Make Independent", notifier = perform_from_user_action })
+      local function key_handler(_, key_event)
+        local key_state = key_event.state or "pressed"
+        state.key_event_summary = tostring(key_event.name) .. ":" .. key_state
+        if (key_event.name == "enter" or key_event.name == "return") and key_state ~= "released" then
+          perform_from_user_action()
+          return nil
+        end
+        return key_event
+      end
+      local shown, show_error = pcall(function()
+        dialog = renoise.app():show_custom_dialog("ACID native undo acceptance", content, key_handler,
+          { send_key_repeat = false, send_key_release = false })
+      end)
+      if not shown or not dialog then
+        cleanup_independence_fixture(state)
+        done({ status = "FAIL", case = "independence-undo-prepare",
+          reason = tostring(show_error or "Native action dialog did not open") })
+        return
+      end
+      state.dialog = dialog
+      prepared_independence_undo = state
+      watch_prepared_independence(state)
+      done({ status = "PASS", case = "independence-undo-prepare", action_ready = true,
+        dialog_visible = dialog.visible, focused = dialog.focused })
+    end)
+  end)
+  if not accepted then
+    done({ status = "FAIL", case = "independence-undo-prepare", reason = describe_failure(start_error) })
+  end
+  return true
+end
+
+local continue_independence_undo
+
+local function run_independence_undo(done)
+  local state = prepared_independence_undo
+  if not state then
+    done({ status = "FAIL", case = "independence-undo", reason = "Native Make Independent action was not prepared" })
+    return true
+  end
+  local same_document, current_song = pcall(renoise.song)
+  if not same_document or not rawequal(current_song, state.song) then
+    remove_undo_idle_notifier(state, "watch_notifier")
+    if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+    prepared_independence_undo = nil
+    cleanup_independence_fixture(state)
+    done({ status = "FAIL", case = "independence-undo", reason = "Prepared song changed before native action readback" })
+    return true
+  end
+  local function wait_for_action()
+    local idle = renoise.tool().app_idle_observable
+    local deadline = os.time() + UNDO_ACTION_WAIT_TIMEOUT_SECONDS
+    local notifier
+    notifier = function()
+    local current_ok, current = pcall(renoise.song)
+    if not current_ok or not rawequal(current, state.song) then
+      pcall(function() idle:remove_notifier(notifier) end)
+      prepared_independence_undo = nil
+      remove_undo_idle_notifier(state, "watch_notifier")
+      if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+      cleanup_independence_fixture(state)
+      done({ status = "FAIL", case = "independence-undo", reason = "Prepared song changed before native action readback" })
+      return
+    end
+    if state.action_result then
+      pcall(function() idle:remove_notifier(notifier) end)
+      prepared_independence_undo = nil
+      remove_undo_idle_notifier(state, "watch_notifier")
+      continue_independence_undo(state, done)
+      return
+    end
+    if os.time() >= deadline then
+      pcall(function() idle:remove_notifier(notifier) end)
+      prepared_independence_undo = nil
+      remove_undo_idle_notifier(state, "watch_notifier")
+      if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+      cleanup_independence_fixture(state)
+      done({ status = "FAIL", case = "independence-undo", reason = "User action did not complete Make Independent",
+        action_ready = true, action_called = false, key_event_summary = state.key_event_summary,
+        dialog_visible = state.dialog and state.dialog.visible or false,
+        dialog_focused = state.dialog and state.dialog.focused or false })
+      return
+    end
+    end
+    idle:add_notifier(notifier)
+  end
+  wait_for_action()
+  return true
+end
+
+continue_independence_undo = function(state, done)
+  if state.dialog and state.dialog.visible then pcall(state.dialog.close, state.dialog) end
+  local action = state.action_result
+  local song, instrument, duplicate = state.song, state.instrument, state.duplicate
+  local sequence = require("model.sequencer")
+  local store = require("renoise.pattern_store")
+  local ownership = require("renoise.phrase_ownership")
+  local writer = require("writers.phrase_writer")
+  local function cleanup() cleanup_independence_fixture(state) end
+  if not action or not action.called or not action.changed or type(action.outcome) ~= "table" then
+    cleanup()
+    done({ status = "FAIL", case = "independence-undo", reason = "User action did not complete Make Independent",
+      action_ready = true, action_called = action and action.called or false,
+      action_error = action and describe_failure(action.outcome) or nil,
+      key_event_summary = state.key_event_summary })
+    return true
+  end
+  local outcome = action.outcome
+  local new_id = outcome.id
+  local after_snapshot = ownership.snapshot(duplicate)
+  local after_source, after_policy, after_pb = store.read_entry(song, new_id)
+  local post_resolution_data = song.tool_data
+  local can_undo_after_action = song:can_undo()
+  local content_matches = after_snapshot and ownership.compare(state.before_snapshot, after_snapshot, "name") or false
+  local id_matches = ownership.id(duplicate) == new_id
+  local source_matches = after_source and state.before_source and sequence.same_source(after_source, state.before_source) or false
+  local settings_match = after_policy == state.before_policy and after_pb == state.before_pb
+  if not (can_undo_after_action and content_matches and id_matches and source_matches and settings_match) then
+    cleanup()
+    done({ status = "FAIL", case = "independence-undo", reason = "User action did not produce an exact undoable post-state",
+      can_undo_after_action = can_undo_after_action, content_matches = content_matches,
+      id_matches = id_matches, source_matches = source_matches, settings_match = settings_match,
+      phrase_id = ownership.id(duplicate), new_id = new_id })
+    return true
+  end
+  local undo_called, undo_error = pcall(function() song:undo() end)
+  if not undo_called then
+    cleanup()
+    done({ status = "FAIL", case = "independence-undo", reason = tostring(undo_error) })
+    return true
+  end
+  on_next_idle(function()
+    local undo_data = song.tool_data
+    local undo_snapshot = ownership.snapshot(duplicate)
+    local undo_original_snapshot = ownership.snapshot(state.original)
+    local undo_source, undo_policy, undo_pb = store.read_entry(song, state.old_id)
+    local undo_new_source, undo_new_policy, undo_new_pb = store.read_entry(song, new_id)
+    local undo_groups = ownership.inventory(song)
+    local undo_state = classify_write_eligibility(song, instrument, duplicate)
+    local undo_original_state = classify_write_eligibility(song, instrument, state.original)
+    local function reject_undo_regeneration(phrase, snapshot_before)
+      return writer_rejects_regeneration_without_mutation(song, state.instrument_index, state.source,
+        phrase, state.factory, writer, ownership) and song.tool_data == undo_data and snapshot_before and
+        ownership.compare(snapshot_before, ownership.snapshot(phrase))
+    end
+    local undo_duplicate_rejected = reject_undo_regeneration(duplicate, undo_snapshot)
+    local undo_original_rejected = reject_undo_regeneration(state.original, undo_original_snapshot)
+    local undo_data_mode = undo_data == state.pre_resolution_data and "pre_resolution_restored" or
+      undo_data == post_resolution_data and "post_make_independent_retained" or "unexpected"
+    local undo_old_association_matches = undo_source and state.before_source and
+      sequence.same_source(undo_source, state.before_source) and undo_policy == state.before_policy and
+      undo_pb == state.before_pb
+    local undo_new_association_matches = undo_new_source and state.before_source and
+      sequence.same_source(undo_new_source, state.before_source) and undo_new_policy == after_policy and
+      undo_new_pb == after_pb
+    local undo_store_safe = undo_old_association_matches and
+      ((undo_data_mode == "pre_resolution_restored") or
+        (undo_data_mode == "post_make_independent_retained" and undo_new_association_matches))
+    local undo_restored = undo_snapshot and undo_original_snapshot and
+      ownership.compare(state.before_snapshot, undo_snapshot) and duplicate.name == state.old_name and
+      ownership.compare(state.before_snapshot, undo_original_snapshot) and
+      ownership.id(duplicate) == state.old_id and undo_groups and
+      group_contains_exact_phrases(undo_groups[state.old_id], { state.original, duplicate })
+    local undo_requests_rejected = undo_duplicate_rejected and undo_original_rejected
+    local undo_safe = undo_restored and undo_store_safe and undo_requests_rejected and
+      undo_state.classification == "unavailable" and not undo_state.eligible and
+      undo_original_state.classification == "unavailable" and not undo_original_state.eligible and
+      song.tool_data == undo_data
+    local can_redo = song:can_redo()
+    if not can_redo then
+      cleanup()
+      done({ status = "FAIL", case = "independence-undo", reason = "Make Independent undo created no redo state",
+        undo_restored = undo_restored == true, undo_safe = undo_safe == true,
+        undo_store_mode = undo_data_mode,
+        undo_original_blocked = undo_original_state.classification == "unavailable" and not undo_original_state.eligible,
+        undo_duplicate_blocked = undo_state.classification == "unavailable" and not undo_state.eligible })
+      return
+    end
+    local redo_called, redo_error = pcall(function() song:redo() end)
+    if not redo_called then
+      cleanup()
+      done({ status = "FAIL", case = "independence-undo", reason = tostring(redo_error) })
+      return
+    end
+    on_next_idle(function()
+      local redo_data = song.tool_data
+      local redo_snapshot = ownership.snapshot(duplicate)
+      local redo_new_source, redo_new_policy, redo_new_pb = store.read_entry(song, new_id)
+      local redo_old_source = store.read_entry(song, state.old_id)
+      local redo_groups = ownership.inventory(song)
+      local redo_state = classify_write_eligibility(song, instrument, duplicate)
+      local redo_store_matches = redo_data == post_resolution_data
+      local redo_restored = redo_snapshot and ownership.compare(state.before_snapshot, redo_snapshot, "name") and
+        ownership.id(duplicate) == new_id and redo_new_source and
+        sequence.same_source(redo_new_source, state.before_source) and redo_new_policy == after_policy and
+        redo_new_pb == after_pb and redo_old_source and sequence.same_source(redo_old_source, state.before_source) and
+        redo_groups and group_contains_exact_phrases(redo_groups[state.old_id], { state.original }) and
+        group_contains_exact_phrases(redo_groups[new_id], { duplicate })
+      local redo_safe = redo_restored and redo_state.classification == "owned" and redo_state.eligible and
+        redo_store_matches and song.tool_data == redo_data
+      local passed = undo_safe and redo_safe
+      local details = {
+        old_id = state.old_id,
+        new_id = new_id,
+        action_used_native_dialog_callback = true,
+        can_undo_after_action = can_undo_after_action,
+        undo_restored_prior_name_and_content = undo_restored == true,
+        undo_store_mode = undo_data_mode,
+        undo_old_association_preserved = undo_old_association_matches == true,
+        undo_retained_clone_association_preserved = undo_new_association_matches == true,
+        undo_both_collision_holders_blocked = undo_state.classification == "unavailable" and
+          not undo_state.eligible and undo_original_state.classification == "unavailable" and
+          not undo_original_state.eligible,
+        undo_collision_remained_blocked = undo_safe == true,
+        undo_regeneration_rejected_without_store_repair = undo_requests_rejected == true,
+        single_undo_restored_prior_phrase = undo_restored == true,
+        redo_restored_new_identity_and_cloned_source = redo_restored == true,
+        redo_target_owned_and_eligible = redo_safe == true,
+        redo_preserved_complete_post_resolution_store = redo_store_matches,
+      }
+      cleanup()
+      details.cleanup_restored_fixture = #instrument.phrases == state.phrase_count_before and song.tool_data == state.data_before
+      details.status = passed and details.cleanup_restored_fixture and "PASS" or "FAIL"
+      details.case = "independence-undo"
+      done(details)
+    end)
+  end)
   return true
 end
 
@@ -2637,9 +3287,442 @@ local function run_editor_responsiveness(done)
   return true
 end
 
+local function inspect_cold_song(expected_target_note, case_name)
+  local song = renoise.song()
+  local instrument_index = song.selected_instrument_index
+  local instrument = song.instruments[instrument_index]
+  local sequence = require("model.sequencer")
+  local store = require("renoise.pattern_store")
+  local ownership = require("renoise.phrase_ownership")
+  local groups = ownership.inventory(song)
+  local old_id, target_id, old_phrase, target_phrase, old_source, target_source
+  local sentinel
+  local sentinel_count = 0
+  for index, candidate_instrument in ipairs(song.instruments) do
+    for _, phrase in ipairs(candidate_instrument.phrases) do
+      if phrase.name == COLD_SENTINEL_PHRASE_NAME then
+        sentinel_count = sentinel_count + 1
+        sentinel = {
+          instrument = candidate_instrument,
+          instrument_index = index,
+          phrase = phrase,
+          snapshot = ownership.snapshot(phrase),
+        }
+      end
+    end
+  end
+  for _, phrase in ipairs(instrument.phrases) do
+    local id = ownership.id(phrase)
+    local source = id and store.read_entry(song, id)
+    if source and source.pitch_events[1] then
+      if source.pitch_events[FIRST_NOTE_LINE].note == sequence.BASE_NOTE + ACCEPTANCE_GENERATED_NOTE then
+        old_id, old_phrase, old_source = id, phrase, source
+      elseif source.pitch_events[FIRST_NOTE_LINE].note == expected_target_note then
+        target_id, target_phrase, target_source = id, phrase, source
+      end
+    end
+  end
+  if not groups or not old_id or not target_id or old_id == target_id or
+      not groups[old_id] or #groups[old_id] ~= 1 or
+      not groups[target_id] or #groups[target_id] ~= 1 or
+      #instrument.phrases ~= TWO_HOLDER_COUNT or sentinel_count ~= 1 or
+      not sentinel or not sentinel.snapshot then
+    return nil, "Saved cold-reopen phrases, unique sources, or foreign sentinel are missing"
+  end
+  local data_before = song.tool_data
+  local old_snapshot = ownership.snapshot(old_phrase)
+  local target_snapshot = ownership.snapshot(target_phrase)
+  if not old_snapshot or not target_snapshot then return nil, "Saved phrase snapshots are unavailable" end
+  local context = context_for(song)
+  local bound = context:bind_phrase(instrument, target_phrase)
+  local classification = context:target_state()
+  local eligible, eligibility_error = context:musical_eligibility()
+  local restored = context:restore_editor_target(instrument, target_phrase)
+  local sentinel_state = classify_write_eligibility(song, sentinel.instrument, sentinel.phrase)
+  local source_read, policy_read, pb_read = store.read_entry(song, target_id)
+  local read_only = bound and classification.kind == "owned" and eligible ~= nil and
+    restored and restored.source and sequence.same_source(restored.source, target_source) and
+    restored.output_policy == policy_read and restored.pb_range == pb_read and
+    source_read and sequence.same_source(source_read, target_source) and
+    song.tool_data == data_before and
+    ownership.compare(old_snapshot, ownership.snapshot(old_phrase)) and
+    ownership.compare(target_snapshot, ownership.snapshot(target_phrase)) and
+    not ownership.id(sentinel.phrase) and ownership.status(sentinel.phrase) == "foreign" and
+    sentinel_state.classification == "foreign" and not sentinel_state.eligible and
+    ownership.compare(sentinel.snapshot, ownership.snapshot(sentinel.phrase))
+  context:release_document()
+  if not read_only then
+    return nil, eligibility_error or "Cold read-only ownership/source restoration changed native state"
+  end
+  return {
+    song = song,
+    instrument = instrument,
+    instrument_index = instrument_index,
+    old_id = old_id,
+    target_id = target_id,
+    old_phrase = old_phrase,
+    target_phrase = target_phrase,
+    old_source = old_source,
+    target_source = target_source,
+    old_snapshot = old_snapshot,
+    target_snapshot = target_snapshot,
+    sentinel = sentinel,
+    target_policy = policy_read,
+    target_pb = pb_read,
+  }
+end
+
+local function prepare_cold_negative_fixture(state, target_source)
+  local song = state.song
+  local sequence = require("model.sequencer")
+  local store = require("renoise.pattern_store")
+  local ownership = require("renoise.phrase_ownership")
+  local writer = require("writers.phrase_writer")
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local empty_instruments = {}
+  for index, instrument in ipairs(song.instruments) do
+    if not rawequal(instrument, state.instrument) and #instrument.phrases == 0 then
+      empty_instruments[#empty_instruments + 1] = { index = index, instrument = instrument }
+      if #empty_instruments == THREE_EMPTY_INSTRUMENTS then break end
+    end
+  end
+  if #empty_instruments ~= THREE_EMPTY_INSTRUMENTS then
+    return nil, "Cold fixture needs three empty instruments for isolated negative associations"
+  end
+  local function clone_into(destination)
+    local phrase = destination:insert_phrase_at(#destination.phrases + 1)
+    phrase:copy_from(state.target_phrase)
+    return phrase
+  end
+  local function set_identity(phrase, id)
+    local name, name_error = ownership.make_name(phrase, id)
+    if not name then return false, name_error end
+    phrase.name = name
+    return true
+  end
+  local function can_save_source(id)
+    local saved, reason = store.save(song, id, target_source, state.target_policy, state.target_pb)
+    if not saved then return false, reason end
+    return true
+  end
+  local duplicate_id, duplicate_error = store.allocate(song)
+  if not duplicate_id then return nil, duplicate_error end
+  local duplicate_source = clone_into(empty_instruments[1].instrument)
+  local identity_ok, identity_error = set_identity(duplicate_source, duplicate_id)
+  if not identity_ok then return nil, identity_error end
+  local saved, save_error = can_save_source(duplicate_id)
+  if not saved then return nil, save_error end
+  local matching_source = store.read_entry(song, duplicate_id)
+  if ownership.status(duplicate_source) ~= "owned" or not matching_source or
+      not sequence.same_source(matching_source, target_source) then
+    return nil, "Cold duplicate source was not a valid owned association before collision"
+  end
+  local duplicate_copy = clone_into(empty_instruments[2].instrument)
+  duplicate_copy.name = duplicate_source.name
+  local duplicate_data_before_proof = song.tool_data
+  local duplicate_source_snapshot = ownership.snapshot(duplicate_source)
+  local duplicate_copy_snapshot = ownership.snapshot(duplicate_copy)
+  local function independence_is_eligible(instrument, phrase)
+    local context = context_for(song)
+    local bound = context:bind_phrase(instrument, phrase)
+    local bound_exactly = bound and rawequal(bound.instrument, instrument) and rawequal(bound.phrase, phrase)
+    local proof = bound_exactly and context:independence_eligibility()
+    context:release_document()
+    return proof ~= nil and proof ~= false
+  end
+  local valid_duplicate_pair = ownership.status(duplicate_source) == "owned" and
+    ownership.status(duplicate_copy) == "owned" and
+    ownership.id(duplicate_source) == duplicate_id and ownership.id(duplicate_copy) == duplicate_id and
+    independence_is_eligible(empty_instruments[1].instrument, duplicate_source) and
+    independence_is_eligible(empty_instruments[2].instrument, duplicate_copy) and
+    song.tool_data == duplicate_data_before_proof and duplicate_source_snapshot and duplicate_copy_snapshot and
+    ownership.compare(duplicate_source_snapshot, ownership.snapshot(duplicate_source)) and
+    ownership.compare(duplicate_copy_snapshot, ownership.snapshot(duplicate_copy))
+
+  local modified_id, modified_error = store.allocate(song)
+  if not modified_id then return nil, modified_error end
+  local modified = clone_into(empty_instruments[1].instrument)
+  identity_ok, identity_error = set_identity(modified, modified_id)
+  if not identity_ok then return nil, identity_error end
+  saved, save_error = can_save_source(modified_id)
+  if not saved then return nil, save_error end
+  local modified_note = modified:line(FIRST_NOTE_LINE):note_column(FIRST_NOTE_COLUMN)
+  modified_note.note_value = modified_note.note_value == ACCEPTANCE_NOTE_VALUE_LOW and
+    ACCEPTANCE_NOTE_VALUE_HIGH or ACCEPTANCE_NOTE_VALUE_LOW
+
+  local missing_id, missing_error = store.allocate(song)
+  if not missing_id then return nil, missing_error end
+  local missing_source = clone_into(empty_instruments[3].instrument)
+  identity_ok, identity_error = set_identity(missing_source, missing_id)
+  if not identity_ok then return nil, identity_error end
+
+  local groups = ownership.inventory(song)
+  local changed_group = groups and groups[duplicate_id]
+  local modified_groups = groups and groups[modified_id]
+  local missing_groups = groups and groups[missing_id]
+  if not valid_duplicate_pair or not changed_group or #changed_group ~= TWO_HOLDER_COUNT or
+      not modified_groups or #modified_groups ~= 1 or
+      not missing_groups or #missing_groups ~= 1 or store.read_entry(song, missing_id) then
+    return nil, "Cold negative associations did not have their planned unique/collision inventory"
+  end
+  local modified_snapshot = ownership.snapshot(modified)
+  local changed_state = classify_write_eligibility(song, empty_instruments[2].instrument, duplicate_copy)
+  local modified_state = classify_write_eligibility(song, empty_instruments[1].instrument, modified)
+  local missing_state = classify_write_eligibility(song, empty_instruments[3].instrument, missing_source)
+  local function reject(phrase, instrument_index)
+    return writer_rejects_regeneration_without_mutation(song, instrument_index.index,
+      target_source, phrase, factory, writer, ownership)
+  end
+  local duplicate_rejected = changed_state.classification == "unavailable" and not changed_state.eligible and
+    reject(duplicate_source, empty_instruments[1]) and reject(duplicate_copy, empty_instruments[2])
+  local modified_rejected = ownership.status(modified) == "modified" and modified_snapshot and
+    modified_state.classification == "unavailable" and not modified_state.eligible and
+    reject(modified, empty_instruments[1])
+  local missing_rejected = missing_state.classification == "unavailable" and not missing_state.eligible and
+    reject(missing_source, empty_instruments[3])
+  if not duplicate_rejected or not modified_rejected or not missing_rejected then
+    return nil, "Cold negative association was eligible or accepted for regeneration"
+  end
+  return {
+    duplicate_id = duplicate_id,
+    modified_id = modified_id,
+    missing_id = missing_id,
+    phrase_count = #song.instruments[empty_instruments[1].index].phrases +
+      #song.instruments[empty_instruments[2].index].phrases +
+      #song.instruments[empty_instruments[3].index].phrases,
+  }
+end
+
+local function run_cold_reopen_regenerate(done)
+  local state, inspect_error = inspect_cold_song(require("model.sequencer").BASE_NOTE + ACCEPTANCE_INDEPENDENT_NOTE,
+    "cold-reopen-regenerate")
+  if not state then
+    done({ status = "FAIL", case = "cold-reopen-regenerate", reason = inspect_error })
+    return true
+  end
+  local sequence = require("model.sequencer")
+  local store = require("renoise.pattern_store")
+  local ownership = require("renoise.phrase_ownership")
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local writer = require("writers.phrase_writer")
+  local changed_source = sequence.copy_source(state.target_source)
+  changed_source.pitch_events[1] = sequence.new_pitch(ACCEPTANCE_REGENERATED_NOTE, ACCEPTANCE_KEY, true, false)
+  local target_index
+  for index, phrase in ipairs(state.instrument.phrases) do
+    if rawequal(phrase, state.target_phrase) then target_index = index; break end
+  end
+  local request, request_error = factory.build(state.song, state.instrument_index,
+    changed_source, target_index)
+  if not request or request.kind ~= "regenerate" then
+    done({ status = "FAIL", case = "cold-reopen-regenerate",
+      reason = describe_failure(request_error or "Cold target did not resolve to an exact regenerate request") })
+    return true
+  end
+  local accepted, start_error = writer.regenerate(request, function(result)
+    on_next_idle(function()
+      local target_source, target_policy, target_pb = store.read_entry(state.song, state.target_id)
+      local old_source = store.read_entry(state.song, state.old_id)
+      local groups = ownership.inventory(state.song)
+      local target_snapshot = ownership.snapshot(state.target_phrase)
+      local old_snapshot = ownership.snapshot(state.old_phrase)
+      local expected_target_snapshot = ownership.copy_snapshot(state.target_snapshot)
+      local old_output_note = sequence.BASE_NOTE + ACCEPTANCE_INDEPENDENT_NOTE
+      local new_output_note = sequence.BASE_NOTE + ACCEPTANCE_REGENERATED_NOTE
+      local changed_memory_count = 0
+      for _, event in ipairs(state.target_source.pitch_events) do
+        if event.note == old_output_note then changed_memory_count = changed_memory_count + 1 end
+      end
+      local source_change_is_unambiguous = changed_memory_count == 1 and
+        state.target_source.pitch_events[1] and
+        state.target_source.pitch_events[1].note == old_output_note
+      local expected_changed_cell_count = 0
+      if expected_target_snapshot and source_change_is_unambiguous then
+        for _, line in ipairs(expected_target_snapshot.lines) do
+          for _, note in ipairs(line.notes) do
+            if note.note_value == old_output_note then
+              note.note_value = new_output_note
+              expected_changed_cell_count = expected_changed_cell_count + 1
+            end
+          end
+        end
+      else
+        expected_target_snapshot = nil
+      end
+      local regenerated_target_matches, target_snapshot_difference = false, "regenerated phrase snapshot is unavailable"
+      if expected_target_snapshot and target_snapshot then
+        regenerated_target_matches, target_snapshot_difference =
+          ownership.compare(expected_target_snapshot, target_snapshot, "name")
+      end
+      local target_identity_preserved = ownership.id(state.target_phrase) == state.target_id and
+        ownership.status(state.target_phrase) == "owned"
+      local old_phrase_unchanged = old_snapshot and ownership.compare(state.old_snapshot, old_snapshot)
+      local sentinel_unchanged = state.sentinel and
+        ownership.id(state.sentinel.phrase) == nil and
+        ownership.status(state.sentinel.phrase) == "foreign" and
+        ownership.compare(state.sentinel.snapshot, ownership.snapshot(state.sentinel.phrase))
+      local writer_succeeded = type(result) == "table" and result.kind == "success" and result.verified == true
+      local same_target_object = writer_succeeded and rawequal(result.phrase, state.target_phrase)
+      local target_source_matches = target_source and sequence.same_source(target_source, changed_source)
+      local target_settings_preserved = target_policy == state.target_policy and target_pb == state.target_pb
+      local old_source_preserved = old_source and sequence.same_source(old_source, state.old_source)
+      local groups_unique = groups and groups[state.old_id] and #groups[state.old_id] == 1 and
+        groups[state.target_id] and #groups[state.target_id] == 1
+      local primary_phrase_count_preserved = #state.instrument.phrases == TWO_HOLDER_COUNT
+      local passed = writer_succeeded and same_target_object and primary_phrase_count_preserved and
+        target_source_matches and target_settings_preserved and old_source_preserved and groups_unique and
+        source_change_is_unambiguous and expected_changed_cell_count > 0 and
+        regenerated_target_matches and target_identity_preserved and old_phrase_unchanged and sentinel_unchanged
+      if not passed then
+        done({ status = "FAIL", case = "cold-reopen-regenerate",
+          reason = writer_succeeded and "Cold regenerated readback did not match expected native output" or
+            describe_failure(result or "Cold regenerate writer did not succeed"),
+          writer_succeeded = writer_succeeded == true,
+          same_target_object = same_target_object == true,
+          primary_phrase_count_preserved = primary_phrase_count_preserved == true,
+          target_source_matches = target_source_matches == true,
+          target_settings_preserved = target_settings_preserved == true,
+          regenerated_note_and_metadata_match = regenerated_target_matches == true,
+          source_change_is_unambiguous = source_change_is_unambiguous == true,
+          expected_changed_cell_count = expected_changed_cell_count,
+          target_identity_preserved = target_identity_preserved == true,
+          target_snapshot_difference = target_snapshot_difference,
+          old_source_preserved = old_source_preserved == true,
+          old_phrase_unchanged = old_phrase_unchanged == true,
+          sentinel_unchanged = sentinel_unchanged == true,
+          groups_unique = groups_unique == true,
+          phrase_count = #state.instrument.phrases })
+        return
+      end
+      local negative_fixture, negative_error = prepare_cold_negative_fixture(state, changed_source)
+      if not negative_fixture then
+        done({ status = "FAIL", case = "cold-reopen-regenerate", reason = negative_error })
+        return
+      end
+      local saved, save_error = save_independent_fixture(state.song, "acceptance-cold-regenerated.xrns")
+      done({ status = saved and "PASS" or "FAIL", case = "cold-reopen-regenerate",
+        roundtrip_fixture = saved and saved.fixture or nil,
+        roundtrip_bytes = saved and saved.bytes or nil,
+        old_id = state.old_id, target_id = state.target_id,
+        regenerated_same_object = rawequal(result.phrase, state.target_phrase),
+        phrase_count = #state.instrument.phrases,
+        read_only_load_and_owned_source_restore = true,
+        other_phrase_and_source_unchanged = old_source and sequence.same_source(old_source, state.old_source) or false,
+        persisted_duplicate_id = negative_fixture.duplicate_id,
+        persisted_modified_id = negative_fixture.modified_id,
+        persisted_missing_source_id = negative_fixture.missing_id,
+        persisted_negative_phrase_count = negative_fixture.phrase_count,
+        foreign_sentinel_preserved = sentinel_unchanged == true,
+        foreign_sentinel_instrument_index = state.sentinel.instrument_index,
+        primary_instrument_phrase_count = #state.instrument.phrases,
+        regenerated_note_and_metadata_match = regenerated_target_matches == true,
+        expected_changed_cell_count = expected_changed_cell_count,
+        target_identity_preserved = target_identity_preserved == true,
+        reason = save_error })
+    end)
+  end)
+  if not accepted then
+    done({ status = "FAIL", case = "cold-reopen-regenerate", reason = describe_failure(start_error) })
+  end
+  return true
+end
+
+local function run_cold_reopen_verify(done)
+  local state, inspect_error = inspect_cold_song(require("model.sequencer").BASE_NOTE + ACCEPTANCE_REGENERATED_NOTE,
+    "cold-reopen-verify")
+  if not state then
+    done({ status = "FAIL", case = "cold-reopen-verify", reason = inspect_error })
+    return true
+  end
+  local song = state.song
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local writer = require("writers.phrase_writer")
+  local ownership = require("renoise.phrase_ownership")
+  local store = require("renoise.pattern_store")
+  local raw_before = song.tool_data
+  local groups = ownership.inventory(song)
+  local snapshots = {}
+  local duplicate_id, duplicate_holders
+  local modified_holder, missing_holder
+  for _, instrument in ipairs(song.instruments) do
+    for _, phrase in ipairs(instrument.phrases) do
+      local snapshot = ownership.snapshot(phrase)
+      if not snapshot then
+        done({ status = "FAIL", case = "cold-reopen-verify", reason = "Persisted phrase snapshot is unavailable" })
+        return true
+      end
+      snapshots[#snapshots + 1] = { instrument = instrument, phrase = phrase, snapshot = snapshot }
+    end
+  end
+  for id, holders in pairs(groups or {}) do
+    if id ~= state.old_id and id ~= state.target_id and #holders >= TWO_HOLDER_COUNT and not duplicate_id then
+      duplicate_id, duplicate_holders = id, holders
+    elseif id ~= state.old_id and id ~= state.target_id and #holders == 1 then
+      local holder = holders[1]
+      local source = store.read_entry(song, id)
+      local status = ownership.status(holder.phrase)
+      if not source and status == "owned" and not missing_holder then missing_holder = holder end
+      if source and status == "modified" and not modified_holder then modified_holder = holder end
+    end
+  end
+  local function blocked_regeneration(holder)
+    if not holder then return false end
+    local source = store.read_entry(song, ownership.id(holder.phrase)) or state.target_source
+    return writer_rejects_regeneration_without_mutation(song, holder.instrument_index, source,
+      holder.phrase, factory, writer, ownership) and song.tool_data == raw_before
+  end
+  local duplicate_blocked = duplicate_id and duplicate_holders and #duplicate_holders == TWO_HOLDER_COUNT
+  for _, holder in ipairs(duplicate_holders or {}) do
+    local state_for_holder = classify_write_eligibility(song, holder.instrument, holder.phrase)
+    duplicate_blocked = duplicate_blocked and state_for_holder.classification == "unavailable" and
+      not state_for_holder.eligible and blocked_regeneration(holder)
+  end
+  local modified_blocked = modified_holder and ownership.status(modified_holder.phrase) == "modified"
+  if modified_holder then
+    local modified_state = classify_write_eligibility(song, modified_holder.instrument, modified_holder.phrase)
+    modified_blocked = modified_blocked and modified_state.classification == "unavailable" and
+      not modified_state.eligible and blocked_regeneration(modified_holder)
+  end
+  local missing_blocked = missing_holder and ownership.status(missing_holder.phrase) == "owned" and
+    not store.read_entry(song, ownership.id(missing_holder.phrase))
+  if missing_holder then
+    local missing_state = classify_write_eligibility(song, missing_holder.instrument, missing_holder.phrase)
+    missing_blocked = missing_blocked and missing_state.classification == "unavailable" and
+      not missing_state.eligible and blocked_regeneration(missing_holder)
+  end
+  local unchanged = song.tool_data == raw_before
+  for _, saved in ipairs(snapshots) do
+    unchanged = unchanged and ownership.compare(saved.snapshot, ownership.snapshot(saved.phrase))
+  end
+  local sentinel_preserved = state.sentinel and not ownership.id(state.sentinel.phrase) and
+    ownership.status(state.sentinel.phrase) == "foreign" and
+    ownership.compare(state.sentinel.snapshot, ownership.snapshot(state.sentinel.phrase))
+  local passed = duplicate_blocked and modified_blocked and missing_blocked and unchanged and sentinel_preserved
+  done({ status = passed and "PASS" or "FAIL", case = "cold-reopen-verify",
+    old_id = state.old_id,
+    target_id = state.target_id,
+    duplicate_id = duplicate_id,
+    modified_id = modified_holder and ownership.id(modified_holder.phrase) or nil,
+    missing_source_id = missing_holder and ownership.id(missing_holder.phrase) or nil,
+    phrase_count = #state.instrument.phrases,
+    owned_source_and_settings_restored_read_only = true,
+    persisted_duplicate_rejected = duplicate_blocked == true,
+    persisted_modified_association_rejected = modified_blocked == true,
+    persisted_missing_source_rejected = missing_blocked == true,
+    foreign_sentinel_preserved = sentinel_preserved == true,
+    primary_instrument_phrase_count = #state.instrument.phrases,
+    no_load_or_inspection_mutation = unchanged == true,
+    reason = inspect_error })
+  return true
+end
+
 function M.run(case_name, done)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name == "make-independent" then return run_make_independent(done) end
+  if case_name == "ownership-negatives" then return run_ownership_negatives(done) end
+  if case_name == "independence-undo-prepare" then return run_independence_undo_prepare(done) end
+  if case_name == "independence-undo" then return run_independence_undo(done) end
+  if case_name == "cold-reopen-regenerate" then return run_cold_reopen_regenerate(done) end
+  if case_name == "cold-reopen-verify" then return run_cold_reopen_verify(done) end
   if case_name == "draft-recovery" then return run_draft_recovery(done) end
   if case_name == "writer-recovery" then return run_writer_recovery(done) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
@@ -2658,9 +3741,12 @@ function M.run(case_name, done)
       for _, phrase in ipairs(instrument.phrases) do
         local id = ownership.id(phrase)
         local source = id and store.read_entry(song, id)
-        if source and source.pitch_events[1] then
-          if source.pitch_events[1].note == sequence.BASE_NOTE+5 then new_id, new_phrase = id, phrase
-          elseif source.pitch_events[1].note == sequence.BASE_NOTE+4 then old_id, old_source = id, source end
+        if source and source.pitch_events[FIRST_NOTE_LINE] then
+          if source.pitch_events[FIRST_NOTE_LINE].note == sequence.BASE_NOTE + ACCEPTANCE_INDEPENDENT_NOTE then
+            new_id, new_phrase = id, phrase
+          elseif source.pitch_events[FIRST_NOTE_LINE].note == sequence.BASE_NOTE + ACCEPTANCE_GENERATED_NOTE then
+            old_id, old_source = id, source
+          end
         end
       end
     end
@@ -2678,7 +3764,8 @@ function M.run(case_name, done)
       return true
     end
     local changed_source = sequence.copy_source(assert(store.read_entry(song, new_id)))
-    changed_source.pitch_events[1] = sequence.new_pitch(6,0,true,false)
+  changed_source.pitch_events[FIRST_NOTE_LINE] = sequence.new_pitch(
+    ACCEPTANCE_REGENERATED_NOTE, ACCEPTANCE_KEY, true, false)
     local target_index
     for index, phrase in ipairs(instrument.phrases) do
       if rawequal(phrase, new_phrase) then target_index = index; break end

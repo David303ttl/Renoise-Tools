@@ -79,6 +79,23 @@ created during installation. Linked parent folders are supported. Replacement
 requires a verifiable backup; links inside the tool being backed up are rejected
 because the backup does not copy their external contents.
 
+### Ownership acceptance
+
+Run the native rejection, user-action undo and cold-process checks separately:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase ownership-negatives
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase independence-undo -TestEnvironment '<path>' -AllowKeyboardFocusActivation
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase make-independent -ColdProcessRoundTrip
+```
+
+- Undo: guarded Enter to the verified PID; real dialog callback, native undo/redo,
+  blocked collision regeneration and no source repair.
+- Cold reopen: save → fresh process → exact-target regeneration → save → another
+  fresh process; valid sources/settings and blocked saved invalid associations.
+- Isolation: runner-owned processes only; `-RenoiseProcessId` is rejected for cold
+  restarts. Temporary fixtures/session files and verified installation restoration.
+
 Result classes are consistent across scenario and run reports: `PASS` means
 every requested postcondition was independently observed; `FAIL` means an
 assertion found a contract violation; `ERROR` means a runner, host or transport

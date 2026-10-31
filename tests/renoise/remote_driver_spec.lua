@@ -944,7 +944,11 @@ local function test_fixed_native_acceptance_command()
   local host, driver = start_driver({
     acceptance_runner = function(case_name, done)
       assert(case_name == "make-independent" or case_name == "reopen-independent" or
-        case_name == "integrity-observers" or case_name == "writer-recovery" or case_name == "editor-responsiveness",
+        case_name == "integrity-observers" or case_name == "writer-recovery" or
+        case_name == "editor-responsiveness" or case_name == "ownership-negatives" or
+        case_name == "independence-undo-prepare" or case_name == "independence-undo" or
+        case_name == "cold-reopen-regenerate" or
+        case_name == "cold-reopen-verify",
         "fixed native acceptance case was not allowlisted")
       completion = done
       return true
@@ -1010,6 +1014,50 @@ local function test_fixed_native_acceptance_command()
   local responsiveness = find_response(take_responses(client), "acceptance-editor-responsiveness")
   assert(responsiveness and responsiveness.ok)
   assert_equal(responsiveness.result.status, "PASS")
+  send_request(host, client, "acceptance-ownership-negatives", "acid.acceptance.run", {case = "ownership-negatives"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-ownership-negatives"), nil)
+  assert(completion, "ownership negative acceptance runner was not called")
+  assert(completion({status = "PASS", case = "ownership-negatives", missing_source_record_blocked = true}))
+  fire_idle(host)
+  local negatives = find_response(take_responses(client), "acceptance-ownership-negatives")
+  assert(negatives and negatives.ok)
+  assert_equal(negatives.result.status, "PASS")
+  driver.stop()
+end
+
+local function test_response_encoding_errors_are_distinct_from_oversized_frames()
+  local result = {status = "PASS", case = "make-independent", value = function() end}
+  local host, driver = start_driver({acceptance_runner = function() return result end})
+  local client = new_client()
+  accept(host, client)
+
+  send_request(host, client, "unsupported-response-value", "acid.acceptance.run", {case = "make-independent"})
+  fire_idle(host)
+  local unsupported = find_response(take_responses(client), "unsupported-response-value")
+  assert(unsupported and not unsupported.ok)
+  assert_equal(unsupported.error.code, "response_encoding_failed")
+  assert_equal(unsupported.error.message, "response could not be encoded")
+
+  result = {status = "PASS", case = "make-independent", [1] = "untagged numeric table"}
+  send_request(host, client, "untagged-response-array", "acid.acceptance.run", {case = "make-independent"})
+  fire_idle(host)
+  local untagged = find_response(take_responses(client), "untagged-response-array")
+  assert(untagged and not untagged.ok)
+  assert_equal(untagged.error.code, "response_encoding_failed")
+  assert_equal(untagged.error.message, "response could not be encoded")
+
+  result = {
+    status = "PASS",
+    case = "make-independent",
+    value = string.rep("x", driver._limits().max_response_bytes)
+  }
+  send_request(host, client, "oversized-response-frame", "acid.acceptance.run", {case = "make-independent"})
+  fire_idle(host)
+  local oversized = find_response(take_responses(client), "oversized-response-frame")
+  assert(oversized and not oversized.ok)
+  assert_equal(oversized.error.code, "response_too_large")
+  assert_equal(oversized.error.message, "response exceeded the transport limit")
   driver.stop()
 end
 
@@ -1295,6 +1343,7 @@ test_gui_state_is_read_from_the_acid_adapter()
 test_gui_state_fails_closed_without_an_adapter()
 test_instrument_navigation_setup_inserts_only_when_needed()
 test_fixed_native_acceptance_command()
+test_response_encoding_errors_are_distinct_from_oversized_frames()
 test_diagnostics_counts_other_commands()
 test_shutdown_records_completion_after_server_stop()
 test_json_codec()

@@ -58,26 +58,36 @@ function Connect-RenoiseDriver {
     param(
         [Parameter(Mandatory)][pscustomobject]$Session,
         [Parameter(Mandatory)][double]$TimeoutSeconds,
-        [Parameter(Mandatory)][scriptblock]$ProcessCheck
+        [Parameter(Mandatory)][scriptblock]$ProcessCheck,
+        [scriptblock]$CreateClient = { [Net.Sockets.TcpClient]::new([Net.Sockets.AddressFamily]::InterNetwork) }
     )
     $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
         & $ProcessCheck
-        $client = [Net.Sockets.TcpClient]::new([Net.Sockets.AddressFamily]::InterNetwork)
+        $client = & $CreateClient
         try {
+            $remainingMilliseconds = [Math]::Max(1, [int][Math]::Ceiling(($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds))
             $connect = $client.ConnectAsync([Net.IPAddress]::Loopback, $Session.Port)
-            if (-not $connect.Wait([Math]::Min(500, [Math]::Max(1, [int]($deadline - [DateTimeOffset]::UtcNow).TotalMilliseconds)))) {
+            if (-not $connect.Wait($remainingMilliseconds)) {
                 $client.Dispose()
-                continue
+                break
             }
             [void]$connect.GetAwaiter().GetResult()
-            $client.NoDelay = $true
-            return $client
         }
         catch {
             $client.Dispose()
-            Start-Sleep -Milliseconds 200
+            if ([DateTimeOffset]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 200 }
+            continue
         }
+        try {
+            & $ProcessCheck
+            $client.NoDelay = $true
+        }
+        catch {
+            $client.Dispose()
+            throw
+        }
+        return $client
     }
     throw "Timed out after $TimeoutSeconds seconds waiting for the Renoise loopback listener."
 }
@@ -105,43 +115,119 @@ function Invoke-RenoiseDriverBootstrap {
     )
     $deadline=[DateTimeOffset]::UtcNow.AddSeconds($StartupTimeoutSeconds)
     $lastTransportFailure=$null
+    $attemptDiagnostics = [Collections.Generic.List[object]]::new()
     for ($attempt=1; $attempt -le $MaximumAttempts -and [DateTimeOffset]::UtcNow -lt $deadline; $attempt++) {
+        $diagnostic = [ordered]@{
+            attempt = $attempt
+            connect_ms = $null
+            listener_owner_ms = $null
+            ping_ms = $null
+            post_ping_owner_ms = $null
+            outcome = $null
+            error_type = $null
+        }
         & $ProcessCheck
         $remaining=($deadline-[DateTimeOffset]::UtcNow).TotalSeconds
         if ($remaining -le 0) { break }
-        $client=Connect-RenoiseDriver -Session $Session -TimeoutSeconds $remaining -ProcessCheck $ProcessCheck
+        $timer = [Diagnostics.Stopwatch]::StartNew()
+        try {
+            $client=Connect-RenoiseDriver -Session $Session -TimeoutSeconds $remaining -ProcessCheck $ProcessCheck
+        }
+        catch {
+            $timer.Stop()
+            $diagnostic.connect_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+            $diagnostic.outcome = 'connect_failed'
+            $diagnostic.error_type = $_.Exception.GetType().FullName
+            $attemptDiagnostics.Add([pscustomobject]$diagnostic)
+            $failure = $_.Exception
+            $failure.Data['bootstrap_attempt_diagnostics'] = @($attemptDiagnostics)
+            throw
+        }
+        $timer.Stop()
+        $diagnostic.connect_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+        $timer.Restart()
         try {
             Assert-RenoiseListenerOwner -Client $client -Identity $Identity -GetListeners $GetListeners -CheckIdentity $CheckIdentity
         }
         catch {
+            $timer.Stop()
+            $diagnostic.listener_owner_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+            $diagnostic.outcome = 'listener_owner_failed'
+            $diagnostic.error_type = $_.Exception.GetType().FullName
             $client.Dispose()
+            $attemptDiagnostics.Add([pscustomobject]$diagnostic)
+            $_.Exception.Data['bootstrap_attempt_diagnostics'] = @($attemptDiagnostics)
             throw
         }
+        $timer.Stop()
+        $diagnostic.listener_owner_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
         $pingTimeout=[Math]::Min($CommandTimeoutSeconds,($deadline-[DateTimeOffset]::UtcNow).TotalSeconds)
-        if ($pingTimeout -le 0) { $client.Dispose();break }
+        if ($pingTimeout -le 0) {
+            $client.Dispose()
+            $diagnostic.outcome = 'startup_budget_expired_before_ping'
+            $attemptDiagnostics.Add([pscustomobject]$diagnostic)
+            break
+        }
+        $timer.Restart()
         try {
             $ping=Invoke-RenoiseDriverRequest -Client $client -Session $Session -Operation 'ping' -Arguments @{} -TimeoutSeconds $pingTimeout -ProcessCheck $ProcessCheck
         }
         catch {
+            $timer.Stop()
+            $diagnostic.ping_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+            $diagnostic.outcome = 'ping_failed'
+            $diagnostic.error_type = $_.Exception.GetType().FullName
             $failure=$_.Exception
             $client.Dispose()
+            $attemptDiagnostics.Add([pscustomobject]$diagnostic)
+            $failure.Data['bootstrap_attempt_diagnostics'] = @($attemptDiagnostics)
             if (-not (Test-RenoiseTransportFailure -Exception $failure) -and
                 $failure -isnot [TimeoutException]) { throw }
             $lastTransportFailure=$failure
             if ($attempt -ge $MaximumAttempts -or [DateTimeOffset]::UtcNow -ge $deadline) { break }
             continue
         }
+        $timer.Stop()
+        $diagnostic.ping_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+        $timer.Restart()
         try {
             Assert-RenoiseListenerOwner -Client $client -Identity $Identity -GetListeners $GetListeners -CheckIdentity $CheckIdentity
         }
         catch {
+            $timer.Stop()
+            $diagnostic.post_ping_owner_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+            $diagnostic.outcome = 'post_ping_listener_owner_failed'
+            $diagnostic.error_type = $_.Exception.GetType().FullName
+            $attemptDiagnostics.Add([pscustomobject]$diagnostic)
             $client.Dispose()
+            $_.Exception.Data['bootstrap_attempt_diagnostics'] = @($attemptDiagnostics)
             throw
         }
-        return [pscustomobject]@{Client=$client;Ping=$ping;Attempts=$attempt}
+        $timer.Stop()
+        $diagnostic.post_ping_owner_ms = [Math]::Round($timer.Elapsed.TotalMilliseconds, 1)
+        $diagnostic.outcome = 'passed'
+        $attemptDiagnostics.Add([pscustomobject]$diagnostic)
+        return [pscustomobject]@{Client=$client;Ping=$ping;Attempts=$attempt;AttemptDiagnostics=@($attemptDiagnostics)}
     }
-    if ($lastTransportFailure) { throw $lastTransportFailure }
-    throw "Timed out after $StartupTimeoutSeconds seconds completing the Renoise authenticated startup ping."
+    $diagnosticText = ($attemptDiagnostics | ForEach-Object {
+        $parts = [Collections.Generic.List[string]]::new()
+        foreach ($stage in @('connect_ms', 'listener_owner_ms', 'ping_ms', 'post_ping_owner_ms')) {
+            if ($null -ne $_.$stage) { $parts.Add($stage.Replace('_ms', '') + '=' + $_.$stage + 'ms') }
+        }
+        if ($_.error_type) { $parts.Add('error=' + $_.error_type) }
+        'attempt ' + $_.attempt + ' ' + $_.outcome + ': ' + ($parts -join ', ')
+    }) -join '; '
+    $diagnosticSuffix = if ($diagnosticText) { ' Bootstrap attempts: ' + $diagnosticText } else { '' }
+    if ($lastTransportFailure) {
+        $lastTransportFailure.Data['bootstrap_attempt_diagnostics'] = @($attemptDiagnostics)
+        if ($lastTransportFailure -is [TimeoutException]) {
+            $diagnosticFailure = [TimeoutException]::new($lastTransportFailure.Message + $diagnosticSuffix, $lastTransportFailure)
+            $diagnosticFailure.Data['bootstrap_attempt_diagnostics'] = @($attemptDiagnostics)
+            throw $diagnosticFailure
+        }
+        throw $lastTransportFailure
+    }
+    throw [TimeoutException]::new("Timed out after $StartupTimeoutSeconds seconds completing the Renoise authenticated startup ping.$diagnosticSuffix")
 }
 
 function Invoke-RenoiseDriverRequest {

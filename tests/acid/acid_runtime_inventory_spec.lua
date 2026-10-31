@@ -214,6 +214,41 @@ do
  ctx:release_document()
 end
 
+-- Projection recapture discards native ownership data, so it does not detach a baseline.
+do
+ local song,inst,a=fixture()
+ local ctx=runtime(song)
+ assert(ctx:bind_phrase(inst,a).kind=='owned')
+ ctx:mark_dirty('projection cache invalidation')
+ local original_copy=ownership.copy_snapshot
+ local baseline_copies=0
+ ownership.copy_snapshot=function(value,...)
+  if type(value)=='table' and value.snapshot~=nil then baseline_copies=baseline_copies+1 end
+  return original_copy(value,...)
+ end
+ local ok,projection_or_error=pcall(function()
+  local projection=ctx:target_projection()
+  assert(projection.kind=='owned' and projection.baseline==nil)
+  assert(baseline_copies==0,'projection recapture copied a baseline it discards')
+  local target=ctx:target_state()
+  assert(target.kind=='owned' and target.baseline~=nil)
+  assert(baseline_copies==1,'explicit target state did not detach its baseline')
+  target.baseline.snapshot.properties.lpb=1
+  local fresh=ctx:target_state()
+  assert(fresh.baseline.snapshot.properties.lpb~=1,
+   'explicit target state shared its detached baseline')
+  assert(baseline_copies==2,'repeated explicit target state skipped baseline detachment')
+  a.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns].delay_value=1
+  ctx:mark_dirty('hidden phrase field changed')
+  local blocked=ctx:target_projection()
+  assert(blocked.kind=='unavailable' and blocked.baseline==nil,
+   'projection recapture reused ownership after a hidden phrase field changed')
+  assert(baseline_copies==2,'blocked projection copied a baseline it discards')
+ end)
+ ownership.copy_snapshot=original_copy
+ assert(ok,projection_or_error)
+end
+
 -- Target restoration reuses its fresh committed proof for draft validation and
 -- editor installation without returning the private baseline to the caller.
 do
