@@ -4,6 +4,8 @@ local ownership=require('renoise.phrase_ownership')
 local store=require('renoise.pattern_store')
 local seq=require('model.sequencer')
 local cache=require('runtime.draft_cache')
+local MAX_FULL_PROOFS_PER_RESOLUTION=2
+local CHANGED_RECEIVER_CHANNEL=2
 
 local function setup(count)
   local song,instrument,selected,other,source=helper.fixture()
@@ -256,38 +258,379 @@ for _,fault in ipairs({'different_seal','hidden_tail','metadata','incompatible_h
     fault..' eligibility changed the colliding phrase')
 end
 
--- A mutation between read-only proof construction and transaction capture
--- invalidates the proof without committing either ownership or store changes.
-do
+-- One full context proof and one independent executor admission are sufficient
+-- for a successful two- or three-holder resolution.
+for _,count in ipairs({2,3}) do
+  local ctx=setup(count)
+  local eligibility=require('runtime.eligibility')
+  local original=eligibility.independence
+  local constructions=0
+  eligibility.independence=function(...)
+    constructions=constructions+1
+    return original(...)
+  end
+  local changed,result=ctx:make_independent()
+  eligibility.independence=original
+  assert(changed,result)
+  assert(constructions<=MAX_FULL_PROOFS_PER_RESOLUTION,
+    'Make Independent constructed more than two full eligibility proofs')
+end
+
+-- Context authorization pins the initial source, holder snapshots and receiver
+-- profiles through the executor admission boundary.
+for _,fault in ipairs({'source','content','profile'}) do
   local ctx,song,instrument,selected,_,source=setup(1)
-  local draft=seq.new_pattern(6)
-  assert(store.write_draft(song,instrument,selected,draft,'play_once',0))
   local other_instrument=helper.instrument({helper.phrase(source,101)})
   local other=other_instrument.phrases[1]
   song.instruments[#song.instruments+1]=other_instrument
   local raw,name=song.tool_data,selected.name
   local selected_before=assert(ownership.snapshot(selected))
-  local eligibility=require('runtime.eligibility')
-  local original=eligibility.independence
-  local calls=0
-  eligibility.independence=function(...)
-    local proof,reason=original(...)
-    calls=calls+1
-    if calls==3 then
-      assert(proof,reason)
-      other.column_names[1]='external change after eligibility proof'
+  local executor=require('runtime.independence')
+  local original=executor.run
+  executor.run=function(...)
+    if fault=='source' then
+      local changed_source=seq.copy_source(source)
+      changed_source.pitch_events[1]=seq.new_pitch(12,0,false,false)
+      assert(store.save(song,101,changed_source,'play_once',0))
+    elseif fault=='content' then
+      other.column_names[1]='external content change before executor admission'
       other.name=assert(ownership.make_name(other,101))
+    else
+      other_instrument.midi_output_properties.channel=CHANGED_RECEIVER_CHANNEL
     end
-    return proof
+    return original(...)
   end
   local changed=ctx:make_independent()
-  eligibility.independence=original
-  assert(not changed,'stale eligibility proof committed after an external holder change')
-  assert(song.tool_data==raw and selected.name==name,'stale proof changed ownership or durable draft bytes')
+  executor.run=original
+  assert(not changed,fault..' drift was accepted as a new executor baseline')
+  assert(selected.name==name,'executor admission drift rekeyed the selected phrase')
   assert(ownership.compare(selected_before,assert(ownership.snapshot(selected))),
-    'stale proof changed selected phrase content')
-  assert(other.column_names[1]=='external change after eligibility proof',
-    'stale proof rollback overwrote the external change')
+    'executor admission drift changed selected phrase content')
+  if fault=='source' then
+    local committed=assert(store.read_entry(song,101))
+    assert(not seq.same_source(committed,source),'executor admission rollback overwrote external source drift')
+  elseif fault=='content' then
+    assert(other.column_names[1]=='external content change before executor admission',
+      'executor admission rollback overwrote external holder drift')
+  else
+    assert(other_instrument.midi_output_properties.channel==CHANGED_RECEIVER_CHANNEL,
+      'executor admission rollback overwrote external receiver drift')
+  end
+  if fault~='source' then
+    assert(song.tool_data==raw,'executor admission drift changed durable source data')
+  end
+end
+
+-- Make Independent owns its admission window before any eligibility callback
+-- can reenter, change runtime intent, or replace the open document session.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  assert(store.write_draft(song,instrument,selected,seq.new_pattern(6),'play_once',0))
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local raw,name=song.tool_data,selected.name
+  local original=ctx.independence_eligibility
+  local nested_result,nested_reason
+  local injected=false
+  ctx.independence_eligibility=function(self,...)
+    if not injected then
+      injected=true
+      nested_result,nested_reason=self:make_independent()
+    end
+    return original(self,...)
+  end
+  local changed,result=ctx:make_independent()
+  ctx.independence_eligibility=original
+  assert(changed,result)
+  assert(nested_result==false and nested_reason,
+    'reentrant Make Independent was not refused during initial eligibility')
+  assert(ownership.id(selected)~=101 and #song.undo_descriptions==1,
+    'reentrant admission caused a duplicate identity transaction')
+  assert(name~=selected.name and song.tool_data~=raw)
+end
+
+-- Reopening the dialog on the attached document during initial eligibility
+-- invalidates its session token instead of authorizing against the new one.
+do
+  local ctx,song,_,selected,_,source=setup(1)
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local raw,name=song.tool_data,selected.name
+  local original=ctx.independence_eligibility
+  local injected=false
+  ctx.independence_eligibility=function(self,...)
+    if not injected then
+      injected=true
+      self:close_dialog()
+      self:open_dialog()
+    end
+    return original(self,...)
+  end
+  local changed=ctx:make_independent()
+  ctx.independence_eligibility=original
+  assert(not changed,'same-song session replacement was accepted during admission')
+  assert(song.tool_data==raw and selected.name==name and #song.undo_descriptions==0,
+    'stale session admission changed committed data or ownership')
+end
+
+-- Reattaching the same song creates a new document epoch and invalidates the
+-- original admission, even though its object identities and bytes still match.
+do
+  local ctx,song,_,selected,_,source=setup(1)
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local raw,name=song.tool_data,selected.name
+  local original=ctx.independence_eligibility
+  local injected=false
+  ctx.independence_eligibility=function(self,...)
+    if not injected then
+      injected=true
+      self:release_document()
+      self:attach_document(song)
+      self:open_dialog()
+    end
+    return original(self,...)
+  end
+  local changed=ctx:make_independent()
+  ctx.independence_eligibility=original
+  assert(not changed,'same-song document reattachment was accepted during admission')
+  assert(song.tool_data==raw and selected.name==name and #song.undo_descriptions==0,
+    'stale document epoch changed committed data or ownership')
+end
+
+-- Native song replacement rejects before querying the old song's undo state.
+do
+  local ctx,song,_,selected=setup(2)
+  local raw,name=song.tool_data,selected.name
+  local original_current=renoise.song
+  local original_eligibility=ctx.independence_eligibility
+  local undo_reads,reads_before_change=0,nil
+  song.is_undo_redoing=function()undo_reads=undo_reads+1;return false end
+  ctx.independence_eligibility=function(self,...)
+    local proof,reason=original_eligibility(self,...)
+    reads_before_change=undo_reads
+    local replacement={}
+    renoise.song=function()return replacement end
+    return proof,reason
+  end
+  local changed=ctx:make_independent()
+  renoise.song=original_current
+  ctx.independence_eligibility=original_eligibility
+  assert(not changed,'a different native current song retained identity authorization')
+  assert(undo_reads==reads_before_change,'stale admission inspected undo state on the old song')
+  assert(song.tool_data==raw and selected.name==name,
+    'native song replacement changed the old ownership or store')
+end
+
+-- Target revisions retain navigation history even when the final objects match.
+do
+  local ctx,song,instrument,selected,other,source=setup(2)
+  local raw,name=song.tool_data,selected.name
+  local original=ctx.transition
+  local injected=false
+  ctx.transition=function(self,kind,...)
+    if kind=='independence' and not injected then
+      injected=true
+      self:bind_phrase(instrument,other)
+      self:bind_phrase(instrument,selected)
+    end
+    return original(self,kind,...)
+  end
+  local changed=ctx:make_independent()
+  ctx.transition=original
+  assert(not changed,'A-to-B-to-A target drift regained admission authorization')
+  assert(song.tool_data==raw and selected.name==name and #song.undo_descriptions==0,
+    'target revision drift changed committed data or ownership')
+end
+
+-- Native undo starting in the undo-description callback invalidates the
+-- commit window before either the source record or phrase seal can be written.
+do
+  local ctx,song,_,selected,other,source=setup(2)
+  local raw,name=song.tool_data,selected.name
+  local other_name=other.name
+  local descriptions=0
+  local undo_processing=false
+  song.is_undo_redoing=function()return undo_processing end
+  song.describe_undo=function()
+    descriptions=descriptions+1
+    undo_processing=true
+  end
+  local changed=ctx:make_independent()
+  assert(not changed,'commit-window native undo processing was accepted')
+  assert(descriptions==1 and song.tool_data==raw and selected.name==name,
+    'commit-window drift changed source bytes or selected ownership')
+  assert(other.name==other_name,'commit-window drift changed the other phrase seal')
+end
+
+-- Writer occupancy changing after initial proof admission rejects the action
+-- without cancellation or an automatic retry; a new explicit call can proceed.
+do
+  local ctx,song,_,selected,_,_,_,writer=setup(2)
+  local raw,name=song.tool_data,selected.name
+  local cancels=writer.cancels
+  local original_eligibility=ctx.independence_eligibility
+  local injected=false
+  ctx.independence_eligibility=function(self,...)
+    local proof,reason=original_eligibility(self,...)
+    if proof and not injected then
+      injected=true
+      writer.status='busy';writer.token={}
+    end
+    return proof,reason
+  end
+  local executor=require('runtime.independence')
+  local original_run=executor.run
+  local admissions=0
+  executor.run=function(...)
+    admissions=admissions+1
+    return original_run(...)
+  end
+  local changed=ctx:make_independent()
+  assert(not changed,'writer occupancy drift after initial proof was accepted')
+  assert(admissions==0,'busy writer crossed the context admission guard')
+  assert(writer.status=='busy' and writer.cancels==cancels,
+    'admission canceled or released the newly busy writer')
+  assert(song.tool_data==raw and selected.name==name,
+    'busy writer admission changed source bytes or phrase ownership')
+  writer.status='idle';writer.token=nil
+  local retried,retry_result=ctx:make_independent()
+  ctx.independence_eligibility=original_eligibility
+  executor.run=original_run
+  assert(retried,retry_result)
+  assert(admissions==1,'explicit idle retry did not make exactly one new admission')
+end
+
+-- Writer occupancy changing inside the undo-description callback is caught by
+-- the commit guard before the source store or phrase name can be written.
+do
+  local ctx,song,_,selected,_,_,_,writer=setup(2)
+  local raw,name=song.tool_data,selected.name
+  local bytes,write_attempts=raw,0
+  rawset(song,'tool_data',nil)
+  setmetatable(song,{
+    __index=function(_,key)if key=='tool_data' then return bytes end end,
+    __newindex=function(object,key,value)
+      if key=='tool_data' then bytes=value;write_attempts=write_attempts+1
+      else rawset(object,key,value) end
+    end,
+  })
+  local cancels=writer.cancels
+  local described=0
+  song.describe_undo=function()
+    described=described+1
+    if described==1 then writer.status='busy';writer.token={} end
+  end
+  local executor=require('runtime.independence')
+  local original_run=executor.run
+  local admissions=0
+  executor.run=function(...)
+    admissions=admissions+1
+    return original_run(...)
+  end
+  local changed=ctx:make_independent()
+  assert(not changed,'writer occupancy drift in the commit window was accepted')
+  assert(described==1 and admissions==1,'busy commit window caused an implicit identity retry')
+  assert(writer.status=='busy' and writer.cancels==cancels,
+    'commit guard canceled or released the newly busy writer')
+  assert(song.tool_data==raw and selected.name==name,
+    'busy commit guard changed source bytes or phrase ownership')
+  assert(write_attempts==0,'busy commit guard attempted a source write before rejecting')
+  writer.status='idle';writer.token=nil
+  local retried,retry_result=ctx:make_independent()
+  executor.run=original_run
+  assert(retried,retry_result)
+  assert(admissions==2 and described==2,
+    'explicit idle retry did not make exactly one new transaction')
+end
+
+-- An edit revision change during eligibility invalidates admission and leaves
+-- the persisted object draft untouched.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  local draft=seq.new_pattern(6)
+  assert(store.write_draft(song,instrument,selected,draft,'play_once',0))
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local raw,name=song.tool_data,selected.name
+  local edited=seq.copy_source(source)
+  edited.pitch_events[1]=seq.new_pitch(8,0,false,false)
+  local original=ctx.independence_eligibility
+  local injected=false
+  ctx.independence_eligibility=function(self,...)
+    if not injected then
+      injected=true
+      assert(self:transition('edit',{source=edited,output_policy='play_once',pb_range=0}))
+    end
+    return original(self,...)
+  end
+  local changed=ctx:make_independent()
+  ctx.independence_eligibility=original
+  assert(not changed,'edit revision drift was accepted during admission')
+  assert(song.tool_data==raw and selected.name==name and #song.undo_descriptions==0,
+    'edit revision drift changed committed data, draft bytes, or ownership')
+  assert(song.tool_data==raw,'edit revision drift changed durable draft bytes')
+end
+
+-- A callback failure during initial proof admission is returned cleanly and
+-- releases the identity lock so a later, valid attempt can proceed.
+do
+  local ctx,song,_,selected,_,source=setup(1)
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local original=ctx.independence_eligibility
+  local calls=0
+  ctx.independence_eligibility=function(self,...)
+    calls=calls+1
+    if calls==1 then error('injected initial proof failure',0) end
+    return original(self,...)
+  end
+  local first=ctx:make_independent()
+  assert(not first,'failed initial proof was accepted')
+  local changed,result=ctx:make_independent()
+  ctx.independence_eligibility=original
+  assert(changed,result)
+end
+
+-- Replacing the selected phrase at its original instrument index invalidates
+-- admission even when the replacement has identical raw contents and seal.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local raw,name=song.tool_data,selected.name
+  local original=ctx.independence_eligibility
+  local injected=false
+  ctx.independence_eligibility=function(self,...)
+    if not injected then
+      injected=true
+      local index
+      for position,phrase in ipairs(instrument.phrases) do
+        if rawequal(phrase,selected) then index=position;break end
+      end
+      assert(index,'selected phrase disappeared before injection')
+      instrument.phrases[index]=helper.phrase(source,101)
+    end
+    return original(self,...)
+  end
+  local changed=ctx:make_independent()
+  ctx.independence_eligibility=original
+  assert(not changed,'same-index phrase replacement was accepted during admission')
+  assert(song.tool_data==raw and selected.name==name and #song.undo_descriptions==0,
+    'same-index replacement changed committed data or the detached phrase name')
+end
+
+-- Eligibility rejects unavailable, processing, and throwing native undo
+-- state before preserving drafts or entering the identity transaction.
+for _,fault in ipairs({'unavailable','processing','throwing'}) do
+  local ctx,song,_,selected,_,source=setup(1)
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local raw,name=song.tool_data,selected.name
+  if fault=='unavailable' then
+    song.is_undo_redoing=nil
+  elseif fault=='processing' then
+    song.is_undo_redoing=function()return true end
+  else
+    song.is_undo_redoing=function()error('injected native undo state failure',0)end
+  end
+  local changed=ctx:make_independent()
+  assert(not changed,fault..' native undo state was accepted')
+  assert(song.tool_data==raw and selected.name==name and #song.undo_descriptions==0,
+    fault..' undo state changed committed data or ownership')
 end
 
 -- A later receiver inspection that changes the committed source invalidates

@@ -617,6 +617,55 @@ do
   local second,third=duplicate_phrase(),duplicate_phrase()
   assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(second))))
   assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(third))))
+
+  -- Real native-render occupancy excludes identity work before and after
+  -- cancellation. Its matching callback retires the slot without retrying it.
+  local identity_ctx=new_context()
+  identity_ctx:attach_document(song)
+  identity_ctx:open_dialog()
+  identity_ctx:bind_phrase(instrument,selected)
+  local holder_names={selected.name,second.name,third.name}
+  local dispatch_before_render=sink_calls
+  render_mode="defer"
+  cold_ctx:bind_new(instrument)
+  edit(cold_ctx,source(52))
+  local store_bytes=song.tool_data
+  dispatch(cold_ctx)
+  local render=next_render("identity exclusion create")
+  local request_token=assert(cold_ctx:state().token)
+  assert(writer.state()=="busy")
+  local eligible,reason=identity_ctx:independence_eligibility()
+  assert(not eligible and tostring(reason):find("writer",1,true),
+    "active real writer did not reject identity eligibility: "..tostring(reason))
+  local changed,occupied_reason=identity_ctx:make_independent()
+  assert(not changed and tostring(occupied_reason):find("writer",1,true),
+    "active real writer admitted identity work: "..tostring(occupied_reason))
+  assert(sink_calls==dispatch_before_render+1,"identity rejection dispatched another writer job")
+
+  assert(cold_ctx:revoke(request_token,"identity exclusion cancellation"))
+  assert(not request_token:is_current() and writer.state()=="busy",
+    "revocation released active native render occupancy")
+  changed,occupied_reason=identity_ctx:make_independent()
+  assert(not changed and tostring(occupied_reason):find("writer",1,true),
+    "canceled in-flight writer admitted identity work: "..tostring(occupied_reason))
+  assert(sink_calls==dispatch_before_render+1,"occupied identity rejection queued work")
+  assert(song.tool_data==store_bytes and selected.name==holder_names[1] and
+    second.name==holder_names[2] and third.name==holder_names[3],
+    "occupied identity rejection mutated the collision")
+
+  render.callback(nil,render.count,0)
+  settle_writer("identity exclusion cancellation")
+  assert(song.tool_data==store_bytes and selected.name==holder_names[1] and
+    second.name==holder_names[2] and third.name==holder_names[3],
+    "late render settlement retried identity work or changed the collision")
+  assert(sink_calls==dispatch_before_render+1,
+    "late settlement dispatched a rejected identity action")
+  assert(writer.state()=="idle")
+  identity_ctx:release_document()
+  cold_ctx:bind_phrase(instrument,selected)
+  assert(cold_ctx:independence_eligibility(),"fresh identity authorization failed after settlement")
+  render_mode="sync"
+
   local dispatch_count=sink_calls
   local independent,identity= cold_ctx:make_independent()
   assert(independent,identity)

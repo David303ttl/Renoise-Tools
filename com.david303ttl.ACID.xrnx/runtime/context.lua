@@ -114,6 +114,7 @@
 -- state remain closure-private.
 local M = {}
 local epoch_serial = 0
+local OPERATION_SERIAL_INCREMENT = 1
 
 local function reason_text(value, fallback)
   if type(value) == "string" then return value end
@@ -1049,31 +1050,32 @@ function M.new(options)
     return value,reason
   end
 
-  function context:make_independent()
+  local function make_independent(self)
     if not current_song or not opened then return false,"No current document dialog is open" end
-    if identity_running then return false,"Make Independent is already running" end
-    local target=self:target_state()
-    local initial,reason=self:independence_eligibility()
-    if not initial then return false,reason end
-    local carry_draft
-    if (editor_draft or editor_dirty) and editor and editor.valid and editor_target and
-        rawequal(editor_target.instrument,target.instrument) and
-        rawequal(editor_target.phrase,target.phrase) then
-      local committed,committed_policy,committed_pb=store.read_entry(current_song,initial.id)
-      if committed and (not sequencer.same_source(editor.source,committed) or
-          editor.output_policy~=committed_policy or editor.pb_range~=committed_pb) then
-        carry_draft=ownership.copy_snapshot({source=editor.source,
-          output_policy=editor.output_policy,pb_range=editor.pb_range})
+    local song,action_epoch,action_session=current_song,epoch,session
+    local authorized_revisions=transitions:revision_state()
+    local target=self:target_projection()
+    local initial
+    local function stable()
+      if not rawequal(current_song,song) or not opened or epoch~=action_epoch or session~=action_session then
+        return false,"Document session changed"
       end
+      local revisions=transitions:revision_state()
+      if revisions.target_revision~=authorized_revisions.target_revision or
+          revisions.edit_revision~=authorized_revisions.edit_revision or
+          revisions.operation_serial~=authorized_revisions.operation_serial or
+          revisions.armed~=authorized_revisions.armed then
+        return false,"Runtime authorization changed before resolution"
+      end
+      return true
     end
-    preserve_editor()
-    self:transition("independence")
-    initial,reason=self:independence_eligibility()
-    if not initial then return false,reason end
-    local song=current_song
-    local function guard()
-      if not rawequal(current_song,song) or not opened then return false,"Document session changed" end
-      if mutation_failed or (mutation_depth>0 and not identity_running) then
+    local function guard(proof)
+      local unchanged,change_error=stable()
+      if not unchanged then return false,change_error end
+      local current,current_error=ownership.is_current(song)
+      if not current then return false,current_error end
+      if mutation_failed or mutation_finalizing or
+          (mutation_depth>0 and not rawequal(mutation_token,identity_token)) then
         return false,"Synchronous mutation is active or requires recovery"
       end
       local integrity_state=self:integrity_state()
@@ -1086,27 +1088,54 @@ function M.new(options)
       if not undo_ok or type(undo)~="boolean" or undo then
         return false,"Native undo or redo is processing or unavailable"
       end
-      local current_target=inventory and inventory:target_state()
+      local current_target=inventory and inventory:target_projection()
       if not current_target or not rawequal(current_target.instrument,target.instrument) or
           not rawequal(current_target.phrase,target.phrase) then
         return false,"Selected phrase changed before resolution"
       end
-      local proof,proof_error=require("runtime.eligibility").independence(song,current_target)
-      if not proof then return false,proof_error end
-      if proof.id~=initial.id or proof.holders~=initial.holders then
-        return false,"Collision group changed before resolution"
+      local still_current,current_error=stable()
+      if not still_current then return false,current_error end
+      if proof then
+        return require("runtime.eligibility").same_independence(initial,proof)
       end
       return true
     end
-    identity_running=true
-    local called,changed,result=pcall(function()
-      return require("runtime.independence").run(song,target,{
-        guard=guard,
-        mutate=function(action) return self:mutate(identity_token,action) end,
-      })
-    end)
-    identity_running=false
-    if not called then return false,changed end
+    local allowed,reason=guard()
+    if not allowed then return false,reason end
+    initial,reason=self:independence_eligibility()
+    if not initial then return false,reason end
+    allowed,reason=guard()
+    if not allowed then return false,reason end
+    local carry_draft
+    if (editor_draft or editor_dirty) and editor and editor.valid and editor_target and
+        rawequal(editor_target.instrument,target.instrument) and
+        rawequal(editor_target.phrase,target.phrase) then
+      local committed,committed_policy,committed_pb=store.read_entry(song,initial.id)
+      if committed and (not sequencer.same_source(editor.source,committed) or
+          editor.output_policy~=committed_policy or editor.pb_range~=committed_pb) then
+        carry_draft=ownership.copy_snapshot({source=editor.source,
+          output_policy=editor.output_policy,pb_range=editor.pb_range})
+      end
+    end
+    allowed,reason=guard()
+    if not allowed then return false,reason end
+    preserve_editor()
+    allowed,reason=guard()
+    if not allowed then return false,reason end
+    local effects,transition_error=self:transition("independence")
+    local next_revisions=effects and effects.revisions
+    if not effects or not effects.independence_intent or not next_revisions or
+        next_revisions.target_revision~=authorized_revisions.target_revision or
+        next_revisions.edit_revision~=authorized_revisions.edit_revision or
+        next_revisions.armed~=authorized_revisions.armed or
+        next_revisions.operation_serial~=authorized_revisions.operation_serial+OPERATION_SERIAL_INCREMENT then
+      return false,transition_error or "Runtime authorization changed before resolution"
+    end
+    authorized_revisions=next_revisions
+    local changed,result=require("runtime.independence").run(song,target,{
+      guard=guard,
+      mutate=function(action) return self:mutate(identity_token,action) end,
+    })
     if not changed then return false,result end
     local adopted,adopt_error=inventory:adopt(target.instrument,target.phrase,result.baseline)
     if not adopted then return false,adopt_error or "Cannot adopt the independent phrase baseline" end
@@ -1132,6 +1161,15 @@ function M.new(options)
       if editor then editor.draft_warning=draft_warning or "Cannot preserve matching object-local draft" end
     end
     return true,result
+  end
+
+  function context:make_independent()
+    if identity_running then return false,"Make Independent is already running" end
+    identity_running=true
+    local called,changed,result=pcall(make_independent,self)
+    identity_running=false
+    if not called then return false,changed end
+    return changed,result
   end
 
   function context:recovery_entries()
@@ -1369,10 +1407,6 @@ function M.new(options)
     if effects.reconcile then
       inventory_dirty=true;external_inventory_dirty=true;reconciliation_pending=true
       invalidate_target_projection()
-    end
-    if kind=="independence" then
-      local proof,reason=self:independence_eligibility()
-      return proof,reason
     end
     return effects
   end

@@ -1538,7 +1538,8 @@ does not close the post-commit reconciliation gap or any native obligation.
 **T4.1 implementation:** eligibility retains every holder's raw object pair,
 exact name, complete snapshot and receiver profile, plus committed source/settings.
 Read-only inspection rechecks that evidence; the executor independently verifies
-live membership/content and repeats compatibility at preparation and commit.
+compatibility at admission and checks live membership, protected content,
+source/settings and receiver profiles against it at preparation and commit.
 Shared compatibility-proof construction serves admission and committed-baseline
 verification. No ownership/store format or manifest version changes.
 
@@ -1549,6 +1550,16 @@ same-object regeneration and same-process save/reload passed in
 Assertions and remaining native limits are in
 [runtime acceptance](../tests/acid/runtime_acceptance.md#t41-collision-eligibility-2026-10-31).
 T4.1 complete; Gate 4 remains open.
+
+**Proof cost:** context admission and executor admission each construct one full
+proof. Context guards check runtime authorization; the executor compares live
+holders against indexed snapshots and retained receiver/source/settings evidence.
+The executor proof must match the original context proof. Native two/three-holder
+profiling and a two-proof regression cap cover this path in
+`tests/renoise/driver/acceptance_cases.lua` and
+`tests/acid/acid_runtime_independence_spec.lua`. Scope includes `runtime/context.lua`
+and the native case because overlapping context guards caused repeated native work.
+Full T4.2 admission and lifecycle acceptance remains separate.
 
 ### T4.2 — Harden session and writer exclusion
 
@@ -1566,6 +1577,25 @@ T4.1 complete; Gate 4 remains open.
   without identity mutation or identity retry. Reentrant admission cannot overlap;
   late settlement never executes a previously rejected action.
 - **Stop:** concurrent mutation, stale authorization, implicit target or queued retry.
+
+**T4.2 implementation:** capture song, epoch, session, revisions and bound objects
+before eligibility inspection. Hold the identity-action lock through admission,
+mutation and adoption; release it on every return or exception. Guards reject
+runtime drift and allow only the action's own intent-revocation transition.
+The original proof remains pinned; writer occupancy and native undo state are
+checked again before source/name mutation. Rejection never cancels the writer or
+queues identity work.
+
+**T4.2 verification:** admission, lifetime, GUI and writer integration specs cover
+reentrancy, proof-error lock release, session/epoch changes, A → B → A, edit
+revision drift, same-index replacement, unavailable/processing undo state,
+admission/commit occupancy changes and explicit retry after matching settlement.
+`acid_runtime_writer_integration_spec.lua` is included to test the existing real
+writer/render-callback path without duplicating its host fixture. These lifecycle
+interruptions use mocks; native Make Independent/save-reload and the two-proof cap
+passed in `interactive-78367462352f4da4bba6905e0e1917ab`. Fresh independent review
+passed. See [runtime acceptance](../tests/acid/runtime_acceptance.md#t42-authorization-and-writer-exclusion-2026-10-31).
+T4.2 complete locally; Gate 4 remains open.
 
 ### T4.3 — Harden allocation and transaction preparation
 

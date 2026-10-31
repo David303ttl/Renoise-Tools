@@ -47,7 +47,7 @@ unresolved.
 | Requirement / owning subgate | Evidence still required |
 | --- | --- |
 | Outcome reconciliation / T4.5–T4.6 | Inject post-commit adoption, reconciliation, editor restoration and draft-rebinding failures. Distinguish verified commit from rejection; preserve committed identity and recoverable drafts, and block unsafe writes when reconciliation fails. |
-| Writer exclusion / T4.2 | Reject active/unsettled writer occupancy without cancellation or queued identity retry; independently recheck current session and target before commit. |
+| Writer exclusion / T4.2 | Local admission, canceled-render occupancy and fresh explicit retry are verified below. Native interruption acceptance remains Step 8. |
 | R24 / T4.8 | Local imported-copy transaction rejection is verified in T4.1 below; native source-less imported-copy rejection without adoption or mutation remains required. |
 | R28 / T4.5–T4.6 | Selected dirty source/settings and exact revision/recovery origin survive injected transaction rollback and post-commit failure; ambiguous old-ID durable drafts remain unclaimed. Existing successful dirty-draft rebinding does not prove this. |
 | R29 / T4.8 | Actual native Make Independent undo/redo states and grouping, including partial phrase/store associations; every inconsistent state blocks regeneration after undo settles, with no repair writes. |
@@ -75,9 +75,54 @@ results contribute to Gate 8 without closing its broader acceptance.
 | Package | `./scripts/package.ps1 -Tool ACID`; archive root and entry inspection | PASS: 34 runtime files, root manifest/main, private modules retained; no SDK/tests/docs |
 | Fresh second pass | Independent final diff review, isolated independence spec, `git diff --check` | PASS; no remaining T4.1 finding |
 
+**Proof-cost checks:** each action builds one context proof and one independent
+executor proof. Source/content/receiver drift between them rejects; subsequent
+guards compare live holders with trusted indexed snapshots and retained profiles
+without rebuilding output plans or seals. Two/three-holder specs cap full proofs
+at two. Context authorization retains the original proof and checks epoch,
+session, revisions, bound objects, undo state and occupancy.
+
+Native CPU measurements (`make-independent`, Renoise 3.5.4 / API 6.2):
+
+| Holders | Baseline full proofs / CPU ms | Optimized full proofs / CPU ms | Native snapshots |
+| --- | --- | --- | --- |
+| Two | 10 / 1705.65 | 2 / 611.37 | 54 → 16 |
+| Three | 10 / 2249.67 | 2 / 735.45 | 80 → 23 |
+
+Reports: baseline `interactive-8ce100fbf7264c3d8efb2edb2c329632`, optimized
+`interactive-8567183247bb48428912e2ed5bd18db2`. The bounded disposable probe
+verifies both unaffected holders and restores exact phrase/store state before
+the existing two-holder save/reload scenario. Timings are diagnostic CPU samples,
+not latency guarantees. The proof-count cap is deterministic.
+
+Verification: ACID/all suites passed 64/67 specs in Lua 5.1; package/root/exclusion
+checks and fresh independent review passed. Native rerun
+`interactive-8567183247bb48428912e2ed5bd18db2` passed the two-proof cap,
+two/three-holder preservation and same-process save/reload/regeneration;
+installation restoration passed.
+
 T4.1 is locally verified. Native source-less import, native undo/redo and
 cold-process reopen remain T4.8 obligations; Gate 4 remains open. The native
 round trip reloads within one process and reports undo unavailable.
+Post-commit reconciliation failures remain T4.5–T4.6 blockers.
+
+### T4.2 authorization and writer exclusion (2026-10-31)
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Pinned admission | `acid_runtime_independence_spec.lua`: initial-proof reentrancy, native current-song switch, same-song dialog reopen/document reattach, A → B → A, edit revision drift, same-index replacement, undo unavailable/processing/throwing, proof exception followed by explicit retry | PASS: no stale identity/store commit or old-song undo read; admission lock releases on errors |
+| Occupancy races | Same spec: writer becomes busy after initial proof or during undo description; store setter counts attempted writes | PASS: zero source-write attempts, no writer cancellation or queued identity retry; explicit idle retry captures fresh authorization |
+| Canceled writer settlement | `acid_runtime_lifetime_spec.lua`, `acid_runtime_writer_integration_spec.lua`: accepted request, retained in-flight slot after revocation, matching render callback, explicit fresh retry | PASS: real writer integration uses the existing API-shaped host; settlement never executes rejected identity work |
+| Cached GUI projection | `acid_gui_independence_spec.lua`: eligibility shown while idle, writer occupied before click | PASS: cached UI state cannot authorize mutation or dispatch musical work |
+| Native regression | `interactive-78367462352f4da4bba6905e0e1917ab/report.json`, Renoise 3.5.4 / API 6.2 | PASS: two/three-holder resolution, two-proof cap, same-object regeneration, same-process save/reload; installation restored |
+| Fresh second pass | Independent admission/guard/test audit and four focused specs | PASS; no T4.2 correctness finding |
+| Local/package checks | PowerShell 7: `./scripts/run_tests.ps1 -Tool ACID`, `./scripts/run_tests.ps1`, `./scripts/package.ps1 -Tool ACID`; final guard-focused reruns and `git diff --check` | PASS: 64/67 specs, Lua 5.1; 34 runtime archive entries with root manifest/main and no development files |
+
+The real writer integration spec is included to verify retained global render
+occupancy on its existing host fixture. Runtime interruption and error cases above
+are local/mocked evidence; native undo/redo, copy/import and cold-process acceptance
+remain T4.8/Step 8. Gate 4 remains open; post-commit reconciliation remains blocked
+under T4.5–T4.6.
 
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform

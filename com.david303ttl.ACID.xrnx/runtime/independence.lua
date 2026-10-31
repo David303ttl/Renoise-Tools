@@ -27,14 +27,23 @@ local function capture_group(song,id)
     if not name then return nil,name_error end
     local snapshot,snapshot_error=ownership.snapshot(holder.phrase)
     if not snapshot then return nil,snapshot_error end
-    result[#result+1]={instrument=holder.instrument,phrase=holder.phrase,name=name,snapshot=snapshot}
+    local index,index_error=ownership.snapshot_index(snapshot)
+    if not index then return nil,index_error end
+    local profile,profile_error=capabilities.inspect(holder.instrument)
+    if not profile or profile.read_error then
+      return nil,profile_error or (profile and profile.read_error) or "Cannot inspect collision output"
+    end
+    result[#result+1]={instrument=holder.instrument,phrase=holder.phrase,name=name,
+      snapshot=snapshot,index=index,profile=profile}
   end
   return result
 end
 
 local function same_group(song,id,expected)
-  local current,reason=capture_group(song,id)
-  if not current then return false,reason end
+  local groups,reason=ownership.inventory(song)
+  if not groups then return false,reason end
+  local current=groups[id]
+  if not current then return false,"Collision group changed" end
   if #current~=#expected then return false,"Collision group changed" end
   for _,saved in ipairs(expected) do
     local found
@@ -43,8 +52,14 @@ local function same_group(song,id,expected)
         found=item;break
       end
     end
-    if not found or found.name~=saved.name or not ownership.compare(found.snapshot,saved.snapshot) then
-      return false,"A colliding holder changed before resolution"
+    if not found then return false,"Collision group changed" end
+    local profile,profile_error=capabilities.inspect(found.instrument)
+    if not profile or profile.read_error or not capabilities.same(profile,saved.profile) then
+      return false,profile_error or "A colliding holder output changed before resolution"
+    end
+    local matches,snapshot_error=ownership.matches_snapshot(found.phrase,saved.snapshot,nil,saved.index)
+    if not matches then
+      return false,snapshot_error or "A colliding holder changed before resolution"
     end
   end
   return true
@@ -55,31 +70,6 @@ local function same_record(song,id,source,policy,pb_range)
   if not current then return false,current_policy end
   if not ownership.compare(source,current) or current_policy~=policy or current_pb~=pb_range then
     return false,"Committed source/settings changed before resolution"
-  end
-  return true
-end
-
-local function same_eligibility(song,target,expected)
-  local current,reason=eligibility.independence(song,target)
-  if not current then return false,reason end
-  if current.id~=expected.id or current.name~=expected.name or
-      current.policy~=expected.policy or current.pb_range~=expected.pb_range or
-      not ownership.compare(current.source,expected.source) or
-      #current.proofs~=#expected.proofs then
-    return false,"Collision eligibility changed before identity resolution"
-  end
-  for _,saved in ipairs(expected.proofs) do
-    local found
-    for _,item in ipairs(current.proofs) do
-      if rawequal(item.instrument,saved.instrument) and rawequal(item.phrase,saved.phrase) then
-        found=item;break
-      end
-    end
-    if not found or found.name~=saved.name or
-        not ownership.compare(found.baseline,saved.baseline) or
-        not capabilities.same(found.profile,saved.profile) then
-      return false,"A colliding holder changed before identity resolution"
-    end
   end
   return true
 end
@@ -100,6 +90,8 @@ function M.run(song,target,options)
   if not permitted then return false,proof_error or "Make Independent is unavailable" end
   local proof,reason=eligibility.independence(song,target)
   if not proof then return false,reason end
+  local authorized,authorization_error=options.guard(proof)
+  if not authorized then return false,authorization_error or "Collision authorization changed" end
   local id=proof.id
   local expected,group_error=capture_group(song,id)
   if not expected then return false,group_error end
@@ -112,7 +104,8 @@ function M.run(song,target,options)
       end
     end
     if not matched or item.name~=matched.name or
-        not ownership.compare(item.snapshot,matched.baseline) then
+        not ownership.compare(item.snapshot,matched.baseline) or
+        not capabilities.same(item.profile,matched.profile) then
       return false,"A colliding holder changed during eligibility inspection"
     end
   end
@@ -141,8 +134,6 @@ function M.run(song,target,options)
   local candidate,prepare_error=store.prepare(song,fresh_id,source,policy,pb_range,function()
     local valid,guard_error=options.guard()
     if not valid then return false,guard_error end
-    local eligible,eligibility_error=same_eligibility(song,target,proof)
-    if not eligible then return false,eligibility_error end
     local same,same_error=same_group(song,id,expected)
     if not same then return false,same_error end
     local record_ok,record_error=same_record(song,id,source,policy,pb_range)
@@ -161,8 +152,6 @@ function M.run(song,target,options)
     return options.mutate(function()
       local valid,guard_error=options.guard()
       if not valid then return false,guard_error end
-      local eligible,eligibility_error=same_eligibility(song,target,proof)
-      if not eligible then return false,eligibility_error end
       local same,same_error=same_group(song,id,expected)
       if not same then return false,same_error end
       local record_ok,record_error=same_record(song,id,source,policy,pb_range)

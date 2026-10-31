@@ -91,6 +91,31 @@ function M.compatibility(phrase,source,policy,pb_range,profile)
   return proof
 end
 
+function M.same_independence(expected,current)
+  if current.id~=expected.id or current.name~=expected.name or
+      current.policy~=expected.policy or current.pb_range~=expected.pb_range or
+      not rawequal(current.instrument,expected.instrument) or
+      not rawequal(current.phrase,expected.phrase) or
+      not ownership.compare(current.source,expected.source) or
+      #current.proofs~=#expected.proofs then
+    return false,"Collision authorization changed before identity resolution"
+  end
+  for _,saved in ipairs(expected.proofs) do
+    local found
+    for _,item in ipairs(current.proofs) do
+      if rawequal(item.instrument,saved.instrument) and rawequal(item.phrase,saved.phrase) then
+        found=item;break
+      end
+    end
+    if not found or found.name~=saved.name or
+        not ownership.compare(found.baseline,saved.baseline) or
+        not capabilities.same(found.profile,saved.profile) then
+      return false,"A colliding holder changed before identity resolution"
+    end
+  end
+  return true
+end
+
 function M.independence(song,target)
   local ok,result,reason=pcall(function()
     local member,err=ownership.membership(song,target.instrument,target.phrase)

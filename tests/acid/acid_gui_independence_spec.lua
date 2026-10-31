@@ -54,7 +54,8 @@ renoise.tool=function()return tool end
 renoise.app=function()return app end
 renoise.ViewBuilder=function()return builder end
 local writes=0
-package.loaded["writers.phrase_writer"]={state=function()return "idle",nil end,
+local writer_status="idle"
+package.loaded["writers.phrase_writer"]={state=function()return writer_status,nil end,
   is_temporary=function()return false end,release=function()end,
   create=function()writes=writes+1;return false,"unexpected render" end,
   regenerate=function()writes=writes+1;return false,"unexpected render" end}
@@ -70,6 +71,13 @@ for _,node in ipairs(builder.nodes)do
 end
 assert(live)
 live:fire(true)
+local duplicate_name,source_bytes=duplicate.name,song.tool_data
+writer_status="busy"
+independent:fire()
+assert(duplicate.name==duplicate_name and song.tool_data==source_bytes,
+  "cached GUI eligibility authorized Make Independent while the writer was occupied")
+assert(writes==0,"occupied Make Independent entered the musical writer")
+writer_status="idle"
 independent:fire()
 local fresh=ownership.id(duplicate)
 assert(fresh and fresh~=101 and ownership.id(original)==101)

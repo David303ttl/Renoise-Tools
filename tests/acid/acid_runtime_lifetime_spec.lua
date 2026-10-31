@@ -362,4 +362,64 @@ do
   assert(not drafts.has(song) and not drafts.has_volatile(song))
 end
 
+-- A canceled request keeps identity work excluded until its own terminal
+-- callback retires writer occupancy. Settlement never retries identity work.
+do
+  local fixture = dofile("tests/acid/runtime_phrase_fixture.lua")
+  local ownership = require("renoise.phrase_ownership")
+  local store = require("renoise.pattern_store")
+  local song, instrument, selected, other, source = fixture.fixture()
+  other.name = assert(ownership.make_name(other, 101))
+  assert(store.save(song, 101, source, "play_once", 0))
+  local writer = {status = "idle", cancels = 0}
+  function writer:state() return self.status, self.token end
+  function writer.is_temporary() return false end
+  local completion, token, captures, deliveries = nil, nil, 0, 0
+  local ctx = context.new{
+    writer = writer,
+    capture = function(_, issued)
+      captures = captures + 1
+      token = issued
+      return {token = issued}
+    end,
+    sink = function(request, done)
+      completion = done
+      writer.status, writer.token = "busy", request.token
+      return true
+    end,
+    cancel = function(issued)
+      assert(rawequal(issued, token) and not issued:is_current())
+      writer.cancels = writer.cancels + 1
+      return true
+    end,
+  }
+  ctx:attach_document(song)
+  ctx:open_dialog(function() deliveries = deliveries + 1 end)
+  ctx:bind_phrase(instrument, selected)
+  assert(ctx:request_generation("in-flight"))
+  assert(ctx:revoke(token, "superseded while rendering"))
+  assert(writer.status == "busy" and rawequal(writer.token, token))
+
+  local selected_name, other_name, source_bytes = selected.name, other.name, song.tool_data
+  local cancellations = writer.cancels
+  local changed = ctx:make_independent()
+  assert(not changed, "canceled writer occupancy admitted Make Independent")
+  assert(writer.cancels == cancellations and captures == 1,
+    "identity rejection canceled or queued work")
+  assert(selected.name == selected_name and other.name == other_name and
+    song.tool_data == source_bytes, "occupied identity rejection mutated ownership")
+
+  writer.status, writer.token = "idle", nil
+  assert(completion({status = "cancelled"}))
+  assert(deliveries == 0 and selected.name == selected_name and
+    song.tool_data == source_bytes, "late settlement retried or committed identity work")
+  assert(ctx:independence_eligibility(), "settlement did not permit fresh eligibility")
+  local resolved, result = ctx:make_independent()
+  assert(resolved, result)
+  assert(result.id ~= 101 and ownership.id(selected) == result.id and
+    ownership.id(other) == 101, "explicit retry did not resolve only the selected holder")
+  assert(captures == 1 and writer.cancels == cancellations,
+    "identity retry entered or canceled the musical writer")
+end
+
 print("ACID runtime document and dialog lifetime checks passed")

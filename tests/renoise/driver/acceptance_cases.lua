@@ -1,5 +1,9 @@
 -- Fixed native acceptance cases for the disposable development host.
 local M = {}
+local MILLISECONDS_PER_SECOND = 1000
+local TWO_HOLDER_COUNT = 2
+local THREE_HOLDER_COUNT = 3
+local MAXIMUM_ELIGIBILITY_PROOFS = 2
 
 local function describe_failure(value)
   if type(value) == "table" then
@@ -49,6 +53,138 @@ local function save_independent_fixture(song)
   return { fixture = name, bytes = size }
 end
 
+local function profile_independence_action(context, eligibility, ownership)
+  local original_eligibility = eligibility.independence
+  local original_snapshot = ownership.snapshot
+  local metrics = {
+    eligibility_calls = 0,
+    eligibility_elapsed_ms = 0,
+    snapshot_calls = 0,
+    snapshot_elapsed_ms = 0,
+  }
+  eligibility.independence = function(...)
+    local started = os.clock()
+    metrics.eligibility_calls = metrics.eligibility_calls + 1
+    local ok, result, reason = pcall(original_eligibility, ...)
+    metrics.eligibility_elapsed_ms = metrics.eligibility_elapsed_ms +
+      (os.clock() - started) * MILLISECONDS_PER_SECOND
+    if not ok then error(result, 0) end
+    return result, reason
+  end
+  ownership.snapshot = function(...)
+    local started = os.clock()
+    metrics.snapshot_calls = metrics.snapshot_calls + 1
+    local ok, result, reason = pcall(original_snapshot, ...)
+    metrics.snapshot_elapsed_ms = metrics.snapshot_elapsed_ms +
+      (os.clock() - started) * MILLISECONDS_PER_SECOND
+    if not ok then error(result, 0) end
+    return result, reason
+  end
+  local started = os.clock()
+  local called, changed, result = pcall(context.make_independent, context)
+  metrics.action_elapsed_ms = (os.clock() - started) * MILLISECONDS_PER_SECOND
+  pcall(function()
+    eligibility.independence = original_eligibility
+    ownership.snapshot = original_snapshot
+  end)
+  if not called then return nil, changed, metrics end
+  return changed, result, metrics
+end
+
+local function run_three_holder_probe(song, instrument, original, duplicate, source,
+    request, old_id, store, ownership, sequence, eligibility)
+  local phrase_count_before = #instrument.phrases
+  local store_bytes_before = song.tool_data
+  local original_before = ownership.snapshot(original)
+  local duplicate_before = ownership.snapshot(duplicate)
+  local probe
+  local context
+  local metrics
+  local passed, failure = pcall(function()
+    probe = instrument:insert_phrase_at(#instrument.phrases + 1)
+    probe:copy_from(original)
+    probe.name = original.name
+    local probe_before = ownership.snapshot(probe)
+    local groups = ownership.inventory(song)
+    if not probe_before or not original_before or not duplicate_before or
+        not groups or not groups[old_id] or #groups[old_id] ~= THREE_HOLDER_COUNT then
+      error("three-holder collision was not established", 0)
+    end
+    context = context_for(song)
+    local bound = context:bind_phrase(instrument, probe)
+    if not bound or not rawequal(bound.instrument, instrument) or not rawequal(bound.phrase, probe) then
+      error("three-holder probe phrase could not be selected", 0)
+    end
+    local changed, outcome
+    changed, outcome, metrics = profile_independence_action(context, eligibility, ownership)
+    if not changed or type(outcome) ~= "table" then
+      error(tostring(outcome or "three-holder Make Independent failed"), 0)
+    end
+    if metrics.eligibility_calls > MAXIMUM_ELIGIBILITY_PROOFS then
+      error("three-holder action rebuilt redundant eligibility proofs", 0)
+    end
+    local probe_after = ownership.snapshot(probe)
+    local original_after = ownership.snapshot(original)
+    local duplicate_after = ownership.snapshot(duplicate)
+    local groups_after = ownership.inventory(song)
+    local old_source, old_policy, old_pb = store.read_entry(song, old_id)
+    local new_source, new_policy, new_pb = store.read_entry(song, outcome.id)
+    local probe_name = probe.name
+    local expected_name = ownership.make_name(original, outcome.id)
+    local selected_name_only = probe_after and ownership.compare(probe_before, probe_after, "name") and
+      probe_name == expected_name and ownership.id(probe) == outcome.id
+    local others_unchanged = original_after and duplicate_after and
+      ownership.compare(original_before, original_after) and
+      ownership.compare(duplicate_before, duplicate_after)
+    local sources_preserved = old_source and new_source and
+      sequence.same_source(old_source, source) and sequence.same_source(new_source, source) and
+      old_policy == request.output_policy and new_policy == request.output_policy and
+      old_pb == request.pb_range and new_pb == request.pb_range
+    local holders_resolved = groups_after and groups_after[old_id] and #groups_after[old_id] == TWO_HOLDER_COUNT and
+      groups_after[outcome.id] and #groups_after[outcome.id] == 1 and
+      rawequal(groups_after[outcome.id][1].phrase, probe)
+    if not (selected_name_only and others_unchanged and sources_preserved and holders_resolved) then
+      error("three-holder resolution changed music, unrelated holders, or source state", 0)
+    end
+  end)
+  if context then pcall(function() context:release_document() end) end
+  local probe_index
+  for index, phrase in ipairs(instrument.phrases) do
+    if rawequal(phrase, probe) then probe_index = index; break end
+  end
+  if probe_index then
+    local deleted, delete_error = pcall(instrument.delete_phrase_at, instrument, probe_index)
+    if not deleted and passed then passed, failure = false, tostring(delete_error) end
+  elseif passed then
+    passed, failure = false, "three-holder probe phrase could not be found for cleanup"
+  end
+  local restored, restore_error = pcall(function() song.tool_data = store_bytes_before end)
+  if not restored and passed then passed, failure = false, tostring(restore_error) end
+  local restored_entry, restored_policy, restored_pb = store.read_entry(song, old_id)
+  local restored_groups = ownership.inventory(song)
+  local restored_original = ownership.snapshot(original)
+  local restored_duplicate = ownership.snapshot(duplicate)
+  local restored_pair_members = false
+  local restored_group = restored_groups and restored_groups[old_id]
+  if restored_group and #restored_group == TWO_HOLDER_COUNT then
+    local original_found, duplicate_found = false, false
+    for _, holder in ipairs(restored_group) do
+      original_found = original_found or rawequal(holder.phrase, original)
+      duplicate_found = duplicate_found or rawequal(holder.phrase, duplicate)
+    end
+    restored_pair_members = original_found and duplicate_found
+  end
+  local pair_restored = #instrument.phrases == phrase_count_before and song.tool_data == store_bytes_before and
+    restored_entry and sequence.same_source(restored_entry, source) and
+    restored_policy == request.output_policy and restored_pb == request.pb_range and
+    restored_pair_members and restored_original and ownership.compare(original_before, restored_original) and
+    restored_duplicate and ownership.compare(duplicate_before, restored_duplicate) and
+    ownership.id(original) == old_id and ownership.id(duplicate) == old_id
+  if not pair_restored and passed then passed, failure = false, "original collision pair or store was not restored" end
+  if not passed then return nil, failure, metrics end
+  return metrics
+end
+
 local function run_make_independent(done)
   local song = renoise.song()
   local instrument_index = song.selected_instrument_index
@@ -91,6 +227,15 @@ local function run_make_independent(done)
       return
     end
 
+    local eligibility = require("runtime.eligibility")
+    local three_holder_profile, three_holder_error = run_three_holder_probe(
+      song, instrument, original, duplicate, source, request, old_id, store, ownership,
+      sequence, eligibility)
+    if not three_holder_profile then
+      done({ status = "FAIL", case = "make-independent", reason = tostring(three_holder_error) })
+      return
+    end
+
     local context = context_for(song)
     local bound = context:bind_phrase(instrument, duplicate)
     if not bound or not rawequal(bound.instrument, instrument) or not rawequal(bound.phrase, duplicate) then
@@ -98,16 +243,17 @@ local function run_make_independent(done)
       done({ status = "FAIL", case = "make-independent", reason = "copied phrase could not be selected" })
       return
     end
-    local eligibility, eligibility_error = context:independence_eligibility()
-    if not eligibility then
+    local proof, eligibility_error = context:independence_eligibility()
+    if not proof then
       context:release_document()
       done({ status = "FAIL", case = "make-independent", reason = tostring(eligibility_error) })
       return
     end
-    local changed, outcome = context:make_independent()
-    if not changed then
+    local changed, outcome, two_holder_profile = profile_independence_action(context, eligibility, ownership)
+    if not changed or two_holder_profile.eligibility_calls > MAXIMUM_ELIGIBILITY_PROOFS then
       context:release_document()
-      done({ status = "FAIL", case = "make-independent", reason = tostring(outcome) })
+      done({ status = "FAIL", case = "make-independent",
+        reason = not changed and tostring(outcome) or "two-holder action rebuilt redundant eligibility proofs" })
       return
     end
 
@@ -134,7 +280,7 @@ local function run_make_independent(done)
       case = "make-independent",
       old_id = old_id,
       new_id = ownership.id(duplicate),
-      holders_before = 2,
+      holders_before = TWO_HOLDER_COUNT,
       holders_after_old_id = groups and #groups[old_id] or 0,
       holders_after_new_id = groups and #groups[outcome.id] or 0,
       selected_content_preserved = selected_content_preserved == true,
@@ -142,6 +288,12 @@ local function run_make_independent(done)
       source_and_settings_preserved = source_preserved == true,
       target_remains_selected = rawequal(target.instrument, instrument) and rawequal(target.phrase, duplicate),
     }
+    for metric, value in pairs(three_holder_profile) do
+      details["three_holder_" .. metric] = value
+    end
+    for metric, value in pairs(two_holder_profile) do
+      details["two_holder_" .. metric] = value
+    end
     local changed_source = sequence.copy_source(source)
     changed_source.pitch_events[1] = sequence.new_pitch(5,0,true,false)
     local duplicate_index
