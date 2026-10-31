@@ -541,6 +541,91 @@ do
     'explicit idle retry did not make exactly one new transaction')
 end
 
+-- Writer occupancy changing during the candidate guard's final allocation
+-- check rejects before any source or ownership write and never retries.
+do
+  local ctx,song,_,selected,_,_,_,writer=setup(2)
+  local original_raw,original_name=song.tool_data,selected.name
+  local source_bytes,source_write_attempts=original_raw,0
+  local old_song_meta=getmetatable(song)
+  rawset(song,'tool_data',nil)
+  setmetatable(song,{
+    __index=function(_,key)if key=='tool_data' then return source_bytes end end,
+    __newindex=function(object,key,value)
+      if key=='tool_data' then
+        source_bytes=value
+        source_write_attempts=source_write_attempts+1
+      else
+        rawset(object,key,value)
+      end
+    end,
+  })
+  local name,old_phrase_meta=original_name,getmetatable(selected)
+  local name_write_attempts=0
+  rawset(selected,'name',nil)
+  setmetatable(selected,{
+    __index=function(object,key)
+      if key=='name' then return name end
+      if type(old_phrase_meta)=='table' then
+        local index=old_phrase_meta.__index
+        if type(index)=='function' then return index(object,key) end
+        if type(index)=='table' then return index[key] end
+      end
+      return nil
+    end,
+    __newindex=function(object,key,value)
+      if key=='name' then
+        name_write_attempts=name_write_attempts+1
+        name=value
+      else
+        rawset(object,key,value)
+      end
+    end,
+  })
+  local original_prepare,original_allocate=store.prepare,store.allocate
+  local prepare_calls,inject_busy=0,false
+  local inside_candidate_guard=false
+  store.prepare=function(target,id,pattern,policy,pb,guard,...)
+    prepare_calls=prepare_calls+1
+    local candidate,reason=original_prepare(target,id,pattern,policy,pb,function(...)
+      inside_candidate_guard=true
+      local results={guard(...) }
+      inside_candidate_guard=false
+      return unpack(results)
+    end,...)
+    return candidate,reason
+  end
+  store.allocate=function(target,...)
+    local id,reason=original_allocate(target,...)
+    if inside_candidate_guard and not inject_busy then
+      inject_busy=true
+      writer.status='busy';writer.token={}
+    end
+    return id,reason
+  end
+  local cancels=writer.cancels
+  local changed=ctx:make_independent()
+  assert(not changed,'writer occupancy drift during the candidate guard was accepted')
+  assert(inject_busy,'candidate guard did not reach its final allocation inspection')
+  assert(prepare_calls==1,'writer drift caused an implicit identity retry')
+  assert(writer.status=='busy' and writer.cancels==cancels,
+    'candidate guard canceled or released the newly busy writer')
+  assert(song.tool_data==original_raw and source_write_attempts==0,
+    'candidate guard attempted or changed the source store after writer drift')
+  assert(selected.name==original_name and name_write_attempts==0,
+    'candidate guard attempted or changed phrase ownership after writer drift')
+
+  writer.status='idle';writer.token=nil
+  setmetatable(song,old_song_meta)
+  rawset(song,'tool_data',source_bytes)
+  setmetatable(selected,old_phrase_meta)
+  rawset(selected,'name',name)
+  local retried,retry_result=ctx:make_independent()
+  store.prepare,store.allocate=original_prepare,original_allocate
+  assert(retried,retry_result)
+  assert(prepare_calls==2,'explicit idle retry did not start exactly one new transaction')
+end
+
 -- An edit revision change during eligibility invalidates admission and leaves
 -- the persisted object draft untouched.
 do

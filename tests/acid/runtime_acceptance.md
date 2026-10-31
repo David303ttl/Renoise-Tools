@@ -111,18 +111,23 @@ Post-commit reconciliation failures remain T4.5–T4.6 blockers.
 | Check | Evidence | Result |
 | --- | --- | --- |
 | Pinned admission | `acid_runtime_independence_spec.lua`: initial-proof reentrancy, native current-song switch, same-song dialog reopen/document reattach, A → B → A, edit revision drift, same-index replacement, undo unavailable/processing/throwing, proof exception followed by explicit retry | PASS: no stale identity/store commit or old-song undo read; admission lock releases on errors |
-| Occupancy races | Same spec: writer becomes busy after initial proof or during undo description; store setter counts attempted writes | PASS: zero source-write attempts, no writer cancellation or queued identity retry; explicit idle retry captures fresh authorization |
+| Occupancy races | Same spec: writer becomes busy after initial proof, during undo description, or during the candidate guard's final allocation inspection; source/name setters count attempted writes | PASS: zero write attempts, no writer cancellation or queued identity retry; explicit idle retry captures fresh authorization |
 | Canceled writer settlement | `acid_runtime_lifetime_spec.lua`, `acid_runtime_writer_integration_spec.lua`: accepted request, retained in-flight slot after revocation, matching render callback, explicit fresh retry | PASS: real writer integration uses the existing API-shaped host; settlement never executes rejected identity work |
 | Cached GUI projection | `acid_gui_independence_spec.lua`: eligibility shown while idle, writer occupied before click | PASS: cached UI state cannot authorize mutation or dispatch musical work |
-| Native regression | `interactive-78367462352f4da4bba6905e0e1917ab/report.json`, Renoise 3.5.4 / API 6.2 | PASS: two/three-holder resolution, two-proof cap, same-object regeneration, same-process save/reload; installation restored |
+| Native regression | `interactive-b6c31116cb9841b3bdf86cb5357d2024/report.json`, Renoise 3.5.4 / API 6.2 | PASS: two/three-holder resolution, two-proof cap, same-object regeneration, same-process save/reload; installation restored |
 | Fresh second pass | Independent admission/guard/test audit and four focused specs | PASS; no T4.2 correctness finding |
 | Local/package checks | PowerShell 7: `./scripts/run_tests.ps1 -Tool ACID`, `./scripts/run_tests.ps1`, `./scripts/package.ps1 -Tool ACID`; final guard-focused reruns and `git diff --check` | PASS: 64/67 specs, Lua 5.1; 34 runtime archive entries with root manifest/main and no development files |
+| Late-guard verification | Final-allocation fault injection, fresh independent review, `./scripts/run_tests.ps1`, `git diff --check` | PASS: 67 specs; zero source/name write attempts, no cancellation or implicit retry; explicit retry succeeds. Fault injection is local, not native evidence. |
 
 The real writer integration spec is included to verify retained global render
 occupancy on its existing host fixture. Runtime interruption and error cases above
 are local/mocked evidence; native undo/redo, copy/import and cold-process acceptance
 remain T4.8/Step 8. Gate 4 remains open; post-commit reconciliation remains blocked
 under T4.5–T4.6.
+
+Authorization revisions record invalidation rather than every runtime transition.
+An arm/disarm round trip without an active Live Edit trigger can leave the tuple
+unchanged; target, source/settings and writer occupancy are checked independently.
 
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform

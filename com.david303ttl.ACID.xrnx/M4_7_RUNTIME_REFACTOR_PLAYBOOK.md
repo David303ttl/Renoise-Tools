@@ -1582,9 +1582,14 @@ Full T4.2 admission and lifecycle acceptance remains separate.
 before eligibility inspection. Hold the identity-action lock through admission,
 mutation and adoption; release it on every return or exception. Guards reject
 runtime drift and allow only the action's own intent-revocation transition.
+The revision tuple tracks authorization invalidation, not every UI transition:
+an arm/disarm round trip without an active Live Edit trigger can leave it unchanged.
+Live target, source and writer checks remain independent requirements.
 The original proof remains pinned; writer occupancy and native undo state are
 checked again before source/name mutation. Rejection never cancels the writer or
 queues identity work.
+The prepared candidate guard rechecks authorization after its final allocation
+inspection; this uses the existing cheap guard, not another eligibility proof.
 
 **T4.2 verification:** admission, lifetime, GUI and writer integration specs cover
 reentrancy, proof-error lock release, session/epoch changes, A → B → A, edit

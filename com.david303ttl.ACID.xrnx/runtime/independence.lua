@@ -145,7 +145,7 @@ function M.run(song,target,options)
     local latest,latest_error=store.allocate(song)
     if not latest then return false,latest_error end
     if latest~=fresh_id then return false,"Allocated phrase ID changed before resolution" end
-    return true
+    return options.guard()
   end)
   if not candidate then return false,prepare_error end
   local transaction_ok,accepted,transaction_result=pcall(function()
