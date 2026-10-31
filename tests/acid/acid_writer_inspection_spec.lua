@@ -12,6 +12,7 @@ local function observable()
   return {
     add_notifier=function(_,f) handlers[f]=true end,
     remove_notifier=function(_,f) handlers[f]=nil end,
+    has_notifier=function(_,f) return handlers[f]==true end,
     fire=function()
       local pending={}
       for f in pairs(handlers) do pending[#pending+1]=f end

@@ -14,9 +14,16 @@ local PHRASE_EFFECT_COLUMNS=1
 local function observable()
   local handlers={}
   return {
-    add_notifier=function(_,callback) handlers[callback]=true end,
+    add_notifier=function(self,callback)
+      if not self.ignore_add then handlers[callback]=true end
+      if self.fail_add_after_register and not self.ignore_add then
+        error("injected notifier add failure after registration")
+      end
+      if self.fire_on_add and handlers[callback] then callback() end
+    end,
     has_notifier=function(self,callback)
       if self.reenter_probe then callback() end
+      if self.invalid_probe then return nil end
       return handlers[callback]==true
     end,
     remove_notifier=function(self,callback)
@@ -31,6 +38,7 @@ local function observable()
       for _ in pairs(handlers) do count=count+1 end
       return count
     end,
+    callback=function() for callback in pairs(handlers) do return callback end end,
     fire=function()
       local pending={}
       for callback in pairs(handlers) do pending[#pending+1]=callback end
@@ -58,6 +66,7 @@ local delete_failure=nil
 local render_queue={}
 local last_render_options=nil
 local last_script_steps=nil
+local empty_script_commit_calls=0
 local inventory_read_failure=false
 local unreadable_inventory=nil
 
@@ -66,6 +75,7 @@ local function make_script()
     compile_error="",runtime_error="",committed_observable=committed}
   function script:commit()
     if commit_failure then error("injected script commit failure",0) end
+    if #self.paragraphs==0 then empty_script_commit_calls=empty_script_commit_calls+1 end
     self.compile_error=#self.paragraphs==0 and EMPTY_SCRIPT_DIAGNOSTIC or ""
     self.runtime_error=""
     if suppress_commit_notifications or
@@ -1431,6 +1441,108 @@ for _,fault in ipairs({"ignore_remove","fail_remove","fail_remove_after_unregist
   assert(not diagnostic or diagnostic.code~="transaction.notifier_cleanup",
     "successful retry must clear its pending-cleanup diagnostic")
 end
+
+new_host()
+idle.ignore_add=true
+local missing_idle=build(source(48),1)
+local accepted,rejection,calls=start(missing_idle)
+assert(accepted,rejection and rejection.message)
+drain()
+assert(#calls==1 and calls[1].kind=="failure" and writer.state()=="idle",
+  "a silently ineffective mandatory idle registration must fail the writer job")
+idle.ignore_add=false
+
+new_host()
+idle.fail_add_after_register=true
+local throwing_idle=build(source(48),1)
+local throwing_ok,throwing_rejection,throwing_calls=start(throwing_idle)
+assert(throwing_ok,throwing_rejection and throwing_rejection.message)
+drain()
+assert(#throwing_calls==1 and throwing_calls[1].kind=="failure" and
+  idle:listener_count()==0,
+  "a throwing mandatory idle registration must unwind even when it attached first")
+idle.fail_add_after_register=false
+
+new_host()
+committed.ignore_add=true
+last_render_options=nil
+empty_script_commit_calls=0
+local missing_clear=build(source(48),1)
+local clear_ok,clear_rejection,clear_calls=start(missing_clear)
+assert(clear_ok,clear_rejection and clear_rejection.message)
+drain()
+assert(#clear_calls==1 and clear_calls[1].kind=="failure" and
+  writer.state()=="idle" and #render_queue==0 and last_render_options==nil and
+  empty_script_commit_calls==0,
+  "a silently ineffective clear-commit subscription must fail before clearing or rendering")
+committed.ignore_add=false
+
+new_host()
+committed.fire_on_add=true
+empty_script_commit_calls=0
+local reentrant_clear=build(source(48),1)
+local reentrant_ok,reentrant_rejection,reentrant_calls=start(reentrant_clear)
+assert(reentrant_ok,reentrant_rejection and reentrant_rejection.message)
+drain()
+assert(#reentrant_calls==1 and reentrant_calls[1].kind=="success" and
+  writer.state()=="idle" and #render_queue==0 and last_render_options~=nil,
+  "an add-time clear callback must remain inert until script commit begins")
+committed.fire_on_add=false
+
+new_host()
+idle.ignore_remove=true
+local retained=build(source(48),1)
+local first_ok,first_rejection,first_calls=start(retained)
+assert(first_ok,first_rejection and first_rejection.message)
+drain()
+assert(#first_calls==1 and idle:listener_count()==1)
+local second=build(source(48),1)
+local second_ok,second_rejection=start(second)
+assert(not second_ok and second_rejection.code=="transaction.notifier_cleanup" and
+  idle:listener_count()==1,
+  "unresolved cleanup must bound listeners and block a successive writer job")
+idle.ignore_remove=false
+idle:fire()
+assert(idle:listener_count()==0)
+
+new_host()
+idle.ignore_remove=true
+local uncertain=build(source(48),1)
+local uncertain_ok,uncertain_rejection,uncertain_calls=start(uncertain)
+assert(uncertain_ok,uncertain_rejection and uncertain_rejection.message)
+idle.invalid_probe=true
+drain()
+assert(#uncertain_calls==1 and idle:listener_count()==1,
+  "a non-boolean removal probe must retain the exact cleanup callback")
+local blocked_ok,blocked_rejection=start(build(source(48),1))
+assert(not blocked_ok and blocked_rejection.code=="transaction.notifier_cleanup",
+  "an invalid removal probe must keep writer admission blocked")
+idle.invalid_probe=false
+idle.ignore_remove=false
+idle:fire()
+assert(idle:listener_count()==0)
+
+new_host()
+idle.ignore_remove=true
+local retired=build(source(48),1)
+local retired_ok,retired_rejection,retired_calls=start(retired)
+assert(retired_ok,retired_rejection and retired_rejection.message)
+drain()
+local stale_idle_callback=assert(idle:callback())
+idle.ignore_remove=false
+local fresh=build(source(48),1)
+render_mode="defer"
+local fresh_ok,fresh_rejection=start(fresh)
+assert(fresh_ok,fresh_rejection and fresh_rejection.message)
+for _=1,500 do idle:fire() end
+assert(writer.diagnostic() and writer.diagnostic().code=="transaction.render_pending")
+stale_idle_callback()
+assert(writer.diagnostic() and writer.diagnostic().code=="transaction.render_pending",
+  "stale cleanup must not replace a newer writer diagnostic")
+local fresh_render=table.remove(render_queue,1)
+fresh_render.callback(nil,fresh_render.count,0)
+idle:fire()
+render_mode="sync"
 for _,fault in ipairs({"ignore_remove","fail_remove"}) do
   new_host()
   render_mode="defer"

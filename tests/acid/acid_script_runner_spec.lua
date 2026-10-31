@@ -3,12 +3,20 @@ local runner_module = require("writers.script_runner")
 local function fixture(mode)
   local listeners = {}
   local observable = {}
-  function observable:add_notifier(fn) listeners[fn] = true end
+  function observable:add_notifier(fn)
+    if not self.ignore_add then listeners[fn] = true end
+  end
   function observable:has_notifier(fn)
     if self.reenter_probe then fn() end
+    if self.probe_error then error("injected probe failure") end
+    if self.probe_mode == "nil" then return nil end
+    if self.probe_mode == "invalid" then return "unknown" end
+    if self.probe_mode == "false" then return false end
     return listeners[fn]==true
   end
   function observable:remove_notifier(fn)
+    self.remove_calls = (self.remove_calls or 0) + 1
+    self.last_removed = fn
     if self.reenter_remove then fn() end
     if self.fail_remove then error("injected removal failure") end
     if self.ignore_remove then return end
@@ -25,8 +33,9 @@ local function fixture(mode)
     for fn in pairs(listeners) do pending[#pending+1] = fn end
     for _, fn in ipairs(pending) do fn() end
   end
-  local script = {committed_observable=observable, renders=0}
+  local script = {committed_observable=observable, renders=0, commits=0}
   function script:commit()
+    self.commits = self.commits + 1
     if mode == "commit_error" then error("commit failed") end
     if mode == "synchronous" or mode == "commit_after_render_error" then observable:fire() end
     if mode == "commit_after_render_error" then error("commit returned after render start") end
@@ -140,6 +149,7 @@ assert(script_ref[1]==nil,
 local detached_script = {renders=0}
 local detached_observable = {}
 function detached_observable:add_notifier(fn) self.fn=fn end
+function detached_observable:has_notifier(fn) return self.fn == fn end
 function detached_observable:remove_notifier() self.fn=nil end
 detached_script.committed_observable=detached_observable
 function detached_script:commit() detached_observable.fn() end
@@ -172,5 +182,41 @@ for _,fault in ipairs({"fail_remove","ignore_remove","fail_remove_after_unregist
     assert(observable:listener_count()==0,
       "runner must retain exact removal evidence and retry failed or ineffective detachment")
   end
+end
+for _,probe_mode in ipairs({"nil", "invalid", "throw", "missing"}) do
+  runner,script,observable,results=fixture()
+  assert(runner:start())
+  local has_notifier=observable.has_notifier
+  if probe_mode == "missing" then
+    observable.has_notifier=nil
+  elseif probe_mode == "throw" then
+    observable.probe_error=true
+  else
+    observable.probe_mode=probe_mode
+  end
+  assert(runner:cancel())
+  local calls=observable.remove_calls
+  local callback=observable.last_removed
+  if probe_mode == "throw" then observable.probe_error=false
+  elseif probe_mode == "missing" then
+    observable.has_notifier=has_notifier
+  else observable.probe_mode="false" end
+  runner:detach()
+  assert(observable.remove_calls > calls,
+    "unverified removal must retain and retry the exact notifier reference")
+  assert(observable.last_removed == callback,
+    "cleanup retry must use the exact notifier reference")
+end
+for _,registration in ipairs({"ignored", "false", "nil", "invalid", "throw", "missing"}) do
+  runner,script,observable,results=fixture()
+  if registration == "ignored" then observable.ignore_add=true
+  elseif registration == "false" then observable.probe_mode="false"
+  elseif registration == "nil" then observable.probe_mode="nil"
+  elseif registration == "invalid" then observable.probe_mode="invalid"
+  elseif registration == "throw" then observable.probe_error=true
+  elseif registration == "missing" then observable.has_notifier=nil end
+  local started,err=runner:start()
+  assert(not started and err and runner.phase=="done" and script.commits==0,
+    "commit must not run without verified notifier attachment")
 end
 print("ACID script runner checks passed")

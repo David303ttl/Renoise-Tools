@@ -11,6 +11,7 @@ local function observable()
   return {
     add_notifier=function(_, cb) handlers[cb] = true end,
     remove_notifier=function(_, cb) handlers[cb] = nil end,
+    has_notifier=function(_, cb) return handlers[cb] == true end,
     fire=function()
       local copy = {}
       for h in pairs(handlers) do copy[#copy+1] = h end

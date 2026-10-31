@@ -9,17 +9,18 @@ function M.new(script, options, callbacks)
   local observer, on_commit
   local render_started=false
   local detaching=false
+  local commit_called=false
   local function detach()
     if detaching then return false end
     if observer and on_commit then
       detaching=true
-      local removed=pcall(function() observer:remove_notifier(on_commit) end)
+      pcall(function() observer:remove_notifier(on_commit) end)
       local probed,attached=pcall(function()
         if type(observer.has_notifier)=="function" then return observer:has_notifier(on_commit) end
-        return not removed
+        return nil
       end)
       detaching=false
-      if not probed or attached then return false end
+      if not probed or attached ~= false then return false end
       observer, on_commit = nil, nil
     end
     return true
@@ -50,6 +51,7 @@ function M.new(script, options, callbacks)
     self.phase = "committing"
     on_commit = function()
       if self.phase ~= "committing" then detach();return end
+      if not commit_called then return end
       self.phase = "rendering"
       detach()
       local native_invoked = false
@@ -79,6 +81,14 @@ function M.new(script, options, callbacks)
     local ok, err = pcall(function()
       observer = script.committed_observable
       observer:add_notifier(on_commit)
+      if type(observer.has_notifier) ~= "function" then
+        error("Commit notifier registration cannot be verified")
+      end
+      local probed, attached = pcall(function() return observer:has_notifier(on_commit) end)
+      if not probed or attached ~= true then
+        error("Commit notifier registration was not verified")
+      end
+      commit_called=true
       script:commit()
     end)
     if not ok then

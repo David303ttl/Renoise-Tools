@@ -11,6 +11,7 @@ local function observable()
   return {
     add_notifier=function(_,callback) handlers[callback]=true end,
     remove_notifier=function(_,callback) handlers[callback]=nil end,
+    has_notifier=function(_,callback) return handlers[callback]==true end,
     fire=function()
       local pending={}
       for callback in pairs(handlers) do pending[#pending+1]=callback end

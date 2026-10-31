@@ -43,6 +43,7 @@ local current = nil
 local released_token = nil
 local delivering = false
 local temporaries = {}
+local pending_cleanup_job = nil
 local last_diagnostic = nil
 local integrity_blocker_errors = setmetatable({}, { __mode = "k" })
 
@@ -487,13 +488,13 @@ local function remove_watch(job,observer_key,callback_key)
   if not observer or not callback then return true end
   if job.removing_watch then return false end
   job.removing_watch=true
-  local removed=pcall(function() observer:remove_notifier(callback) end)
+  pcall(function() observer:remove_notifier(callback) end)
   local probed,attached=pcall(function()
-    if type(observer.has_notifier)=="function" then return observer:has_notifier(callback) end
-    return not removed
+    if type(observer.has_notifier)~="function" then return nil end
+    return observer:has_notifier(callback)
   end)
   job.removing_watch=nil
-  if not probed or attached then return false end
+  if not probed or attached~=false then return false end
   job[observer_key],job[callback_key]=nil,nil
   return true
 end
@@ -514,14 +515,25 @@ local function unlink(job)
   end
   job.unlinking=nil
   if not removed then
-    set_diagnostic("transaction.notifier_cleanup",
-      "Notifier cleanup is pending; the retained idle callback will retry removal.")
-    job.cleanup_diagnostic=last_diagnostic
+    pending_cleanup_job=job
+    if current==job then
+      set_diagnostic("transaction.notifier_cleanup",
+        "Notifier cleanup is pending; the retained idle callback will retry removal.")
+      job.cleanup_diagnostic=last_diagnostic
+    end
   elseif rawequal(last_diagnostic,job.cleanup_diagnostic) then
     last_diagnostic=nil
     job.cleanup_diagnostic=nil
   end
+  if removed then
+    if rawequal(pending_cleanup_job,job) then pending_cleanup_job=nil end
+  end
   return removed
+end
+
+local function retry_pending_cleanup()
+  if pending_cleanup_job then unlink(pending_cleanup_job) end
+  return pending_cleanup_job==nil
 end
 
 local function settle(job, result)
@@ -930,7 +942,15 @@ local function begin_wait(job)
     end
   end
   job.idle_observer = renoise.tool().app_idle_observable
-  job.idle_observer:add_notifier(job.on_idle)
+  local added=pcall(function() job.idle_observer:add_notifier(job.on_idle) end)
+  local probed,attached=pcall(function()
+    if type(job.idle_observer.has_notifier)~="function" then return nil end
+    return job.idle_observer:has_notifier(job.on_idle)
+  end)
+  if not added or not probed or attached~=true then
+    terminal_failure(job,"failed","transaction.idle_notifier","transaction",
+      "Could not register the required writer idle callback")
+  end
 end
 
 local function apply_layout(job)
@@ -985,6 +1005,7 @@ local function clear_stage_script(job, expected_articulation)
     end
     job.on_clear_commit = function()
       if job.unlinking or job.removing_watch then return end
+      if not job.clear_commit_started then return end
       if current~=job or job.settled or job.released or job.clear_committed then
         remove_watch(job,"clear_observer","on_clear_commit")
         return
@@ -993,7 +1014,15 @@ local function clear_stage_script(job, expected_articulation)
       remove_watch(job,"clear_observer","on_clear_commit")
     end
     job.clear_observer:add_notifier(job.on_clear_commit)
+    local attached_ok,attached=pcall(function()
+      if type(job.clear_observer.has_notifier)~="function" then return nil end
+      return job.clear_observer:has_notifier(job.on_clear_commit)
+    end)
+    if not attached_ok or attached~=true then
+      error("Phrase script commit notification did not register",0)
+    end
     script.paragraphs = {}
+    job.clear_commit_started=true
     script:commit()
   end)
   if not ok then
@@ -1716,6 +1745,7 @@ local function stage(job)
   end
   job.runner = runner
   begin_wait(job)
+  if job.settled then return end
   local started, start_error = runner:start()
   if not started then
     terminal_failure(job, "failed", "transaction.render", "transaction", start_error)
@@ -1723,6 +1753,10 @@ local function stage(job)
 end
 
 local function start(request, done, kind)
+  if pending_cleanup_job and not retry_pending_cleanup() then
+    return false, failure(request, "transaction.notifier_cleanup", "transaction",
+      "ACID notifier cleanup is unresolved; new phrase generation is blocked")
+  end
   if busy or current or delivering then
     local message = current and current.released and
       "Native phrase rendering is still pending; restart Renoise if its callback never arrives." or

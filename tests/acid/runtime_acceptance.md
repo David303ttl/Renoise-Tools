@@ -2,71 +2,24 @@
 
 ## Gate 7 integration closeout (2026-10-31)
 
-T7.0 baseline: `feature/hardening4` at
-`8f5bee6f90fbe6992ab57c81089a4af4e31405b8`; clean working tree, no user changes.
-Gates 1/1A, 2 and 3 have their completed contract/dependency/writer evidence in
-the playbook; Gates 4 (including T4.8a), 5 and 6 have acceptance evidence here.
-Their native limitations remain applicable; no prerequisite requires Gate 8.
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Notifier removal | `acid_script_runner_spec.lua`, `acid_writer_safety_spec.lua`: only an exact `false` probe retires callback references; invalid or unavailable probes retain cleanup. | PASS |
+| Writer admission | One pending cleanup job blocks subsequent writes until removal is verified; persistent failure cannot accumulate writer listeners. | PASS |
+| Mandatory subscriptions | Idle, render-commit and clear-commit attachment require an exact `true` probe; failed attachment settles once without publishing. Registration reentry cannot substitute for commitment. | PASS |
+| Diagnostic ownership | Captured retired callbacks preserve a newer job's diagnostic and terminal result. | PASS |
+| Independent review | Writer/runner lifecycle, attachment reentry, admission and diagnostic ownership. | PASS |
+| Architecture | Existing writer/runner owners; no new module, scheduler, persisted format or manifest version. | PASS |
+| Native writer recovery | Renoise 3.5.4 / API 6.2: `tmp/interactive-80d34dedc91e4d9994c6d67a328c3c13/report.json`. | PASS |
+| Native integrity observers | Renoise 3.5.4 / API 6.2: `tmp/interactive-018f100b82ed4d5ab090d02547a9ac41/report.json`. | PASS |
+| Lua 5.1 suites | ACID 65/65 (`tmp/acid-notifier-final-tests.log`); repository 68/68 (`tmp/repository-notifier-final-tests.log`). | PASS |
+| Release package | 34 source-identical entries; root manifest/main/license, private directories preserved, development inputs excluded. | PASS |
 
-T6.5 correction: the new silent idle-add regression failed on the baseline;
-mandatory idle registration now probes `has_notifier` before initialization
-succeeds. GUI views, runtime observers and runtime lifetime specs PASS, including
-unwind and exact single-watcher reopen. Pinned API 6.2 definitions/offline docs
-confirm the notifier probe contract. Final notifier native rerun PASS:
-`interactive-8c5de55f8e924e67b5b46d40a9053a2f/report.json`, Renoise 3.5.4 / API 6.2,
-baseline plus the GUI correction. Existing `integrity-observers` production
-matrix, inventory and expected-difference scenarios pass. T7.0 PASS; no inherited
-P0/P1 blocker remains.
+**Gate 7 CLOSED; Gate 8 remains OPEN.**
 
-T7.1 PASS: dependency graph includes function-local imports; independent
-production call-site review confirms one target authority, scheduler/request
-entry, terminal channel and shared writer job, with distinct identity/draft/store
-owners. Guarded staging and injected test sinks are legitimate responsibilities.
-
-T7.2 audit identified two specific gaps: notifier cleanup references lost after
-failed/ineffective removal, and R07 instrument-choice assertions missing behind
-an inaccurate GUI locator. New removal regressions failed on the baseline;
-the initial audit suite reported 63/65 PASS (`tmp/acid-audit-tests.log`). The
-single R01–R36 map below now identifies actual assertions and native limits.
-
-T7.3 PASS: the Gate 3 writer/runner owners retain exact subscription refs until
-verified removal; their existing idle callback retries cleanup after settlement
-or release. Reentrant/stale delivery cannot republish or redeliver, and native
-render occupancy remains held until completion. Focused runner, writer safety,
-inspection and dependency specs PASS. R07 provider and notifier-to-idle GUI
-assertions PASS for add/rename/reorder/removal without writer requests. No new
-module, scheduler, compatibility layer, durable state or format/version change.
-
-Final revised runtime native checks PASS in Renoise 3.5.4 / API 6.2:
-`interactive-1a6eac2912d74e9f829318be29cb81f4/report.json` (`writer-recovery`)
-and `interactive-9f85a96f54cc4e97999c5beaf599664e/report.json`
-(`integrity-observers`). The latter verifies four idle/four busy name/mute
-reconciliations, active cancellation, preserved destination/store, fresh commit,
-close/reopen/new-song detachment and zero old listeners. Faulty native removal
-is simulated locally; these native runs do not force host removal failures.
-
-T7.4 PASS under PowerShell 7 / Lua 5.1: ACID 65/65 (81.75s), then repository
-68/68 (75.13s), recorded in `tmp/acid-final-tests.log` and
-`tmp/repository-final-tests.log`. ACID release packaging PASS: 34 source-identical
-runtime entries, root `manifest.xml`/`main.lua`/`LICENSE`, preserved private
-directories, no SDK/tests/docs/development files. Final source/archive comparison
-PASS; manifest and persisted codec/ownership owners are unchanged. Staged and
-unstaged diffs, changed paths and working-tree status reviewed; `git diff --check`
-and staged whitespace check PASS. No preexisting user changes; no files staged.
-
-T7.5 PASS: independent architecture/callback review and separate assertion-map
-audit completed against the final changes and verification evidence. Final review
-corrected R29's overstatement of native undo grouping; the map now distinguishes
-verified undo/redo states from unestablished complete logical grouping. No
-unresolved P0/P1 local defect, competing authority or unrelated change remains.
-Cleanup ownership is explicit, repeated unverified removal paths are consolidated
-inside the writer, and missing inventory assertions are covered without new
-architecture. Final documentation whitespace review PASS.
-
-**Gate 7 CLOSED.** T7.0–T7.5 and all 36 local regression contracts pass. Targeted
-native evidence is reused only for its recorded assertions. Playback, broader
-musical-writer undo grouping, actual field preservation and full Step 8 A–E
-acceptance remain OPEN; Gate 8 and M4 are not complete.
+Notifier failure injection uses mocks; native runs do not force host add/remove
+failures. Playback, broader musical-writer undo grouping, actual field
+preservation and full Step 8 A–E acceptance remain OPEN.
 
 ## Gate 6 observer contracts (2026-10-31)
 
