@@ -4,7 +4,22 @@ local function fixture(mode)
   local listeners = {}
   local observable = {}
   function observable:add_notifier(fn) listeners[fn] = true end
-  function observable:remove_notifier(fn) listeners[fn] = nil end
+  function observable:has_notifier(fn)
+    if self.reenter_probe then fn() end
+    return listeners[fn]==true
+  end
+  function observable:remove_notifier(fn)
+    if self.reenter_remove then fn() end
+    if self.fail_remove then error("injected removal failure") end
+    if self.ignore_remove then return end
+    listeners[fn] = nil
+    if self.fail_remove_after_unregister then error("injected post-removal failure") end
+  end
+  function observable:listener_count()
+    local count=0
+    for _ in pairs(listeners) do count=count+1 end
+    return count
+  end
   function observable:fire()
     local pending = {}
     for fn in pairs(listeners) do pending[#pending+1] = fn end
@@ -136,4 +151,26 @@ detached_runner=runner_module.new(detached_script, {}, {
   done=function(err) assert(err);detached_calls=detached_calls+1 end})
 assert(detached_runner:start())
 assert(detached_script.renders == 0 and detached_calls == 1)
+for _,fault in ipairs({"fail_remove","ignore_remove","fail_remove_after_unregister",
+    "reenter_remove","reenter_probe"}) do
+  for _,complete in ipairs({false,true}) do
+    runner,script,observable,results=fixture()
+    observable[fault]=true
+    assert(runner:start())
+    if complete then
+      observable:fire()
+      script.done(nil,3,0)
+      assert(results()==1 and script.renders==1)
+    else
+      assert(runner:cancel())
+    end
+    observable:fire()
+    assert(results()==(complete and 1 or 0) and script.renders==(complete and 1 or 0),
+      "retained commit callback must not render or deliver again")
+    observable[fault]=false
+    runner:detach()
+    assert(observable:listener_count()==0,
+      "runner must retain exact removal evidence and retry failed or ineffective detachment")
+  end
+end
 print("ACID script runner checks passed")

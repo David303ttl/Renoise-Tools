@@ -8,11 +8,21 @@ function M.new(script, options, callbacks)
   local runner = {phase="queued"}
   local observer, on_commit
   local render_started=false
+  local detaching=false
   local function detach()
+    if detaching then return false end
     if observer and on_commit then
-      pcall(function() observer:remove_notifier(on_commit) end)
+      detaching=true
+      local removed=pcall(function() observer:remove_notifier(on_commit) end)
+      local probed,attached=pcall(function()
+        if type(observer.has_notifier)=="function" then return observer:has_notifier(on_commit) end
+        return not removed
+      end)
+      detaching=false
+      if not probed or attached then return false end
       observer, on_commit = nil, nil
     end
+    return true
   end
   local function finish(err, rendered, skipped)
     if runner.phase == "done" or runner.phase == "cancelled" then return end
@@ -22,13 +32,13 @@ function M.new(script, options, callbacks)
     callbacks.done(err, rendered, skipped)
   end
   function runner:detach()
-    detach()
     if self.phase == "queued" or self.phase == "committing" then
       self.phase = "cancelled"
       script = nil
     elseif not render_started then
       script = nil
     end
+    return detach()
   end
   function runner:cancel()
     if self.phase ~= "queued" and self.phase ~= "committing" then return false end
@@ -39,9 +49,9 @@ function M.new(script, options, callbacks)
     if self.phase ~= "queued" then return nil, "Script runner already started" end
     self.phase = "committing"
     on_commit = function()
-      if self.phase ~= "committing" then return end
-      detach()
+      if self.phase ~= "committing" then detach();return end
       self.phase = "rendering"
+      detach()
       local native_invoked = false
       local ok, err = pcall(function()
         if callbacks.rendering then callbacks.rendering() end

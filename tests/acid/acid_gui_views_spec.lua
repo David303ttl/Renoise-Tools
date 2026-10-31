@@ -651,6 +651,62 @@ assert(render_calls==before_queued_generate+1 and generation_request.target_inde
 generation_callback(terminal_result(generation_request,"committed","Queued destination generated."))
 live_checkbox:fire(false)
 
+-- Instrument inventory notifications refresh the native destination popup on
+-- idle while preserving its bound object and without requesting a render.
+local function popup_with_item(item)
+  for _,node in ipairs(builder.nodes) do
+    if node.kind=="popup" and node.items then
+      for _,candidate in ipairs(node.items) do
+        if candidate==item then return node end
+      end
+    end
+  end
+  error("missing popup item: "..item)
+end
+local target_label="00: "..instrument.name
+local instrument_popup=popup_with_item(target_label)
+local phrase_popup_for_inventory=popup_with_item("NEW PHRASE (append)")
+local before_inventory_render_calls=render_calls
+local function inventory_idle()
+  tool.app_idle_observable:fire()
+  local expected_index
+  for index,target in ipairs(song.instruments) do
+    if rawequal(target,instrument) then expected_index=index end
+  end
+  local labels_match=#instrument_popup.items==#song.instruments
+  for index,target in ipairs(song.instruments) do
+    labels_match=labels_match and instrument_popup.items[index]==
+      string.format("%02X: %s",index-1,target.name)
+  end
+  assert(labels_match and expected_index and instrument_popup.value==expected_index and
+    instrument_popup.items[expected_index]==string.format("%02X: %s",expected_index-1,instrument.name),
+    "instrument popup refreshes labels and selected index while retaining the bound object")
+  assert(phrase_popup_for_inventory.items[#phrase_popup_for_inventory.items]=="NEW PHRASE (append)" and
+    phrase_popup_for_inventory.value>=1,
+    "instrument inventory refresh keeps the bound phrase choices available")
+  assert(render_calls==before_inventory_render_calls,
+    string.format("instrument inventory notifications never request a writer operation (before=%d after=%d)",before_inventory_render_calls,render_calls))
+end
+local inventory_host=dofile("tests/acid/observer_host_fixture.lua")
+local added_instrument={name="Inventory add",phrases={},samples={},sample_modulation_sets={},
+  sample_device_chains={},phrase_program=1}
+table.insert(song.instruments,added_instrument)
+inventory_host.attach(song,observable)
+song.instruments_observable:fire()
+inventory_idle()
+added_instrument.name="Inventory renamed"
+added_instrument.name_observable:fire()
+inventory_idle()
+song.instruments={instrument_two,instrument,added_instrument}
+song.instruments_observable:fire()
+inventory_idle()
+song.instruments={instrument_two,instrument}
+song.instruments_observable:fire()
+inventory_idle()
+song.instruments={instrument,instrument_two}
+song.instruments_observable:fire()
+inventory_idle()
+
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")
 dialog.visible=false
@@ -660,7 +716,19 @@ assert(song.selected_phrase_observable:listener_count()==0,
 assert(tool.app_idle_observable:listener_count()==0,
   "closing ACID removes its dialog idle listener")
 local gui_module=require("gui")
+tool.app_idle_observable.ignore_add=true
+local idle_loaded,idle_error=pcall(gui_module.show)
+assert(not idle_loaded and tostring(idle_error):find("idle notifier registration failed",1,true),
+  "silently ineffective idle registration rejects dialog initialization")
+assert(tool.app_idle_observable:listener_count()==0 and
+  song.selected_phrase_observable:listener_count()==0 and
+  not gui_module.get_ui_state().dialog_visible and
+  not gui_module.get_ui_state().idle_listener_attached,
+  "ineffective idle registration unwinds the dialog, native subscriptions and active flag")
+tool.app_idle_observable.ignore_add=false
 gui_module.show()
+assert(gui_module.get_ui_state().dialog_visible and tool.app_idle_observable:listener_count()==1,
+  "dialog reopens with one idle watcher after ineffective registration cleanup")
 dialog.visible=false
 tool.app_idle_observable:fire()
 tool.app_idle_observable.fail_add=true

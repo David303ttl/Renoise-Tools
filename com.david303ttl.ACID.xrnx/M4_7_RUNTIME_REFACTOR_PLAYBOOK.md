@@ -1842,14 +1842,94 @@ Passing contracts, regression mappings and native reports are recorded in the
 
 ## Step 7 — Remove competing paths and run local/package checks
 
+**Status:** Gate 7 CLOSED. T7.0–T7.5 pass with assertion-level R01–R36 evidence,
+focused lifecycle/inventory corrections, final ACID 65/65 and repository 68/68
+specs, native observer/writer-recovery reruns, 34-file source-identical release
+package and independent final review. See the [Gate 7 acceptance record](../tests/acid/runtime_acceptance.md#gate-7-integration-closeout-2026-10-31).
+Step 8 A–E acceptance and M4 remain open.
+
 **Architecture closeout:** rerun Gate 1A's dependency/policy/codec equivalence checks against the integrated runtime. Confirm Step 5 already deleted the legacy writer call path, duplicate callback/draft-movement logic, arming mirrors and dead exports; remove only incidental leftovers, never add a shim to keep an old path alive. Keep one write authority, one queue and one terminal path; do not introduce a new architectural cleanup milestone.
 
-1. Confirm no old musical writer callers, implicit append fallback, stale index caches, selection assignments, duplicate notifications, abandoned delayed handlers or legacy scheduler state remain; Step 5 deleted them and Step 7 must not reintroduce them. Internal stage/backup insertion remains legal only inside the guarded writer.
-2. Keep one runtime target, one musical request entry point, explicit create/regenerate sharing one job implementation, one identity-only action, one ownership implementation, and existing draft/store owners. Avoid new abstractions without a concrete duplicate responsibility.
-3. Update obsolete expectations; preserve compiler/sequencer regression coverage. Review the focused cases below against tests already added at earlier gates.
-4. Run `./scripts/run_tests.ps1 -Tool ACID`, then `./scripts/run_tests.ps1` in PowerShell 7. No CI workflows or broad audio/timing matrix.
-5. If runtime layout/package inputs change, run `./scripts/package.ps1 -Tool ACID`; inspect root `manifest.xml`/`main.lua`, private module paths, and absence of SDK/tests/docs. Do not change manifest/tool versions incidentally.
-6. Review `git diff --check` and changed paths. Remove only this work's unrelated changes; preserve user work. Record local results without claiming playback or native undo acceptance.
+**Execution rule:** T7.0 → T7.1 → T7.2 → T7.3 → T7.4 → T7.5, strictly in order. Never advance through a failed exit condition. A later defect returns to its owning substep or earlier gate; rerun its checks and affected downstream verification. Earlier results do not establish a pass against the final revised tree.
+
+### T7.0 — Baseline and prerequisite closure
+
+Record branch, HEAD, working-tree status and existing user changes in the existing
+acceptance record. Reconcile Gates 1A–6 against actual evidence. Under T6.5,
+reproduce silently ineffective mandatory idle registration, correct the owning
+GUI path and verify initialization unwind/reopen. Rerun the existing native
+`integrity-observers` acceptance against the final notifier changes; the earlier
+native report predates the registration/removal postcondition follow-up.
+
+**Exit:** prerequisites verified, targeted native rerun passes and no inherited
+P0/P1 blocker remains. Otherwise return to the responsible earlier gate.
+
+### T7.1 — Architecture and hidden-coupling audit
+
+Rerun Gate 1A's dependency checks, including function-local imports, and inspect
+production call sites and retained callback ownership. Prove one target authority,
+one request entry/queue/scheduler, one terminal channel, explicit create/regenerate
+sharing one musical writer job, one identity-only action and distinct
+ownership/draft/store owners. Confirm no implicit append fallback, stale index
+cache, native selection assignment, duplicate notification or legacy scheduling
+state. Guarded stage/backup insertion and injected test writer sinks are legitimate.
+
+Inspect transient writer/script-runner notifier removal with ineffective removal
+and stale-delivery fault injection before deciding whether a production correction
+is necessary. Keep corrections within the existing writer/runner owners.
+
+**Exit:** every competing path is absent or has a specific correction assigned to
+its existing owner; no unexplained authority duplication or unowned callback.
+
+### T7.2 — R01–R36 regression evidence audit
+
+Update the existing [36-case acceptance map](../tests/acid/runtime_acceptance.md)
+with actual assertion/test-case locators, current outcomes and mocked/native
+limitations. Inspect assertions for missing coverage, false positives and obsolete
+expectations; preserve compiler/sequencer regressions. Do not create another matrix
+or duplicate already passing tests.
+
+**Exit:** all 36 cases have demonstrable local coverage or a named, reproducible
+blocker assigned for correction. A filename or case label alone is not evidence.
+
+### T7.3 — Minimal corrective implementation
+
+Address only defects established by T7.1–T7.2. Add a failing regression first,
+correct the owning module and rerun affected checks. Remove obsolete paths only
+after proving they have no legitimate production responsibility. Earlier-gate
+defects return to that gate for correction.
+
+**Exit:** all discovered in-scope correctness defects resolved; no new scheduler,
+event bus, compatibility layer, persistent state or duplicate authority.
+
+### T7.4 — Integrated verification
+
+Run focused affected checks, then `./scripts/run_tests.ps1 -Tool ACID`, followed by
+`./scripts/run_tests.ps1`, under PowerShell 7. Run
+`./scripts/package.ps1 -Tool ACID` once for this closeout and verify source/archive
+equivalence, root `manifest.xml`/`main.lua`, private module directories, exclusions
+and unchanged persisted formats/versions. Inspect staged and unstaged diffs,
+changed paths, `git diff --check` and working-tree status; preserve user work.
+
+**Exit:** all required checks pass against the final revised tree.
+
+### T7.5 — Independent review and Gate 7 closure
+
+Perform a fresh second-pass review of final architecture, assertion-level R01–R36
+evidence, callback lifetimes, unexpected changes and residual debt. Reconcile the
+existing acceptance map and roadmap concisely, retaining Step 8 obligations.
+
+**Exit:** no unresolved P0/P1 local defect, current Gate 7 evidence and independent
+review passed. Close Gate 7 only then; do not claim Gate 8 or M4 completion.
+
+**Scope restriction:** allow demonstrated dead-path removal, duplicate-responsibility
+reduction, stronger existing contract tests, proven lifecycle fixes and misleading
+documentation corrections. Exclude speculative refactoring, new architectural
+layers, compatibility shims, migrations, persistent-format changes, replacement
+test frameworks, broad audio research, M5 GUI redesign and additional scheduling
+machinery. Reuse the existing dependency/model-policy checks and shared writer job.
+Debt reduction means fewer unnecessary paths/ambiguous responsibilities and stronger
+tests, not more modules or infrastructure.
 
 | Case | Required regression |
 |---|---|
@@ -1890,7 +1970,14 @@ Passing contracts, regression mappings and native reports are recorded in the
 | R35 | Song integrity blocker survives dialog reopen in the same live song; release drops exact recovery refs; reload reclassifies persisted state; read-only revalidation never auto-retries; unrelated song usable once global render settles |
 | R36 | Cold reopen reclassifies valid persisted ID/seal + song source/output as Owned using fresh runtime objects; no epoch/token/index persistence, auto-render, accidental append or foreign adoption; explicit regenerate retains the intended target |
 
-**Gate 7:** All 36 focused regressions and existing local suites pass; package checks pass when required. R29 and R36 use lifecycle/reload mocks here; actual native undo and cold-process save/reopen/regenerate behavior remain explicitly pending Step 8. Map every case to its test file/case and result in the existing checklist; a case label alone is not evidence.
+**Gate 7:** T7.0–T7.5 pass in order with current assertion-level evidence for all
+36 local contracts, integrated suites/package checks and independent review; no
+unresolved P0/P1 local defect remains. Reuse targeted native R29/R36 evidence
+already recorded under T4.8/T4.8a for its exact assertions. Local lifecycle/reload
+mocks do not expand those native claims. Playback, broader undo grouping, actual
+field preservation and full Step 8 A–E acceptance remain open. Gate 7 establishes
+verified local integration contracts, not absence of all undiscovered defects or
+M4 completion.
 
 ## Step 8 — Native Renoise acceptance
 

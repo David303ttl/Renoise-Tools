@@ -1238,6 +1238,8 @@ function M.show()
   idle_active=true
   local idle_registered,idle_error=pcall(function()
     observed_idle_observable:add_notifier(observed_notifier)
+    assert(observed_idle_observable:has_notifier(observed_notifier),
+      "idle notifier registration was ineffective")
   end)
   if not idle_registered then
     idle_active=false

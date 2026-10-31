@@ -482,16 +482,46 @@ local function forget_job_temporaries(job)
   end
 end
 
+local function remove_watch(job,observer_key,callback_key)
+  local observer,callback=job[observer_key],job[callback_key]
+  if not observer or not callback then return true end
+  if job.removing_watch then return false end
+  job.removing_watch=true
+  local removed=pcall(function() observer:remove_notifier(callback) end)
+  local probed,attached=pcall(function()
+    if type(observer.has_notifier)=="function" then return observer:has_notifier(callback) end
+    return not removed
+  end)
+  job.removing_watch=nil
+  if not probed or attached then return false end
+  job[observer_key],job[callback_key]=nil,nil
+  return true
+end
+
 local function unlink(job)
-  if job.runner then pcall(function() job.runner:detach() end) end
-  if job.idle_observer and job.on_idle then
-    pcall(function() job.idle_observer:remove_notifier(job.on_idle) end)
+  if job.unlinking then return false end
+  job.unlinking=true
+  local runner_removed=true
+  if job.runner then
+    local ok,removed=pcall(function() return job.runner:detach() end)
+    runner_removed=ok and removed~=false
+    if runner_removed then job.runner=nil end
   end
-  if job.clear_observer and job.on_clear_commit then
-    pcall(function() job.clear_observer:remove_notifier(job.on_clear_commit) end)
+  local clear_removed=remove_watch(job,"clear_observer","on_clear_commit")
+  local removed=false
+  if runner_removed and clear_removed then
+    removed=remove_watch(job,"idle_observer","on_idle")
   end
-  job.runner, job.idle_observer, job.on_idle = nil, nil, nil
-  job.clear_observer, job.on_clear_commit = nil, nil
+  job.unlinking=nil
+  if not removed then
+    set_diagnostic("transaction.notifier_cleanup",
+      "Notifier cleanup is pending; the retained idle callback will retry removal.")
+    job.cleanup_diagnostic=last_diagnostic
+  elseif rawequal(last_diagnostic,job.cleanup_diagnostic) then
+    last_diagnostic=nil
+    job.cleanup_diagnostic=nil
+  end
+  return removed
 end
 
 local function settle(job, result)
@@ -855,15 +885,13 @@ local after_clear
 local function begin_wait(job)
   job.ticks = 0
   job.on_idle = function()
-    if current ~= job or job.settled or job.released then return end
+    if current ~= job or job.settled or job.released then unlink(job);return end
+    if job.unlinking or job.removing_watch then return end
     if job.waiting_for_clear then
       job.ticks = job.ticks + 1
       if job.clear_committed and script_settled(job) then
         job.waiting_for_clear = false
-        if job.clear_observer and job.on_clear_commit then
-          pcall(function() job.clear_observer:remove_notifier(job.on_clear_commit) end)
-        end
-        job.clear_observer, job.on_clear_commit = nil, nil
+        remove_watch(job,"clear_observer","on_clear_commit")
         local completed, completion_error = pcall(after_clear, job)
         if not completed and not job.settled then
           terminal_failure(job, "failed", "phrase.publication", "phrase",
@@ -956,11 +984,13 @@ local function clear_stage_script(job, expected_articulation)
       error("Phrase script commit notification is unavailable", 0)
     end
     job.on_clear_commit = function()
-      job.clear_committed = true
-      if job.clear_observer and job.on_clear_commit then
-        pcall(function() job.clear_observer:remove_notifier(job.on_clear_commit) end)
+      if job.unlinking or job.removing_watch then return end
+      if current~=job or job.settled or job.released or job.clear_committed then
+        remove_watch(job,"clear_observer","on_clear_commit")
+        return
       end
-      job.clear_observer, job.on_clear_commit = nil, nil
+      job.clear_committed = true
+      remove_watch(job,"clear_observer","on_clear_commit")
     end
     job.clear_observer:add_notifier(job.on_clear_commit)
     script.paragraphs = {}
@@ -1770,8 +1800,8 @@ function M.cancel(token, reason)
   return true
 end
 
--- Release drops host references, temporary registrations and GUI delivery
--- while retaining only a host-free tombstone for an in-flight native render.
+-- Release drops musical host references, temporary registrations and GUI delivery.
+-- Failed notifier removal retains only exact subscription refs for cleanup retry.
 -- The neutral stage remains as explicitly reported recovery material.
 function M.release()
   local job = current
@@ -1784,9 +1814,14 @@ function M.release()
   local token, epoch = job.token, job.epoch
   local diagnostics = job.diagnostic and job.diagnostic.message or nil
   release_store_candidate(job)
+  job.released,job.cancelled=true,true
   unlink(job)
   forget_job_temporaries(job)
+  local cleanup={runner=job.runner,idle_observer=job.idle_observer,on_idle=job.on_idle,
+    clear_observer=job.clear_observer,on_clear_commit=job.on_clear_commit,
+    cleanup_diagnostic=job.cleanup_diagnostic}
   for key in pairs(job) do job[key] = nil end
+  for key,value in pairs(cleanup) do job[key]=value end
   job.token, job.epoch = token, epoch
   job.released, job.cancelled = true, true
   job.cancel_reason = "Document released during native rendering"

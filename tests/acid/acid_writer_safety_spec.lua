@@ -15,7 +15,22 @@ local function observable()
   local handlers={}
   return {
     add_notifier=function(_,callback) handlers[callback]=true end,
-    remove_notifier=function(_,callback) handlers[callback]=nil end,
+    has_notifier=function(self,callback)
+      if self.reenter_probe then callback() end
+      return handlers[callback]==true
+    end,
+    remove_notifier=function(self,callback)
+      if self.reenter_remove then callback() end
+      if self.fail_remove then error("injected notifier removal failure") end
+      if self.ignore_remove then return end
+      handlers[callback]=nil
+      if self.fail_remove_after_unregister then error("injected post-removal failure") end
+    end,
+    listener_count=function()
+      local count=0
+      for _ in pairs(handlers) do count=count+1 end
+      return count
+    end,
     fire=function()
       local pending={}
       for callback in pairs(handlers) do pending[#pending+1]=callback end
@@ -1395,4 +1410,47 @@ for _,operation in ipairs({writer.create,writer.regenerate}) do
   end
 end
 
+for _,fault in ipairs({"ignore_remove","fail_remove","fail_remove_after_unregister",
+    "reenter_remove","reenter_probe"}) do
+  new_host()
+  idle[fault],committed[fault]=true,true
+  local request=build(source(48),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  assert(#calls==1 and calls[1].kind=="success")
+  local raw,count=song.tool_data,#instrument.phrases
+  committed:fire();idle:fire()
+  assert(#calls==1 and song.tool_data==raw and #instrument.phrases==count,
+    "retained writer callbacks must not republish or deliver another terminal result")
+  idle[fault],committed[fault]=false,false
+  idle:fire();committed:fire();idle:fire()
+  assert(idle:listener_count()==0 and committed:listener_count()==0,
+    "writer must retry failed or ineffective idle and clear-commit removals")
+  local diagnostic=writer.diagnostic()
+  assert(not diagnostic or diagnostic.code~="transaction.notifier_cleanup",
+    "successful retry must clear its pending-cleanup diagnostic")
+end
+for _,fault in ipairs({"ignore_remove","fail_remove"}) do
+  new_host()
+  render_mode="defer"
+  idle[fault],committed[fault]=true,true
+  local request=build(source(48),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  assert(writer.state()=="busy" and #render_queue==1)
+  writer.release()
+  committed:fire();idle:fire()
+  assert(writer.state()=="busy" and #calls==0 and song.tool_data=="",
+    "cleanup retry must not settle or publish a released native render")
+  idle[fault],committed[fault]=false,false
+  idle:fire()
+  assert(idle:listener_count()==0 and committed:listener_count()==0,
+    "release must retain exact subscription cleanup refs until removal succeeds")
+  local queued=table.remove(render_queue,1)
+  queued.callback(nil,queued.count,0)
+  assert(writer.state()=="idle" and #calls==0 and song.tool_data=="",
+    "late completion must only retire released occupancy after notifier cleanup")
+  render_mode="sync"
+end
 print("ACID writer safety checks passed (mocked Renoise; native playback unverified)")

@@ -352,6 +352,44 @@ do
  assert(#assert(ctx:phrase_choices(other))==1)
  assert(not ctx:draft_options().validate(song,inst,a))
 end
+
+-- Instrument choice projections follow the current native inventory by object
+-- identity, display name, and position after structural edits.
+do
+ local song,inst,_,_,source=fixture()
+ local other=instrument({phrase(source,102)})
+ other.name='Other'
+ song.instruments={inst,other}
+ local ctx=runtime(song)
+ local function choices()
+  return assert(ctx:instrument_choices())
+ end
+ local initial=choices()
+ assert(#initial==2 and rawequal(initial[1].instrument,inst) and
+   initial[1].instrument_index==1 and initial[1].instrument_name==inst.name and
+   rawequal(initial[2].instrument,other) and initial[2].instrument_index==2 and
+   initial[2].instrument_name=='Other',
+   'instrument choices expose current objects, names, and positions')
+ local added=instrument({phrase(source,103)})
+ added.name='Added'
+ table.insert(song.instruments,added)
+ local after_add=choices()
+ assert(#after_add==3 and rawequal(after_add[3].instrument,added) and
+   after_add[3].instrument_index==3 and after_add[3].instrument_name=='Added',
+   'new native instruments appear in choices without dispatching a write')
+ other.name='Renamed'
+ song.instruments={other,inst,added}
+ local after_rename_reorder=choices()
+ assert(#after_rename_reorder==3 and rawequal(after_rename_reorder[1].instrument,other) and
+   after_rename_reorder[1].instrument_index==1 and after_rename_reorder[1].instrument_name=='Renamed' and
+   rawequal(after_rename_reorder[2].instrument,inst) and after_rename_reorder[2].instrument_index==2,
+   'renamed and reordered instruments refresh their displayed choice metadata')
+ song.instruments={other,added}
+ local after_remove=choices()
+ assert(#after_remove==2 and rawequal(after_remove[1].instrument,other) and
+   rawequal(after_remove[2].instrument,added) and after_remove[2].instrument_index==2,
+   'removed instruments disappear and remaining choices keep current identity and position')
+end
 -- Display projection does not consume a pending native selection change;
 -- explicit idle reconciliation still rebinds the selected phrase.
 do
