@@ -153,16 +153,18 @@ rejection remain verified.
 | --- | --- | --- |
 | Bound target and authorization | `acid_gui_independence_spec.lua`: content-equal objects remain distinct; armed resolution makes no writer/selection call; the next source edit regenerates the exact object after idle dispatch; removed targets stay unavailable. | PASS |
 | Dialog lifetime | Same spec: reentrant close runs once; callbacks from a closed session cannot affect a reopened dialog. | PASS |
+| Real writer lifecycle | `acid_runtime_writer_integration_spec.lua`: armed resolution retains exact target/native selection without writer dispatch; post-commit reentrant close blocks writes until read-only revalidation; later explicit regeneration preserves every unrelated holder and committed source/settings. | PASS |
 | Native notifications | `acid_runtime_observers_spec.lua`: receiver playback/program and protected script changes notify during idle/busy operation; private render-script events remain filtered; structural undo rebinds listeners. | PASS |
 | Listener lifetime and cost | Same spec: unchanged refresh adds/removes no listeners; reentrant detach/replacement preserves attachment boundaries and queued notifications; removed objects lose listeners. Existing lifetime/writer integration specs cover released callbacks and retained render occupancy. | PASS |
-| Native identity and refresh | `interactive-c0ee4d62dd464641b4ddbac74d82d398/report.json`: armed resolution preserves native selection, bound objects, notes/source/settings and other holders; zero generation, two eligibility proofs, zero snapshots on unchanged display/reconcile; explicit regeneration and same-process reload retain the exact destination. | PASS |
-| Native integrity, writer recovery, drafts | `interactive-026e85e44b204c5b86f47e6a05b993c8`, `interactive-c48d162cac444e62a7e331caf15e9968`, `interactive-50bcff9e07bb46c1b4184d3d085746d3`. | PASS |
-| Native/keyboard catalog | `interactive-8611724f12d5421b8fd7016e39db2e51`: native inventory scenarios, real shortcut, dialog close and native navigation; installation restored. | PASS |
-| Native responsiveness | `interactive-a27cb8ec7c234f4285bbedf0ce524ac8`: zero GUI actions exceed 30 ms; busy edit 17.09 ms, four editor snapshot copies; unchanged reads perform zero native snapshots. | PASS |
-| Local suites and second pass | `./scripts/run_tests.ps1 -Tool ACID`: 64/64; `./scripts/run_tests.ps1`: 67/67, Lua 5.1. Fresh GUI/runtime/native reviews and focused reruns; `git diff --check`. | PASS |
+| Native identity and refresh | `interactive-e899e49142234933b54ebca8f21e1ef0/report.json`: armed resolution preserves native selection, bound objects, notes/source/settings and other holders; zero generation, two eligibility proofs, zero snapshots on unchanged display/reconcile; explicit regeneration and same-process reload retain the exact destination. | PASS |
+| Native integrity, writer recovery, drafts | `interactive-ad29c337adf14dc991feb85b4660b3f7`, `interactive-97ba7979ca034312889db2f0aafb92a0`, `interactive-aafdf385ce754feb901aaa58ee0d76c8`. | PASS |
+| Native/keyboard catalog | `interactive-dab152679f3b4ca491ec693d3526848b`: native inventory scenarios, real shortcut, dialog close and native navigation; installation restored. | PASS |
+| Native responsiveness | `interactive-71179c34baad454eab94941a7ab2c54c`: zero GUI actions exceed 30 ms; busy edit 18.63 ms; unchanged reads perform zero native snapshots. | PASS |
+| Local suites and second pass | `./scripts/run_tests.ps1 -Tool ACID`: 64/64; `./scripts/run_tests.ps1`: 67/67, Lua 5.1. Fresh GUI/runtime/observer reviews, independent assertion review and focused reruns; `git diff --check`. | PASS |
+| Offline and package checks | `./scripts/run_offline_tests.ps1`: 18/18 groups; `./scripts/package.ps1 -Tool ACID`: 34 entries match source bytes, root manifest/main and private modules present, SDK/development files excluded. | PASS |
 
 Reports are under ignored `tmp/`; commands use PowerShell 7 and Renoise 3.5.4 /
-API 6.2. The native Make Independent command is
+API 6.2 at runtime revision `7964da5`. The native Make Independent command is
 `./scripts/run_interactive_tests.ps1 -Suite Native -AcceptanceCase make-independent -Install -ApproveDisposableSong`;
 the catalog uses `-Suite All -TestEnvironment <local-config> -AllowKeyboardFocusActivation`.
 The 34-entry ACID release archive passes root/module/exclusion checks.

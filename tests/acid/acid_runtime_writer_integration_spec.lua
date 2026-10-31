@@ -666,9 +666,20 @@ do
   assert(cold_ctx:independence_eligibility(),"fresh identity authorization failed after settlement")
   render_mode="sync"
 
+  cold_ctx:transition("arm")
+  assert(cold_ctx:generation_state().armed,
+    "Live Edit did not arm before Make Independent")
+  song.selected_instrument=instrument
+  song.selected_phrase=selected
   local dispatch_count=sink_calls
   local independent,identity= cold_ctx:make_independent()
   assert(independent,identity)
+  assert(cold_ctx:generation_state().armed,
+    "Make Independent changed the Live Edit arming state")
+  assert(rawequal(cold_ctx:target_state().phrase,selected),
+    "Make Independent replaced the explicitly selected phrase object")
+  assert(rawequal(song.selected_instrument,instrument) and rawequal(song.selected_phrase,selected),
+    "Make Independent changed native selection")
   assert(identity.old_id==old_id and ownership.id(selected)==identity.id)
   assert(ownership.id(second)==old_id and ownership.id(third)==old_id)
   local groups=assert(ownership.inventory(song))
@@ -685,6 +696,7 @@ do
   assert(independent_target.kind=='owned' and rawequal(independent_target.phrase,selected),
     tostring(independent_target.kind)..': '..tostring(independent_target.reason))
 
+  cold_ctx:transition("disarm")
   edit(cold_ctx,source(49))
   dispatch(cold_ctx)
   drain(cold,#cold+1,'regenerate unique holder beside unrelated collision')
@@ -707,6 +719,89 @@ do
   assert_success(cold[#cold],selected,'reopen and regenerate independent holder')
   assert(first_note(assert(store.load(song,instrument,selected)))==51)
   assert(#assert(ownership.inventory(song))[old_id]==2)
+
+  -- A reentrant dialog close after the identity commit retains the selected
+  -- object and blocks writes until committed state is explicitly revalidated.
+  local reentrant_duplicate=duplicate_phrase()
+  local phrase_count_before_reentrant=#instrument.phrases
+  local reentrant_id=assert(ownership.id(selected))
+  local selected_snapshot=assert(ownership.snapshot(selected))
+  local duplicate_snapshot=assert(ownership.snapshot(reentrant_duplicate))
+  local other_snapshot=assert(ownership.snapshot(second))
+  local third_snapshot=assert(ownership.snapshot(third))
+  local retained_source,retained_policy,retained_pb_range=store.read_entry(song,old_id)
+  assert(retained_source)
+  local duplicate_source,duplicate_policy,duplicate_pb_range=store.read_entry(song,reentrant_id)
+  assert(duplicate_source)
+  local function unrelated_state_unchanged()
+    local current_source,current_policy,current_pb_range=store.read_entry(song,old_id)
+    local current_duplicate_source,current_duplicate_policy,current_duplicate_pb_range=
+      store.read_entry(song,reentrant_id)
+    return current_source and sequencer.same_source(retained_source,current_source) and
+      current_policy==retained_policy and current_pb_range==retained_pb_range and
+      current_duplicate_source and sequencer.same_source(duplicate_source,current_duplicate_source) and
+      current_duplicate_policy==duplicate_policy and current_duplicate_pb_range==duplicate_pb_range and
+      ownership.compare(duplicate_snapshot,assert(ownership.snapshot(reentrant_duplicate))) and
+      ownership.compare(other_snapshot,assert(ownership.snapshot(second))) and
+      ownership.compare(third_snapshot,assert(ownership.snapshot(third)))
+  end
+  assert(ownership.id(reentrant_duplicate)==reentrant_id)
+  local reentrant_ctx=new_context()
+  local reentrant_results,reentrant_delivery=delivered()
+  reentrant_ctx:attach_document(song)
+  reentrant_ctx:open_dialog(reentrant_delivery)
+  reentrant_ctx:bind_phrase(instrument,selected)
+  local original_transition=reentrant_ctx.transition
+  local close_on_refresh=true
+  reentrant_ctx.transition=function(self,kind,values)
+    if kind=="refresh" and close_on_refresh then
+      close_on_refresh=false
+      self:close_dialog()
+    end
+    return original_transition(self,kind,values)
+  end
+  local dispatch_before_close=sink_calls
+  local committed,close_result=reentrant_ctx:make_independent()
+  reentrant_ctx.transition=original_transition
+  assert(sink_calls==dispatch_before_close,"reentrant identity close dispatched the writer")
+  assert(committed and close_result.committed and close_result.warning,
+    "post-commit dialog close was not reported as a committed blocked result")
+  assert(not reentrant_ctx:lifetime_state().open,
+    "post-commit reentrant close left the dialog open")
+  assert(ownership.id(selected)~=reentrant_id and ownership.id(reentrant_duplicate)==reentrant_id,
+    "reentrant close changed the selected phrase identity or its duplicate")
+  assert(ownership.compare(selected_snapshot,assert(ownership.snapshot(selected)),"name"),
+    "reentrant identity close changed the selected phrase content")
+  assert(#instrument.phrases==phrase_count_before_reentrant and
+    unrelated_state_unchanged() and
+    ownership.id(second)==old_id and ownership.id(third)==old_id,
+    "reentrant close changed unrelated phrase content, identities, or inventory")
+  assert(rawequal(reentrant_ctx:target_projection().phrase,selected),
+    "reentrant close replaced the explicitly selected phrase object")
+  assert(reentrant_ctx:integrity_state().blocked and
+    not reentrant_ctx:request_generation("manual"),
+    "post-commit reentrant close allowed a write before revalidation")
+  reentrant_ctx:open_dialog(reentrant_delivery)
+  song.selected_instrument=instrument
+  song.selected_phrase=selected
+  local revalidation,revalidation_proof=reentrant_ctx:revalidation_status()
+  assert(revalidation.verified,revalidation.reason)
+  assert(reentrant_ctx:revalidate(revalidation_proof),
+    "post-commit reentrant close evidence could not be revalidated")
+  reentrant_ctx:bind_phrase(instrument,selected)
+  reentrant_ctx:transition("disarm")
+  local regenerated_pitch=56
+  edit(reentrant_ctx,source(regenerated_pitch))
+  dispatch(reentrant_ctx)
+  drain(reentrant_results,1,"regenerate after reentrant identity close")
+  assert_success(reentrant_results[1],selected,"regenerate after reentrant identity close")
+  assert(rawequal(reentrant_results[1].phrase,selected) and
+    #instrument.phrases==phrase_count_before_reentrant,
+    "explicit regeneration after identity close changed the destination or phrase count")
+  assert(first_note(assert(store.load(song,instrument,selected)))==regenerated_pitch)
+  assert(unrelated_state_unchanged(),
+    "regeneration after identity close changed unrelated phrase or source state")
+  reentrant_ctx:release_document()
 end
 
 print("ACID runtime writer integration checks passed (native playback unverified)")

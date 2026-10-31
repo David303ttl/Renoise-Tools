@@ -1702,6 +1702,9 @@ preserves native selection and the exact bound objects; a later source edit uses
 the existing serialized writer. Draft callbacks reuse the editor state returned
 by the transition instead of copying it again. Assertions and results are in
 [runtime acceptance](../tests/acid/runtime_acceptance.md#t47-gui-observers-and-lifecycle-2026-10-31).
+Real-writer integration verifies armed resolution, post-commit reentrant close,
+blocked writes until revalidation, and exact-target regeneration with unrelated
+phrase/source/settings preservation.
 No extra scheduler, compatibility path, persisted format or manifest change.
 
 ### T4.8 — Independent acceptance and debt closeout
