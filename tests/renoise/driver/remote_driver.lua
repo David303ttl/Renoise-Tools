@@ -391,7 +391,7 @@ local function valid_args_for_operation(current, request)
         args.case == "editor-responsiveness" or args.case == "import-donor" or args.case == "ownership-negatives" or
         args.case == "independence-undo-fixture" or args.case == "independence-undo-prepare" or args.case == "independence-undo" or
         args.case == "cold-reopen-regenerate" or
-        args.case == "cold-reopen-verify")
+        args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow")
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end
@@ -984,7 +984,7 @@ local function process_record(current, record)
       return true
     end
     record.acceptance_started = true
-    local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete)
+    local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete, current.json)
     if not call_ok then
       finish_error(current, record, "acceptance_error",
         "native acceptance case raised an error: " .. tostring(accepted))

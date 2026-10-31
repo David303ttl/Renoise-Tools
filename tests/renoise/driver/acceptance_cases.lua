@@ -18,6 +18,10 @@ local FIRST_NOTE_LINE = 1
 local FIRST_NOTE_COLUMN = 1
 local UNDO_ACTION_WAIT_TIMEOUT_SECONDS = 10
 local UNDO_PREPARATION_TIMEOUT_SECONDS = 30
+local WORKFLOW_INSTRUMENT_COUNT = 3
+local WORKFLOW_PHRASES_PER_INSTRUMENT = 4
+local WORKFLOW_OWNED_PER_INSTRUMENT = 2
+local WORKFLOW_FOREIGN_PER_INSTRUMENT = 2
 local prepared_independence_undo = nil
 
 local function has_eligibility(value)
@@ -2162,6 +2166,487 @@ local function run_writer_recovery(done)
   return true
 end
 
+local function run_multi_instrument_workflow(done, json)
+  local song = renoise.song()
+  local sequence = require("model.sequencer")
+  local writer = require("writers.phrase_writer")
+  local ownership = require("renoise.phrase_ownership")
+  local store = require("renoise.pattern_store")
+  local factory = dofile(renoise.tool().bundle_path .. "\\__dev\\writer_request.lua")
+  local start_instrument_count = #song.instruments
+  local start_phrase_count = 0
+  for _, instrument in ipairs(song.instruments) do start_phrase_count = start_phrase_count + #instrument.phrases end
+  if start_instrument_count < WORKFLOW_INSTRUMENT_COUNT or start_phrase_count ~= 0 then
+    done({ status = "FAIL", case = "multi-instrument-workflow",
+      reason = "acceptance requires the runner's fresh empty song",
+      instrument_count = start_instrument_count, phrase_count = start_phrase_count })
+    return true
+  end
+
+  local instruments, instrument_indices, targets, foreign, list_observers = {}, {}, {}, {}, {}
+  local native_identity_registry, next_native_identity = {}, 0
+  local trace, active_operation = {}, "setup"
+  local transaction_count, completed, selection_checks = 0, false, true
+  local function selection_state()
+    local instrument_index = song.selected_instrument_index
+    local phrase_index = song.selected_phrase_index
+    local instrument = instrument_index > 0 and song.instruments[instrument_index] or nil
+    local phrase = instrument and phrase_index > 0 and instrument.phrases[phrase_index] or nil
+    return {
+      instrument = instrument,
+      phrase = phrase,
+      instrument_index = instrument_index,
+      phrase_index = phrase_index,
+      instrument_identity = instrument_index > 0 and
+        ("instrument:" .. tostring(instrument_index) .. ":" .. tostring(instrument and instrument.name or "")) or "none",
+      phrase_identity = phrase and
+        ((ownership.id(phrase) and ("owned:" .. tostring(ownership.id(phrase)))) or
+          ((phrase.name or "") ~= "" and ("phrase:" .. phrase.name) or "phrase:unnamed")) or "none",
+    }
+  end
+  local function same_selection(left, right)
+    return rawequal(left.instrument, right.instrument) and
+      rawequal(left.phrase, right.phrase) and
+      left.instrument_identity == right.instrument_identity and
+      left.phrase_identity == right.phrase_identity and
+      left.instrument_index == right.instrument_index and
+      left.phrase_index == right.phrase_index
+  end
+  -- Renoise can create fresh userdata wrappers for a native object between reads.
+  -- Compare wrappers directly instead of using them as table keys for trace IDs.
+  local function native_identity(value)
+    if value == nil then return 0 end
+    for _, record in ipairs(native_identity_registry) do
+      if rawequal(record.value, value) then return record.id end
+    end
+    next_native_identity = next_native_identity + 1
+    native_identity_registry[#native_identity_registry + 1] = { value = value, id = next_native_identity }
+    return next_native_identity
+  end
+  local function phrase_names(instrument)
+    local names = json.array()
+    for index, phrase in ipairs(instrument.phrases) do names[index] = phrase.name end
+    return names
+  end
+  local function phrase_identity_label(phrase)
+    local id = ownership.id(phrase)
+    if id then return "owned:" .. tostring(id) end
+    local name = tostring(phrase.name or "")
+    if name:match("^Workflow foreign ") then return "foreign:" .. name end
+    return "temporary:" .. (name ~= "" and name or "unnamed")
+  end
+  local function stop_observers()
+    for _, record in ipairs(list_observers) do
+      pcall(function() record.observable:remove_notifier(record.notifier) end)
+    end
+    list_observers = {}
+  end
+  local function finish(status, reason)
+    if completed then return end
+    completed = true
+    stop_observers()
+    local trace_summary = json.array()
+    for index, event in ipairs(trace) do
+      trace_summary[index] = {
+        operation = event.operation,
+        event = event.event,
+        instrument_index = event.instrument_index,
+        instrument_phrase_count = event.instrument_phrase_count,
+        instrument_phrase_names = event.instrument_phrase_names,
+        instrument_phrase_identity_order = event.instrument_phrase_identity_order,
+        instrument_phrase_identity_labels = event.instrument_phrase_identity_labels,
+        selected_instrument_index = event.selected_instrument_index,
+        selected_phrase_index = event.selected_phrase_index,
+        selected_instrument_identity = event.selected_instrument_identity,
+        selected_phrase_identity = event.selected_phrase_identity,
+        selected_instrument_label = event.selected_instrument_label,
+        selected_phrase_label = event.selected_phrase_label,
+        selection_stable = event.selection_stable == true,
+      }
+    end
+    local summary = {
+      status = status,
+      case = "multi-instrument-workflow",
+      reason = reason,
+      instrument_count = #instruments,
+      phrase_count = 0,
+      phrases_per_instrument = json.array(),
+      owned_targets = #targets,
+      foreign_targets = #foreign,
+      transaction_count = transaction_count,
+      selection_trace = trace_summary,
+      user_navigation_injected = false,
+      selection_stable = selection_checks,
+      playback_asserted = false,
+      live_edit_asserted = false,
+      persistence_asserted = false,
+    }
+    for index, instrument in ipairs(instruments) do
+      local count = #instrument.phrases
+      summary.phrase_count = summary.phrase_count + count
+      summary.phrases_per_instrument[index] = count
+    end
+    done(summary)
+  end
+  local function record_selection(event_kind, instrument_index)
+    local selected = selection_state()
+    local instrument = instruments[instrument_index]
+    local event = {
+      operation = active_operation,
+      event = event_kind,
+      instrument_index = instrument_index,
+      instrument_phrase_count = instrument and #instrument.phrases or 0,
+      instrument_phrase_names = instrument and phrase_names(instrument) or json.array(),
+      instrument_phrase_identity_order = json.array(),
+      instrument_phrase_identity_labels = json.array(),
+      selected_instrument_index = selected.instrument_index,
+      selected_phrase_index = selected.phrase_index,
+      selected_instrument_identity = native_identity(selected.instrument),
+      selected_phrase_identity = native_identity(selected.phrase),
+      selected_instrument_label = selected.instrument_identity,
+      selected_phrase_label = selected.phrase_identity,
+      selection_state = selected,
+    }
+    if instrument then
+      for index, phrase in ipairs(instrument.phrases) do
+        event.instrument_phrase_identity_order[index] = native_identity(phrase)
+        event.instrument_phrase_identity_labels[index] = phrase_identity_label(phrase)
+      end
+    end
+    trace[#trace + 1] = event
+    return selected
+  end
+  local function attach_list_observer(instrument, instrument_index)
+    local observable = instrument.phrases_observable
+    local notifier = function() record_selection("phrase-list-change", instrument_index) end
+    observable:add_notifier(notifier)
+    list_observers[#list_observers + 1] = { observable = observable, notifier = notifier }
+  end
+  for _, record in ipairs({
+      { observable = song.selected_instrument_observable, name = "selected-instrument-change" },
+      { observable = song.selected_phrase_observable, name = "selected-phrase-change" },
+    }) do
+    local event_name = record.name
+    local notifier = function() record_selection(event_name, song.selected_instrument_index) end
+    record.observable:add_notifier(notifier)
+    list_observers[#list_observers + 1] = { observable = record.observable, notifier = notifier }
+  end
+  local function source_for(key)
+    local source = sequence.new_pattern(ACCEPTANCE_PATTERN_LENGTH)
+    source.pitch_events[FIRST_NOTE_LINE] = sequence.new_pitch(key, ACCEPTANCE_KEY, true, false)
+    return source
+  end
+  local fixture_selection = selection_state()
+  local function inventory_baseline()
+    local inventory = {}
+    for instrument_index, instrument in ipairs(instruments) do
+      local phrases = {}
+      for phrase_index, phrase in ipairs(instrument.phrases) do
+        local snapshot = ownership.snapshot(phrase)
+        if not snapshot then error("native phrase snapshot is unavailable") end
+        local id = ownership.id(phrase)
+        local source, policy, pb_range
+        if id then source, policy, pb_range = store.read_entry(song, id) end
+        phrases[phrase_index] = { phrase = phrase, snapshot = snapshot, id = id,
+          source = source, output_policy = policy, pb_range = pb_range }
+      end
+      inventory[instrument_index] = phrases
+    end
+    return inventory
+  end
+  local function inventory_unchanged_except(before, target)
+    for instrument_index, instrument in ipairs(instruments) do
+      local expected = before[instrument_index]
+      if not expected or #expected ~= #instrument.phrases then return false end
+      for phrase_index, phrase in ipairs(instrument.phrases) do
+        local old = expected[phrase_index]
+        if not old or not rawequal(old.phrase, phrase) then return false end
+        if not rawequal(phrase, target) then
+          local snapshot = ownership.snapshot(phrase)
+          if not snapshot or not ownership.compare(old.snapshot, snapshot) then return false end
+          if ownership.id(phrase) ~= old.id then return false end
+          if old.id then
+            local source, policy, pb_range = store.read_entry(song, old.id)
+            if not source or not old.source or not sequence.same_source(old.source, source) or
+                policy ~= old.output_policy or pb_range ~= old.pb_range then return false end
+          end
+        end
+      end
+    end
+    return true
+  end
+
+  local function on_created(target_record, result, next_step, before_phrases)
+    if type(result) ~= "table" or result.kind ~= "success" or result.verified ~= true or not result.phrase then
+      finish("FAIL", describe_failure(result or "writer create did not return a verified phrase"))
+      return
+    end
+    local instrument = target_record.instrument
+    local phrase = result.phrase
+    local id = ownership.id(phrase)
+    local source, policy, pb_range
+    if id then source, policy, pb_range = store.read_entry(song, id) end
+    if not id or not source then
+      finish("FAIL", "created target has no persisted source association")
+      return
+    end
+    local inventory_ok = #instrument.phrases == #before_phrases + 1 and
+      rawequal(instrument.phrases[#instrument.phrases], phrase)
+    if inventory_ok then
+      for index, old in ipairs(before_phrases) do
+        if not rawequal(instrument.phrases[index], old.phrase) then inventory_ok = false; break end
+        local snapshot = ownership.snapshot(old.phrase)
+        if not snapshot or not ownership.compare(old.snapshot, snapshot) or ownership.id(old.phrase) ~= old.id then
+          inventory_ok = false; break
+        end
+        if old.id then
+          local old_source, old_policy, old_pb_range = store.read_entry(song, old.id)
+          if not old_source or not old.source or not sequence.same_source(old.source, old_source) or
+              old_policy ~= old.output_policy or old_pb_range ~= old.pb_range then
+            inventory_ok = false; break
+          end
+        end
+      end
+    end
+    if not inventory_ok then
+      finish("FAIL", "phrase creation changed existing phrase identity, content, order, or count")
+      return
+    end
+    target_record.phrase = phrase
+    target_record.id = id
+    target_record.source = source
+    target_record.output_policy = policy
+    target_record.pb_range = pb_range
+    next_step()
+  end
+
+  local function create_target(target_record, note, next_step)
+    local selection_before = selection_state()
+    local before_phrases = {}
+    for index, phrase in ipairs(target_record.instrument.phrases) do
+      local snapshot = ownership.snapshot(phrase)
+      if not snapshot then finish("FAIL", "cannot snapshot phrases before create transaction"); return end
+      local id = ownership.id(phrase)
+      local source, policy, pb_range
+      if id then source, policy, pb_range = store.read_entry(song, id) end
+      before_phrases[index] = { phrase = phrase, snapshot = snapshot, id = id,
+        source = source, output_policy = policy, pb_range = pb_range }
+    end
+    active_operation = "create instrument " .. tostring(target_record.instrument_index) .. " target " .. tostring(target_record.slot)
+    local trace_start = #trace + 1
+    local request, request_error = factory.build(song, target_record.instrument_index,
+      source_for(note), #target_record.instrument.phrases + 1)
+    if not request or request.kind ~= "create" then
+      finish("FAIL", describe_failure(request_error or "target creation request was not accepted"))
+      return
+    end
+    transaction_count = transaction_count + 1
+    local accepted, start_error = writer.create(request, function(result)
+      on_next_idle(function()
+        record_selection("transaction-settled", target_record.instrument_index)
+        for index = trace_start, #trace do
+          trace[index].selection_stable = same_selection(selection_before, trace[index].selection_state)
+          if not trace[index].selection_stable then selection_checks = false end
+        end
+        if not same_selection(selection_before, selection_state()) then selection_checks = false end
+        on_created(target_record, result, next_step, before_phrases)
+      end)
+    end)
+    if not accepted then finish("FAIL", describe_failure(start_error)) end
+    target_record.selection_before = selection_before
+  end
+
+  local function add_foreign(instrument_index, slot)
+    local instrument = instruments[instrument_index]
+    local selection_before = selection_state()
+    local trace_start = #trace + 1
+    local phrase = instrument:insert_phrase_at(#instrument.phrases + 1)
+    phrase.name = "Workflow foreign " .. tostring(instrument_index) .. " " .. tostring(slot)
+    if not same_selection(selection_before, selection_state()) then
+      record_selection("transaction-settled", instrument_index)
+      selection_checks = false
+    end
+    for index = trace_start, #trace do
+      trace[index].selection_stable = same_selection(selection_before, trace[index].selection_state)
+      if not trace[index].selection_stable then selection_checks = false end
+    end
+    foreign[#foreign + 1] = { instrument = instrument, phrase = phrase, name = phrase.name }
+    return phrase
+  end
+
+  local instrument_index = 1
+  for index = 1, WORKFLOW_INSTRUMENT_COUNT do
+    local native_index = index
+    local instrument = song.instruments[native_index]
+    instrument.name = "Workflow instrument " .. tostring(index)
+    instruments[index] = instrument
+    instrument_indices[index] = native_index
+    attach_list_observer(instrument, index)
+  end
+  for _, event in ipairs(trace) do
+    if event.operation == "setup" then
+      event.selection_stable = same_selection(fixture_selection, event.selection_state)
+    end
+  end
+
+  local function populate_instrument()
+    if instrument_index > WORKFLOW_INSTRUMENT_COUNT then
+      if #targets ~= WORKFLOW_INSTRUMENT_COUNT * WORKFLOW_OWNED_PER_INSTRUMENT or
+          #foreign ~= WORKFLOW_INSTRUMENT_COUNT * WORKFLOW_FOREIGN_PER_INSTRUMENT then
+        finish("FAIL", "fixture did not create the required owned and foreign phrase counts")
+        return
+      end
+      for index, instrument in ipairs(instruments) do
+        if #instrument.phrases ~= WORKFLOW_PHRASES_PER_INSTRUMENT then
+          finish("FAIL", "instrument phrase count is not the required bounded fixture size")
+          return
+        end
+        local expected_order = {
+          targets[(index - 1) * 2 + 1].phrase,
+          foreign[(index - 1) * 2 + 1].phrase,
+          targets[(index - 1) * 2 + 2].phrase,
+          foreign[(index - 1) * 2 + 2].phrase,
+        }
+        for phrase_index, phrase in ipairs(expected_order) do
+          if not rawequal(instrument.phrases[phrase_index], phrase) then
+            finish("FAIL", "fixture phrase ordering changed during setup")
+            return
+          end
+        end
+      end
+      local original_inventory = inventory_baseline()
+      local foreign_baselines = {}
+      for index, item in ipairs(foreign) do
+        foreign_baselines[index] = ownership.snapshot(item.phrase)
+        if ownership.id(item.phrase) ~= nil or ownership.status(item.phrase) ~= "foreign" then
+          finish("FAIL", "fixture phrase was not classified as foreign")
+          return
+        end
+      end
+      local target_cursor = 1
+      local function regenerate_next()
+        local target_record = targets[target_cursor]
+        if not target_record then
+          local final_inventory = true
+          for index, item in ipairs(foreign) do
+            local now = ownership.snapshot(item.phrase)
+            if not now or not ownership.compare(foreign_baselines[index], now) or
+                ownership.id(item.phrase) ~= nil or ownership.status(item.phrase) ~= "foreign" then
+              final_inventory = false
+            end
+          end
+          local ordered = true
+          for index, instrument in ipairs(instruments) do
+            local expected = original_inventory[index]
+            if #instrument.phrases ~= WORKFLOW_PHRASES_PER_INSTRUMENT then ordered = false end
+            for phrase_index, old in ipairs(expected) do
+              if not rawequal(instrument.phrases[phrase_index], old.phrase) then ordered = false end
+            end
+          end
+          local report_selection_stable = true
+          for _, event in ipairs(trace) do
+            if event.selection_stable ~= true then report_selection_stable = false end
+          end
+          local passed = final_inventory and ordered and report_selection_stable and selection_checks and #trace > 0 and
+            (#targets == 6) and (#foreign == 6) and transaction_count == 12
+          if passed then finish("PASS")
+          else finish("FAIL", "multi-instrument regeneration changed phrase identity, content, order, count, or native selection") end
+          return
+        end
+
+        local target = target_record.phrase
+        local instrument = target_record.instrument
+        local phrase_index
+        for index, candidate in ipairs(instrument.phrases) do
+          if rawequal(candidate, target) then phrase_index = index; break end
+        end
+        if not phrase_index or ownership.id(target) ~= target_record.id then
+          finish("FAIL", "owned target identity or index was lost before regeneration")
+          return
+        end
+        local before_inventory = inventory_baseline()
+        local before_selection = selection_state()
+        local old_source = target_record.source
+        local changed_source = sequence.copy_source(old_source)
+        local old_event = changed_source.pitch_events[FIRST_NOTE_LINE]
+        local changed_key = old_event and ((old_event.note - sequence.BASE_NOTE + 1) % 13) or target_cursor
+        changed_source.pitch_events[FIRST_NOTE_LINE] = sequence.new_pitch(changed_key, ACCEPTANCE_KEY, true, false)
+        local request, request_error = factory.build(song, target_record.instrument_index,
+          changed_source, phrase_index)
+        if not request or request.kind ~= "regenerate" then
+          finish("FAIL", describe_failure(request_error or "owned target did not build a regenerate request"))
+          return
+        end
+        active_operation = "regenerate instrument " .. tostring(target_record.instrument_index) ..
+          " target " .. tostring(target_record.slot)
+        transaction_count = transaction_count + 1
+        local trace_start = #trace + 1
+        local accepted, start_error = writer.regenerate(request, function(result)
+          on_next_idle(function()
+            local after_selection = selection_state()
+            local target_source, policy, pb_range = store.read_entry(song, target_record.id)
+            local target_snapshot = ownership.snapshot(target)
+            local expected_output_note = sequence.BASE_NOTE + changed_key
+            local expected_output_observed = false
+            if target_snapshot then
+              for _, line in ipairs(target_snapshot.lines) do
+                for _, note in ipairs(line.notes) do
+                  if note.note_value == expected_output_note then expected_output_observed = true end
+                end
+              end
+            end
+            local selection_stable = same_selection(before_selection, after_selection)
+            record_selection("transaction-settled", target_record.instrument_index)
+            if not selection_stable then selection_checks = false end
+            local target_valid = type(result) == "table" and result.kind == "success" and
+              result.verified == true and rawequal(result.phrase, target) and
+              rawequal(instrument.phrases[phrase_index], target) and
+              #instrument.phrases == WORKFLOW_PHRASES_PER_INSTRUMENT and target_snapshot and
+              expected_output_observed and
+              target_source and sequence.same_source(target_source, changed_source) and
+              policy == target_record.output_policy and pb_range == target_record.pb_range
+            local peers_valid = inventory_unchanged_except(before_inventory, target)
+            for _, event in ipairs(trace) do
+              if event.operation == active_operation and event.selection_stable == nil then
+                event.selection_stable = same_selection(before_selection, event.selection_state)
+                if not event.selection_stable then selection_checks = false end
+              end
+            end
+            if not selection_stable or not target_valid or not peers_valid then
+              finish("FAIL", not selection_stable and "native selection changed during regeneration" or
+                (not target_valid and describe_failure(result or "target did not regenerate in place") or
+                  "another phrase or instrument changed during regeneration"))
+              return
+            end
+            target_record.source = changed_source
+            target_cursor = target_cursor + 1
+            regenerate_next()
+          end)
+        end)
+        if not accepted then finish("FAIL", describe_failure(start_error)) end
+      end
+      regenerate_next()
+      return
+    end
+
+    local instrument = instruments[instrument_index]
+    local first = { instrument = instrument, instrument_index = instrument_indices[instrument_index], slot = 1 }
+    targets[#targets + 1] = first
+    create_target(first, instrument_index, function()
+      add_foreign(instrument_index, 1)
+      local second = { instrument = instrument, instrument_index = instrument_indices[instrument_index], slot = 2 }
+      targets[#targets + 1] = second
+      create_target(second, instrument_index + WORKFLOW_INSTRUMENT_COUNT, function()
+        add_foreign(instrument_index, 2)
+        instrument_index = instrument_index + 1
+        populate_instrument()
+      end)
+    end)
+  end
+  populate_instrument()
+  return true
+end
+
 local function run_editor_responsiveness(done)
   local song=renoise.song()
   local unpack_values=unpack or table.unpack
@@ -4251,7 +4736,7 @@ local function run_cold_reopen_verify(done)
   return true
 end
 
-function M.run(case_name, done)
+function M.run(case_name, done, json)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name == "make-independent" then return run_make_independent(done) end
   if case_name == "ownership-negatives" then return run_ownership_negatives(done) end
@@ -4263,6 +4748,7 @@ function M.run(case_name, done)
   if case_name == "cold-reopen-verify" then return run_cold_reopen_verify(done) end
   if case_name == "draft-recovery" then return run_draft_recovery(done) end
   if case_name == "writer-recovery" then return run_writer_recovery(done) end
+  if case_name == "multi-instrument-workflow" then return run_multi_instrument_workflow(done, json) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
   if case_name == "editor-responsiveness" then return run_editor_responsiveness(done) end
   if case_name == "reopen-independent" then

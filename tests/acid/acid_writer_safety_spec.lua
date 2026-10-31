@@ -411,6 +411,26 @@ local function assert_same_snapshot(actual,expected,label)
   assert(same,label..": "..tostring(difference))
 end
 
+-- Cleanup keys off the registered inserted objects, not their names or their
+-- current list positions. Same-named user phrases must survive regeneration.
+do
+  local host_instrument,phrase,song=create_owned(48)
+  local foreign=make_phrase()
+  foreign.name=writer.TRANSACTION_BACKUP_NAME
+  host_instrument.phrases[2]=foreign
+  local request=build(source(58),1)
+  local accepted,rejection,calls=start(request)
+  assert(accepted,rejection and rejection.message)
+  drain()
+  assert(#calls==1 and calls[1].kind=="success" and rawequal(calls[1].phrase,phrase),
+    calls[1] and calls[1].message or "same-named foreign phrase regeneration failed")
+  assert(#host_instrument.phrases==2 and rawequal(host_instrument.phrases[1],phrase) and
+      rawequal(host_instrument.phrases[2],foreign),
+    "temporary cleanup removed or reordered a same-named user phrase")
+  assert(not writer.is_temporary(song,host_instrument,foreign),
+    "same-named user phrase was registered as writer-owned")
+end
+
 do
   local host_instrument,phrase=create_owned(48)
   local before=snapshot(phrase)

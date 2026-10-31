@@ -1744,8 +1744,11 @@ function M.new(options)
               end
             end
           end
-          native_instrument=current_song.selected_instrument
-          native_phrase=current_song.selected_phrase
+          local final_instrument,final_phrase=current_song.selected_instrument,current_song.selected_phrase
+          assert(not writer.is_temporary(current_song,final_instrument,final_phrase),
+            "ACID temporary phrase remains the native selection at mutation finalization")
+          native_instrument=final_instrument
+          native_phrase=final_phrase
           end)
           if not neutral then
             mutation_failed=true

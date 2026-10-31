@@ -940,17 +940,20 @@ local function test_instrument_navigation_setup_inserts_only_when_needed()
 end
 
 local function test_fixed_native_acceptance_command()
-  local completion
+  local completion, acceptance_json_codec
   local host, driver = start_driver({
-    acceptance_runner = function(case_name, done)
+    acceptance_runner = function(case_name, done, json_codec)
+      assert(type(json_codec) == "table" and type(json_codec.array) == "function",
+        "acceptance runner did not receive the shared response codec")
       assert(case_name == "make-independent" or case_name == "reopen-independent" or
         case_name == "integrity-observers" or case_name == "writer-recovery" or
         case_name == "editor-responsiveness" or case_name == "import-donor" or case_name == "ownership-negatives" or
         case_name == "independence-undo-fixture" or case_name == "independence-undo-prepare" or case_name == "independence-undo" or
         case_name == "cold-reopen-regenerate" or
-        case_name == "cold-reopen-verify",
+        case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow",
         "fixed native acceptance case was not allowlisted")
       completion = done
+      acceptance_json_codec = json_codec
       return true
     end
   })
@@ -969,12 +972,15 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(take_responses(client), "acceptance-run"), nil,
     "asynchronous acceptance returned before its native operation settled")
   assert(completion, "fixed acceptance runner was not called")
-  assert(completion({status = "PASS", case = "make-independent", new_id = 12}))
+  assert(completion({status = "PASS", case = "make-independent", new_id = 12,
+    codec_array = acceptance_json_codec.array({"shared-codec-array"})}))
   fire_idle(host)
   local result = find_response(take_responses(client), "acceptance-run")
   assert(result and result.ok)
   assert_equal(result.result.status, "PASS")
   assert_equal(result.result.new_id, 12)
+  assert_equal(result.result.codec_array[1], "shared-codec-array",
+    "acceptance response encoder did not recognize the shared codec's array marker")
   send_request(host, client, "acceptance-reopen", "acid.acceptance.run", {case = "reopen-independent"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-reopen"), nil,
@@ -985,6 +991,16 @@ local function test_fixed_native_acceptance_command()
   local reopened = find_response(take_responses(client), "acceptance-reopen")
   assert(reopened and reopened.ok)
   assert_equal(reopened.result.status, "PASS")
+  send_request(host, client, "acceptance-multi-instrument", "acid.acceptance.run", {case = "multi-instrument-workflow"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-multi-instrument"), nil,
+    "multi-instrument acceptance returned before its native operations settled")
+  assert(completion, "multi-instrument acceptance runner was not called")
+  assert(completion({status = "PASS", case = "multi-instrument-workflow", instrument_count = 3, phrase_count = 12}))
+  fire_idle(host)
+  local multi_instrument = find_response(take_responses(client), "acceptance-multi-instrument")
+  assert(multi_instrument and multi_instrument.ok)
+  assert_equal(multi_instrument.result.status, "PASS")
   send_request(host, client, "acceptance-integrity-observers", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-integrity-observers"), nil,

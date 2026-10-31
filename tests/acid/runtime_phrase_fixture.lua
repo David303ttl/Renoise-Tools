@@ -41,7 +41,7 @@ local function instrument(phrases)
 end
 local function runtime(song,temporary)
  local ctx=context.new{writer={state=function()return 'idle',nil end,
-  is_temporary=function(_,_,p)return rawequal(p,temporary)end},
+  is_temporary=function(_,_,p)return p~=nil and rawequal(p,temporary)end},
   capture=function()error('inventory must not capture')end,
   sink=function()error('inventory must not render')end}
  ctx:attach_document(song);ctx:open_dialog()

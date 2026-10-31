@@ -69,6 +69,38 @@ policy, phrase LPB, line count, loop endpoints and observed playback for each.
    count, saved source or transport. Switch timing during rendering and confirm
    the last-good destination and source remain unchanged.
 
+## Gate 8 multi-instrument production session
+
+This sustained acceptance journey is pending; the ordered cases and evidence
+boundaries are tracked in [runtime acceptance](runtime_acceptance.md#gate-8-acceptance-plan-2026-10-31).
+Use a disposable song with four tracks playing concurrently, three instruments
+(sampler, VST and another supported instrument), and at least 12 owned and
+foreign phrases. Keep the other tracks playing while editing ACID targets.
+
+1. Open ACID on instrument A / phrase 2. Enable Live Edit and change notes,
+   ties and timing during playback. Record ACID's target and Renoise's selected
+   instrument/phrase before, during and after generation.
+2. During an active render, switch to instrument B / phrase 4, edit it and
+   regenerate. Return to A and verify its exact destination and source. Repeat
+   on C, including an explicit New phrase.
+3. Disable Live Edit, edit a different phrase, navigate away and back, then use
+   explicit Generate. Save the song, fully restart Renoise, reopen it, inspect
+   restored source/settings and regenerate selected phrases.
+4. Check selection stability, phrase isolation, destination object identity,
+   settled phrase count/order, A's preserved draft, other tracks' phrase
+   programs and fresh-process persistence. An explicit Create must add one
+   durable phrase and remove none.
+5. Watch the phrase list during rendering as well as after settlement. Record
+   any visible staging/backup entries independently from final cleanup; correct
+   selection and cleanup do not establish that temporary list churn was hidden.
+
+API 6.2 marks both `song.selected_phrase` and `song.selected_phrase_index`
+read-only in the pinned definitions and offline docs. Do not attempt to restore
+selection by assigning the index. Any reproduced switch from A to B, or removal
+of an existing last phrase, is a P0 blocker and keeps Gate 8 open until the
+native case passes after correction. Complete logical undo grouping remains a
+separate Gate 8 obligation.
+
 Renoise 3.5.4 LPB check: phrases 01 and 02 were created and 02 was regenerated
 through the native callback; count stayed two. Phrase preview started and the
 Renoise output meter showed signal; Stop halted preview. Missing callbacks,

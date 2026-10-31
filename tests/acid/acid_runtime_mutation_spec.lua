@@ -35,6 +35,38 @@ do
  assert(not ran and not ctx:mutation_state().failed)
 end
 
+-- A temporary selected during an ACID-owned mutation cannot become the native selection baseline.
+for _,notify_selection in ipairs({false,true}) do
+ local ctx,log,song,instrument,source,temporaries,writer=fixture()
+ writer.status='busy'
+ local temporary={name='ACID staging phrase'}
+ local ok=pcall(function()ctx:mutate(log.token,function()
+  instrument.phrases[2]=temporary;temporaries[temporary]=true
+  song.selected_phrase=temporary
+  if notify_selection then assert(not ctx:notify_native_change('selection')) end
+ end)end)
+ assert(not ok and ctx:mutation_state().failed,
+  'selected ACID temporary was accepted as the native selection baseline')
+ assert(ctx:integrity_state().blocked,'selected ACID temporary did not fail closed')
+end
+
+-- A genuine native selection change during a mutation is not overwritten.
+do
+ local ctx,log,song,instrument,source=fixture()
+ local other=phrase_fixture(limits);other.name='Foreign phrase'
+ instrument.phrases[2]=other
+ local ok=pcall(function()ctx:mutate(log.token,function()
+  song.selected_phrase=other
+  assert(ctx:notify_native_change('selection'))
+ end)end)
+ assert(ok and not ctx:mutation_state().failed,'existing native navigation failed the mutation')
+ local target=ctx:reconcile()
+ assert(rawequal(song.selected_phrase,other),
+  'mutation finalization overwrote the current native phrase selection')
+ assert(target and target.kind=='new',
+  'native selection change replaced the explicitly bound New target')
+end
+
 -- Unregistered copied owners and unreadable registry responses fail closed.
 for _,registry in ipairs({'copy','invalid','throws','removed'})do
  local ctx,log,_,instrument,source,_,writer=fixture()
@@ -138,7 +170,7 @@ do
    backup.name='ACID backup';ctx:mark_dirty('neutral name')
   end)
   assert(ctx:mutation_state().depth==1)
-  song.selected_phrase=backup
+  song.selected_phrase=source
   return 'value',nil,3
  end)
  validator.classify=classify

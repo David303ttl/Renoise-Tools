@@ -653,6 +653,7 @@ Assert ($runnerAst.Extent.Text -match "case = 'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match "-Keys '\{Enter\}'" -and
     $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
+Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
 $startProcessFunction = $runnerAst.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-RunnerOwnedProcess'
 }, $true)

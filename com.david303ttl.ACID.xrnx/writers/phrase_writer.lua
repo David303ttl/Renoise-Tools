@@ -354,7 +354,16 @@ local function delete_phrase_direct(instrument, phrase)
   return phrase_index(instrument, phrase) == nil
 end
 
-local function try_delete_phrase(instrument, phrase)
+local function try_delete_temporary(job, phrase)
+  if type(job) ~= "table" or phrase == nil or
+      not M.is_temporary(job.song, job.instrument, phrase) then
+    return false
+  end
+  local instrument, song = job.instrument, job.song
+  local instrument_ok, instrument_present = membership(song.instruments, instrument)
+  if not instrument_ok or not instrument_present then return false end
+  local occurrence_ok, occurrences = pcall(phrase_occurrences, instrument, phrase)
+  if not occurrence_ok or occurrences ~= 1 then return false end
   local ok, removed = pcall(delete_phrase_direct, instrument, phrase)
   return ok and removed == true
 end
@@ -402,6 +411,7 @@ local function remove_phrase(job, phrase)
     return true
   end
   if present > 1 then return false end
+  if not M.is_temporary(job.song, job.instrument, phrase) then return false end
   local function action() return delete_phrase_direct(job.instrument, phrase) end
   local ok, removed = mutate_host(job, action)
   if ok and removed == true then
@@ -1267,7 +1277,7 @@ end
 
 local function cleanup_committed_temporaries(job, backup)
   if backup then
-    if try_delete_phrase(job.instrument, backup) then
+    if try_delete_temporary(job, backup) then
       forget_temporary(backup)
       job.backup = nil
     else
@@ -1281,7 +1291,7 @@ local function cleanup_committed_temporaries(job, backup)
     end
   end
   if job.replace then
-    if try_delete_phrase(job.instrument, job.phrase) then
+    if try_delete_temporary(job, job.phrase) then
       job.temporary = false
       forget_temporary(job.phrase)
     else
@@ -1783,7 +1793,7 @@ local function start(request, done, kind)
       terminal_failure(job, "failed", "transaction.stage", "transaction", tostring(error_message))
     else
       pcall(function()
-        if job.phrase and job.instrument then try_delete_phrase(job.instrument, job.phrase) end
+        if job.phrase and job.instrument then try_delete_temporary(job, job.phrase) end
       end)
     end
     return true

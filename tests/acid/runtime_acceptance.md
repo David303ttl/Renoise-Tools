@@ -21,6 +21,62 @@ Notifier failure injection uses mocks; native runs do not force host add/remove
 failures. Playback, broader musical-writer undo grouping, actual field
 preservation and full Step 8 A–E acceptance remain OPEN.
 
+## Gate 8 acceptance plan (2026-10-31)
+
+Gate 8 remains OPEN. The native diagnostic below reproduces a phrase-selection
+jump; its correction remains unresolved. Removal of an existing last phrase
+would also block acceptance but was not observed in this run. API 6.2 was checked directly in both
+`sdk/renoise-api-6.2/definitions/library/renoise/song.lua` and
+`sdk/renoise-api-6.2/docs/API/renoise/renoise.Song.html`: `selected_phrase_index`
+is explicitly READ-ONLY, as is `selected_phrase`. There is no selected-phrase
+index observable. Do not document or test assignment as a supported restoration
+mechanism. Selection stability must be assessed from independently read native
+state while respecting actual user navigation.
+
+The required sequence is T8.0 reproduce/classify, T8.1 correct ownership and
+temporary lifecycle, T8.2 single-target regression, T8.3 bounded multi-instrument
+session, T8.4 recovery/persistence, and T8.5 gate closure. A–E and cold
+reopen/regenerate remain required within that sequence. The T8.3 fixture is
+bounded to four concurrently playing tracks, three instruments (sampler, VST,
+and another supported instrument), and at least 12 owned and foreign phrases.
+Its workflow switches A / phrase 2 to B / phrase 4 during rendering, returns to
+A, exercises C and explicit New, edits with Live Edit during playback, performs
+manual Generate, then saves, fully restarts Renoise, reloads and regenerates.
+The production writer remains serialized; exact object identity, native
+selection, phrase count/order, playback and persisted source/settings are the
+acceptance oracle.
+
+| Substep | Evidence / boundary | Status |
+| --- | --- | --- |
+| T8.0 | Native diagnostic `tmp/interactive-be7913f6df0a4f44862856e9d4a4cc87/report.json` reproduced a selection jump on the first regeneration: initial no-phrase selection index 0 → staging/backup `Phrase 05` index 5 → existing foreign phrase `Workflow foreign 1 2` index 4 after temporary deletion. The run completed six creates, then stopped on regeneration 1 of 6 (seven transactions total). It used three instruments with four phrases each (six owned, six foreign); the affected instrument settled at four phrases after cleanup. No existing-phrase deletion was observed in this run. | FAIL: selection P0 reproduced |
+| T8.1 | Native proof of no unintended selection switch, no deletion of existing phrases, and cleanup limited to exact ACID-owned temporary objects. Visible staging/backup entries during rendering must be measured separately; correct settled state does not establish invisibility. The selection invariant failed in T8.0, so correction and same-case proof are blocked. | BLOCKED |
+| T8.2 | First, middle and last phrase create/regenerate/Live Edit; New tested separately; exact destination identity and count/order assertions. Sequential gate: not run after T8.0 failed. | DEFERRED |
+| T8.3 | Implemented native driver case `multi-instrument-workflow` in `tests/renoise/driver/acceptance_cases.lua`, invoked with `-AcceptanceCase multi-instrument-workflow`. The diagnostic run above covers three instruments, six creates, and begins six regenerations with native selection/list snapshots; it fails at the first regeneration. It does not pass the multi-instrument acceptance. Four-track concurrent playback, GUI navigation, Live Edit, save/restart workflow and full phrase-order/isolation postconditions remain untested. | DEFERRED; diagnostic FAIL |
+| T8.4 | Interruptions, failures, duplicate ownership, save/reopen and undo/redo. Complete logical musical-writer undo grouping remains an explicit open obligation; safe partial undo states do not satisfy it. | DEFERRED |
+| T8.5 | Remaining A–E checks, cold reopen/regenerate, local suites, package checks and independent review; close only against actual native evidence. | DEFERRED |
+
+Supporting local checks for the related hardening changes passed: Lua 5.1
+repository suite 68/68, offline checks 18/18 groups (`tmp/acid-workflow-offline.log`),
+and the ACID release package with 34 runtime files. These checks do not close any
+native T8 substep. The diagnostic runner restored the original Renoise
+installation and force-stopped its runner-owned process after graceful closure
+did not complete; the unrelated existing Renoise process was left open. It did not verify the full
+12-phrase final ordering/isolation postconditions because it stopped at the
+first failed selection invariant.
+
+For the journey, assert these separately: (1) selection stays stable except for
+real user navigation; (2) A edits do not change B, C, another phrase, or a
+foreign holder; (3) regeneration changes the same destination object and leaves
+settled count/order unchanged; (4) explicit Create adds one durable phrase and
+removes none; (5) cleanup removes only verified temporaries and leaves none
+after settlement; (6) any visible temporary list churn is recorded and remains
+an open UX issue if unacceptable; (7) A drafts survive switching through B and
+C, including superseded queued generation; (8) other tracks retain their
+phrase-program selections and supported playback; and (9) fresh-process
+reopen preserves phrase/source/settings/instrument associations and targets
+the intended phrase on explicit regeneration. ACID's success response is not
+evidence for these native facts.
+
 ## Gate 6 observer contracts (2026-10-31)
 
 Notifier postcondition follow-up: observer and mandatory GUI lifecycle adds now
