@@ -19,6 +19,49 @@ for passing report IDs and intermediate failures. Acoustic playback and native
 song undo/redo grouping remain manual Step 8 acceptance; Gates 4-8 retain their
 independent acceptance requirements.
 
+## Task 4 hardening readiness (2026-10-31)
+
+Gate 4 remains OPEN. The playbook's Step 4 now defines ordered T4.0–T4.8
+subgates for completing the existing implementation. This is a readiness audit,
+not by itself implementation acceptance. Record revision, command or native
+report, exact assertion, result and remaining blocker for each subgate as it
+executes. Do not advance past an unresolved earlier correctness defect.
+
+### T4.0 baseline execution (2026-10-31)
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Revision and checkout | HEAD `6cf32aaa9cb7ef3261f12dce0ed87dfd690b996d`; branch `feature/hardening4`, tracking origin | Recorded. Two documentation files had pre-existing staged edits; preserved. No runtime/spec edits were made for T4.0. |
+| ACID baseline | PowerShell 7: `./scripts/run_tests.ps1 -Tool ACID`; runner used Lua 5.1 | 64 specs passed, 0 failed, 54.72s. `acid_runtime_independence_spec.lua` and `acid_gui_independence_spec.lua` passed in this run. |
+| Second-pass verification | Same ACID command; independent read-only review; staged and unstaged `git diff --check` | 64 specs passed again, 0 failed, 54.52s. No material review findings; scope remained the two allowed docs and pre-existing staged changes were unchanged. |
+| Runtime and mutation ownership | GUI button → `runtime.context:make_independent()` → `runtime.independence.run()`; read-only proof in `runtime.eligibility`; identity/store authorities in `renoise.phrase_ownership` and `renoise.pattern_store`; musical writes in `writers.phrase_writer` | Single identity transaction owner confirmed. Make Independent does not invoke the musical writer. |
+| Writer exclusion | Context admission checks active/unsettled writer state, global occupancy, mutation guard and undo state; the Step 4 rule rejects without cancelling or queuing identity work. A later explicit action rechecks after matching terminal settlement. | Contract recorded; detailed races remain T4.2. |
+| Verified commit versus presentation | Runtime identity transaction verifies before returning success. If subsequent inventory adoption or editor restoration fails, current context returns a plain failure and does not first record the required integrity blocker. | Known T4.5–T4.6 correctness gap; no post-commit reconciliation pass is claimed. |
+| Remaining cases | R24 imported/source-less copy negatives; R28 dirty source/settings and recovery-origin failure preservation; R29 native undo/redo states and grouping; R36 cold-process reopen/reclassification/regeneration and negative associations | Open. Existing successful dirty-draft rebinding does not close R28. |
+| Native evidence boundary | `interactive-ce843446f483440ea1d3f121667c45cd` covers Make Independent and same-process saved-song reload/regeneration. | Does not establish cold-process R36 or native undo/redo R29. The prior undo mismatch (restored phrase seal/content with newer `song.tool_data`) remains a negative probe. |
+
+T4.0 baseline and contract recording is complete; Gate 4 remains open. The
+post-commit reconciliation gap and all listed native/local obligations remain
+unresolved.
+
+| Requirement / owning subgate | Evidence still required |
+| --- | --- |
+| Outcome reconciliation / T4.5–T4.6 | Inject post-commit adoption, reconciliation, editor restoration and draft-rebinding failures. Distinguish verified commit from rejection; preserve committed identity and recoverable drafts, and block unsafe writes when reconciliation fails. |
+| Writer exclusion / T4.2 | Reject active/unsettled writer occupancy without cancellation or queued identity retry; independently recheck current session and target before commit. |
+| R24 / T4.1, T4.8 | Focused cross-song/imported-copy transaction negatives, plus native source-less imported-copy rejection without adoption or mutation. |
+| R28 / T4.5–T4.6 | Selected dirty source/settings and exact revision/recovery origin survive injected transaction rollback and post-commit failure; ambiguous old-ID durable drafts remain unclaimed. Existing successful dirty-draft rebinding does not prove this. |
+| R29 / T4.8 | Actual native Make Independent undo/redo states and grouping, including partial phrase/store associations; every inconsistent state blocks regeneration after undo settles, with no repair writes. |
+| R36 / T4.8 | Save, terminate Renoise, open the song in a fresh process, reclassify read-only and explicitly regenerate the exact independent target; repeat negative persisted-association checks. |
+| Architectural debt / T4.1, T4.7–T4.8 | Identify concrete duplicate policy removed, preserve independent live checks, and verify the existing dependency graph, single mutation guard, musical pipeline, queue and ownership/store/draft authorities. No new compatibility path, persistence format or unrelated M5 change. |
+
+The [native host record](../renoise/host_verification.md#exceptional-writer-recovery-verification-2026-10-31)
+records a passing Make Independent and saved-song reload/regenerate scenario.
+It does not establish cold-process acceptance or native undo/redo safety. The
+[prerequisite undo probe](acid_m35_s_manual.md#prerequisite-feasibility-record)
+observed restored phrase content/seal with newer `song.tool_data`; retain this
+negative evidence when designing the native checks. Gate 4's targeted native
+results contribute to Gate 8 without closing its broader acceptance.
+
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform
 no native cell scans or seal hashes. Five edits average 1.09 ms, maximum 1.17 ms,

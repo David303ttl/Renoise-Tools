@@ -63,7 +63,8 @@ This plan retains the existing asynchronous phrase-script renderer, staging/back
 | Active target, session/revision checks, native reconciliation | One runtime context used by `gui.lua`; consolidate existing state, adding a small private module only if needed |
 | User controls and presentation | `gui.lua`; widgets dispatch user actions and render state |
 | Serialized generation and cancellation | One runtime scheduler (a single queue owned by the runtime context; a private helper is allowed only if it remains the sole queue) and the writer's final job/terminal contract. The `model.live_regen` scheduling and arming path was deleted at the `6413e5f` cutover, never wrapped |
-| Phrase mutation, staging, backup, verification, cleanup | `writers.phrase_writer`; two explicit musical operations sharing private helpers |
+| Musical phrase mutation, staging, backup, verification, cleanup | `writers.phrase_writer`; two explicit musical operations sharing private helpers |
+| Identity-only name/source mutation | `runtime.independence`; one explicit Make Independent executor under the existing `runtime.context` mutation guard, sharing store/ownership authorities |
 | Ownership parsing, seal, complete phrase comparison | `renoise.phrase_ownership`; no second ownership implementation |
 | Canonical source/settings and durable draft serialization | `renoise.pattern_store`; preserve its format and guarded commit/restore helpers |
 | Object-keyed session drafts and restoration precedence | `runtime.draft_cache`; preserve existing durable drafts where unambiguous |
@@ -1083,7 +1084,7 @@ Use only epoch, dialog session, target revision, edit revision and operation ser
 | Arm Live Edit | Change arming intent only; do not load/rebind a different target. | None |
 | Disarm Live Edit | Revoke pending/in-flight Live Edit authorization and request cancellation; retain occupancy/drafts. Explicit manual authorization remains independently guarded. | None |
 | Generate, including explicit retry | Capture a fresh operation through the same generation entry; supersede older pending intent. Manual action does not require armed state. | New/create or Owned/regenerate only |
-| Make Independent | Revoke pending musical intent and cancel active work; require settled occupancy and fresh separate group proof. Never queue an automatic retry on settlement. | Metadata-only sink in Step 4; never musical sink |
+| Make Independent | Reject while active work or writer occupancy is unsettled; require explicit retry after settlement. Once admitted, revoke pending musical intent and obtain fresh separate group proof. Never cancel active work or queue an identity retry. | Metadata-only sink in Step 4; never musical sink |
 | External content/source/capability/planner-option change, removal or new collision | Revoke affected requests; advance target revision on eligibility/baseline change; detach mismatching drafts. Never refresh expected values into authorization. | None |
 | Undo/redo processing | Revoke work and reconcile read-only; after processing stops, require independent compatibility proof, not just a valid seal/source. | None |
 | Close/release/new document or integrity blocker | Revoke relevant delivery/requests as in 2.2/2.5; discard pending authorization, retain recoverable drafts under their documented lifetime. | None |
@@ -1283,14 +1284,17 @@ in `tests/acid/acid_gui_recovery_spec.lua` and
 `tests/acid/acid_draft_recovery_spec.lua`. The R01–R36 evidence map is
 `tests/acid/runtime_acceptance.md`.
 
-Native Renoise 3.5.4 checks completed for draft recovery and Make Independent
-(run records `tmp/interactive-2c5c874fbd5846a68b60a56544b706a4` and
-`tmp/interactive-f9a33212200a4e08abbcd94ccfe71766`). These are implementation
-acceptance evidence, not closure of Gates 4–8. Native undo/redo grouping,
-cold-process save/reopen/regeneration, and remaining A–E acceptance remain
-pending. Focused final results: **pending parent verification**. Current full
-ACID/repository suites, package inspection, diff check, and independent final
-review: **pending**. Gates remain open until their exact owning criteria pass.
+**Historical verification snapshot (2026-10-30):** Native Renoise 3.5.4 checks
+completed for draft recovery and Make Independent (run records
+`tmp/interactive-2c5c874fbd5846a68b60a56544b706a4` and
+`tmp/interactive-f9a33212200a4e08abbcd94ccfe71766`). At that point, native
+undo/redo grouping, cold-process save/reopen/regeneration and remaining A-E
+acceptance were pending, as were focused final results, full ACID/repository
+suites, package inspection, diff check and independent final review. This is the
+status recorded at that follow-up, not the later verification result. Subsequent
+Gate 3 and native rerun evidence appears in the Step 3 closeout below and the
+[host verification record](../tests/renoise/host_verification.md#exceptional-writer-recovery-verification-2026-10-31).
+Other gates remain open until their own acceptance criteria pass.
 
 ## Step 3 — Establish the explicit asynchronous writer contract
 
@@ -1382,19 +1386,289 @@ retains verified evidence until writer blocker clearance succeeds. Facade admiss
 contains exceptional request getters. The focused native case also verifies these faults on real Renoise phrases;
 this does not establish acoustic playback or native undo grouping.
 
-## Step 4 — Implement explicit Make Independent
+## Step 4 — Harden existing explicit Make Independent
 
-This is one metadata/source transaction in the writer, sharing Step 1 store/ownership helpers; it is not another render path.
+**Status: Gate 4 OPEN.** Runtime and GUI implementation already exist, with local
+coverage and a native Make Independent/save-reload round trip. Complete and
+harden that implementation; do not create a second path. Gate 3 direct writer
+acceptance is closed; its delivered interfaces are the baseline, not evidence
+that identity resolution or Gate 8 is complete.
 
-1. Accept the instrument/phrase objects from the currently bound **ACID destination dropdown**, expected old name/ID/content/source baseline, and current session guard. Native selection may differ; do not read it as this action's target or write it. The writer uses the existing store allocator immediately before the transaction; never trust a GUI-allocated fresh ID.
-2. Require exact live membership, a current valid seal, an existing old-ID collision, valid committed source/settings under that old ID, and Step 1's independent source/output compatibility check. Every live holder of that ID must have the same exact ownership name/seal and protected content snapshot as the selected phrase (compare values, not enclosing object references). Different valid seals, changed content, incompatible or unverifiable output, or a modified holder block resolution for the group: the shared record's intended association cannot be chosen safely. Use the narrow Step 1 reader, not a guessed original phrase. For 3+ matching holders, resolve only the selected holder and re-evaluate the remaining group.
-3. Invalidate/cancel pending generation before this action and wait for verified cleanup. Revalidate selection, content, old record, and allocated fresh-ID uniqueness across live phrase names and stored entries after cancellation and immediately before commit. A missing source, modified content, active undo/redo, or integrity blocker rejects.
-4. Prepare a clone of the old **committed** source/settings under the new ID, preserving the old entry, other entries, and durable drafts. Do not clone another holder's dirty draft. Keep per-object session drafts detached until matching baselines are checked.
-5. Describe undo; in a short synchronous internal-mutation scope, commit the new source entry and change only the selected phrase's ownership name using the current name/seal format. The visible ID changes because the ID is stored in the name. Do not promise byte-identical names. Do not insert/delete, compile/render, change notes/effects or another holder.
-6. Verify the new ID is unique, cloned committed source/settings match, selected content is unchanged, and old entry/other holders remain unchanged. On failure, restore both previous name and guarded song store; refuse to overwrite intervening changes and raise an integrity blocker if restoration cannot be verified.
-7. Reclassify all holders through the shared reconciliation path and return selected object/new ID. Keep the same ACID-bound object selected. Initialize it from its cloned committed source; restore only an independently matching object-local draft. Do not delete or claim ownership of an ambiguous old-ID durable draft. Further holders remain blocked until unique.
+**Authority and admission contract:** `runtime.independence` is the sole
+identity-only mutation executor. `runtime.context` authorizes the explicitly
+ACID-bound instrument/phrase objects and supplies the existing synchronous
+mutation guard. `runtime.eligibility` provides read-only admission; the executor
+rechecks live authorization. Reuse `renoise.phrase_ownership`,
+`renoise.pattern_store`, existing compatibility validation and draft owners.
+`writers.phrase_writer` remains the musical mutation executor; Make Independent
+never invokes create/regenerate, compile/render, staging, insertion or deletion.
+Native selection is neither the target nor assigned by this action.
 
-**Gate 4:** Tests cover two/three matching holders, same-ID holders with different valid seals/content (reject without mutation), explicit selection without original inference, missing/corrupt records, changed hidden content, new-ID collision with orphaned stored entries, stale guards, failure after either mutation, unchanged musical content/other holders, and preservation of unrelated source/draft records. No observer can call this operation.
+Reject Make Independent while a writer is active, cancellation/cleanup is
+unsettled, global render occupancy is retained, or synchronous mutation is active.
+Do not cancel the active writer as a side effect of this rejected action. The
+user may explicitly retry after settlement; there is no pending identity action,
+automatic retry or additional queue. Once admitted, revoke pending musical intent
+through the existing transition and recheck occupancy, session and authorization
+immediately before mutation. Arming Live Edit and resolving identity never request
+generation. No observer or programmatic refresh may invoke this action.
+
+**Outcome contract:** distinguish mutation-free rejection, verified rollback,
+verified identity commit, and uncertain mutation outcome. These describe evidence,
+not a requirement for a new public API or persisted status format. A verified
+commit followed by adoption, reconciliation, editor restoration or draft-rebinding
+failure is a committed operation with a reconciliation failure, never an ordinary
+mutation-free rejection. Retain the committed object/ID and available verification
+evidence, preserve drafts, invalidate unsafe authorization and record an integrity
+blocker using the existing integrity owner. If recording fails, fail closed through
+the existing runtime fallback. Do not blindly roll back a verified commit to repair
+presentation. Any uncertain commit or unproved restoration remains blocked until
+read-only revalidation establishes safety; no silent repair or automatic retry.
+
+### Execution rules
+
+Execute T4.0–T4.8 in order. Every subgate requires recorded assertions and results
+before the next starts. A discovered earlier-contract defect returns to its owning
+subgate; fix it there and rerun affected downstream checks. Unresolved correctness
+defects stop advancement. Native evidence that is unavailable stays an explicit
+blocker; passing mocks cannot close it.
+
+Allowed files below are repository-relative: runtime paths are under
+`com.david303ttl.ACID.xrnx/`, spec names under `tests/acid/`. Every subgate may
+update this section and `tests/acid/runtime_acceptance.md` with evidence. These are
+scope limits, not instructions to edit every listed file. Widen scope only after
+documenting the concrete defect and its owning contract; no unrelated cleanup.
+
+### T4.0 — Establish the baseline and freeze contracts
+
+- **Scope:** inspect branch, HEAD, status and existing diffs; preserve user work.
+  Confirm Gate 3 interfaces, current Make Independent implementation, mutation
+  ownership and all unresolved R-cases. Resolve contradictory cancellation/writer
+  wording before implementation. Run `./scripts/run_tests.ps1 -Tool ACID` in pwsh
+  and record command, revision, result and any relevant baseline failure.
+- **Allowed files:** this playbook and `tests/acid/runtime_acceptance.md` only.
+- **Assertions / exit:** record current runtime/GUI/spec paths, committed-versus-
+  presentation outcome contract, settled-writer admission and R24/R28/R29/R36
+  blockers. Separate prior native save/reload evidence from cold-process evidence.
+- **Stop:** unclear mutation owner, competing contracts or relevant baseline failure.
+
+**T4.0 baseline record (2026-10-31):** HEAD `6cf32aaa9cb7ef3261f12dce0ed87dfd690b996d`
+(`fix(acid): harden exceptional writer recovery and admission`) on
+`feature/hardening4`, tracking `origin/feature/hardening4`. At entry, the playbook
+and `tests/acid/runtime_acceptance.md` already contained staged edits (257
+insertions, 23 deletions); the unstaged diff was empty. Those staged edits were
+preserved. No runtime or spec files were changed for this subgate.
+
+The existing call path is `gui.lua` → `runtime.context:make_independent()` →
+`runtime.independence.run()`. Context owns document/session, target, undo,
+integrity, writer-occupancy and synchronous-mutation admission; `runtime.eligibility`
+provides the read-only collision proof; `runtime.independence` prepares, commits,
+verifies or rolls back only the selected phrase name and cloned source entry.
+`renoise.phrase_ownership` and `renoise.pattern_store` remain the shared identity
+and persistence authorities. `writers.phrase_writer` owns musical mutation only.
+Focused local coverage is in `acid_runtime_independence_spec.lua`,
+`acid_gui_independence_spec.lua`, and `acid_runtime_writer_integration_spec.lua`,
+with related eligibility, integrity, transition, lifetime and compatibility specs.
+
+Gate 3's frozen writer boundary is `create(request, done)` and
+`regenerate(request, done)`: explicit targets are required; `false` means
+mutation-free rejection before admission, while an accepted job returns `true`
+and reports its one terminal result through `done`, including later failures.
+Make Independent does not dispatch either facade. It rejects while writer cleanup
+or global render occupancy is unsettled and does not cancel the writer or queue an
+identity retry. The matching terminal path retires occupancy; a later explicit
+user action must capture fresh authorization. The Step 4 outcome contract is also
+frozen: a verified metadata commit followed by adoption/reconciliation/editor or
+draft-presentation failure remains a committed operation, preserves drafts and
+committed identity, invalidates unsafe authorization, and records an integrity
+blocker; an uncertain commit or unproved rollback remains blocked pending
+read-only revalidation.
+
+The current implementation has one recorded gap against that outcome contract:
+after `runtime.independence.run()` returns a verified commit,
+`runtime.context:make_independent()` returns an ordinary failure if
+`inventory:adopt()` or editor restoration fails, without first recording the
+required integrity blocker. It does not roll the verified commit back. Treat this
+as unresolved T4.5–T4.6 work; the local baseline pass below does not prove the
+post-commit reconciliation cases.
+
+Fresh baseline command: `./scripts/run_tests.ps1 -Tool ACID` in PowerShell 7;
+runner selected Lua 5.1. Result: **64 specs passed, 0 failed, 54.72s**. The
+focused Make Independent runtime and GUI specs passed in this run. No relevant
+baseline failure was observed.
+
+**Second-pass verification (2026-10-31):** an independent read-only audit found
+no material inaccuracy, missing T4.0 assertion or scope violation. The same ACID
+command passed again: **64 specs passed, 0 failed, 54.52s**. Both staged and
+unstaged `git diff --check` passed; the cached user patch remained unchanged and
+the T4.0 worktree additions remained confined to these two documentation files.
+
+Open obligations remain R24 (focused cross-song/imported-copy transaction
+rejection and native source-less import), R28 (failure-path preservation of dirty
+source/settings and exact recovery origin; existing successful rebinding is not
+enough), R29 (actual native Make Independent undo/redo states and grouping), and
+R36 (cold-process save/reopen, read-only reclassification and explicit exact-target
+regeneration, plus negative associations). Native Make Independent and saved-song
+reload/regeneration passed in the documented same-process scenario
+(`interactive-ce843446f483440ea1d3f121667c45cd`); this is not evidence of a fresh
+Renoise process. The prior undo probe still records a restored phrase seal/content
+paired with newer `song.tool_data`; no native undo safety or cold-process result is
+inferred here.
+
+**T4.0 result:** baseline and contracts recorded; Gate 4 remains open. This result
+does not close the post-commit reconciliation gap or any native obligation.
+
+### T4.1 — Harden read-only collision eligibility
+
+- **Scope:** verify exact live membership using raw object identity, every holder,
+  exact ownership name/seal, complete protected content and source/output/settings
+  compatibility. Missing/corrupt records, getter errors and external mutation reject.
+  Review compatibility-proof construction in eligibility and independence; extract
+  only actual duplicate policy, retaining independent live boundary checks.
+- **Allowed files:** `runtime/eligibility.lua`, `runtime/independence.lua`,
+  `renoise/phrase_ownership.lua`, `writers/phrase_validator.lua`;
+  `acid_runtime_independence_spec.lua`, `acid_output_compatibility_spec.lua`,
+  `acid_live_identity_spec.lua`.
+- **Assertions / exit:** two/three matching holders qualify; different valid seals,
+  hidden/tail/metadata changes, incompatible holders and source-less imports reject
+  with exact phrase/store/draft equality before and after. Identical-content objects
+  remain distinct. No inferred original, excluded holder or adoption from notes.
+- **Stop:** any ambiguous group qualifies or read-only inspection mutates state.
+
+### T4.2 — Harden session and writer exclusion
+
+- **Scope:** check current song, runtime epoch/session/revision, bound object pair,
+  undo state and writer occupancy at admission and before commit. A previously
+  canceled job still blocks admission until its matching terminal cleanup retires
+  occupancy; an explicit retry then requires fresh authorization. Cached UI
+  eligibility is never commit authorization.
+- **Allowed files:** `runtime/context.lua`, `runtime/eligibility.lua`,
+  `runtime/independence.lua`; `acid_runtime_independence_spec.lua`,
+  `acid_runtime_transitions_spec.lua`, `acid_runtime_lifetime_spec.lua`,
+  `acid_gui_independence_spec.lua`.
+- **Assertions / exit:** active writer, canceled in-flight render, unavailable undo
+  state, undo/redo, stale session, A → B → A and same-index replacement reject
+  without identity mutation or identity retry. Reentrant admission cannot overlap;
+  late settlement never executes a previously rejected action.
+- **Stop:** concurrent mutation, stale authorization, implicit target or queued retry.
+
+### T4.3 — Harden allocation and transaction preparation
+
+- **Scope:** use the existing store allocator immediately before the transaction.
+  Check fresh-ID uniqueness against all live phrase names, stored entries and
+  retained durable drafts. Capture original committed source/settings, full group
+  snapshots and guarded store state; prepare the clone without partial writes.
+- **Allowed files:** `runtime/independence.lua`, `renoise/pattern_store.lua`;
+  `acid_runtime_independence_spec.lua`, `acid_id_allocation_spec.lua`,
+  `acid_pattern_store_codec_spec.lua`.
+- **Assertions / exit:** orphaned source/draft IDs cannot be reused; allocation,
+  snapshot, decode and candidate-preparation failures leave exact names, musical
+  state, store bytes and drafts unchanged. Recheck group/source/guard before commit.
+  Clone committed source/settings, never another holder's dirty draft.
+- **Stop:** partial preparation writes, stale proof or an allocation collision.
+
+### T4.4 — Verify the identity commit contract
+
+- **Scope:** describe undo and commit only the new cloned source entry and selected
+  ownership name within the one runtime mutation scope; preserve the seal format.
+- **Allowed files:** `runtime/independence.lua`, `runtime/context.lua`,
+  `renoise/pattern_store.lua`; `acid_runtime_independence_spec.lua`,
+  `acid_runtime_writer_integration_spec.lua`.
+- **Assertions / exit:** selected object/count and all protected musical data stay
+  unchanged; new ID is unique, new committed source/settings match the old entry,
+  old entry and unrelated records/drafts/holders are unchanged. Resolve one holder
+  only; remaining collisions stay blocked. Assert zero musical writer calls.
+- **Stop:** any render, fallback append, other-holder mutation or unverifiable commit.
+
+### T4.5 — Harden rollback and uncertain outcomes
+
+- **Scope:** fault-inject store/name write-then-throw, getter exceptions, reentrant
+  modification, changed guards, name restoration failure and store rollback failure.
+  Restore only guarded transaction-owned values; preserve intervening user changes.
+- **Allowed files:** `runtime/independence.lua`, `runtime/context.lua`,
+  `runtime/integrity.lua`, `renoise/pattern_store.lua`;
+  `acid_runtime_independence_spec.lua`, `acid_runtime_integrity_spec.lua`.
+- **Assertions / exit:** every injected fault proves exact rollback, verified commit,
+  or blocked uncertainty with available evidence. Test both mutation boundaries and
+  rollback verification failures; an exception alone proves neither commit nor
+  rollback. Unproved restoration records a blocker, with fail-closed fallback if
+  evidence recording fails. Revalidate is read-only and never erases user changes.
+- **Stop:** ordinary rejection after possible mutation, overwritten intervening data
+  or an uncertain state that can regenerate.
+
+### T4.6 — Harden post-commit adoption and drafts
+
+- **Scope:** inject false returns and exceptions from `inventory:adopt`, runtime
+  reconciliation, editor restoration and draft rebinding after verified commit.
+  Finish R28 selected dirty-draft rollback regressions.
+- **Allowed files:** `runtime/context.lua`, `runtime/inventory.lua`,
+  `runtime/draft_cache.lua`, `runtime/integrity.lua`;
+  `acid_runtime_independence_spec.lua`, `acid_runtime_editor_spec.lua`,
+  `acid_draft_cache_spec.lua`, `acid_runtime_integrity_spec.lua`.
+- **Assertions / exit:** adoption failure cannot return an ordinary mutation-free
+  rejection. Keep the committed ID/object verifiable and prevent stale displayed
+  state from authorizing writes. Preserve selected dirty source/settings, exact
+  revision/recovery origin and unrelated drafts on rollback and failed adoption.
+  Restore/rebind only independently matching object-local drafts; never delete or
+  claim ambiguous old-ID durable drafts. Persistence warnings retain recoverability.
+  Reopening the dialog cannot clear the live-song blocker.
+- **Stop:** lost/reassigned drafts, stale writable UI or committed state reported as
+  untouched failure. No new persistent outcome state without necessity/lifecycle.
+
+### T4.7 — Close GUI, observers and lifecycle integration
+
+- **Scope:** retain same ACID-bound object through resolution; exercise armed Live
+  Edit, notification reentrancy, target removal, dialog close and document release.
+  Integrate through existing reconciliation and listener/scheduler owners.
+- **Allowed files:** `gui.lua`, `runtime/context.lua`, `runtime/inventory.lua`,
+  `runtime/observers.lua`; `acid_gui_independence_spec.lua`,
+  `acid_runtime_observers_spec.lua`, `acid_runtime_lifetime_spec.lua`,
+  `acid_runtime_writer_integration_spec.lua`, `acid_dependency_graph_spec.lua`.
+- **Assertions / exit:** no generation or native selection assignment on identity
+  resolution; other holders reclassify correctly. No released-object accesses,
+  stale callbacks, listener leaks, second scheduler or repeated full snapshots on
+  unchanged idle/display refresh. Unique selected phrase later regenerates through
+  the existing musical writer only on a new explicit authorized request.
+- **Stop:** observer mutation, stale callback, hidden polling/scheduler or target drift.
+
+### T4.8 — Independent acceptance and debt closeout
+
+- **Scope / allowed files:** existing `tests/acid/` focused specs/manual guides,
+  `tests/renoise/driver/acceptance_cases.lua`, `tests/renoise/host_verification.md`
+  and the two evidence documents; runtime fixes return to their owning subgate.
+- **Local assertions:** run focused identity/GUI/fault/lifecycle/dependency checks,
+  `./scripts/run_tests.ps1 -Tool ACID`, then `./scripts/run_tests.ps1` in pwsh.
+  Run `./scripts/package.ps1 -Tool ACID`; inspect archive-root manifest/main,
+  private modules and exclusion of SDK/development files. Record revision,
+  commands, case/assertion references and results, plus `git diff --check`.
+- **Native assertions:** independently inspect actual phrase/store/draft state for
+  matching two/three-holder groups, mismatching groups, explicit selected-holder
+  isolation, source-less cross-song/imported copies, independent regeneration,
+  save/reload and a separate cold-process save/reopen/regenerate round trip.
+  For Make Independent undo/redo, capture every reachable name/content/source
+  association, including newer `tool_data` with restored old phrase state.
+  Inconsistent states must reject regeneration after undo settles, without repair.
+  Mock undo grouping or an operation's success result is not native evidence.
+- **Evidence / exit:** map each requirement to a passing assertion/report or explicit
+  blocker in `tests/acid/runtime_acceptance.md`. R24 requires focused import/cross-
+  song negatives and native source-less rejection; R28 requires exact dirty-draft
+  failure preservation; R29 requires actual native undo/redo states; R36 requires
+  a fresh Renoise process, positive regeneration and negative saved associations.
+  Existing same-process reload and native Make Independent passes remain valid
+  evidence for their recorded scope only. Unexecuted native cases remain open.
+- **Debt assertion:** require net architectural-debt reduction across Task 4. Record
+  duplicate responsibilities or contract ambiguities removed and why any helper
+  extraction reduces policy duplication; preserve passing code otherwise. No legacy
+  API/shim, feature flag, extra queue, transaction framework, duplicate truth,
+  implicit target, persistence migration, manifest/API bump or unrelated M5 change.
+  Any additional persistent state requires necessity and an explicit lifecycle.
+- **Stop:** failed assertion, missing native requirement or unexplained debt growth.
+
+**Gate 4:** close only when all nine subgates have evidence and no unresolved
+correctness defects or required native blockers. Record local/mocked and native
+results separately; do not infer success from case labels, previous Gate 3 results
+or the existing native round trip. Gate 4's targeted native checks contribute to
+Step 8 but do not close Gate 8's broader A–E requirements or M4.
 
 ## Step 5 — Set the single runtime scheduler and perform the atomic production cutover
 
