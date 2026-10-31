@@ -237,23 +237,104 @@ local function run_make_independent(done)
     end
 
     local context = context_for(song)
+    local observer = require("runtime.observers").new()
+    local observer_notifications = 0
+    observer:attach(song, context, function()
+      observer_notifications = observer_notifications + 1
+    end)
+    local function release_context()
+      observer:detach()
+      context:close_dialog()
+      context:release_document()
+    end
     local bound = context:bind_phrase(instrument, duplicate)
     if not bound or not rawequal(bound.instrument, instrument) or not rawequal(bound.phrase, duplicate) then
-      context:release_document()
+      release_context()
       done({ status = "FAIL", case = "make-independent", reason = "copied phrase could not be selected" })
       return
     end
+    local selected_instrument = song.selected_instrument
+    local selected_phrase = song.selected_phrase
+    local selected_instrument_index = song.selected_instrument_index
+    local selected_phrase_index = song.selected_phrase_index
+    local generation_calls = 0
+    local original_create, original_regenerate = writer.create, writer.regenerate
+    writer.create = function(...)
+      generation_calls = generation_calls + 1
+      return original_create(...)
+    end
+    writer.regenerate = function(...)
+      generation_calls = generation_calls + 1
+      return original_regenerate(...)
+    end
+    context:transition("arm")
     local proof, eligibility_error = context:independence_eligibility()
     if not proof then
-      context:release_document()
+      writer.create, writer.regenerate = original_create, original_regenerate
+      release_context()
       done({ status = "FAIL", case = "make-independent", reason = tostring(eligibility_error) })
       return
     end
     local changed, outcome, two_holder_profile = profile_independence_action(context, eligibility, ownership)
+    writer.create, writer.regenerate = original_create, original_regenerate
     if not changed or two_holder_profile.eligibility_calls > MAXIMUM_ELIGIBILITY_PROOFS then
-      context:release_document()
+      release_context()
       done({ status = "FAIL", case = "make-independent",
         reason = not changed and tostring(outcome) or "two-holder action rebuilt redundant eligibility proofs" })
+      return
+    end
+
+    observer:refresh()
+    local target_after_resolution = context:target_state()
+    local selection_unchanged = rawequal(song.selected_instrument, selected_instrument) and
+      rawequal(song.selected_phrase, selected_phrase) and
+      song.selected_instrument_index == selected_instrument_index and
+      song.selected_phrase_index == selected_phrase_index
+    local resolution_target_preserved = rawequal(target_after_resolution.instrument, instrument) and
+      rawequal(target_after_resolution.phrase, duplicate)
+    local armed_after_resolution = context:revision_state().armed
+    context:target_projection()
+    context:independence_projection()
+    context:reconcile()
+    local unchanged_refresh_snapshot_calls = 0
+    local original_snapshot = ownership.snapshot
+    ownership.snapshot = function(...)
+      unchanged_refresh_snapshot_calls = unchanged_refresh_snapshot_calls + 1
+      return original_snapshot(...)
+    end
+    local refresh_ok, refresh_error = pcall(function()
+      observer:refresh()
+      context:target_projection()
+      context:independence_projection()
+      context:reconcile()
+      context:target_projection()
+      observer:refresh()
+    end)
+    ownership.snapshot = original_snapshot
+    if not refresh_ok then
+      release_context()
+      done({ status = "FAIL", case = "make-independent",
+        reason = "unchanged observer/display refresh failed: " .. tostring(refresh_error) })
+      return
+    end
+    local original_classification = context:bind_phrase(instrument, original)
+    local duplicate_target = context:bind_phrase(instrument, duplicate)
+    local duplicate_classification = duplicate_target
+    local observer_resolution_passed = generation_calls == 0 and selection_unchanged and
+      armed_after_resolution and resolution_target_preserved and observer_notifications > 0 and
+      unchanged_refresh_snapshot_calls == 0 and original_classification and
+      original_classification.kind == "owned" and duplicate_classification and
+      duplicate_classification.kind == "owned" and
+      rawequal(duplicate_target.instrument, instrument) and rawequal(duplicate_target.phrase, duplicate)
+    if not observer_resolution_passed then
+      release_context()
+      done({ status = "FAIL", case = "make-independent",
+        reason = "identity resolution changed native selection, target, generation, holder classification, or refresh cost",
+        generation_calls = generation_calls, selection_unchanged = selection_unchanged,
+        armed = armed_after_resolution, observer_notifications = observer_notifications,
+        unchanged_refresh_snapshot_calls = unchanged_refresh_snapshot_calls,
+        original_classification = original_classification and original_classification.kind,
+        duplicate_classification = duplicate_classification and duplicate_classification.kind })
       return
     end
 
@@ -287,6 +368,12 @@ local function run_make_independent(done)
       original_holder_unchanged = original_unchanged == true,
       source_and_settings_preserved = source_preserved == true,
       target_remains_selected = rawequal(target.instrument, instrument) and rawequal(target.phrase, duplicate),
+      resolution_kept_live_edit_armed = armed_after_resolution,
+      resolution_preserved_native_selection = selection_unchanged,
+      resolution_preserved_bound_objects = resolution_target_preserved,
+      resolution_made_no_generation = generation_calls == 0,
+      unchanged_refresh_snapshot_calls = unchanged_refresh_snapshot_calls,
+      observer_notifications = observer_notifications,
     }
     for metric, value in pairs(three_holder_profile) do
       details["three_holder_" .. metric] = value
@@ -305,7 +392,7 @@ local function run_make_independent(done)
     if not regenerate_request or regenerate_request.kind ~= "regenerate" then
       details.status = "FAIL"
       details.reason = describe_failure(regenerate_error or "independent target did not build a regenerate request")
-      context:release_document()
+      release_context()
       done(details)
       return
     end
@@ -314,7 +401,7 @@ local function run_make_independent(done)
           regenerated.verified ~= true or not rawequal(regenerated.phrase, duplicate) then
         details.status = "FAIL"
         details.regenerate_error = describe_failure(regenerated or "regeneration did not return the same verified phrase")
-        context:release_document()
+        release_context()
         done(details)
         return
       end
@@ -342,7 +429,7 @@ local function run_make_independent(done)
         details.case = "make-independent"
         details.regeneration_preserved_same_phrase = regenerate_passed == true
         if details.status == "FAIL" then
-          context:release_document()
+          release_context()
           done(details)
           return
         end
@@ -354,7 +441,14 @@ local function run_make_independent(done)
           details.roundtrip_fixture = saved.fixture
           details.roundtrip_bytes = saved.bytes
         end
+        context:close_dialog()
         context:release_document()
+        observer:detach()
+        details.observer_detached_after_release = not observer:state().attached and observer:refresh() == false
+        if not details.observer_detached_after_release then
+          details.status = "FAIL"
+          details.reason = "native observer remained active after document release"
+        end
         local function inspect_history(expected_source, expected_snapshot)
           local data_before = song.tool_data
           local check_context = context_for(song)
@@ -434,7 +528,7 @@ local function run_make_independent(done)
     if not regenerate_accepted then
       details.status = "FAIL"
       details.regenerate_error = describe_failure(regenerate_start_error)
-      context:release_document()
+      release_context()
       done(details)
     end
     end)

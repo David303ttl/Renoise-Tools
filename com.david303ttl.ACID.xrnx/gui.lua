@@ -218,15 +218,14 @@ function M.show()
     return copy
   end
   local function save_draft(kind)
-    local transitioned,transition_error=runtime:transition(kind or "edit",{
+    local state,transition_error=runtime:transition(kind or "edit",{
       source=pattern,output_policy=output_policy,pb_range=pb_range})
-    if not transitioned then
+    if not state then
       return false,transition_error or "Editor state transition failed"
     end
     render(source_state,"text","SOURCE DIRTY: Generate to apply this draft.")
     if not bound_instrument() then return true end
-    local state=runtime:editor_state()
-    return state and not state.draft_warning,state and state.draft_warning
+    return not state.draft_warning,state.draft_warning
   end
   local loading=false
   local function default_pitch()
@@ -1112,11 +1111,14 @@ function M.show()
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)
   dialog_session=session
   local observed_dialog=dialog
+  local observed_session=session
   local observed_checkbox=live_checkbox
   idle_observable=renoise.tool().app_idle_observable
   local observed_idle_observable=idle_observable
   local observed_notifier
+  local closing=false
   observed_notifier=function()
+    if closing then return end
     local function detach_this_watch()
       pcall(function() observed_idle_observable:remove_notifier(observed_notifier) end)
     if rawequal(idle_observable,observed_idle_observable) and
@@ -1124,7 +1126,7 @@ function M.show()
         idle_observable,idle_notifier=nil,nil
       end
     end
-    if not rawequal(dialog,observed_dialog) then
+    if not rawequal(dialog,observed_dialog) or dialog_session~=observed_session then
       detach_this_watch()
       return
     end
@@ -1134,6 +1136,7 @@ function M.show()
       runtime:flush_pending()
       return
     end
+    closing=true
     detach_this_watch()
     native_observers:detach()
     runtime:transition("disarm")
@@ -1142,7 +1145,6 @@ function M.show()
     if rawequal(active_live_checkbox,observed_checkbox) then active_live_checkbox=nil end
     dialog=nil
     dialog_session=nil
-    runtime:close_dialog()
   end
   idle_notifier=observed_notifier
   observed_idle_observable:add_notifier(observed_notifier)

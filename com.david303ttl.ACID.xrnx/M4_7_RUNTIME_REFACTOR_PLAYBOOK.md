@@ -1692,6 +1692,18 @@ and exclusion checks. Native acceptance remains T4.8; Gate 4 stays OPEN.
   the existing musical writer only on a new explicit authorized request.
 - **Stop:** observer mutation, stale callback, hidden polling/scheduler or target drift.
 
+**T4.7 implementation:** dialog idle callbacks require the captured dialog/session,
+reject reentrant close handling and close the runtime once. Observers retain stable
+bindings across unchanged refreshes, rebind after structural changes including
+undo, and preserve attachment boundaries during reentrant release/replacement.
+Receiver playback/program and protected script changes use the existing dirty
+notification path; writer-private script events remain filtered. Armed resolution
+preserves native selection and the exact bound objects; a later source edit uses
+the existing serialized writer. Draft callbacks reuse the editor state returned
+by the transition instead of copying it again. Assertions and results are in
+[runtime acceptance](../tests/acid/runtime_acceptance.md#t47-gui-observers-and-lifecycle-2026-10-31).
+No extra scheduler, compatibility path, persisted format or manifest change.
+
 ### T4.8 — Independent acceptance and debt closeout
 
 - **Scope / allowed files:** existing `tests/acid/` focused specs/manual guides,

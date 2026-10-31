@@ -2,6 +2,7 @@ local fixture=dofile("tests/acid/runtime_phrase_fixture.lua")
 local ownership=require("renoise.phrase_ownership")
 local store=require("renoise.pattern_store")
 local seq=require("model.sequencer")
+local EDITED_PITCH_KEY=5
 local song,instrument,original,_,source=fixture.fixture()
 source.pitch_events[1]=seq.new_pitch(4,0,true,false)
 original=fixture.phrase(source,101)
@@ -9,15 +10,35 @@ instrument.phrases={original,fixture.phrase(source,102)}
 assert(store.save(song,101,source,"play_once",0))
 assert(store.save(song,102,source,"play_once",0))
 local duplicate=fixture.phrase(source,101)
+local note_equal={__eq=function() return true end}
+setmetatable(original,note_equal)
+setmetatable(duplicate,note_equal)
 instrument.phrases[#instrument.phrases+1]=duplicate
 song.selected_instrument_index=1
 song.selected_instrument=instrument
 song.selected_phrase=duplicate
+local selected_phrase=song.selected_phrase
+local selection_assignments=0
+song.selected_phrase=nil
+setmetatable(song,{__index=function(_,key)
+  if key=="selected_phrase" then return selected_phrase end
+end,__newindex=function(target,key,value)
+  if key=="selected_phrase" then
+    selection_assignments=selection_assignments+1
+    selected_phrase=value
+  elseif key=="selected_phrase_index" then
+    selection_assignments=selection_assignments+1
+  else rawset(target,key,value) end
+end})
 
 local function observable()
-  local handlers={}
-  return {add_notifier=function(_,fn)handlers[fn]=true end,
+  local handlers,history={},{}
+  return {add_notifier=function(_,fn)handlers[fn]=true;history[#history+1]=fn end,
     remove_notifier=function(_,fn)handlers[fn]=nil end,
+    fire_stale=function()
+      local pending={};for _,fn in ipairs(history)do pending[#pending+1]=fn end
+      for _,fn in ipairs(pending)do fn()end
+    end,
     fire=function()
       local pending={};for fn in pairs(handlers)do pending[#pending+1]=fn end
       for _,fn in ipairs(pending)do if handlers[fn]then fn()end end
@@ -54,18 +75,29 @@ renoise.tool=function()return tool end
 renoise.app=function()return app end
 renoise.ViewBuilder=function()return builder end
 local writes=0
+local last_writer_request
 local writer_status="idle"
 package.loaded["writers.phrase_writer"]={state=function()return writer_status,nil end,
   is_temporary=function()return false end,release=function()end,
-  create=function()writes=writes+1;return false,"unexpected render" end,
-  regenerate=function()writes=writes+1;return false,"unexpected render" end}
+  create=function(request)
+    writes=writes+1;last_writer_request=request;return false,"unexpected render"
+  end,
+  regenerate=function(request)
+    writes=writes+1;last_writer_request=request;return false,"unexpected render"
+  end}
 local before=assert(ownership.snapshot(duplicate))
 local original_before=assert(ownership.snapshot(original))
 local context_module=require("runtime.context")
 local original_context_new=context_module.new
+local close_calls=0
 context_module.new=function(options)
   local runtime=original_context_new(options)
   local make_independent=runtime.make_independent
+  local close_dialog=runtime.close_dialog
+  runtime.close_dialog=function(self,...)
+    close_calls=close_calls+1
+    return close_dialog(self,...)
+  end
   local resolved=0
   runtime.make_independent=function(self,...)
     if resolved==0 then
@@ -120,6 +152,11 @@ for _,node in ipairs(builder.nodes)do
   if node.kind=="popup" and node.width==360 then phrase_choice=node end
 end
 assert(phrase_choice.value==3,"resolution keeps the selected object bound")
+builder.views.acid_program_key_popup:fire(EDITED_PITCH_KEY+1)
+tool.app_idle_observable:fire()
+assert(writes==1 and last_writer_request.kind=="regenerate" and
+    rawequal(last_writer_request.phrase,duplicate),
+  "a new armed source edit regenerates only the exact independent phrase")
 local blocked_duplicate=fixture.phrase(source,fresh)
 instrument.phrases[#instrument.phrases+1]=blocked_duplicate
 instrument.phrases_observable:fire()
@@ -140,13 +177,13 @@ for _,node in ipairs(builder.nodes)do
 end
 assert(generate)
 generate:fire()
-assert(writes==0,"blocked committed outcome cannot enter the musical writer")
+assert(writes==1,"blocked committed outcome cannot enter the musical writer")
 instrument.phrases[3]=nil
 instrument.phrases_observable:fire()
 tool.app_idle_observable:fire()
 assert(phrase_choice.items[phrase_choice.value]=="Unavailable bound phrase",
   "native removal leaves the exact missing target unavailable")
-assert(writes==0 and not independent.active)
+assert(writes==1 and not independent.active)
 song.instruments={}
 song.instruments_observable:fire()
 tool.app_idle_observable:fire()
@@ -156,7 +193,35 @@ for _,node in ipairs(builder.nodes)do
 end
 assert(instrument_choice.items[instrument_choice.value]=="Unavailable bound instrument",
   "removing the bound instrument preserves its unavailable identity")
-assert(writes==0 and not independent.active)
+assert(writes==1 and not independent.active)
+local live_value=live.value
+live.value=nil
+setmetatable(live,{__index=function(_,key)
+  if key=="value" then return live_value end
+end,__newindex=function(node,key,value)
+  if key=="value" then
+    live_value=value
+    tool.app_idle_observable:fire()
+  else rawset(node,key,value) end
+end})
 dialog.visible=false
 tool.app_idle_observable:fire()
+assert(close_calls==1,"closing the dialog closes its runtime session once")
+assert(live_value==false,"close disarms Live Edit even when checkbox updates reenter idle")
+tool.app_idle_observable:fire()
+assert(close_calls==1,"a removed idle callback cannot close a session again")
+local closed_dialog=dialog
+song.instruments={instrument}
+song.selected_instrument_index=1
+song.selected_instrument=instrument
+require("gui").show()
+assert(dialog~=closed_dialog and dialog.visible,"the GUI opens a fresh dialog session")
+local fresh_dialog=dialog
+tool.app_idle_observable:fire_stale()
+assert(dialog==fresh_dialog and dialog.visible and close_calls==1,
+  "a stale idle callback cannot close or update a reopened dialog session")
+dialog.visible=false
+tool.app_idle_observable:fire()
+assert(close_calls==2,"the reopened dialog closes its own runtime session")
+assert(selection_assignments==0,"GUI identity resolution never assigns native selection")
 print("ACID GUI explicit collision resolution passed (mocked Renoise)")

@@ -147,6 +147,31 @@ on a 32-step/128-line phrase. Thirty GUI actions meet a 30 ms callback budget;
 queued edits commit the latest source. Hidden/inactive cells and external-change
 rejection remain verified.
 
+### T4.7 GUI, observers and lifecycle (2026-10-31)
+
+| Contract | Assertions | Result |
+| --- | --- | --- |
+| Bound target and authorization | `acid_gui_independence_spec.lua`: content-equal objects remain distinct; armed resolution makes no writer/selection call; the next source edit regenerates the exact object after idle dispatch; removed targets stay unavailable. | PASS |
+| Dialog lifetime | Same spec: reentrant close runs once; callbacks from a closed session cannot affect a reopened dialog. | PASS |
+| Native notifications | `acid_runtime_observers_spec.lua`: receiver playback/program and protected script changes notify during idle/busy operation; private render-script events remain filtered; structural undo rebinds listeners. | PASS |
+| Listener lifetime and cost | Same spec: unchanged refresh adds/removes no listeners; reentrant detach/replacement preserves attachment boundaries and queued notifications; removed objects lose listeners. Existing lifetime/writer integration specs cover released callbacks and retained render occupancy. | PASS |
+| Native identity and refresh | `interactive-c0ee4d62dd464641b4ddbac74d82d398/report.json`: armed resolution preserves native selection, bound objects, notes/source/settings and other holders; zero generation, two eligibility proofs, zero snapshots on unchanged display/reconcile; explicit regeneration and same-process reload retain the exact destination. | PASS |
+| Native integrity, writer recovery, drafts | `interactive-026e85e44b204c5b86f47e6a05b993c8`, `interactive-c48d162cac444e62a7e331caf15e9968`, `interactive-50bcff9e07bb46c1b4184d3d085746d3`. | PASS |
+| Native/keyboard catalog | `interactive-8611724f12d5421b8fd7016e39db2e51`: native inventory scenarios, real shortcut, dialog close and native navigation; installation restored. | PASS |
+| Native responsiveness | `interactive-a27cb8ec7c234f4285bbedf0ce524ac8`: zero GUI actions exceed 30 ms; busy edit 17.09 ms, four editor snapshot copies; unchanged reads perform zero native snapshots. | PASS |
+| Local suites and second pass | `./scripts/run_tests.ps1 -Tool ACID`: 64/64; `./scripts/run_tests.ps1`: 67/67, Lua 5.1. Fresh GUI/runtime/native reviews and focused reruns; `git diff --check`. | PASS |
+
+Reports are under ignored `tmp/`; commands use PowerShell 7 and Renoise 3.5.4 /
+API 6.2. The native Make Independent command is
+`./scripts/run_interactive_tests.ps1 -Suite Native -AcceptanceCase make-independent -Install -ApproveDisposableSong`;
+the catalog uses `-Suite All -TestEnvironment <local-config> -AllowKeyboardFocusActivation`.
+The 34-entry ACID release archive passes root/module/exclusion checks.
+Stable bindings remove idle listener churn; draft callbacks reuse the returned
+editor state and avoid a duplicate copy. The existing runtime, dirty-notification
+path, queue and writer remain the sole owners. Formats and versions are unchanged.
+Native undo is unavailable in these runs. T4.8 source-less import, actual undo/redo
+and cold-process reopen obligations remain open; Gate 4 remains OPEN.
+
 | Case | Local evidence | Acceptance limit |
 | --- | --- | --- |
 | R01 | `acid_gui_views_spec.lua`, `acid_gui_admission_spec.lua`, `acid_runtime_editor_spec.lua`: opening, arming, navigation and programmatic restoration leave the request count unchanged. | GUI mocks only. |

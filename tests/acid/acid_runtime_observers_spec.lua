@@ -1,12 +1,18 @@
 dofile("tests/bootstrap.lua")("acid")
 
+local UNCHANGED_IDLE_REFRESH_COUNT=8
 local listeners={}
+local notifier_adds,notifier_removes=0,0
 local function observable()
   local value={}
   listeners[value]={}
-  function value:add_notifier(handler) listeners[self][handler]=true end
+  function value:add_notifier(handler)
+    notifier_adds=notifier_adds+1
+    listeners[self][handler]=true
+  end
   function value:remove_notifier(handler)
     assert(listeners[self][handler],"removing an unattached listener")
+    notifier_removes=notifier_removes+1
     listeners[self][handler]=nil
   end
   function value:has_notifier(handler) return listeners[self][handler]==true end
@@ -51,12 +57,18 @@ local function phrase(name)
     self._column_mute_changes[column]=self._column_mute_changes[column] or observable()
     return self._column_mute_changes[column]
   end
+  result.script={}
+  for _,property in ipairs({"editor_visible","parameters","paragraphs",
+      "paragraphs_assignment","pending_changes","committed"}) do
+    result.script[property.."_observable"]=observable()
+  end
   return result
 end
 
 local function instrument(name,phrases)
   return {name=name,name_observable=observable(),phrases=phrases,
-    phrases_observable=observable(),phrase_mappings_observable=observable()}
+    phrases_observable=observable(),phrase_mappings_observable=observable(),
+    phrase_playback_mode_observable=observable(),phrase_program_observable=observable()}
 end
 
 local p1,p2=phrase("one"),phrase("two")
@@ -90,6 +102,11 @@ for column=1,12 do
     p1:column_is_muted_observable(column):count_notifiers()==1,
     "note-column metadata observables must be attached for every column")
 end
+for _,property in ipairs({"editor_visible","parameters","paragraphs",
+    "paragraphs_assignment","pending_changes","committed"}) do
+  assert(p1.script[property.."_observable"]:count_notifiers()==1,
+    "phrase script state observers must attach for "..property)
+end
 
 depth=1
 p1.lpb_observable:fire()
@@ -102,6 +119,12 @@ assert(#dirty==0,"line notifier callbacks should defer runtime work")
 p1:column_name_observable(1):fire()
 assert(changes[#changes].kind=="content" and changes[#changes].object==p1 and changes[#changes].internal,
   "column renames must participate in native change observation")
+p1.script.paragraphs_assignment_observable:fire()
+assert(changes[#changes].kind=="content" and changes[#changes].object==p1 and changes[#changes].internal,
+  "script paragraph assignment must participate in native change observation")
+i1.phrase_playback_mode_observable:fire()
+assert(changes[#changes].kind=="content" and changes[#changes].object==i1 and changes[#changes].internal,
+  "instrument phrase playback changes must participate in native change observation")
 p1:column_is_muted_observable(12):fire()
 assert(changes[#changes].kind=="content" and changes[#changes].object==p1 and changes[#changes].internal,
   "column mute changes must participate in native change observation")
@@ -120,9 +143,11 @@ p1.lpb_observable:fire()
 p1._line_changes:fire()
 p1:column_name_observable(1):fire()
 p1:column_is_muted_observable(12):fire()
+p1.script.paragraphs_observable:fire()
+p1.script.committed_observable:fire()
 p1.name_observable:fire()
 assert(#changes==before_render_events,
-  "busy writer staging phrase content and rename events must be filtered")
+  "busy writer staging phrase content, script and rename events must be filtered")
 assert(#dirty==0,"writer-owned async content and rename must not invalidate its operation")
 p2._line_changes:fire()
 assert(#changes==before_render_events+1 and changes[#changes].object==p2,
@@ -133,6 +158,12 @@ assert(#changes==before_render_events+2 and changes[#changes].object==p2,
 p2:column_is_muted_observable(12):fire()
 assert(#changes==before_render_events+3 and changes[#changes].object==p2 and not changes[#changes].internal,
   "column mute edits must remain external during generation")
+p2.script.parameters_observable:fire()
+assert(#changes==before_render_events+4 and changes[#changes].object==p2 and not changes[#changes].internal,
+  "script parameter inventory edits must remain external during generation")
+i1.phrase_program_observable:fire()
+assert(#changes==before_render_events+5 and changes[#changes].object==i1 and not changes[#changes].internal,
+  "instrument phrase program changes must remain external during generation")
 observer:refresh()
 assert(#dirty==1,"external phrase content must invalidate during a busy render")
 runtime.busy=false
@@ -142,7 +173,10 @@ observer:refresh()
 local before_metadata_events=#changes
 p2:column_name_observable(1):fire()
 p2:column_is_muted_observable(12):fire()
-assert(#changes==before_metadata_events+2 and changes[#changes].object==p2 and not changes[#changes].internal,
+p2.script.editor_visible_observable:fire()
+p2.script.pending_changes_observable:fire()
+i1.phrase_playback_mode_observable:fire()
+assert(#changes==before_metadata_events+5 and changes[#changes].object==i1 and not changes[#changes].internal,
   "idle column metadata edits must notify external content changes")
 i1.name_observable:fire()
 assert(changes[#changes].kind=="rename" and changes[#changes].object==i1 and not changes[#changes].internal)
@@ -185,6 +219,10 @@ song.instruments_observable:fire()
 assert(i2.name_observable:count_notifiers()==0,"list callbacks must defer nested rebind")
 observer:refresh()
 assert(i1.name_observable:count_notifiers()==0 and observer:state().listener_count==listener_total())
+assert(i1.phrase_playback_mode_observable:count_notifiers()==0 and
+  p1.script.paragraphs_observable:count_notifiers()==0 and
+  p1.script.parameters_observable:count_notifiers()==0,
+  "removed instruments must detach instrument and phrase script observers")
 for column=1,12 do
   assert(p1:column_name_observable(column):count_notifiers()==0 and
     p1:column_is_muted_observable(column):count_notifiers()==0,
@@ -207,6 +245,10 @@ assert(p4.name_observable:count_notifiers()==1,"refresh must attach new phrase o
 local stable_count=listener_total()
 observer:refresh()
 assert(listener_total()==stable_count,"repeated refresh must not leak listeners")
+local stable_adds,stable_removes=notifier_adds,notifier_removes
+for _=1,UNCHANGED_IDLE_REFRESH_COUNT do observer:refresh() end
+assert(notifier_adds==stable_adds and notifier_removes==stable_removes,
+  "unchanged idle refreshes must retain observer bindings")
 
 local old_song_instruments=song.instruments_observable
 observer:detach()
@@ -221,6 +263,82 @@ observer:attach(song,runtime,function(kind) changes[#changes+1]={kind=kind} end)
 assert(listener_total()==attached_count,"repeated attach must not leak listeners")
 observer:detach()
 assert(listener_total()==0)
+
+-- Dirty reconciliation can close/release the observer reentrantly. The idle
+-- callback must not recreate nested listeners after that attachment ended.
+do
+  local reentrant_song={instruments={i2},instruments_observable=observable(),
+    selected_instrument_observable=observable(),selected_phrase_observable=observable()}
+  local reentrant= require("runtime.observers").new()
+  local reentrant_runtime={}
+  function reentrant_runtime:mark_dirty()
+    reentrant:detach()
+  end
+  local listeners_before_attach=listener_total()
+  reentrant:attach(reentrant_song,reentrant_runtime)
+  assert(listener_total()>listeners_before_attach)
+  i2.name_observable:fire()
+  assert(reentrant:refresh())
+  assert(not reentrant:state().attached and listener_total()==listeners_before_attach,
+    "reentrant detach during dirty delivery must leave no song listeners")
+  reentrant_song.instruments_observable:fire()
+  assert(not reentrant:state().attached,
+    "released root callback reached a reentrantly detached observer")
+end
+
+-- A replacement attachment created by mark_dirty keeps its own queued list
+-- notification for the next refresh.
+do
+  local replacement=instrument("replacement",{phrase("replacement phrase")})
+  local final_replacement=instrument("final replacement",{phrase("final phrase")})
+  local replacement_song={instruments={i2},instruments_observable=observable(),
+    selected_instrument_observable=observable(),selected_phrase_observable=observable()}
+  local replacement_observer=require("runtime.observers").new()
+  local replacement_runtime={reentered=false}
+  function replacement_runtime:mark_dirty()
+    if self.reentered then return end
+    self.reentered=true
+    replacement_song.instruments={replacement}
+    replacement_observer:attach(replacement_song,replacement_runtime)
+    replacement_song.instruments={final_replacement}
+    replacement_song.instruments_observable:fire()
+  end
+  replacement_observer:attach(replacement_song,replacement_runtime)
+  i2.name_observable:fire()
+  replacement_observer:refresh()
+  assert(replacement.phrases[1].name_observable:count_notifiers()==1 and
+    final_replacement.phrases[1].name_observable:count_notifiers()==0,
+    "replaced attachment was rebound during the old refresh")
+  replacement_observer:refresh()
+  assert(replacement.phrases[1].name_observable:count_notifiers()==0 and
+    final_replacement.phrases[1].name_observable:count_notifiers()==1,
+    "replacement attachment lost its pending inventory notification")
+  replacement_observer:detach()
+end
+
+-- Undo classification must not hide the structural change needed to rebuild
+-- nested observers.
+do
+  local undo_old=instrument("undo old",{phrase("undo phrase")})
+  local undo_new=instrument("undo new",{phrase("restored phrase")})
+  local undo_song={instruments={undo_old},instruments_observable=observable(),
+    selected_instrument_observable=observable(),selected_phrase_observable=observable(),undoing=true}
+  function undo_song:is_undo_redoing() return self.undoing end
+  local undo_runtime={}
+  function undo_runtime:mark_dirty(reason) self.reason=reason end
+  local undo_observer=require("runtime.observers").new()
+  undo_observer:attach(undo_song,undo_runtime)
+  undo_song.instruments={undo_new}
+  undo_song.instruments_observable:fire()
+  undo_song.undoing=false
+  undo_observer:refresh()
+  assert(undo_runtime.reason=="Native undo or redo change",
+    "structural undo must retain undo classification")
+  assert(undo_old.name_observable:count_notifiers()==0 and
+    undo_new.name_observable:count_notifiers()==1,
+    "undo inventory change did not rebind nested observers")
+  undo_observer:detach()
+end
 
 -- Delayed native inventory notifications from revoked writer cleanup use the
 -- runtime's captured post-mutation identity proof. A later unrelated list

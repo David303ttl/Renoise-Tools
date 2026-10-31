@@ -10,6 +10,11 @@ local PHRASE_PROPERTIES={
   "delay_column_visible","sample_effects_column_visible",
 }
 local MAPPING_PROPERTIES={"key_tracking","base_note","note_range","looping","loop_start","loop_end"}
+local INSTRUMENT_PHRASE_PROPERTIES={"phrase_playback_mode","phrase_program"}
+local SCRIPT_PROPERTIES={
+  "editor_visible","parameters","paragraphs","paragraphs_assignment",
+  "pending_changes","committed",
+}
 local NOTE_COLUMN_COUNT=12
 
 local function read(object,key)
@@ -21,8 +26,9 @@ function M.new()
   local observer={}
   local song,runtime,on_change
   local root_records,nested_records={},{}
-  local generation=0
+  local attachment_serial=0
   local pending_external,pending_undo=false,false
+  local pending_inventory_rebind=false
 
   local function remove(records)
     for index=#records,1,-1 do
@@ -54,7 +60,7 @@ function M.new()
     return checked and temporary==true
   end
 
-  local function add(records,source,kind,object,list,current_generation,temporary_instrument,inventory_kind)
+  local function add(records,source,kind,object,list,temporary_instrument,inventory_kind)
     if source==nil then return end
     local add_notifier=read(source,"add_notifier")
     local remove_notifier=read(source,"remove_notifier")
@@ -62,7 +68,7 @@ function M.new()
     local slot={object=object}
     local handler=function()
       local subject=slot.object
-      if subject==nil or generation~=current_generation or song==nil then return end
+      if subject==nil or song==nil then return end
       if kind=="content" and is_render_temporary(temporary_instrument,subject) then return end
       if kind=="rename" and temporary_instrument and is_render_temporary(temporary_instrument,subject) then return end
       local change_kind=classify_undo(song) and "undo" or kind
@@ -81,23 +87,24 @@ function M.new()
         pending_external=true
         pending_undo=pending_undo or change_kind=="undo"
       end
+      if kind=="inventory" then pending_inventory_rebind=true end
       if on_change then pcall(on_change,change_kind,subject,internal,inventory_kind) end
     end
     local ok=pcall(function() source:add_notifier(handler) end)
     if ok then records[#records+1]={source=source,handler=handler,slot=slot,list=list==true} end
   end
 
-  local function add_phrase(records,instrument,phrase,current_generation)
-    add(records,read(phrase,"name_observable"),"rename",phrase,false,current_generation,instrument)
+  local function add_phrase(records,instrument,phrase)
+    add(records,read(phrase,"name_observable"),"rename",phrase,false,instrument)
     for _,property in ipairs(PHRASE_PROPERTIES) do
-      add(records,read(phrase,property.."_observable"),"content",phrase,false,current_generation,instrument)
+      add(records,read(phrase,property.."_observable"),"content",phrase,false,instrument)
     end
     for _,property in ipairs({"column_name_observable","column_is_muted_observable"}) do
       local observable_for_column=read(phrase,property)
       if type(observable_for_column)=="function" then
         for column=1,NOTE_COLUMN_COUNT do
           local ok,source=pcall(observable_for_column,phrase,column)
-          if ok then add(records,source,"content",phrase,false,current_generation,instrument) end
+          if ok then add(records,source,"content",phrase,false,instrument) end
         end
       end
     end
@@ -107,7 +114,7 @@ function M.new()
       local slot={object=phrase}
       local handler=function()
         local subject=slot.object
-        if subject==nil or generation~=current_generation or song==nil then return end
+        if subject==nil or song==nil then return end
         if is_render_temporary(instrument,subject) then return end
         local change_kind=classify_undo(song) and "undo" or "content"
         local internal=false
@@ -130,25 +137,34 @@ function M.new()
     local mapping=read(phrase,"mapping")
     if mapping then
       for _,property in ipairs(MAPPING_PROPERTIES) do
-        add(records,read(mapping,property.."_observable"),"content",phrase,false,current_generation,instrument)
+        add(records,read(mapping,property.."_observable"),"content",phrase,false,instrument)
+      end
+    end
+    local script=read(phrase,"script")
+    if script then
+      for _,property in ipairs(SCRIPT_PROPERTIES) do
+        add(records,read(script,property.."_observable"),"content",phrase,false,instrument)
       end
     end
   end
 
-  local function add_instrument(records,instrument,current_generation)
-    add(records,read(instrument,"name_observable"),"rename",instrument,false,current_generation)
-    add(records,read(instrument,"phrases_observable"),"inventory",instrument,true,current_generation,nil,"phrases")
-    add(records,read(instrument,"phrase_mappings_observable"),"inventory",instrument,true,current_generation,nil,"phrase_mappings")
+  local function add_instrument(records,instrument)
+    add(records,read(instrument,"name_observable"),"rename",instrument,false)
+    for _,property in ipairs(INSTRUMENT_PHRASE_PROPERTIES) do
+      add(records,read(instrument,property.."_observable"),"content",instrument,false)
+    end
+    add(records,read(instrument,"phrases_observable"),"inventory",instrument,true,nil,"phrases")
+    add(records,read(instrument,"phrase_mappings_observable"),"inventory",instrument,true,nil,"phrase_mappings")
     local phrases=read(instrument,"phrases")
     pcall(function()
-      for _,phrase in ipairs(phrases) do add_phrase(records,instrument,phrase,current_generation) end
+      for _,phrase in ipairs(phrases) do add_phrase(records,instrument,phrase) end
     end)
   end
 
-  local function add_nested(current_song,current_generation)
+  local function add_nested(current_song)
     local instruments=read(current_song,"instruments")
     pcall(function()
-      for _,instrument in ipairs(instruments) do add_instrument(nested_records,instrument,current_generation) end
+      for _,instrument in ipairs(instruments) do add_instrument(nested_records,instrument) end
     end)
   end
 
@@ -157,41 +173,42 @@ function M.new()
     assert(current_runtime==nil or type(current_runtime)=="table","Runtime must be a table")
     assert(callback==nil or type(callback)=="function","Change callback must be a function")
     self:detach()
-    generation=generation+1
+    attachment_serial=attachment_serial+1
     song,runtime,on_change=current_song,current_runtime,callback
-    local current_generation=generation
-    add(root_records,read(song,"instruments_observable"),"inventory",song,true,current_generation,nil,"instruments")
-    add(root_records,read(song,"selected_instrument_observable"),"selection",song,false,current_generation)
-    add(root_records,read(song,"selected_phrase_observable"),"selection",song,false,current_generation)
-    add_nested(song,current_generation)
+    add(root_records,read(song,"instruments_observable"),"inventory",song,true,nil,"instruments")
+    add(root_records,read(song,"selected_instrument_observable"),"selection",song,false)
+    add(root_records,read(song,"selected_phrase_observable"),"selection",song,false)
+    add_nested(song)
     return true
   end
 
   function observer:refresh()
     if song==nil then return false end
-    if pending_external and runtime and type(runtime.mark_dirty)=="function" then
-      local reason=pending_undo and "Native undo or redo change" or "External native change"
+    local attached_song,attached_runtime,attached_callback=song,runtime,on_change
+    local attached_serial=attachment_serial
+    local mark_external,mark_undo=pending_external,pending_undo
+    pending_external,pending_undo=false,false
+    if mark_external and runtime and type(runtime.mark_dirty)=="function" then
+      local reason=mark_undo and "Native undo or redo change" or "External native change"
       pcall(runtime.mark_dirty,runtime,reason)
     end
-    pending_external,pending_undo=false,false
-    remove(nested_records)
-    generation=generation+1
-    local current_generation=generation
-    -- Root callbacks are rebuilt too so every listener shares the active token.
-    remove(root_records)
-    add(root_records,read(song,"instruments_observable"),"inventory",song,true,current_generation,nil,"instruments")
-    add(root_records,read(song,"selected_instrument_observable"),"selection",song,false,current_generation)
-    add(root_records,read(song,"selected_phrase_observable"),"selection",song,false,current_generation)
-    add_nested(song,current_generation)
+    -- mark_dirty may synchronously release or replace this attachment.
+    if attachment_serial~=attached_serial or not rawequal(song,attached_song) or
+        not rawequal(runtime,attached_runtime) or not rawequal(on_change,attached_callback) then return true end
+    if pending_inventory_rebind then
+      pending_inventory_rebind=false
+      remove(nested_records)
+      add_nested(song)
+    end
     return true
   end
 
   function observer:detach()
-    generation=generation+1
+    attachment_serial=attachment_serial+1
     remove(nested_records)
     remove(root_records)
     song,runtime,on_change=nil,nil,nil
-    pending_external,pending_undo=false,false
+    pending_external,pending_undo,pending_inventory_rebind=false,false,false
     return true
   end
 
