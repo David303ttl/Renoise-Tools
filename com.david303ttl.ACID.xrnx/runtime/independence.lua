@@ -236,7 +236,8 @@ function M.run(song,target,options)
       if committed and rename_ok and verified then
         store.release_candidate(candidate)
         return true,{instrument=target.instrument,phrase=target.phrase,old_id=id,id=fresh_id,
-          source=source,output_policy=policy,pb_range=pb_range,baseline=committed_baseline}
+          source=source,output_policy=policy,pb_range=pb_range,baseline=committed_baseline,
+          committed_store=song.tool_data}
       end
       local rollback_errors={}
       local current_name,name_read_error=read_name(target.phrase)

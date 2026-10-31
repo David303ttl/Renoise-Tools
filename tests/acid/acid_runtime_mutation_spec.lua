@@ -77,6 +77,42 @@ do
  assert(ctx:reconcile().kind=='new')
 end
 
+-- Recovery recording failures always unwind finalization and fail closed until reattachment.
+for _,mode in ipairs({'returns_false','throws'})do
+ local integrity_module=require('runtime.integrity')
+ local original_new=integrity_module.new
+ integrity_module.new=function(...)
+  local owner=original_new(...)
+  owner.record=function()
+   if mode=='throws' then error('injected recovery recorder failure') end
+   return false,'injected recovery recorder rejection'
+  end
+  return owner
+ end
+ local ctx,log,song=fixture()
+ integrity_module.new=original_new
+ local ok=pcall(function()ctx:mutate(log.token,function()
+  song.tool_data='uncertain mutation';error('injected uncertain mutation')
+ end)end)
+ assert(not ok,'uncertain mutation unexpectedly succeeded')
+ local state=ctx:mutation_state()
+ assert(state.depth==0 and state.failed,'failed recovery recording left finalization active')
+ assert(ctx:integrity_state().blocked,'failed recovery recording did not retain an effective blocker')
+ local status=ctx:revalidation_status()
+ assert(not status.verified and status.blocked,'failed recovery recording exposed a revalidation route')
+ assert(not ctx:revalidate({}),'failed recovery recording accepted a proof')
+ assert(ctx:release_document())
+ assert(ctx:mutation_state().depth==0,'release retained mutation finalization')
+ ctx:attach_document(song)
+ assert(not ctx:mutation_state().failed and ctx:mutation_state().depth==0,
+  'reattachment retained failed mutation state')
+ assert(ctx:integrity_state().blocked and not ctx:revalidation_status().verified,
+  'same-document reattachment lost the recording-failure blocker')
+ local _,_,other_song=fixture()
+ ctx:attach_document(other_song)
+ assert(not ctx:integrity_state().blocked,'different-document attachment retained stale blocker')
+end
+
 -- Copy/name/list callbacks remain synchronous dirtiness; only neutral outer exit reconciles.
 do
  local ctx,log,song,instrument,source,temporaries=fixture()

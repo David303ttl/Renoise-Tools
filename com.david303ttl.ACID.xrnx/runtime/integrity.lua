@@ -17,6 +17,9 @@ function M.new(song,drafts,idle)
   local proofs=setmetatable({},{__mode="k"})
   local owner={}
   local captures=setmetatable({},{__mode="k"})
+  local committed_captures=setmetatable({},{__mode="k"})
+  local draft_release_tokens=setmetatable({},{__mode="k"})
+  local original_song=setmetatable({song},{__mode="v"})
 
   function owner:capture_mutation()
     local ok,capture=pcall(function()
@@ -38,12 +41,74 @@ function M.new(song,drafts,idle)
     return descriptor
   end
 
+  local function committed_delta_matches(instrument,phrase,baseline,pre_evidence,committed_store)
+    local before=pre_evidence and captures[pre_evidence]
+    if not before or type(committed_store)~="string" or song.tool_data~=committed_store then
+      return false,"Committed store or pre-commit recovery evidence is unavailable"
+    end
+    local ok,matches=pcall(function()
+      if #song.instruments~=#before.instruments then return false end
+      local target_seen=false
+      for instrument_index,saved_instrument in ipairs(before.instruments) do
+        local current_instrument=song.instruments[instrument_index]
+        if not rawequal(current_instrument,saved_instrument.instrument) or
+            #current_instrument.phrases~=#saved_instrument.phrases then return false end
+        for phrase_index,saved_phrase in ipairs(saved_instrument.phrases) do
+          local current_phrase=current_instrument.phrases[phrase_index]
+          if not rawequal(current_phrase,saved_phrase.phrase) then return false end
+          local comparison=rawequal(current_phrase,phrase) and "name" or "exact"
+          if not ownership.compare(saved_phrase.snapshot,assert(ownership.snapshot(current_phrase)),comparison) then
+            return false
+          end
+          if rawequal(current_phrase,phrase) then
+            if target_seen or not rawequal(current_instrument,instrument) or
+                not ownership.membership(song,instrument,phrase) or
+                not ownership.compare(saved_phrase.snapshot,baseline.snapshot,"name") then
+              return false
+            end
+            target_seen=true
+          end
+        end
+      end
+      return target_seen and ownership.id(phrase)==baseline.id
+    end)
+    if not ok or not matches then
+      return false,"Protected phrase state changed before committed recovery capture"
+    end
+    return true
+  end
+
+  function owner:capture_committed(instrument,phrase,baseline,reason,pre_evidence,committed_store)
+    if not rawequal(song,original_song[1]) or not instrument or not phrase or type(baseline)~="table" then
+      return nil,"Committed recovery target is incomplete"
+    end
+    local delta_matches,delta_error=committed_delta_matches(instrument,phrase,baseline,
+      pre_evidence,committed_store)
+    if pre_evidence then captures[pre_evidence]=nil end
+    if not delta_matches then return nil,delta_error end
+    local descriptor,capture_error=self:capture_mutation()
+    if not descriptor then return nil,capture_error end
+    committed_captures[descriptor]={instrument=instrument,phrase=phrase,
+      baseline=ownership.copy_snapshot(baseline),reason=reason}
+    if not committed_captures[descriptor].baseline then
+      captures[descriptor]=nil
+      committed_captures[descriptor]=nil
+      return nil,"Committed recovery baseline is invalid"
+    end
+    return descriptor
+  end
+
   function owner:record(evidence)
     if song==nil then return false,"No current document is attached" end
     local record={reason="Song integrity requires revalidation",recovery={}}
     if captures[evidence] then
       record.mutation=captures[evidence]
+      record.committed_target=committed_captures[evidence]
+      if record.committed_target and type(record.committed_target.reason)=="string" then
+        record.reason=record.committed_target.reason
+      end
       captures[evidence]=nil
+      committed_captures[evidence]=nil
     end
     local ok=pcall(function()
       if record.mutation then return end
@@ -140,6 +205,24 @@ function M.new(song,drafts,idle)
             end
           end
         end
+        if entry.committed_target then
+          local target=entry.committed_target
+          if not ownership.membership(song,target.instrument,target.phrase) then
+            return nil,"Committed phrase identity has not been restored"
+          end
+          local selected_ok,selected_instrument,selected_phrase=pcall(function()
+            return song.selected_instrument,song.selected_phrase
+          end)
+          if not selected_ok or not rawequal(selected_instrument,target.instrument) or
+              not rawequal(selected_phrase,target.phrase) then
+            return nil,"Select the committed phrase before revalidation"
+          end
+          local baseline,baseline_error=current_baseline({instrument=target.instrument,phrase=target.phrase})
+          if not baseline then return nil,baseline_error end
+          if not ownership.compare(target.baseline,baseline) then
+            return nil,"Committed phrase baseline has changed"
+          end
+        end
       else
         if type(entry.destination_phrases)=="table" and
             (not entry.committed or entry.operation=="regenerate") then
@@ -216,8 +299,52 @@ function M.new(song,drafts,idle)
     return true
   end
 
+  function owner:prepare_draft_release()
+    local retained={}
+    for _,entry in ipairs(entries) do
+      if entry.draft_capture then
+        if not drafts or not drafts.is_current(song,entry.draft_capture) then
+          return nil,"Captured draft preconditions have changed; preserve the detached draft"
+        end
+        retained[#retained+1]={entry=entry,capture=entry.draft_capture}
+      end
+    end
+    local token={}
+    draft_release_tokens[token]=retained
+    return token
+  end
+
+  function owner:complete_draft_release(token)
+    local retained=draft_release_tokens[token]
+    if not retained then return false,"Draft release proof is stale or unknown" end
+    draft_release_tokens[token]=nil
+    for _,item in ipairs(retained) do
+      if item.entry.draft_capture==item.capture then
+        item.entry.draft_capture=nil
+      end
+    end
+    return true
+  end
+
   function owner:release()
-    song=nil;drafts=nil;idle=nil;entries={};proofs={};captures={}
+    song=nil;drafts=nil;idle=nil;entries={};proofs={};captures={};committed_captures={}
+  end
+
+  function owner:suspend()
+    proofs=setmetatable({},{__mode="k"})
+    captures=setmetatable({},{__mode="k"})
+    committed_captures=setmetatable({},{__mode="k"})
+    draft_release_tokens=setmetatable({},{__mode="k"})
+    song=nil;drafts=nil;idle=nil
+  end
+
+  function owner:resume(current_song,current_drafts,current_idle)
+    if not rawequal(current_song,original_song[1]) or song~=nil then
+      return false,"Recovery evidence belongs to a different song"
+    end
+    song=current_song;drafts=current_drafts;idle=current_idle
+    proofs=setmetatable({},{__mode="k"})
+    return true
   end
 
   return owner

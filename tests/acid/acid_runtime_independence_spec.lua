@@ -7,6 +7,7 @@ local cache=require('runtime.draft_cache')
 local MAX_FULL_PROOFS_PER_RESOLUTION=2
 local CHANGED_RECEIVER_CHANNEL=2
 local UNEXPECTED_COMMITTED_ID=1000
+local INDEPENDENCE_COLLISION_ID=101
 
 local function setup(count)
   local song,instrument,selected,other,source=helper.fixture()
@@ -77,7 +78,20 @@ end
 
 -- Resolves only the selected holder, clones committed source/settings, and leaves music intact.
 do
+  local integrity_module=require('runtime.integrity')
+  local original_new=integrity_module.new
+  local mutation_captures=0
+  integrity_module.new=function(...)
+    local owner=original_new(...)
+    local original_capture=owner.capture_mutation
+    owner.capture_mutation=function(self,...)
+      mutation_captures=mutation_captures+1
+      return original_capture(self,...)
+    end
+    return owner
+  end
   local ctx,song,instrument,selected,other,source,holders,_,log=setup(2)
+  integrity_module.new=original_new
   local before=assert(ownership.snapshot(selected))
   local other_before=assert(ownership.snapshot(holders[2]))
   local unrelated_draft=seq.new_pattern(6)
@@ -91,6 +105,7 @@ do
   assert(ctx:independence_eligibility())
   local changed,result=ctx:make_independent()
   assert(changed,result)
+  assert(mutation_captures==1,'Make Independent captured whole-song recovery evidence more than once')
   assert(result.old_id==101 and result.id==103)
   assert(rawequal(result.phrase,selected) and rawequal(result.instrument,instrument))
   local after=assert(ownership.snapshot(selected))
@@ -353,7 +368,7 @@ end
 do
   local ctx,song,instrument,selected,_,source=setup(1)
   assert(store.write_draft(song,instrument,selected,seq.new_pattern(6),'play_once',0))
-  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,INDEPENDENCE_COLLISION_ID)})
   local raw,name=song.tool_data,selected.name
   local original=ctx.independence_eligibility
   local nested_result,nested_reason
@@ -378,7 +393,7 @@ end
 -- Reopening the dialog on the attached document during initial eligibility
 -- invalidates its session token instead of authorizing against the new one.
 do
-  local ctx,song,_,selected,_,source=setup(1)
+  local ctx,song,instrument,selected,_,source=setup(1)
   song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
   local raw,name=song.tool_data,selected.name
   local original=ctx.independence_eligibility
@@ -401,7 +416,7 @@ end
 -- Reattaching the same song creates a new document epoch and invalidates the
 -- original admission, even though its object identities and bytes still match.
 do
-  local ctx,song,_,selected,_,source=setup(1)
+  local ctx,song,instrument,selected,_,source=setup(1)
   song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
   local raw,name=song.tool_data,selected.name
   local original=ctx.independence_eligibility
@@ -835,7 +850,16 @@ end
 
 -- A store setter that writes and then throws is guardedly restored with the old identity intact.
 do
-  local ctx,song,_,selected,_,_,holders=setup(2)
+  local ctx,song,instrument,selected,_,source,holders=setup(1)
+  local outgoing=seq.copy_source(source)
+  outgoing.pitch_events[1]=seq.new_pitch(11,0,false,false)
+  assert(ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true}))
+  assert(ctx:transition('edit',{source=outgoing,output_policy='repeat',pb_range=12}))
+  assert(cache.put(song,instrument,selected,outgoing,'repeat',12,ctx:draft_options()))
+  local _,draft_policy,draft_pb,draft_before=cache.get(song,instrument,selected,ctx:draft_options())
+  assert(draft_before and draft_before.token and draft_before.revision)
+  local other_holder=helper.phrase(source,101)
+  song.instruments[#song.instruments+1]=helper.instrument({other_holder})
   local raw=song.tool_data
   local original=store.commit
   store.commit=function(target,candidate)
@@ -846,7 +870,19 @@ do
   store.commit=original
   assert(not changed,'failed store commit was reported as success')
   assert(song.tool_data==raw and ownership.id(selected)==101)
-  assert(ownership.id(holders[2])==101 and not ctx:integrity_state().blocked)
+  song.instruments[#song.instruments]=nil
+  assert(ctx:transition('refresh'))
+  local state=ctx:editor_state()
+  local _,after_policy,after_pb,draft_after=cache.get(song,instrument,selected)
+  assert(seq.same_source(state.source,outgoing) and state.output_policy=='repeat' and state.pb_range==12,
+    'transaction rollback changed the selected dirty source or settings')
+  assert(after_policy==draft_policy and after_pb==draft_pb and draft_after.token==draft_before.token and
+      draft_after.revision==draft_before.revision and draft_after.recovered==draft_before.recovered and
+      draft_after.persistent==draft_before.persistent and
+      draft_after.recovery_token==draft_before.recovery_token and
+      draft_after.recovery_revision==draft_before.recovery_revision,
+    'transaction rollback changed the exact selected draft revision')
+  assert(ownership.id(other_holder)==101 and not ctx:integrity_state().blocked)
 end
 
 -- A matching object-local editor draft follows the selected object only after
@@ -857,7 +893,6 @@ do
   assert(store.write_draft(song,instrument,selected,old_draft,'play_once',0))
   local other_holder=helper.phrase(source,101)
   song.instruments[#song.instruments+1]=helper.instrument({other_holder})
-  ctx:bind_phrase(instrument,selected)
   local outgoing=seq.copy_source(source)
   outgoing.pitch_events[1]=seq.new_pitch(11,0,false,false)
   ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true})
@@ -1072,16 +1107,113 @@ for _,fault in ipairs({'false','throw'}) do
     end
     return inventory
   end
-  local ctx,song,_,selected,_,_,holders,_,log=setup(2)
+  local ctx,song,instrument,selected,_,source,holders,_,log=setup(1)
+  local outgoing=seq.copy_source(source)
+  outgoing.pitch_events[1]=seq.new_pitch(10,0,false,false)
+  assert(ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true}))
+  assert(ctx:transition('edit',{source=outgoing,output_policy='repeat',pb_range=2}))
+  assert(cache.put(song,instrument,selected,outgoing,'repeat',2,ctx:draft_options()))
+  local _,draft_policy,draft_pb,draft_before=cache.get(song,instrument,selected,ctx:draft_options())
+  local other_holder=helper.phrase(source,101)
+  song.instruments[#song.instruments+1]=helper.instrument({other_holder})
   inventory_module.new=original_new
   local changed,result=ctx:make_independent()
   assert(changed and result.committed==true and type(result.warning)=='string',
     fault..' post-commit adoption was reported as mutation-free rejection')
-  assert(ownership.id(selected)==result.id and ownership.id(holders[2])==101,
+  assert(ownership.id(selected)==result.id and ownership.id(other_holder)==101,
     fault..' adoption failure lost the committed identity result')
   assert(ctx:integrity_state().blocked,'adoption failure did not block the live song')
   assert(not ctx:request_generation('manual'),'adoption failure left stale editor state writable')
   assert(log.sinks==0,'adoption failure entered the musical scheduler')
+  local state=ctx:editor_state()
+  local draft_matches,draft_after=cache.matches_values(song,instrument,selected,outgoing,'repeat',2)
+  assert(seq.same_source(state.source,outgoing) and state.output_policy=='repeat' and state.pb_range==2,
+    fault..' adoption failure lost the dirty source or settings')
+  assert(draft_matches and draft_policy=='repeat' and draft_pb==2 and draft_after.token==draft_before.token and
+      draft_after.revision==draft_before.revision and draft_after.recovered==draft_before.recovered and
+      draft_after.persistent==draft_before.persistent and
+      draft_after.recovery_token==draft_before.recovery_token and
+      draft_after.recovery_revision==draft_before.recovery_revision,
+    fault..' adoption failure changed the exact selected draft revision')
+end
+
+-- A committed adoption blocker can clear only after its retained evidence
+-- verifies, including after the same document is detached and reattached.
+do
+  local inventory_module=require('runtime.inventory')
+  local original_new=inventory_module.new
+  inventory_module.new=function(...)
+    local inventory=original_new(...)
+    inventory.adopt=function() return false,'injected adoption rejection' end
+    return inventory
+  end
+  local ctx,song,instrument,selected,_,source=setup(1)
+  inventory_module.new=original_new
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+
+  local changed,result=ctx:make_independent()
+  assert(changed and result.committed==true,'adoption failure lost the committed outcome')
+  song.selected_instrument,song.selected_phrase=instrument,selected
+  local status,proof=ctx:revalidation_status()
+  assert(status.verified and proof,'stable committed evidence did not produce a revalidation proof: '..
+    tostring(status.reason))
+  assert(ctx:revalidate(proof),'stable committed evidence could not clear its blocker')
+  assert(not ctx:integrity_state().blocked,'revalidation left the committed blocker active')
+  assert(ownership.id(selected)==result.id,'revalidation changed committed identity')
+
+  local inventory_module_new=inventory_module.new
+  inventory_module.new=function(...)
+    local inventory=inventory_module_new(...)
+    inventory.adopt=function() return false,'injected adoption rejection' end
+    return inventory
+  end
+  local attached_ctx,attached_song,attached_instrument,attached_phrase,_,attached_source=setup(1)
+  inventory_module.new=inventory_module_new
+  attached_song.instruments[#attached_song.instruments+1]=helper.instrument({
+    helper.phrase(attached_source,INDEPENDENCE_COLLISION_ID)})
+  local attached,attached_result=attached_ctx:make_independent()
+  assert(attached and attached_result.committed==true,'reattach case lost the committed outcome')
+  attached_song.selected_instrument,attached_song.selected_phrase=attached_instrument,attached_phrase
+  attached_ctx:release_document()
+  attached_ctx:attach_document(attached_song)
+  attached_ctx:open_dialog()
+  local resumed_status,resumed_proof=attached_ctx:revalidation_status()
+  assert(resumed_status.verified and resumed_proof,
+    'same-song reattach did not resume committed recovery verification')
+  assert(attached_ctx:revalidate(resumed_proof),
+    'same-song reattach could not clear verified committed recovery')
+  assert(not attached_ctx:integrity_state().blocked and ownership.id(attached_phrase)==attached_result.id,
+    'same-song revalidation left the blocker or changed committed identity')
+end
+
+-- A post-commit callback cannot make intervening protected phrase edits part
+-- of the recovery baseline.
+do
+  local inventory_module=require('runtime.inventory')
+  local original_new=inventory_module.new
+  local protected_phrase
+  inventory_module.new=function(...)
+    local inventory=original_new(...)
+    inventory.adopt=function()
+      protected_phrase.name='Externally changed protected phrase'
+      return false,'injected adoption rejection'
+    end
+    return inventory
+  end
+  local ctx,song,_,selected,other_phrase,source=setup(1)
+  protected_phrase=other_phrase
+  inventory_module.new=original_new
+  song.instruments[#song.instruments+1]=helper.instrument({
+    helper.phrase(source,INDEPENDENCE_COLLISION_ID)})
+  local changed,result=ctx:make_independent()
+  assert(changed and result.committed==true,'protected-state test lost committed identity')
+  assert(other_phrase.name=='Externally changed protected phrase',
+    'injected protected-state change did not occur')
+  local status=ctx:revalidation_status()
+  assert(not status.verified and not ctx:revalidate(),
+    'intervening protected phrase edit was accepted as the recovery baseline')
+  assert(ownership.id(selected)==result.id,
+    'protected-state recovery check changed the committed identity')
 end
 
 -- Recovery capture and recording failures preserve the committed identity and
@@ -1099,12 +1231,8 @@ for _,fault in ipairs({'capture_throw','record_false','record_throw'}) do
   integrity_module.new=function(...)
     local integrity=original_integrity_new(...)
     if fault=='capture_throw' then
-      local capture=integrity.capture_mutation
-      local calls=0
-      integrity.capture_mutation=function(self,...)
-        calls=calls+1
-        if calls==1 then error('injected recovery capture exception',0) end
-        return capture(self,...)
+      integrity.capture_committed=function()
+        error('injected committed recovery capture exception',0)
       end
     elseif fault=='record_false' then
       integrity.record=function() return false,'injected recovery recording rejection' end
@@ -1145,11 +1273,13 @@ end
 -- writes until the committed identity can be reconciled.
 for _,fault in ipairs({'false','throw'}) do
   local ctx,song,instrument,selected,_,source=setup(1)
-  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
   local outgoing=seq.copy_source(source)
-  outgoing.pitch_events[1]=seq.new_pitch(12,0,false,false)
+  outgoing.pitch_events[1]=seq.new_pitch(9,0,false,false)
   assert(ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true}))
-  assert(ctx:transition('edit',{source=outgoing,output_policy='play_once',pb_range=0}))
+  assert(ctx:transition('edit',{source=outgoing,output_policy='repeat',pb_range=24}))
+  assert(cache.put(song,instrument,selected,outgoing,'repeat',24,ctx:draft_options()))
+  local _,draft_policy,draft_pb,draft_before=cache.get(song,instrument,selected,ctx:draft_options())
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
   local transition=ctx.transition
   ctx.transition=function(self,kind,values)
     if kind=='programmatic' and values and values.restore==true then
@@ -1164,19 +1294,32 @@ for _,fault in ipairs({'false','throw'}) do
     'editor restoration failure was reported as mutation-free rejection')
   assert(seq.same_source(ctx:editor_state().source,outgoing),
     'editor restoration failure lost the selected dirty source')
+  local state=ctx:editor_state()
+  local _,after_policy,after_pb,draft_after=cache.get(song,instrument,selected,ctx:draft_options())
+  assert(state.output_policy=='repeat' and state.pb_range==24 and after_policy==draft_policy and
+      after_pb==draft_pb and draft_after.token==draft_before.token and
+      draft_after.revision==draft_before.revision and draft_after.recovered==draft_before.recovered and
+      draft_after.persistent==draft_before.persistent and
+      draft_after.recovery_token==draft_before.recovery_token and
+      draft_after.recovery_revision==draft_before.recovery_revision,
+    fault..' editor restoration failure changed the dirty settings or exact draft revision')
   assert(ctx:integrity_state().blocked and not ctx:musical_eligibility(),
     'editor restoration failure left stale UI state writable')
   assert(ownership.id(selected)==result.id)
 end
 
--- Reconciliation failure after commit is a blocked committed outcome.
-for _,fault in ipairs({'false','throw'}) do
+-- Reconciliation must validate the classified target, not only a truthy return.
+for _,fault in ipairs({'false','throw','unavailable'}) do
   local ctx,song,_,selected,_,source=setup(1)
   song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
   local transition=ctx.transition
   ctx.transition=function(self,kind,values)
     if kind=='refresh' then
       if fault=='throw' then error('injected reconciliation exception',0) end
+      if fault=='unavailable' then
+        return {kind='unavailable',reason='injected unavailable selected phrase',
+          phrase=nil}
+      end
       return nil,'injected reconciliation rejection'
     end
     return transition(self,kind,values)
@@ -1190,31 +1333,81 @@ for _,fault in ipairs({'false','throw'}) do
   assert(not ctx:request_generation('manual'),'reconciliation failure left stale UI state writable')
 end
 
+-- A target switch during post-commit reconciliation must not bind the committed
+-- source to the newly selected phrase.
+do
+  local ctx,song,instrument,selected,_,source=setup(1)
+  local other_source=seq.new_pattern(5)
+  other_source.pitch_events[1]=seq.new_pitch(11,0,false,false)
+  local other_phrase=helper.phrase(other_source,207)
+  instrument.phrases[#instrument.phrases+1]=other_phrase
+  assert(store.save(song,207,other_source,'play_once',0))
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local transition=ctx.transition
+  ctx.transition=function(self,kind,values)
+    if kind=='refresh' then
+      local rebound,rebind_error=self:restore_editor_target(instrument,other_phrase)
+      assert(rebound,rebind_error)
+    end
+    return transition(self,kind,values)
+  end
+  local changed,result=ctx:make_independent()
+  ctx.transition=transition
+  local state=ctx:editor_state()
+  assert(changed and result.committed==true and result.warning,
+    'post-commit target switch was not reported as blocked commit')
+  assert(ownership.id(selected)==result.id and ctx:target_state().phrase==other_phrase,
+    'post-commit target switch lost the committed phrase or selected target')
+  assert(seq.same_source(state.source,other_source) and state.output_policy=='play_once' and state.pb_range==0,
+    'post-commit source restoration replaced the newly selected phrase editor')
+  assert(ctx:integrity_state().blocked and not ctx:request_generation('manual'),
+    'post-commit target switch left stale runtime state writable')
+end
+
+-- A dialog session change after commit blocks editor restoration for the old
+-- operation even when the song and selected phrase remain the same.
+do
+  local ctx,song,_,selected,_,source=setup(1)
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local original_session=ctx:lifetime_state().session
+  local transition=ctx.transition
+  ctx.transition=function(self,kind,values)
+    if kind=='refresh' then self:open_dialog() end
+    return transition(self,kind,values)
+  end
+  local changed,result=ctx:make_independent()
+  ctx.transition=transition
+  assert(changed and result.committed==true and result.warning,
+    'post-commit session change was reported as a completed adoption')
+  assert(ctx:lifetime_state().session>original_session and ownership.id(selected)==result.id,
+    'post-commit session change lost the committed identity or new session')
+  assert(ctx:integrity_state().blocked and not ctx:request_generation('manual'),
+    'post-commit session change left stale runtime state writable')
+end
+
 -- Draft persistence rejection and exception keep the object-local editor copy
 -- and surface a recoverable warning after the committed rebind.
 for _,fault in ipairs({'false','throw'}) do
   local ctx,song,instrument,selected,_,source=setup(1)
-  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
   local outgoing=seq.copy_source(source)
   outgoing.pitch_events[1]=seq.new_pitch(10,0,false,false)
   assert(ctx:transition('programmatic',{source=source,output_policy='play_once',pb_range=0,restore=true}))
   assert(ctx:transition('edit',{source=outgoing,output_policy='play_once',pb_range=0}))
-  local original_put=cache.put
+  assert(cache.put(song,instrument,selected,outgoing,'play_once',0,ctx:draft_options()))
+  song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
+  local original_write=store.write_draft
   local calls=0
-  cache.put=function(...)
+  store.write_draft=function(...)
     calls=calls+1
-    if calls>1 then
-      if fault=='throw' then error('injected draft rebind exception',0) end
-      return nil,'injected draft rebind rejection'
-    end
-    return original_put(...)
+    if fault=='throw' then error('injected draft rebind exception',0) end
+    return nil,'injected draft rebind rejection'
   end
   local changed,result=ctx:make_independent()
-  cache.put=original_put
+  store.write_draft=original_write
   local state=ctx:editor_state()
   assert(changed and ownership.id(selected)==result.id,
     fault..' draft persistence failure lost committed identity')
-  assert(calls==2 and seq.same_source(state.source,outgoing) and state.draft_warning,
+  assert(calls==1 and seq.same_source(state.source,outgoing) and state.draft_warning,
     fault..' draft persistence failure lost the selected dirty source or warning')
   assert(not ctx:integrity_state().blocked,
     fault..' recoverable object-local draft unnecessarily blocked the song')

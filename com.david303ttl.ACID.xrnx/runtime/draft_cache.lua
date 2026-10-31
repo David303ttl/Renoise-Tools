@@ -9,6 +9,7 @@ local capabilities=require("renoise.target_capabilities")
 local pitch_bend=require("writers.phrase_pitch_bend")
 local M={}
 local NEW={}
+local MIN_OWNERSHIP_ID=1
 local sessions=setmetatable({},{__mode="k"})
 local captures=setmetatable({},{__mode="k"})
 local serial=0
@@ -65,7 +66,9 @@ local function labels(instrument,phrase)
 end
 local function metadata(record)
   return {token=record.token,revision=record.revision,recovered=record.recovered==true,
-    persistent=record.persistent==true,warning=record.warning}
+    persistent=record.persistent==true,warning=record.warning,
+    recovery_token=record.origin and record.origin.token,
+    recovery_revision=record.origin and record.origin.revision}
 end
 local function values(record)
   return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record)
@@ -84,7 +87,7 @@ local function proof(song,instrument,phrase,options,previous_baseline,previous_i
   if not ok then return nil,"Cannot validate draft baseline" end
   if not result then return nil,err or "Draft target is unavailable" end
   local id_ok,id=pcall(ownership.id,phrase)
-  if not id_ok or not policies.is_integer(id) or id<1 then
+  if not id_ok or not policies.is_integer(id) or id<MIN_OWNERSHIP_ID then
     return nil,"Cannot inspect draft phrase identity"
   end
   local identity=result.baseline_identity
@@ -117,7 +120,7 @@ local function proof(song,instrument,phrase,options,previous_baseline,previous_i
     return detached
   end)
   if not readable then return nil,"Cannot inspect verified draft baseline" end
-  if not baseline or not policies.is_integer(baseline.id) or baseline.id<1 or
+  if not baseline or not policies.is_integer(baseline.id) or baseline.id<MIN_OWNERSHIP_ID or
       type(baseline.settings)~="table" or type(baseline.snapshot)~="table" or
       type(baseline.planning_inputs)~="table" or
       not policies.valid_output_policy(baseline.settings.output_policy) or
@@ -236,6 +239,63 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   if not saved then return nil,save_error,metadata(record) end
   record.persistent=true
   return true,nil,metadata(record)
+end
+
+function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selection,options)
+  local valid,target_error=valid_target(song,instrument,phrase)
+  if not valid then return nil,target_error end
+  local options_valid,options_error=valid_options(options)
+  if not options_valid then return nil,options_error end
+  if type(selection)~="table" or getmetatable(selection)~=nil or
+      not policies.is_integer(selection.token) or not policies.is_integer(selection.revision) then
+    return nil,"Invalid draft rebind selection"
+  end
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if not record or record.detached or record.token~=selection.token or
+      record.revision~=selection.revision then
+    return nil,"Draft changed before identity rebind"
+  end
+  local origin_token=record.origin and record.origin.token
+  local origin_revision=record.origin and record.origin.revision
+  if selection.recovery_token~=origin_token or selection.recovery_revision~=origin_revision then
+    return nil,"Draft recovery origin changed before identity rebind"
+  end
+  local source,source_error=sequencer.copy_source(pattern)
+  if not source then return nil,source_error end
+  if not sequencer.same_source(record.pattern,source) or
+      record.output_policy~=output_policy or record.pb_range~=pb_range then
+    return nil,"Draft values changed before identity rebind"
+  end
+  local verified,verify_error,verified_identity,verified_snapshot=baseline(song,instrument,phrase,options)
+  if not verified then return nil,verify_error end
+  if not policies.is_integer(verified.id) or verified.id<MIN_OWNERSHIP_ID then
+    return nil,"Committed draft identity is unavailable"
+  end
+  record.baseline=verified
+  record.baseline_identity=verified_identity
+  record.verified_snapshot=verified_snapshot
+  record.labels=labels(instrument,phrase)
+  local write_ok,saved,save_error=pcall(store.write_draft,song,instrument,phrase,
+    source,output_policy,pb_range)
+  record.persistent=write_ok and saved==true
+  if record.persistent then
+    record.warning=nil
+  else
+    record.warning=write_ok and save_error or saved or "Draft persistence failed"
+  end
+  return true,record.warning,metadata(record)
+end
+
+function M.matches_values(song,instrument,phrase,pattern,output_policy,pb_range)
+  if not valid_target(song,instrument,phrase) then return false end
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if not record or record.detached or record.output_policy~=output_policy or
+      record.pb_range~=pb_range or not sequencer.same_source(record.pattern,pattern) then
+    return false
+  end
+  return true,metadata(record)
 end
 
 local function resolve(song,instrument,phrase,options)

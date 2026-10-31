@@ -190,4 +190,24 @@ for _,replacement in ipairs({"|unknown|", "||"}) do
   assert(timing_song.tool_data==corrupt)
 end
 timing_song.tool_data=valid_timing_data
+
+-- A successful identity rebind clears the persistence warning.
+local rebind_phrase_id=101
+local rebind_pattern_length=5
+local rebind_pb_range=0
+local rebind_instrument={name="Rebind",phrases={}}
+local rebind_phrase={id=rebind_phrase_id}
+rebind_instrument.phrases[1]=rebind_phrase
+local rebind_song={instruments={rebind_instrument}}
+local rebind_source=sequencer.new_pattern(rebind_pattern_length)
+assert(pattern_store.save(rebind_song,rebind_phrase.id,rebind_source,"repeat",rebind_pb_range))
+local _,_,rebind_metadata=cache.put(rebind_song,rebind_instrument,rebind_phrase,
+  rebind_source,"repeat",rebind_pb_range)
+assert(rebind_metadata and rebind_metadata.persistent)
+local rebound,rebind_warning,rebound_metadata=cache.rebind(rebind_song,rebind_instrument,
+  rebind_phrase,rebind_source,"repeat",rebind_pb_range,rebind_metadata)
+assert(rebound and rebind_warning==nil and rebound_metadata.persistent and
+  rebound_metadata.warning==nil,
+  "successful draft identity rebind has no persistence warning")
+
 print("acid_draft_cache_spec: ok")

@@ -61,7 +61,31 @@ package.loaded["writers.phrase_writer"]={state=function()return writer_status,ni
   regenerate=function()writes=writes+1;return false,"unexpected render" end}
 local before=assert(ownership.snapshot(duplicate))
 local original_before=assert(ownership.snapshot(original))
+local context_module=require("runtime.context")
+local original_context_new=context_module.new
+context_module.new=function(options)
+  local runtime=original_context_new(options)
+  local make_independent=runtime.make_independent
+  local resolved=0
+  runtime.make_independent=function(self,...)
+    if resolved==0 then
+      local changed,result=make_independent(self,...)
+      if changed then resolved=resolved+1 end
+      return changed,result
+    end
+    local transition=self.transition
+    self.transition=function(context,kind,...)
+      if kind=="refresh" then return nil,"injected post-commit reconciliation failure" end
+      return transition(context,kind,...)
+    end
+    local changed,result=make_independent(self,...)
+    self.transition=transition
+    return changed,result
+  end
+  return runtime
+end
 require("gui").show()
+context_module.new=original_context_new
 local independent=assert(builder.views.acid_make_independent)
 assert(independent.active,"a matching selected collision offers Make Independent")
 assert(writes==0,"opening a collision does not generate")
@@ -96,6 +120,27 @@ for _,node in ipairs(builder.nodes)do
   if node.kind=="popup" and node.width==360 then phrase_choice=node end
 end
 assert(phrase_choice.value==3,"resolution keeps the selected object bound")
+local blocked_duplicate=fixture.phrase(source,fresh)
+instrument.phrases[#instrument.phrases+1]=blocked_duplicate
+instrument.phrases_observable:fire()
+tool.app_idle_observable:fire()
+assert(independent.active,"a new copied-ID collision offers resolution")
+independent:fire()
+local status
+for _,node in ipairs(builder.nodes)do
+  if node.kind=="multiline_textfield" then status=node end
+end
+assert(status and status.text:find("Selected phrase is independent.",1,true) and
+    status.text:find("injected post-commit reconciliation failure",1,true),
+  "GUI distinguishes a committed identity from its visible recovery warning")
+assert(not independent.active,"a blocked committed identity cannot authorize another resolution")
+local generate
+for _,node in ipairs(builder.nodes)do
+  if node.kind=="button" and node.text=="Generate / Regenerate ACID Phrase" then generate=node end
+end
+assert(generate)
+generate:fire()
+assert(writes==0,"blocked committed outcome cannot enter the musical writer")
 instrument.phrases[3]=nil
 instrument.phrases_observable:fire()
 tool.app_idle_observable:fire()

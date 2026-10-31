@@ -1,6 +1,7 @@
 local helper=dofile('tests/acid/runtime_phrase_fixture.lua')
 local context=require('runtime.context')
 local ownership=require('renoise.phrase_ownership')
+local SESSION_DRAFT_PATTERN_LENGTH=5
 local function fixture()
  local song,instrument,phrase=helper.fixture()
  local writer={status='idle'}
@@ -164,7 +165,8 @@ do
  local ctx,log,_,song,instrument,phrase,baseline=fixture()
  local cache=require('runtime.draft_cache')
  local seq=require('model.sequencer')
- assert(cache.put(song,instrument,phrase,seq.new_pattern(5),'play_once',0,ctx:draft_options()))
+ assert(cache.put(song,instrument,phrase,seq.new_pattern(SESSION_DRAFT_PATTERN_LENGTH),
+  'play_once',0,ctx:draft_options()))
  local descriptor=assert(cache.capture(song,instrument,phrase,ctx:draft_options()))
  local report=evidence(instrument,phrase,baseline)
  report.draft_capture=descriptor
@@ -175,6 +177,26 @@ do
  assert(cache.put(song,instrument,phrase,seq.new_pattern(6),'play_once',0,ctx:draft_options()))
  assert(not ctx:revalidate(proof),'newer real draft revision did not block revalidation')
  assert(ctx:integrity_state().blocked)
+end
+
+-- Same-song release records the intentional loss of a still-current session
+-- draft before invalidating its descriptor.
+do
+ local ctx,log,_,song,instrument,phrase,baseline=fixture()
+ local cache=require('runtime.draft_cache')
+ local seq=require('model.sequencer')
+ assert(cache.put(song,instrument,phrase,seq.new_pattern(5),'play_once',0,ctx:draft_options()))
+ local descriptor=assert(cache.capture(song,instrument,phrase,ctx:draft_options()))
+ local report=evidence(instrument,phrase,baseline)
+ report.draft_capture=descriptor
+ assert(ctx:record_blocker(log.token,report))
+ log.done({kind='failed'})
+ ctx:release_document()
+ ctx:attach_document(song)
+ ctx:open_dialog()
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and proof,'same-song attach lost valid draft release evidence')
+ assert(ctx:revalidate(proof),'same-song attach could not clear verified draft recovery')
 end
 -- A failed creation has no destination baseline; exact preconditions permit cleanup.
 do
@@ -281,5 +303,46 @@ do
  assert(cache.is_current(song,draft))
  assert(song.tool_data==before)
  assert(not ctx:request_generation('manual'))
+end
+-- Committed blockers retain a read-only snapshot that is checked against the
+-- exact committed phrase identity and baseline before a proof is issued.
+do
+ local song,instrument,phrase=helper.fixture()
+ song.selected_instrument,song.selected_phrase=instrument,phrase
+ local ctx=helper.runtime(song)
+ local baseline=assert(ctx:bind_phrase(instrument,phrase).baseline)
+ local owner=require('runtime.integrity').new(song,nil,function()return true end)
+ local phrase_name=phrase.name
+ local pre_evidence=assert(owner:capture_mutation())
+ local captured=assert(owner:capture_committed(instrument,phrase,baseline,
+  'Committed target requires reconciliation',pre_evidence,song.tool_data))
+ assert(owner:record(captured))
+ local before=song.tool_data
+ local snapshot=assert(ownership.snapshot(phrase))
+ local status,proof=owner:status()
+ assert(status.verified and proof and status.reason=='Committed target requires reconciliation')
+ assert(song.tool_data==before and ownership.compare(snapshot,assert(ownership.snapshot(phrase))),
+  'committed revalidation changed native song state')
+ phrase.name=phrase.name..' changed'
+ assert(not owner:clear(proof),'committed snapshot accepted an intervening native change')
+ phrase.name=phrase_name
+ local valid,current=owner:status()
+ assert(valid.verified and owner:clear(current))
+end
+-- Same-song release and reattach preserve integrity evidence while invalidating
+-- proofs issued in the prior attachment epoch.
+do
+ local ctx,log,_,song,instrument,phrase,baseline=fixture()
+ assert(ctx:record_blocker(log.token,evidence(instrument,phrase,baseline)))
+ log.done({kind='failed'})
+ local _,stale=ctx:revalidation_status()
+ assert(stale)
+ ctx:release_document()
+ ctx:attach_document(song);ctx:open_dialog()
+ assert(ctx:integrity_state().blocked,'same-song reattach discarded recovery evidence')
+ assert(not ctx:revalidate(stale),'prior attachment proof survived release')
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and proof,'same-song recovery evidence could not be revalidated')
+ assert(ctx:revalidate(proof) and not ctx:integrity_state().blocked)
 end
 print('ACID runtime integrity blocker and read-only revalidation passed')
