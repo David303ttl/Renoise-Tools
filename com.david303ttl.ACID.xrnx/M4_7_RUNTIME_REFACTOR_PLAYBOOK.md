@@ -1665,6 +1665,17 @@ T4.2 complete locally; Gate 4 remains open.
 - **Stop:** lost/reassigned drafts, stale writable UI or committed state reported as
   untouched failure. No new persistent outcome state without necessity/lifecycle.
 
+**T4.3–T4.6 local result (2026-10-31):** Allocation reserves stored source,
+retained draft and live-name IDs; preparation is write-free. Commit verification
+checks the complete source-entry set. Guarded rollback preserves intervening
+changes and blocks uncertainty. Verified commits with failed adoption,
+reconciliation or editor restoration retain the committed identity, preserve
+drafts, report a warning and block writes, including when recovery evidence
+capture or recording fails. Focused assertions are mapped in
+[runtime acceptance](../tests/acid/runtime_acceptance.md#t43t46-local-acceptance-2026-10-31).
+ACID/all Lua suites passed 64/67 specs; the 34-file ACID package passed root
+and exclusion checks. Native acceptance remains T4.8; Gate 4 stays OPEN.
+
 ### T4.7 — Close GUI, observers and lifecycle integration
 
 - **Scope:** retain same ACID-bound object through resolution; exercise armed Live

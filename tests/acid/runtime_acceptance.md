@@ -129,6 +129,17 @@ Authorization revisions record invalidation rather than every runtime transition
 An arm/disarm round trip without an active Live Edit trigger can leave the tuple
 unchanged; target, source/settings and writer occupancy are checked independently.
 
+### T4.3–T4.6 local acceptance (2026-10-31)
+
+| Subgate | Assertions | Result |
+| --- | --- | --- |
+| T4.3 | `acid_id_allocation_spec.lua`: orphaned source/draft and live-name IDs are reserved; candidate preparation and corrupt-store rejection preserve bytes. `acid_runtime_independence_spec.lua`: allocation and guard drift reject before name/source mutation. | PASS |
+| T4.4 | `acid_runtime_independence_spec.lua`: selected name and cloned source alone change; unrelated phrase and New drafts survive; unexpected source entry rejects; no musical sink call. | PASS |
+| T4.5 | `acid_runtime_independence_spec.lua`: unreadable name and reentrant store change retain a blocker without overwriting newer data. `acid_runtime_integrity_spec.lua`: revalidation is read-only. | PASS |
+| T4.6 | `acid_runtime_independence_spec.lua`: adoption, reconciliation and editor restoration false/throw remain committed and blocked; draft-rebind failure retains dirty source; failed preparation preserves old-ID draft bytes; failed recovery capture/record fails closed across dialog reopen. | PASS |
+
+PowerShell 7: `./scripts/run_tests.ps1 -Tool ACID` passed 64/64; `./scripts/run_tests.ps1` passed 67/67. `./scripts/package.ps1 -Tool ACID` built 34 runtime files; archive root has `manifest.xml` and `main.lua`, with no development files. Fresh read-only code and test reviews found no correctness defect; the fail-closed cases above were added from review. Native T4.8 acceptance, including source-less import, undo/redo and cold-process reopen, remains open.
+
 Editor responsiveness is measured by native `editor-responsiveness` acceptance:
 unchanged display/idle reads perform no phrase snapshots; clean source edits perform
 no native cell scans or seal hashes. Five edits average 1.09 ms, maximum 1.17 ms,

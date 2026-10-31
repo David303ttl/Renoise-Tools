@@ -971,6 +971,7 @@ function M.show()
         state.output_policy~=result.output_policy or state.pb_range~=result.pb_range)
       render(source_state,"text",dirty and "SOURCE DIRTY: Generate to apply this draft." or "SOURCE COMMITTED")
       status.text="Selected phrase is independent. Its musical content is unchanged."
+      if result.warning then status.text=status.text.."\n"..tostring(result.warning) end
       if state and state.draft_warning then
         status.text=status.text.."\nDRAFT WARNING: "..tostring(state.draft_warning)
       end

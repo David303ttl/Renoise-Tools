@@ -1132,14 +1132,46 @@ function M.new(options)
       return false,transition_error or "Runtime authorization changed before resolution"
     end
     authorized_revisions=next_revisions
+    local recovery_evidence
+    local evidence_ok,evidence_or_reason=pcall(function() return integrity:capture_mutation() end)
+    if evidence_ok then recovery_evidence=evidence_or_reason end
     local changed,result=require("runtime.independence").run(song,target,{
       guard=guard,
       mutate=function(action) return self:mutate(identity_token,action) end,
     })
     if not changed then return false,result end
-    local adopted,adopt_error=inventory:adopt(target.instrument,target.phrase,result.baseline)
-    if not adopted then return false,adopt_error or "Cannot adopt the independent phrase baseline" end
-    self:transition("refresh")
+
+    local function block_post_commit(stage,reason)
+      local message="Make Independent committed, but "..stage.." failed: "..
+        reason_text(reason,"runtime state is unavailable")
+      if recovery_evidence then
+        local recorded,record_ok,record_error=pcall(integrity.record,integrity,recovery_evidence)
+        if not recorded or not record_ok then
+          message=message.."; recovery evidence could not be recorded: "..
+            reason_text(recorded and record_error or record_ok,"unknown evidence error")
+        end
+      else
+        message=message.."; pre-commit recovery evidence is unavailable"
+      end
+      adoption_blocked_reason=message
+      invalidate_target_projection()
+      inventory_dirty=true
+      external_inventory_dirty=true
+      reconciliation_pending=true
+      result.warning=message
+      result.committed=true
+      return true,result
+    end
+
+    local adopted_ok,adopted,adopt_error=pcall(inventory.adopt,inventory,
+      target.instrument,target.phrase,result.baseline)
+    if not adopted_ok or not adopted then
+      return block_post_commit("runtime adoption",adopted_ok and adopt_error or adopted)
+    end
+    local refreshed_ok,refreshed,refresh_error=pcall(self.transition,self,"refresh")
+    if not refreshed_ok or not refreshed then
+      return block_post_commit("runtime reconciliation",refreshed_ok and refresh_error or refreshed)
+    end
     local restored_source,restored_policy,restored_pb=result.source,result.output_policy,result.pb_range
     local draft_persisted=true
     local draft_warning
@@ -1151,9 +1183,17 @@ function M.new(options)
       restored_source,restored_policy,restored_pb=carry_draft.source,
         carry_draft.output_policy,carry_draft.pb_range
     end
-    local restored,restore_error=self:transition("programmatic",{source=restored_source,
-      output_policy=restored_policy,pb_range=restored_pb,restore=true})
-    if not restored then return false,restore_error end
+    local restored_ok,restored,restore_error=pcall(self.transition,self,"programmatic",{source=restored_source,
+      output_policy=restored_policy,pb_range=restored_pb,restore=true,draft=carry_draft~=nil})
+    if not restored_ok or not restored then
+      if carry_draft then
+        editor=ownership.copy_snapshot({source=carry_draft.source,
+          output_policy=carry_draft.output_policy,pb_range=carry_draft.pb_range}) or editor
+        editor_dirty=true
+        editor_draft=true
+      end
+      return block_post_commit("editor restoration",restored_ok and restore_error or restored)
+    end
     editor_draft=carry_draft~=nil
     if carry_draft and not draft_persisted then
       editor_dirty=true

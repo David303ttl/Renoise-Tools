@@ -7,6 +7,7 @@ local capabilities=require("renoise.target_capabilities")
 local M={}
 
 local MINIMUM_COLLISION_SIZE=2
+local CLONED_ENTRY_COUNT=1
 
 local function read_name(phrase)
   local ok,name=pcall(function() return phrase.name end)
@@ -202,10 +203,22 @@ function M.run(song,target,options)
         if not committed_baseline then return false,old_error or "Independent phrase baseline could not be verified" end
         local entries,entries_error=store.read(song)
         if not entries then return false,entries_error end
+        local entry_count=0
+        for existing_id in pairs(entries) do
+          entry_count=entry_count+1
+          if existing_id~=fresh_id and original_entries[existing_id]==nil then
+            return false,"An unexpected committed source entry was added"
+          end
+        end
+        local original_entry_count=0
         for existing_id,entry in pairs(original_entries) do
+          original_entry_count=original_entry_count+1
           if not ownership.compare(entry,entries[existing_id]) then
             return false,"Another committed source entry changed"
           end
+        end
+        if entry_count~=original_entry_count+CLONED_ENTRY_COUNT then
+          return false,"Committed source entry set changed beyond the cloned entry"
         end
         for _,item in ipairs(expected) do
           if not rawequal(item.phrase,target.phrase) then
