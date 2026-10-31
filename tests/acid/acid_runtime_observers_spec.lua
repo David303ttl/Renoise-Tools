@@ -1023,4 +1023,42 @@ do
   end
 end
 
+-- Silent native failures must satisfy the same safety contract as thrown failures.
+do
+  local source=observable()
+  local live_song={instruments={},instruments_observable=source,
+    selected_instrument_observable=observable(),selected_phrase_observable=observable()}
+  local context={}
+  function context:set_observer_error(reason) self.observer_error=reason end
+  local observer=require("runtime.observers").new()
+  local add,remove=source.add_notifier,source.remove_notifier
+  function source:add_notifier() end
+  assert(not observer:attach(live_song,context),"ineffective add must reject attachment")
+  assert(context.observer_error and not observer:state().attached and observer:state().listener_count==0,
+    "ineffective add must invalidate runtime and unwind attachment")
+  function source:add_notifier(handler)
+    add(self,handler)
+    error("injected failure after subscription")
+  end
+  function source:remove_notifier() end
+  assert(not observer:attach(live_song,context),"partial registration must reject attachment")
+  assert(observer:state().listener_count==1 and source:count_notifiers()==1,
+    "registration rollback must retain silently unremoved listeners")
+  source.remove_notifier=remove
+  assert(observer:detach(),"registration rollback cleanup must remain retryable")
+  source.add_notifier=add
+  local deliveries=0
+  assert(observer:attach(live_song,context,function() deliveries=deliveries+1 end))
+  function source:remove_notifier() end
+  assert(not observer:detach(),"ineffective removal must fail detachment")
+  assert(observer:state().listener_count==1 and source:count_notifiers()==1,
+    "ineffective removal must retain exact cleanup evidence")
+  source:fire()
+  assert(deliveries==0,"retained callback must be inert")
+  assert(not observer:attach(live_song,context),"unresolved removal must block attachment")
+  source.remove_notifier=remove
+  assert(observer:detach() and observer:state().listener_count==0 and source:count_notifiers()==0,
+    "detachment must retry ineffective removal")
+end
+
 print("ACID runtime native observer lifecycle checks passed")

@@ -4,6 +4,7 @@ local function observable()
   local handlers,notifier_history={},{}
   return {
     add_notifier=function(self,handler)
+      if self.ignore_add then return end
       if self.fail_add then error("injected notifier registration failure") end
       handlers[handler]=true
       notifier_history[#notifier_history+1]=handler
@@ -279,6 +280,15 @@ assert(tool.app_release_document_observable:listener_count()==0 and
   "partial notifier installation is removed after registration throws")
 package.loaded.gui=nil
 tool.app_new_document_observable.fail_add_after_register=false
+tool.app_new_document_observable.ignore_add=true
+lifecycle_loaded,lifecycle_error=pcall(require,"gui")
+assert(not lifecycle_loaded and tostring(lifecycle_error):find("New document notifier registration failed",1,true),
+  "silently ineffective lifecycle registration must reject initialization")
+assert(tool.app_release_document_observable:listener_count()==0 and
+  tool.app_new_document_observable:listener_count()==0,
+  "ineffective lifecycle registration must unwind installed listeners")
+package.loaded.gui=nil
+tool.app_new_document_observable.ignore_add=false
 local unload_observable=tool.tool_will_unload_observable
 tool.tool_will_unload_observable=nil
 lifecycle_loaded,lifecycle_error=pcall(require,"gui")

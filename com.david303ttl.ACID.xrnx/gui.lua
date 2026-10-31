@@ -117,6 +117,13 @@ local function register_lifecycle(observable,label,handler)
   local record={observable=observable,handler=handler}
   lifecycle_records[#lifecycle_records+1]=record
   local ok,err=pcall(function() observable:add_notifier(handler) end)
+  if ok then
+    local checked,registered=pcall(function() return observable:has_notifier(handler) end)
+    if not checked or registered~=true then
+      ok=false
+      err=checked and "notifier is not registered after subscription" or registered
+    end
+  end
   if not ok then
     lifecycle_registration_failed(label,err)
   end

@@ -42,13 +42,13 @@ function M.new()
       if record.active then
         local ok,err=pcall(record.remove)
         if attachment_serial~=expected_serial then return false end
-        if ok then
+        local probe_ok,registered=true,not ok
+        if record.probe then probe_ok,registered=pcall(record.probe) end
+        if attachment_serial~=expected_serial then return false end
+        if ok and probe_ok and registered==false then
           record.active=false
         else
           local getter_ok=read_result(record.source,record.remove_key)
-          if attachment_serial~=expected_serial then return false end
-          local probe_ok,registered=true,true
-          if record.probe then probe_ok,registered=pcall(record.probe) end
           if attachment_serial~=expected_serial then return false end
           -- Retire inaccessible host sources only after proving their owner was removed.
           local owner_state=nil
@@ -59,7 +59,7 @@ function M.new()
             record.active=false
           else
             complete=false
-            record.remove_error=tostring(err)
+            record.remove_error=ok and "notifier removal could not be verified" or tostring(err)
           end
         end
       end
@@ -137,10 +137,19 @@ function M.new()
       if registered==false then forget();return true end
       record.active=true
       local removed,remove_error=pcall(record.remove)
-      if removed then forget();return true end
-      record.remove_error=tostring(remove_error)
+      local checked,remaining=true,not removed
+      if has_notifier then checked,remaining=pcall(has_notifier) end
+      if checked and remaining==false then forget();return true end
+      record.remove_error=removed and "notifier removal could not be verified" or tostring(remove_error)
       retain()
       return false
+    end
+    if ok and has_notifier then
+      local checked,registered=pcall(has_notifier)
+      if not checked or registered~=true then
+        ok=false
+        err=checked and "notifier is not registered after subscription" or registered
+      end
     end
     if not ok then
       cleanup()

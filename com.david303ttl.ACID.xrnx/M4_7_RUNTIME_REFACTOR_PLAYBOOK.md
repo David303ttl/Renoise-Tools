@@ -1821,7 +1821,7 @@ Step 8 but do not close Gate 8's broader A–E requirements or M4.
 
 ## Step 6 — Attach native observers and reconcile internal changes
 
-**Status:** Gate 6 OPEN. Tighten and verify the existing native synchronization path; observer infrastructure already exists. The readiness review is inspected-source evidence, not an executed baseline or native acceptance result.
+**Status:** Gate 6 CLOSED. The completed implementation and recorded native acceptance are linked below. Notifier postconditions additionally reject ineffective registration and retain cleanup evidence until removal is verified; fault-injection regressions cover these paths.
 
 **Execution rule:** T6.0 → T6.1 → T6.2 → T6.3 → T6.4 → T6.5 → T6.6, strictly in order. Do not advance with unresolved required failures. A later defect returns to its owning substep and requires rerunning its regressions and affected downstream evidence. Gates 1–5 are prerequisites; their passing evidence does not establish Gate 6.
 

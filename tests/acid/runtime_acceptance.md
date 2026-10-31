@@ -2,6 +2,18 @@
 
 ## Gate 6 observer contracts (2026-10-31)
 
+Notifier postcondition follow-up: observer and mandatory GUI lifecycle adds now
+verify registration where a notifier probe is available. Detachment and partial
+registration rollback retain cleanup records until removal is confirmed.
+Fault-injection regressions cover ineffective add/remove, inert retained
+callbacks, blocked reattachment, cleanup retry and lifecycle initialization
+unwind. These are mocked API checks; the recorded native matrix below was not
+rerun for this follow-up.
+
+Follow-up verification: focused observer/GUI specs PASS; ACID 65/65 and
+repository 68/68 Lua specs PASS under Lua 5.1; offline checks 18/18 groups PASS,
+including development/release package validation; `git diff --check` PASS.
+
 Baseline: `feature/hardening4` at `5cd1d7c`; the staged playbook edit is preserved.
 The reviewed `7d8fb918` baseline differs by the closed-dialog completion fix.
 Pinned API 6.2 definitions and offline docs confirm the following subscriptions.
