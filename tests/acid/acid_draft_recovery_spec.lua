@@ -5,6 +5,9 @@ local store=require("renoise.pattern_store")
 local validator=require("writers.phrase_validator")
 local fixture=dofile("tests/acid/complete_phrase_fixture.lua")
 local cache=require("runtime.draft_cache")
+local COLLISION_ID=12
+local COLLISION_PB_RANGE=12
+local COLLISION_SOURCE_LENGTH=8
 local committed=seq.new_pattern(1)
 local function phrase(id)
   local p=fixture()
@@ -165,6 +168,40 @@ assert(#cache.list(song)==1,"a later edited revision cannot consume original rec
 assert(cache.discard(song,scratch_token,scratch_entry.revision) and
   not cache.discard(song,scratch_token,scratch_entry.revision))
 
+-- A fresh session cannot recover a durable phrase draft through either ID holder.
+local isolated_phrase=phrase(COLLISION_ID)
+local isolated_duplicate=phrase(COLLISION_ID)
+local function holder(name,held_phrase)
+  return {name=name,phrases={held_phrase},samples={{sample_buffer={has_sample_data=true}}},
+    plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,
+      alias_fx_device_index=0,midi_output_routing_index=0},midi_output_properties={device_name=""}}
+end
+local isolated_instrument=holder("Isolated",isolated_phrase)
+local isolated_other=holder("Collision",nil)
+local isolated_song={instruments={isolated_instrument,isolated_other}}
+local current_song=song
+song=isolated_song
+assert(store.save(isolated_song,COLLISION_ID,committed,"play_once",0))
+assert(cache.put(isolated_song,isolated_instrument,isolated_phrase,dirty,"repeat",COLLISION_PB_RANGE))
+assert(cache.release(isolated_song))
+isolated_other.phrases={isolated_duplicate}
+local isolated_raw=isolated_song.tool_data
+assert(not cache.get(isolated_song,isolated_instrument,isolated_phrase) and
+  isolated_song.tool_data==isolated_raw,
+  "the original ID holder cannot read the durable draft in a fresh colliding session")
+assert(not cache.get(isolated_song,isolated_other,isolated_duplicate) and
+  isolated_song.tool_data==isolated_raw,
+  "the second ID holder cannot read or reassign the durable draft")
+assert(not cache.clear(isolated_song,isolated_instrument,isolated_phrase) and
+  not cache.clear(isolated_song,isolated_other,isolated_duplicate) and
+  isolated_song.tool_data==isolated_raw,
+  "neither ID holder can clear the durable draft")
+assert(not cache.put(isolated_song,isolated_instrument,isolated_phrase,dirty,"repeat",0) and
+  not cache.put(isolated_song,isolated_other,isolated_duplicate,dirty,"repeat",0) and
+  isolated_song.tool_data==isolated_raw,
+  "neither ID holder can overwrite the durable draft")
+song=current_song
+
 -- Durable hydration captures the currently verified baseline, not historical evidence.
 assert(cache.put(song,instrument,b,dirty,"repeat",24))
 assert(cache.release(song))
@@ -183,8 +220,19 @@ local duplicate=phrase(2)
 other.phrases={duplicate}
 local raw=song.tool_data
 assert(not cache.get(song,other,duplicate))
-assert(not cache.put(song,other,duplicate,seq.new_pattern(8),"repeat",0))
+local collision_source=seq.new_pattern(COLLISION_SOURCE_LENGTH)
+local collision_saved,collision_error,collision_meta=cache.put(song,other,duplicate,
+  collision_source,"repeat",0)
+assert(not collision_saved and collision_error and collision_meta,
+  "colliding holders keep edits only in their object-local session draft")
 assert(song.tool_data==raw)
+assert(not cache.clear(song,instrument,b) and song.tool_data==raw,
+  "the original holder cannot clear a durable draft while its ID is ambiguous")
+assert(not cache.clear(song,other,duplicate) and song.tool_data==raw,
+  "a colliding holder cannot clear the shared durable draft")
+assert(not cache.rebind(song,other,duplicate,collision_source,"repeat",0,collision_meta) and
+  song.tool_data==raw,
+  "identity rebind cannot overwrite a durable draft while its ID is ambiguous")
 assert(not cache.get(song,other,duplicate))
 assert(#cache.list(song)==2,"only object-local collision edits enter recovery")
 other.phrases={}

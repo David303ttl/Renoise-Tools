@@ -411,12 +411,21 @@ function M.new(options)
     return copy,success
   end
 
-  local function adopt_success(record,result,destination_current)
+  local function adopt_success(record,result,destination_current,apply_success)
     if not destination_current or not inventory then return false,"No current destination inventory" end
     if not host_object(result.phrase) then return false,"Committed destination phrase is unavailable" end
     local request=record.request
     if not request then return false,"Request values are unavailable" end
     local phrase=result.phrase
+    local transfer_new_draft=request.kind=="create" and not apply_success and
+      (editor_dirty or editor_draft) and editor and editor_target and
+      editor_target.kind=="new" and rawequal(editor_target.instrument,request.instrument)
+    local new_draft_capture
+    if transfer_new_draft and type(drafts.capture)=="function" then
+      local captured,descriptor=pcall(drafts.capture,current_song,request.instrument,nil,
+        draft_options_for_target(nil))
+      if captured then new_draft_capture=descriptor end
+    end
     if request.kind=="regenerate" then
       if not rawequal(phrase,request.phrase) then return false,"Returned destination changed" end
     elseif request.kind~="create" then
@@ -432,15 +441,43 @@ function M.new(options)
       transitions:transition("target",{instrument=request.instrument,phrase=phrase,kind="owned"})
       editor_target={instrument=request.instrument,phrase=phrase,kind="owned"}
       observed_target=semantic(inventory:target_state())
-      -- A pending edit was preserved under the previous New target. Move that
-      -- session draft to the destination returned by the committed create so
-      -- the queued request can capture it after adoption.
-      if pending_trigger then preserve_editor(true) end
+      if transfer_new_draft then
+        local prior_warning=editor.draft_warning
+        preserve_editor(true)
+        editor.draft_warning=prior_warning or editor.draft_warning
+        local matches_ok,matches_destination=pcall(drafts.matches_values,current_song,
+          request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range)
+        if matches_ok and matches_destination and new_draft_capture and
+            type(drafts.compare_and_clear)=="function" then
+          local cleared,clear_error=pcall(drafts.compare_and_clear,current_song,
+            new_draft_capture,false)
+          if not cleared or not clear_error then
+            diagnose(record,"completion.draft_transfer",cleared and
+              "New Phrase draft changed before transfer cleanup" or clear_error)
+          end
+        end
+      end
     elseif request.kind=="regenerate" then
       observed_target=semantic(inventory:target_state())
     end
-    editor_dirty=false
-    editor_draft=false
+    if apply_success then
+      editor_dirty=false
+      editor_draft=false
+    elseif request.kind=="regenerate" and request.baseline and (editor_dirty or editor_draft) and editor and
+        not ownership.compare(request.baseline,result.baseline) and editor_target and
+        rawequal(editor_target.instrument,request.instrument) and
+        rawequal(editor_target.phrase,phrase) then
+      local draft_ok,draft_matches,metadata=pcall(drafts.matches_values,current_song,
+        request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range)
+      if draft_ok and draft_matches and type(metadata)=="table" then
+        local target=inventory:target_state()
+        local rebound_ok,rebound,rebind_warning=pcall(drafts.rebind,current_song,
+          request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range,
+          metadata,draft_options_for_target(target))
+        local warning=(not rebound_ok and rebound) or rebind_warning
+        editor.draft_warning=editor.draft_warning or warning
+      end
+    end
     return true
   end
 
@@ -734,7 +771,7 @@ function M.new(options)
       end
       local apply_success=effects and effects.apply_success==true or false
       if success and destination_current then
-        local adopted,adopt_reason=adopt_success(record,terminal,destination_current)
+        local adopted,adopt_reason=adopt_success(record,terminal,destination_current,apply_success)
         if not adopted then
           diagnose(record,"completion.baseline",adopt_reason)
           success=false

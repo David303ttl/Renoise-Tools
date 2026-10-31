@@ -1,7 +1,49 @@
 # Runtime integration acceptance map
 
+## Gate 5 acceptance (2026-10-31)
+
+Baseline `e469f032a7cf4a2d9f51e242e8dddaab2c76958e`; reviewed HEAD `467dc37`.
+Committed baseline-to-HEAD changes affect the playbook and roadmap. This working
+tree changes runtime completion handling, editor/draft specs and acceptance docs.
+Persistence formats, manifest versions and runtime module boundaries are unchanged.
+
+| Subgate | Assertions and owners | Evidence |
+| --- | --- | --- |
+| T5.0 | Requirement mapping in this table and R01–R36 below; runtime target/revisions/arming in `runtime.context`, capture/checkpoints in `runtime.requests`, explicit `create`/`regenerate` in `writers.phrase_writer`. | Independent source/test review. |
+| T5.1 | `acid_runtime_context_spec.lua`, `acid_runtime_request_spec.lua`, `acid_runtime_editor_spec.lua`, `acid_runtime_transitions_spec.lua`, `acid_runtime_lifetime_spec.lua`, `acid_runtime_writer_integration_spec.lua`: single occupancy, latest pending edit, manual/live overlap, A→B→A, compile/render cancellation, missing/duplicate/late terminals, stale completion, close/reopen and song release. | PASS: focused specs and full suites. |
+| T5.1 | `acid_runtime_editor_spec.lua`: changed committed baseline retains newer persisted/session-only draft, source/settings, exact token/revision and persistence warning; navigation restores it. Late create with Live Edit off transfers the newer draft to the exact returned phrase without a second request. | PASS: focused/full specs and fresh second-pass review. |
+| T5.2 | `acid_draft_recovery_spec.lua`, `acid_gui_recovery_spec.lua`, `acid_runtime_editor_spec.lua`, `acid_runtime_writer_integration_spec.lua`: outgoing drafts, instrument scratches, cold-context restoration, occupied scratch, recovery/copy/discard, exact-revision clearing, settings isolation and persistence failure. | PASS: focused specs and full suites. |
+| T5.2 | `acid_draft_recovery_spec.lua`: neither holder reads, overwrites, clears or rebinds one ambiguous durable draft; raw store bytes stay unchanged. `acid_runtime_independence_spec.lua` and GUI independence specs: identity-only action remains outside musical dispatch. | Focused specs pass. |
+| T5.3 | GUI admission/views/recovery/timing specs plus real-writer integration: no-op/arming/navigation/recovery enqueue nothing; create→edit, stale/blocked delivery and foreign/detached refusal use the single production path. | PASS: focused/full specs and targeted native reruns. |
+| T5.3 | `acid_runtime_integrity_spec.lua`, writer integration and GUI recovery: read-only Revalidate refuses active renders/recovery objects; blockers survive navigation/reopen, drafts survive and old intent never retries. | Focused specs pass. |
+| T5.4 | Production caller/dependency search and `acid_dependency_graph_spec.lua`: one target authority, request, pending trigger, writer transaction and terminal channel; no legacy scheduler/writer/status path, adapter, feature flag or mirror. | Independent review and focused specs pass. |
+| T5.4 | `acid_pattern_store_codec_spec.lua`, `acid_phrase_persistence_spec.lua`, `acid_store_candidate_spec.lua`, inventory/output-compatibility/writer integration specs: strict saved-song decoding, source/draft/seal bytes and fresh-context ownership. | PASS: focused/full specs and package checks. |
+
+Gate 5 CLOSED: T5.0–T5.4 pass; no unresolved local assertion or review finding.
+Native playback, full undo grouping and the cold-process GUI journey remain Step 8.
+
+| Final verification | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | PASS: 65/65, Lua 5.1. |
+| `./scripts/run_offline_tests.ps1` | PASS: 18/18 groups, including 68/68 repository Lua specs, runner and development/release package checks. |
+| Fresh second pass | Independent scheduler, draft, production-path and final-diff reviews; focused reruns and `git diff --check` pass. |
+| Native draft recovery | PASS: `interactive-cfd7f0bf7db946f1b2293633b1f9a2d9/report.json`. |
+| Native integrity observers | PASS: `interactive-7fafb625fdb74d97b1175dd8ddef1867/report.json`. |
+| Native writer recovery | PASS: `interactive-7b72de1be62d42598724628308676662/report.json`. |
+| Native editor responsiveness | PASS: `interactive-224457298744455897b70d5da80950f2/report.json`. |
+| Native/Keyboard catalog | PASS: `interactive-845e6da11f584abbbc6b45cb1b94f051/report.json`. |
+| Native scenario order | PASS: `interactive-c31967fcce394b50995516cfae5abb9b/report.json`; `-VerifyScenarioOrder`. |
+
+Native commands use `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong`
+with `-AcceptanceCase draft-recovery`, `integrity-observers`, `writer-recovery` or
+`editor-responsiveness`. The catalog uses `-Suite All -TestEnvironment <local-config>`
+and `-AllowKeyboardFocusActivation`. Reports are under ignored `tmp/`; Renoise 3.5.4 /
+API 6.2. All six runs restored the installation. Package checks require 34
+source-identical runtime entries, root `manifest.xml`/`main.lua`, private modules
+and no SDK/tests/docs. Source/draft/seal codecs and manifest versions are unchanged.
+
 This map links the Step 7 regressions R01–R36 to local assertions. Focused specs
-have been run during implementation; the full repository rerun passes 67 specs
+have been run during implementation; the full repository rerun passes 68 specs
 with no timeout. Native checks completed in Renoise 3.5.4 cover queued Live Edit,
 editor history, draft recovery, Make Independent, song reload and column observers.
 Acoustic playback and the broader Step 8 A–E acceptance remain open. T4.8 now has targeted native evidence for undo/redo, source-less ownership negatives and cold-process reopen.

@@ -2,6 +2,14 @@ local helper=dofile('tests/acid/runtime_phrase_fixture.lua')
 local context=require('runtime.context')
 local seq=require('model.sequencer')
 local cache=require('runtime.draft_cache')
+local store=require('renoise.pattern_store')
+local capabilities=require('renoise.target_capabilities')
+local validator=require('writers.phrase_validator')
+local pitch_bend=require('writers.phrase_pitch_bend')
+local NEWER_EDIT_NOTE=11
+local FIRST_COMMITTED_NOTE=9
+local OWNED_PHRASE_ID=101
+local CREATED_PHRASE_ID=103
 local function fixture(new)
  local song,instrument,phrase,other,source=helper.fixture(new and 'new')
  local log={captures=0,sinks=0,requests={},done={},cancels=0}
@@ -22,6 +30,145 @@ local function copy_edit(source,note)
  local copy=assert(seq.copy_source(source));copy.pitch_events[1]=seq.new_pitch(note,0,false,false)
  return copy
 end
+
+local function validated_baseline(song,instrument,phrase,id)
+ local profile=assert(capabilities.inspect(instrument))
+ local limits={max_lines=helper.limits.max_lines,max_note_columns=helper.limits.max_note_columns,
+  max_effect_columns=helper.limits.max_effect_columns,
+  play_pattern=renoise.InstrumentPhrase.PLAY_PATTERN,
+  key_tracking_none=renoise.InstrumentPhrase.KEY_TRACKING_NONE}
+ local classified=assert(validator.classify(song,instrument,phrase,
+   profile,limits,{pitch_bend_delivery=pitch_bend.delivery_enabled}))
+ return {id=id,source=classified.source,settings=classified.settings,
+   snapshot=classified.baseline,planning_inputs=classified.planning_inputs}
+end
+
+local function verify_rebase(persistence_failure)
+ local ctx,log,song,instrument,phrase,other,source=fixture()
+ assert(ctx:transition('edit',{source=copy_edit(source,FIRST_COMMITTED_NOTE),
+   output_policy='play_once',pb_range=0}))
+ assert(ctx:request_generation('manual'))
+ local request=log.requests[1]
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ local write_draft=store.write_draft
+ if persistence_failure then
+  store.write_draft=function()return false,'injected draft persistence failure'end
+ end
+ local edited,edit_error=ctx:transition('edit',{source=newer,output_policy='play_once',pb_range=0})
+ assert(edited,edit_error or 'newer edit failed')
+ local expected_warning=persistence_failure and 'injected draft persistence failure' or nil
+ assert(ctx:editor_state().draft_warning==expected_warning,
+   'newer draft persistence warning is incorrect')
+ local draft_matches,before_rebind=cache.matches_values(song,instrument,phrase,newer,'play_once',0)
+ assert(draft_matches and type(before_rebind)=='table','newer session draft metadata is unavailable')
+
+ -- Model the committed request output and obtain its baseline from the production validator.
+ local committed_phrase=helper.phrase(request.source,OWNED_PHRASE_ID)
+ for key,value in pairs(committed_phrase)do phrase[key]=value end
+ assert(store.save(song,OWNED_PHRASE_ID,request.source,request.output_policy,request.pb_range))
+ local committed_baseline=validated_baseline(song,instrument,phrase,OWNED_PHRASE_ID)
+
+ log.done[1]({kind='success',status='committed',verified=true,token=request.token,
+   epoch=request.epoch,request=request,phrase=phrase,baseline=committed_baseline})
+ store.write_draft=write_draft
+
+ local state=ctx:generation_state()
+ assert(not state.last_commit,'older editor revision was recorded as the current commit')
+ assert(ctx:target_state().baseline.source.pitch_events[1].note==
+   request.source.pitch_events[1].note,'committed baseline was not advanced')
+ assert(ctx:editor_state().draft_warning==expected_warning,
+   'rebase changed the draft persistence warning')
+ assert(ctx:editor_state().source.pitch_events[1].note==seq.BASE_NOTE+NEWER_EDIT_NOTE,
+   'newer editor source was replaced by committed output')
+ local retained=cache.get(song,instrument,phrase,ctx:draft_options())
+ assert(retained and retained.pitch_events[1].note==seq.BASE_NOTE+NEWER_EDIT_NOTE,
+   'newer session draft was cleared after the committed baseline changed')
+ local still_matches,after_rebind=cache.matches_values(song,instrument,phrase,newer,'play_once',0)
+ assert(still_matches and after_rebind.token==before_rebind.token and
+   after_rebind.revision==before_rebind.revision,
+   'baseline rebind changed the session draft token or edit revision')
+ assert(after_rebind.persistent==not persistence_failure and
+   after_rebind.warning==expected_warning,
+   'baseline rebind changed persistence state or warning metadata')
+ assert(ctx:restore_editor_target(instrument,other))
+ assert(ctx:restore_editor_target(instrument,phrase))
+ assert(ctx:editor_state().source.pitch_events[1].note==seq.BASE_NOTE+NEWER_EDIT_NOTE,
+   'navigation did not restore the newer rebased draft')
+end
+
+verify_rebase(true)
+verify_rebase(false)
+
+local function verify_create_transfer(failure)
+ local ctx,log,song,instrument,_,_,source=fixture(true)
+ assert(ctx:transition('edit',values(copy_edit(source,FIRST_COMMITTED_NOTE))))
+ assert(ctx:request_generation('manual'))
+ local request=log.requests[1]
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ assert(ctx:transition('edit',values(newer)))
+ local draft_matches,new_metadata=cache.matches_values(song,instrument,nil,newer,'play_once',0)
+ assert(draft_matches and type(new_metadata)=='table','newer New draft metadata is unavailable')
+ local new_capture=assert(cache.capture(song,instrument,nil,ctx:draft_options()))
+ local created=helper.phrase(request.source,CREATED_PHRASE_ID)
+ instrument.phrases[#instrument.phrases+1]=created
+ assert(store.save(song,CREATED_PHRASE_ID,request.source,request.output_policy,request.pb_range))
+ local durable_before=song.tool_data
+ local write_draft=store.write_draft
+ local put=cache.put
+ if failure=='persistence' then
+  store.write_draft=function()return false,'injected destination draft persistence failure'end
+ elseif failure=='session' then
+  cache.put=function(target_song,target_instrument,target_phrase,...)
+   if rawequal(target_phrase,created) then return nil,'injected destination session transfer failure'end
+   return put(target_song,target_instrument,target_phrase,...)
+  end
+ end
+ local baseline=validated_baseline(song,instrument,created,CREATED_PHRASE_ID)
+ log.done[1]({kind='success',status='committed',verified=true,token=request.token,
+  epoch=request.epoch,request=request,phrase=created,baseline=baseline})
+ store.write_draft=write_draft
+ cache.put=put
+ assert(log.sinks==1,'newer create draft triggered a second render')
+ if failure=='session' then
+  local retained,new_metadata_after=cache.matches_values(song,instrument,nil,newer,'play_once',0)
+  assert(retained and new_metadata_after.token==new_metadata.token and
+   new_metadata_after.revision==new_metadata.revision and cache.is_current(song,new_capture),
+   'failed destination session transfer consumed the newer New draft revision')
+  assert(song.tool_data==durable_before,
+   'failed destination session transfer changed durable New draft bytes')
+  assert(ctx:editor_state().draft_warning=='injected destination session transfer failure',
+   'failed destination session transfer warning was lost')
+  local restored_new=assert(ctx:restore_editor_target(instrument,nil))
+  assert(restored_new.source.pitch_events[1].note==seq.BASE_NOTE+NEWER_EDIT_NOTE,
+   'failed destination session transfer did not restore the New draft')
+ else
+  assert(not cache.is_current(song,new_capture),
+   'successful destination session copy did not clear the captured New revision')
+  local scratch,scratch_policy,scratch_pb=store.read_draft(song,instrument,nil)
+  assert(scratch and seq.same_source(scratch,newer) and scratch_policy=='play_once' and scratch_pb==0,
+   'destination transfer changed durable New draft bytes')
+  local expected_warning=failure=='persistence' and
+   'injected destination draft persistence failure' or nil
+  assert(ctx:editor_state().draft_warning==expected_warning,
+   'create transfer did not preserve its persistence warning: '..tostring(failure)..'/'..
+    tostring(ctx:editor_state().draft_warning)..' expected '..tostring(expected_warning))
+  local restored=assert(ctx:restore_editor_target(instrument,created))
+  assert(restored.source.pitch_events[1].note==seq.BASE_NOTE+NEWER_EDIT_NOTE,
+   'successful create did not preserve the newer New draft on the created phrase')
+  local matches,metadata=cache.matches_values(song,instrument,created,newer,'play_once',0)
+  local persistent=failure~='persistence'
+  assert(matches and metadata.persistent==persistent,
+   'created phrase draft persistence state is incorrect')
+  if failure=='persistence' then
+   assert(song.tool_data==durable_before,
+    'failed destination persistence changed durable New draft bytes')
+  end
+ end
+end
+
+verify_create_transfer(nil)
+verify_create_transfer('persistence')
+verify_create_transfer('session')
 
 -- Runtime admission validates its detached editor buffer without an extra source copy.
 do
