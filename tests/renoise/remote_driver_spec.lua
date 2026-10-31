@@ -945,8 +945,8 @@ local function test_fixed_native_acceptance_command()
     acceptance_runner = function(case_name, done)
       assert(case_name == "make-independent" or case_name == "reopen-independent" or
         case_name == "integrity-observers" or case_name == "writer-recovery" or
-        case_name == "editor-responsiveness" or case_name == "ownership-negatives" or
-        case_name == "independence-undo-prepare" or case_name == "independence-undo" or
+        case_name == "editor-responsiveness" or case_name == "import-donor" or case_name == "ownership-negatives" or
+        case_name == "independence-undo-fixture" or case_name == "independence-undo-prepare" or case_name == "independence-undo" or
         case_name == "cold-reopen-regenerate" or
         case_name == "cold-reopen-verify",
         "fixed native acceptance case was not allowlisted")

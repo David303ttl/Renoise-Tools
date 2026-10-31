@@ -371,7 +371,7 @@ Environment: PowerShell 7, Renoise 3.5.4 / API 6.2. Report source revision
 | Native report under ignored `tmp/` | Result |
 | --- | --- |
 | `interactive-8d48c04d9b894b8a8cd84e0263a40a58/report.json` | PASS: three Renoise process IDs (12588 → 14756 → 18728); cold reopen, read-only Owned classification, exact-target regeneration, second reopen, and persisted duplicate/missing-source/modified-association rejection. Foreign sentinel and unrelated phrase/source remain unchanged. |
-| `interactive-2da536d79a394909a2bd7ef8fca15349/report.json` | PASS: native Make Independent undo restores pre-action phrase state while `song.tool_data` retains the exact post-action bytes; both duplicate holders block and regeneration rejects without repair. Redo restores the new identity and cloned source, in one native undo action. |
+| `interactive-2da536d79a394909a2bd7ef8fca15349/report.json` | PASS: native Make Independent undo restores pre-action phrase state while `song.tool_data` retains the exact post-action bytes; both duplicate holders block and regeneration rejects without repair. Redo restores the new identity and cloned source after the single transition tested; full logical grouping was not established. |
 | `interactive-715d1ec981e3445a878c399fb4da1b27/report.json` | PASS: source-less foreign, missing-source, mismatching and two/three-holder associations remain blocked. |
 | `interactive-1ce5271935564fa2ae996fcd10ae3949/report.json` | PASS: draft source/output settings restore; Copy to New preserves the draft; recovery remains until explicit discard. |
 | `interactive-4b2a150014864a7e8a44ba9d8cc1d638/report.json` | PASS: native integrity and column observers. |
@@ -380,6 +380,34 @@ Environment: PowerShell 7, Renoise 3.5.4 / API 6.2. Report source revision
 | `interactive-8bc1ad14982a40a0891e73462d5c26a9`, `interactive-c4dbcf0027594961bf433c03d16f80ae` | PASS: Native/Keyboard suite and scenario-order checks; installation restored. |
 | `tmp/t48-offline-verified.log` | PASS: 18/18 offline groups, 67/67 Lua specs and package checks; release archive has 34 source-identical entries. Runner/driver regressions cover shared-session rejection, selected PID/process ownership, bounded connection handling and transport failure diagnostics. |
 
-Gate 4 CLOSED. Fresh local suites (64 ACID / 67 total), projection ownership
+Historical Gate 4 closure (superseded by the acceptance-tightening review). Fresh local suites (64 ACID / 67 total), projection ownership
 regressions, package verification and independent review pass. Acoustic playback
 and broader Step 8 A–E acceptance remain open.
+
+## Acceptance evidence tightening (2026-10-31)
+
+T4.8a passes the targeted Gate 4 requirements. Production Lua, manifests, persistence format and runtime architecture are unchanged. Tested base revision: `5e8c04df2037b23b5ac6869e42b7fbded3df5608` plus the acceptance working tree identified below; these are live Renoise 3.5.4 / API 6.2 runs, not inferred results.
+
+| Native report under ignored `tmp/` | Observed result |
+| --- | --- |
+| `interactive-758cc1ee4bdd45dba076ed26fac7af12/report.json` | PASS: PIDs 1484 → 15844 → 14544; original ID 1 and independent ID 2 remain exact. Both cold reopens match the independent pre-save baseline, including complete canonical source/inactive memory, output/PB settings, names/seals, complete native snapshots, foreign sentinel and raw tool-data bytes. Updated committed values and negative associations survive the final reopen. |
+| `interactive-ecfdc86bb42045908495b0d26ad9cb20/report.json` | PASS: collision fixture saved and reopened with empty undo/redo history; native dialog action; undo chain exhausted after one state, redo chain exhausted after one state. Baselines record before/after action and every transition. Both collision holders reject regeneration without mutation; redo restores the exact independent source/identity. Fixture restored exactly. |
+| `interactive-00900a8b23d24e09ac8357b31060e0eb/report.json` | PASS: native donor instrument export, new recipient song and native instrument import. ID 42 and complete donor snapshot/name/seal survive; donor source is absent. Regeneration and Make Independent refuse without phrase/store mutation; unrelated recipient records and phrases remain exact. Existing duplicate/mismatched/missing-source negatives pass. |
+
+Every final native report records successful installation restoration; no runner-owned Renoise process remains. The installed ACID entrypoint also matches the original pre-run backup byte for byte.
+
+The undo report explicitly records `complete_logical_undo_grouped = false`: Renoise retains the post-action source clone on undo. Safety passes because both colliding holders remain blocked. This does not establish complete logical undo grouping or broader musical-writer grouping. The production cold-reopen GUI → editor restore → runtime request → scheduler → writer journey was not run; it is explicitly required under Gate 8 in the playbook. Playback/acoustic checks were not performed.
+
+The runner SHA-256 is `f8e498fd458d2518721fda0e7e233fb5fee4d13411057fc6f69691a056ef84cb` (`scripts/run_interactive_tests.ps1`); the driver SHA-256 is `2862b7fbc4a65f7041a68516bda7555aa70a41997576ae0eca4034695b854632` (`tests/renoise/driver/remote_driver.lua`). The installed acceptance-file SHA-256 for the cold report is `f8f31c2bffd8746eb73b35081b3588541d0de197df400d3cf4f0d48bca984818`; the final undo/import reports use `d75be6c1f3c3828ebf25eb54a38f13fe870d9f072c4a1e9c5407de5b4422c079` (`tests/renoise/driver/acceptance_cases.lua`). The latter adds explicit before/after-action entries to the undo history; cold-path logic is identical.
+
+Local verification:
+
+- `scripts/run_tests.ps1`: 68/68 Lua 5.1 specs pass (`tmp/acceptance-lua-verified.log`), including the new baseline regression. It detects identity, inactive source memory, output/PB, seal/sentinel, inactive native-cell and raw-byte drift. Precision and absent-versus-empty checks pass in the focused rerun.
+- Final harness rerun: 4/4 specs (`tmp/acceptance-harness-verified.log`), after the final history recording change.
+- `tests/renoise/runner_spec.ps1`: PASS (`tmp/acceptance-runner-verified.log`).
+- `tests/renoise/test_package_dev.ps1`: PASS (`tmp/acceptance-dev-package-verified.log`).
+- `scripts/package.ps1`: PASS; ACID remains 34 runtime files (`tmp/acceptance-package-check.log`).
+
+Failed harness attempts are not acceptance evidence: `interactive-3298334c818f4b7ca4a74d461b3083bd` failed raw-table JSON encoding; `interactive-ef3ce240444f40bea8d74d992aeaf538` hit the dirty donor-song prompt; `interactive-9e6f2266e2864e179e5c8d0ec367f188` failed bootstrap ping. Reports `interactive-bff974068176463a968ff301015b077f`, `interactive-c2c0323408fb4e0f92cf8ffb5e89f94f` and `interactive-6d45dff5a8b848f49129022c7dc02ef9` rejected import fixture cleanup because native import adds a trailing instrument slot. `interactive-83ff7d32e44e437eadf8212c39f454fd` rejected the old undo cleanup assumption after switching to a reopened fixture. These test-harness issues were corrected before the final passing runs. Restoration backups from failed runs were retained; the original installation was recovered before rerunning.
+
+Gate 4's targeted identity/source safety acceptance is CLOSED after T4.8a. Gate 8 and M4 remain OPEN, including the explicit cold GUI journey and broader undo grouping/playback checks.

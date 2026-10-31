@@ -214,6 +214,9 @@ function Invoke-ColdProcessAcceptance {
     param(
         [Parameter(Mandatory)][string]$SongPath,
         [Parameter(Mandatory)][string]$Case,
+        [Parameter(Mandatory)]$ExpectedBaseline,
+        [Parameter(Mandatory)][int]$ExpectedOldId,
+        [Parameter(Mandatory)][int]$ExpectedTargetId,
         [string]$ExpectedFixture
     )
     $oldIdentity = $script:processIdentity
@@ -261,6 +264,16 @@ function Invoke-ColdProcessAcceptance {
         -TimeoutSeconds ([Math]::Max($script:CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
     if ($result.case -cne $Case -or [string]$result.status -cne 'PASS') {
         throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' did not pass: $(ConvertTo-AcidCanonicalJson $result)")
+    }
+    if ($null -eq $ExpectedBaseline -or $null -eq $result.reopened_baseline -or
+        (ConvertTo-AcidCanonicalJson $ExpectedBaseline) -cne (ConvertTo-AcidCanonicalJson $result.reopened_baseline)) {
+        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' changed the independently captured persisted baseline.")
+    }
+    if ($result.old_id -ne $ExpectedOldId -or $result.target_id -ne $ExpectedTargetId) {
+        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' changed the original or independent numeric identity.")
+    }
+    Add-Trace -Operation 'acceptance.persisted_baseline' -Status 'PASS' -Details @{
+        case = $Case; expected = $ExpectedBaseline; actual = $result.reopened_baseline
     }
     if ($ExpectedFixture -and $result.roundtrip_fixture -cne $ExpectedFixture) {
         throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' returned an unexpected saved fixture name.")
@@ -797,7 +810,23 @@ try {
             $lastExpected = "Fixed native acceptance case '$AcceptanceCase' completes with independent postconditions"
             $lastActual = $null
             $lastDiff = $null
+            if ($AcceptanceCase -ceq 'ownership-negatives') {
+                $donor = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
+                    -Arguments @{ case = 'import-donor' } -TimeoutSeconds 180 -ProcessCheck $processCheck
+                if ($donor.status -cne 'PASS') { throw 'Native donor export failed.' }
+                $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
+                Add-Trace -Operation 'acceptance.import-donor' -Status 'PASS' -Details $donor
+                $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.new' `
+                    -Arguments @{ timeout_ms = $resetTimeoutMs } -TimeoutSeconds $resetResponseTimeout -ProcessCheck $processCheck
+            }
             if ($undoCallbackAcceptance) {
+                $undoFixture = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
+                    -Arguments @{ case = 'independence-undo-fixture' } -TimeoutSeconds 180 -ProcessCheck $processCheck
+                if ($undoFixture.status -cne 'PASS') { throw 'Native undo fixture could not be saved.' }
+                $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
+                $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.load_fixture' `
+                    -Arguments @{ root = 'fixtures'; name = 'acceptance-undo.xrns'; timeout_ms = 120000 } `
+                    -TimeoutSeconds 123 -ProcessCheck $processCheck
                 $prepare = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
                     -Arguments @{ case = 'independence-undo-prepare' } `
                     -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
@@ -837,6 +866,11 @@ try {
                 diff = $lastDiff
             })
             Add-Trace -Operation "acceptance.$AcceptanceCase" -Status $acceptanceStatus -Details $acceptance
+            if ($AcceptanceCase -ceq 'ownership-negatives' -and
+                ($acceptance.native_cross_song_import_blocked -ne $true -or
+                 $donor.donor_phrase -cne $acceptance.imported_donor_phrase)) {
+                throw [RenoiseRunnerAssertionException]::new('Native imported phrase differs from the independent donor snapshot or was not blocked.')
+            }
             if ($AcceptanceCase -ceq 'make-independent' -and $acceptanceStatus -ceq 'PASS') {
                 if ($acceptance.roundtrip_fixture -cne 'acceptance-independent.xrns') {
                     throw 'Make Independent did not return the fixed round-trip fixture name.'
@@ -883,7 +917,7 @@ try {
                 Add-Trace -Operation 'acceptance.reopen-independent' -Status ([string]$reopened.status) -Details $reopened
                 if ($ColdProcessRoundTrip) {
                     $coldFirstPath = Join-Path $installedFixturesPath 'acceptance-independent.xrns'
-                    $null = Invoke-ColdProcessAcceptance -SongPath $coldFirstPath -Case 'cold-reopen-regenerate' -ExpectedFixture $coldRegenerationFixtureName
+                    $coldRegeneration = Invoke-ColdProcessAcceptance -SongPath $coldFirstPath -Case 'cold-reopen-regenerate' -ExpectedBaseline $acceptance.saved_baseline -ExpectedOldId $acceptance.old_id -ExpectedTargetId $acceptance.new_id -ExpectedFixture $coldRegenerationFixtureName
                     $coldRegeneratedPath = Join-Path $installedFixturesPath $coldRegenerationFixtureName
                     $coldRegeneratedItem = Get-Item -LiteralPath $coldRegeneratedPath -Force -ErrorAction Stop
                     if ($coldRegeneratedItem.PSIsContainer -or ($coldRegeneratedItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or $coldRegeneratedItem.Length -le 0) {
@@ -895,7 +929,7 @@ try {
                         throw [RenoiseRunnerAssertionException]::new('Cold-process round trip changed unexpected files in the temporary fixture directory.')
                     }
                     $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
-                    $null = Invoke-ColdProcessAcceptance -SongPath $coldRegeneratedPath -Case 'cold-reopen-verify'
+                    $null = Invoke-ColdProcessAcceptance -SongPath $coldRegeneratedPath -Case 'cold-reopen-verify' -ExpectedBaseline $coldRegeneration.saved_baseline -ExpectedOldId $acceptance.old_id -ExpectedTargetId $acceptance.new_id
                     $verifiedColdFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
                     if ($verifiedColdFixturesHash -cne $installedFixturesHash) {
                         throw [RenoiseRunnerAssertionException]::new('Read-only cold-process verification changed the temporary fixture directory.')

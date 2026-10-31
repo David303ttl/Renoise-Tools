@@ -1388,7 +1388,7 @@ this does not establish acoustic playback or native undo grouping.
 
 ## Step 4 — Harden existing explicit Make Independent
 
-**Status: Gate 4 CLOSED.** T4.0–T4.8 local and targeted native acceptance pass.
+**Status: Gate 4 CLOSED after T4.8a.** The acceptance-tightening evidence below supersedes the initial T4.8 closure and distinguishes safe undo blocking from complete logical grouping.
 Make Independent retains one identity-only executor and the existing mutation
 guard. Gate 8's broader A–E acceptance and M4 remain open.
 
@@ -1753,7 +1753,7 @@ is included in T4.7's scope. Keep the native callback budget at 30 ms.
 | Assertion | Evidence | Result |
 | --- | --- | --- |
 | R24 source-less and invalid ownership | `interactive-715d1ec981e3445a878c399fb4da1b27/report.json` | PASS: source-less foreign, missing-source, mismatching and two/three-holder groups remain blocked. |
-| R29 native undo/redo | `interactive-2da536d79a394909a2bd7ef8fca15349/report.json` | PASS: undo blocks both holders and regeneration without source repair while `song.tool_data` retains exact post-action bytes; redo restores the exact new association in one native undo action. |
+| R29 native undo/redo | `interactive-2da536d79a394909a2bd7ef8fca15349/report.json` | PASS: undo blocks both holders and regeneration without source repair while `song.tool_data` retains exact post-action bytes; redo restores the exact new association after the single transition tested; complete logical grouping was not established. |
 | R36 cold reopen and regeneration | `interactive-8d48c04d9b894b8a8cd84e0263a40a58/report.json` | PASS: three process IDs; read-only classification, exact-target regeneration, second reopen and persisted duplicate/missing/modified rejection. |
 | Draft recovery | `interactive-1ce5271935564fa2ae996fcd10ae3949/report.json` | PASS: source/output policy retained on Copy to New; recovery cleared only by explicit discard. |
 | Integrity observers | `interactive-4b2a150014864a7e8a44ba9d8cc1d638/report.json` | PASS: native integrity and column observers. |
@@ -1765,7 +1765,21 @@ is included in T4.7's scope. Keep the native callback budget at 30 ms.
 | Offline, package and harness | `tmp/t48-offline-verified.log` | PASS: 18 groups, 67 Lua specs, 34 source-identical release entries; shared-session rejection, PID ownership/shutdown, bounded connection and transport diagnostics checked. |
 | Debt and compatibility | Integrated dependency/ownership review | PASS: shared compatibility-proof construction; existing runtime mutation, musical writer, queue, ownership, store and draft authorities retained. No added production state or entry point; persistence formats and versions unchanged. |
 
-**T4.8 complete; Gate 4 CLOSED.** Fresh local, package and independent review checks pass. Acoustic playback and broader Step 8 A–E acceptance remain open.
+**Historical T4.8 closure (superseded by T4.8a):** local, package and targeted native checks passed, but the independent review identified acceptance-proof gaps. Acoustic playback and broader Step 8 A–E acceptance remain open.
+
+### T4.8a — Acceptance evidence tightening
+
+**Result: PASS (2026-10-31).** Native cold-process baselines, complete controlled undo/redo chain and actual cross-song instrument import pass. Full results, exact source hashes and failed-attempt chronology are recorded in [host verification](../tests/renoise/host_verification.md#acceptance-evidence-tightening-2026-10-31). Local verification passes 68 Lua specs, runner and development-package checks, and release packaging. Complete logical undo grouping remains false; the tested partial state is safely blocked. Gate 8 remains open.
+
+Keep production runtime, persistence, writer and versions unchanged. Require:
+
+- R36: capture complete identities, source (including inactive memory), output/PB settings, phrase names/seals and all native snapshot cells, foreign sentinel and raw tool-data bytes before each save. Compare each cold reopen with that earlier baseline. Report both original and independent IDs across processes. A lossless deterministic baseline interns repeated cells without hashes.
+- R29: save and reopen the collision fixture; require empty native undo/redo history before the user action. Walk native undo to exhaustion and redo to exhaustion, recording every state and invalid-target write rejection. Report logical grouping separately: retaining the post-action store on undo demonstrates safe blocking, not complete logical undo grouping. Keep broader musical-writer grouping in Gate 8.
+- R24: export an owned donor instrument, create a separate recipient song with its own source record, then load the native instrument file. Preserve the donor name/seal and complete phrase snapshot; require absent donor source, regeneration and Make Independent refusal, exact recipient records and unrelated phrases.
+- Evidence: rerun affected native cases and local checks. Keep final sign-off pending until all required assertions pass; record failed harness attempts separately.
+
+Gate 8 additionally requires one cold-reopen GUI journey: reopen the saved song in a fresh process, open the production ACID dialog, select the saved target, verify editor source/settings restoration, edit and Generate through the runtime request/scheduler/writer, and verify only the selected destination changes. Gate 4's native runtime/writer route does not establish this GUI journey.
+
 **Gate 4:** close only when all nine subgates have evidence and no unresolved
 correctness defects or required native blockers. Record local/mocked and native
 results separately; do not infer success from case labels, previous Gate 3 results
@@ -1776,7 +1790,7 @@ Step 8 but do not close Gate 8's broader A–E requirements or M4.
 
 **Status:** cutover landed at `6413e5f`: one runtime scheduler and direct GUI dispatch replace the obsolete scheduler/adapter path. Recovery chooser/copy/discard and Make Independent are wired through the runtime context and covered by focused local tests. Gate 5 remains OPEN for independent scheduler/recovery acceptance, current full-suite verification, and its complete checklist; native acceptance is tracked separately in Step 8.
 
-**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 writer acceptance is closed; Gate 4 acceptance is closed; its identity-only action remains separate from the musical scheduler. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
+**Prerequisites and sequencing:** the cutover consumed Step 2's runtime interface, Step 3's explicit writer facades and Step 1's draft/store/recovery APIs. Gate 3 writer acceptance is closed; Gate 4 targeted acceptance is closed after the acceptance-tightening follow-up; its identity-only action remains separate from the musical scheduler. Reuse Gate 1A's canonical editor projection and source freeze; do not add a second compilation, completion, queue or scheduler.
 
 **Ordered work:**
 

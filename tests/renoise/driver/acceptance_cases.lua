@@ -87,6 +87,54 @@ local function on_next_idle(callback)
   idle:add_notifier(notifier)
 end
 
+-- Intern repeated native empty cells without hashing or dropping inactive data.
+local function canonical_baseline(value)
+  local definitions, interned = {}, {}
+  local function encode(item)
+    if type(item) == "string" then return string.format("%q", item) end
+    if type(item) == "number" then return string.format("%.17g", item) end
+    if type(item) ~= "table" then return tostring(item) end
+    local keys, parts = {}, {}
+    for key in pairs(item) do keys[#keys + 1] = key end
+    table.sort(keys, function(a, b)
+      if type(a) ~= type(b) then return type(a) < type(b) end
+      return a < b
+    end)
+    for _, key in ipairs(keys) do parts[#parts + 1] = encode(key) .. "=" .. encode(item[key]) end
+    local contents = "{" .. table.concat(parts, ",") .. "}"
+    if not interned[contents] then
+      definitions[#definitions + 1] = contents
+      interned[contents] = #definitions
+    end
+    return "@" .. tostring(interned[contents])
+  end
+  local root = encode(value)
+  return table.concat(definitions, "\n") .. "\n" .. root
+end
+
+local function persisted_baseline(song)
+  local ownership = require("renoise.phrase_ownership")
+  local store = require("renoise.pattern_store")
+  local instruments = {}
+  for instrument_index, instrument in ipairs(song.instruments) do
+    local phrases = {}
+    for phrase_index, phrase in ipairs(instrument.phrases) do
+      local id = ownership.id(phrase)
+      local source, policy, pb = nil, nil, nil
+      if id then source, policy, pb = store.read_entry(song, id) end
+      local snapshot = ownership.snapshot(phrase)
+      assert(snapshot, "Persisted baseline requires a complete phrase snapshot")
+      phrases[phrase_index] = { id = id, snapshot = snapshot,
+        source = source, output_policy = policy, pb_range = pb }
+    end
+    instruments[instrument_index] = { name = instrument.name, phrases = phrases }
+  end
+  local raw = song.tool_data or ""
+  local hex = raw:gsub(".", function(byte) return string.format("%02x", string.byte(byte)) end)
+  return canonical_baseline({ instruments = instruments, tool_data_hex = hex,
+    tool_data_present = song.tool_data ~= nil })
+end
+
 local function save_independent_fixture(song, fixture_name)
   local name = fixture_name or "acceptance-independent.xrns"
   local path = renoise.tool().bundle_path .. "\\..\\fixtures\\" .. name
@@ -135,6 +183,11 @@ end
 local function cleanup_independence_fixture(state)
   if not state then return end
   pcall(function() if state.context then state.context:release_document() end end)
+  if state.preserve_fixture then
+    pcall(function() state.duplicate.name = state.old_name end)
+    pcall(function() state.song.tool_data = state.data_before end)
+    return
+  end
   pcall(function()
     local instrument = state.instrument
     for _, phrase in ipairs({ state.original, state.duplicate }) do
@@ -612,6 +665,7 @@ local function run_make_independent(done)
             done(details)
             return
           end
+          details.saved_baseline = persisted_baseline(song)
           local saved, save_error = save_independent_fixture(song)
           if not saved then
             details.status = "FAIL"
@@ -730,7 +784,7 @@ local function run_make_independent(done)
   return true
 end
 
-local function run_ownership_negatives(done)
+local function run_ownership_negatives(done, donor_only)
   local song = renoise.song()
   local instrument_index = song.selected_instrument_index
   local instrument = song.instruments[instrument_index]
@@ -767,10 +821,14 @@ local function run_ownership_negatives(done)
   local function finish(passed, details)
     cleanup()
     local restored = #instrument.phrases == phrase_count_before and song.tool_data == store_before
+    if donor_only then
+      local saved, save_error = save_independent_fixture(song, "acceptance-donor.xrns")
+      if not saved then passed = false; details.reason = save_error end
+    end
     details.cleanup_restored_fixture = restored
     if not restored then passed = false end
     details.status = passed and "PASS" or "FAIL"
-    details.case = "ownership-negatives"
+    details.case = donor_only and "import-donor" or "ownership-negatives"
     done(details)
   end
 
@@ -784,6 +842,58 @@ local function run_ownership_negatives(done)
       end
       local original = result.phrase
       test_phrases[#test_phrases + 1] = original
+      local donor_path = renoise.tool().bundle_path .. "\\__dev\\import-donor.xrni"
+      if donor_only then
+        local donor_id = 42
+        local name = ownership.make_name(original, donor_id)
+        local saved_source = store.save(song, donor_id, source, request.output_policy, request.pb_range)
+        original.name = assert(name)
+        song.selected_instrument_index = instrument_index
+        local exported = saved_source and renoise.app():save_instrument(donor_path)
+        finish(exported == true, { donor_phrase = canonical_baseline(ownership.snapshot(original)),
+          donor_id = donor_id, native_instrument_exported = exported == true })
+        return
+      end
+      local recipient_before = persisted_baseline(song)
+      local recipient_data = song.tool_data
+      local recipient_instrument_count = #song.instruments
+      local imported_index = recipient_instrument_count + 1
+      song:insert_instrument_at(imported_index)
+      song.selected_instrument_index = imported_index
+      local loaded = renoise.app():load_instrument(donor_path)
+      local imported_instrument = song.instruments[imported_index]
+      local imported = imported_instrument.phrases[1]
+      local imported_snapshot = imported and ownership.snapshot(imported)
+      local imported_baseline = imported_snapshot and canonical_baseline(imported_snapshot)
+      local import_context = context_for(song)
+      local import_bound = imported and import_context:bind_phrase(imported_instrument, imported)
+      local independent, independent_error = false, nil
+      if import_bound then independent, independent_error = import_context:make_independent() end
+      import_context:release_document()
+      local import_details = { loaded = loaded, id = imported and ownership.id(imported),
+        status = imported and ownership.status(imported), source_missing = not store.read_entry(song, 42),
+        independent_refused = not independent, independent_reason = describe_failure(independent_error),
+        tool_data_unchanged = song.tool_data == recipient_data }
+      local imported_rejected = loaded and imported and ownership.id(imported) == 42 and
+        ownership.status(imported) == "owned" and not store.read_entry(song, 42) and
+        not independent and independent_error ~= nil and
+        writer_rejects_regeneration_without_mutation(song, imported_index, source,
+          imported, factory, writer, ownership) and song.tool_data == recipient_data and
+        ownership.compare(imported_snapshot, ownership.snapshot(imported))
+      song:delete_instrument_at(imported_index)
+      while #song.instruments > recipient_instrument_count do
+        assert(#song.instruments[#song.instruments].phrases == 0,
+          "Unexpected phrase in the native import's trailing instrument slot")
+        song:delete_instrument_at(#song.instruments)
+      end
+      song.selected_instrument_index = instrument_index
+      imported_rejected = imported_rejected and recipient_before == persisted_baseline(song)
+      import_details.recipient_preserved = recipient_before == persisted_baseline(song)
+      if not import_details.recipient_preserved then
+        import_details.recipient_before = recipient_before
+        import_details.recipient_after = persisted_baseline(song)
+      end
+      os.remove(donor_path)
       local original_id = ownership.id(original)
       local original_snapshot = ownership.snapshot(original)
       if not original_id or not original_snapshot then
@@ -860,7 +970,10 @@ local function run_ownership_negatives(done)
         not missing_state.eligible and reject_regeneration(original)
       local source_restored = pcall(function() song.tool_data = raw_before_missing end)
 
-      finish(pair_blocked and three_blocked and mismatch_blocked and foreign_blocked and source_less_blocked and source_restored, {
+      finish(imported_rejected and pair_blocked and three_blocked and mismatch_blocked and foreign_blocked and source_less_blocked and source_restored, {
+        native_cross_song_import_blocked = imported_rejected == true,
+        imported_donor_phrase = imported_baseline,
+        import_details = import_details,
         original_id = original_id,
         pair_holder_count = pair_groups and #pair_groups[original_id] or 0,
         pair_blocked = pair_blocked == true,
@@ -886,7 +999,7 @@ local function run_ownership_negatives(done)
   return true
 end
 
-local function run_independence_undo_prepare(done)
+local function run_independence_undo_prepare(done, fixture_only)
   if prepared_independence_undo then
     remove_undo_idle_notifier(prepared_independence_undo, "watch_notifier")
     if prepared_independence_undo.dialog and prepared_independence_undo.dialog.visible then
@@ -912,7 +1025,7 @@ local function run_independence_undo_prepare(done)
   end
   local phrase_count_before = #instrument.phrases
   local data_before = song.tool_data
-  local accepted, start_error = writer.create(request, function(result)
+  local function prepared(result)
     on_next_idle(function()
       if type(result) ~= "table" or result.kind ~= "success" or result.verified ~= true or not result.phrase then
         cleanup_independence_fixture({ song = song, instrument = instrument,
@@ -921,9 +1034,21 @@ local function run_independence_undo_prepare(done)
         return
       end
       local original = result.phrase
-      local duplicate = instrument:insert_phrase_at(#instrument.phrases + 1)
-      duplicate:copy_from(original)
-      duplicate.name = original.name
+      local duplicate = instrument.phrases[2]
+      if fixture_only then
+        duplicate = instrument:insert_phrase_at(#instrument.phrases + 1)
+        duplicate:copy_from(original)
+        duplicate.name = original.name
+        local saved, save_error = save_independent_fixture(song, "acceptance-undo.xrns")
+        done({ status = saved and "PASS" or "FAIL", case = "independence-undo-fixture",
+          reason = save_error, roundtrip_fixture = saved and saved.fixture })
+        return
+      end
+      if #instrument.phrases ~= 2 or song:can_undo() or song:can_redo() then
+        done({ status = "FAIL", case = "independence-undo-prepare",
+          reason = "Undo acceptance requires a reopened collision fixture with empty history" })
+        return
+      end
       local context = context_for(song)
       local bound = context:bind_phrase(instrument, duplicate)
       local proof = bound and context:independence_eligibility()
@@ -947,6 +1072,8 @@ local function run_independence_undo_prepare(done)
         before_source = before_source,
         before_policy = before_policy,
         before_pb = before_pb,
+        preserve_fixture = true,
+        fixture_baseline = persisted_baseline(song),
         key_event_summary = "",
       }
       if not proof then
@@ -994,7 +1121,12 @@ local function run_independence_undo_prepare(done)
       done({ status = "PASS", case = "independence-undo-prepare", action_ready = true,
         dialog_visible = dialog.visible, focused = dialog.focused })
     end)
-  end)
+  end
+  if not fixture_only then
+    prepared({ kind = "success", verified = true, phrase = instrument.phrases[1] })
+    return true
+  end
+  local accepted, start_error = writer.create(request, prepared)
   if not accepted then
     done({ status = "FAIL", case = "independence-undo-prepare", reason = describe_failure(start_error) })
   end
@@ -1081,6 +1213,7 @@ continue_independence_undo = function(state, done)
   local after_snapshot = ownership.snapshot(duplicate)
   local after_source, after_policy, after_pb = store.read_entry(song, new_id)
   local post_resolution_data = song.tool_data
+  local post_resolution_baseline = persisted_baseline(song)
   local can_undo_after_action = song:can_undo()
   local content_matches = after_snapshot and ownership.compare(state.before_snapshot, after_snapshot, "name") or false
   local id_matches = ownership.id(duplicate) == new_id
@@ -1147,13 +1280,47 @@ continue_independence_undo = function(state, done)
         undo_duplicate_blocked = undo_state.classification == "unavailable" and not undo_state.eligible })
       return
     end
-    local redo_called, redo_error = pcall(function() song:redo() end)
-    if not redo_called then
-      cleanup()
-      done({ status = "FAIL", case = "independence-undo", reason = tostring(redo_error) })
-      return
+    local history = {
+      { direction = "before_action", baseline = state.fixture_baseline, safe = true },
+      { direction = "after_action", baseline = post_resolution_baseline, safe = true },
+      { direction = "undo", baseline = persisted_baseline(song), safe = undo_safe == true },
+    }
+    local undo_count, redo_count, history_safe = 1, 0, undo_safe
+    local function walk_history(completed)
+      local direction = song:can_undo() and redo_count == 0 and "undo" or "redo"
+      if direction == "redo" and not song:can_redo() then completed(); return end
+      if #history >= 32 then
+        cleanup()
+        done({ status = "FAIL", case = "independence-undo", reason = "Native undo chain exceeded its bound", history = canonical_baseline(history) })
+        return
+      end
+      song[direction](song)
+      if direction == "undo" then undo_count = undo_count + 1 else redo_count = redo_count + 1 end
+      on_next_idle(function()
+        local before = persisted_baseline(song)
+        local safe = #instrument.phrases == TWO_HOLDER_COUNT
+        for _, phrase in ipairs(instrument.phrases) do
+          local target = classify_write_eligibility(song, instrument, phrase)
+          local id = ownership.id(phrase)
+          local snapshot = ownership.snapshot(phrase)
+          safe = safe and (id == state.old_id or id == new_id) and snapshot and
+            ownership.compare(state.before_snapshot, snapshot, "name")
+          if target.classification ~= "owned" or not target.eligible then
+            safe = writer_rejects_regeneration_without_mutation(song, state.instrument_index,
+              state.source, phrase, state.factory, writer, ownership) and safe
+          else
+            local source, policy, pb = store.read_entry(song, id)
+            safe = safe and source and sequence.same_source(source, state.before_source) and
+              policy == state.before_policy and pb == state.before_pb
+          end
+        end
+        safe = safe and before == persisted_baseline(song)
+        history_safe = history_safe and safe
+        history[#history + 1] = { direction = direction, baseline = before, safe = safe == true }
+        walk_history(completed)
+      end)
     end
-    on_next_idle(function()
+    walk_history(function()
       local redo_data = song.tool_data
       local redo_snapshot = ownership.snapshot(duplicate)
       local redo_new_source, redo_new_policy, redo_new_pb = store.read_entry(song, new_id)
@@ -1169,7 +1336,7 @@ continue_independence_undo = function(state, done)
         group_contains_exact_phrases(redo_groups[new_id], { duplicate })
       local redo_safe = redo_restored and redo_state.classification == "owned" and redo_state.eligible and
         redo_store_matches and song.tool_data == redo_data
-      local passed = undo_safe and redo_safe
+      local passed = undo_safe and redo_safe and history_safe and undo_count == redo_count
       local details = {
         old_id = state.old_id,
         new_id = new_id,
@@ -1185,12 +1352,18 @@ continue_independence_undo = function(state, done)
         undo_collision_remained_blocked = undo_safe == true,
         undo_regeneration_rejected_without_store_repair = undo_requests_rejected == true,
         single_undo_restored_prior_phrase = undo_restored == true,
+        complete_logical_undo_grouped = undo_count == 1 and undo_data_mode == "pre_resolution_restored" and undo_restored == true,
+        undo_history_exhausted = true,
+        undo_state_count = undo_count,
+        redo_state_count = redo_count,
+        history = canonical_baseline(history),
         redo_restored_new_identity_and_cloned_source = redo_restored == true,
         redo_target_owned_and_eligible = redo_safe == true,
         redo_preserved_complete_post_resolution_store = redo_store_matches,
       }
       cleanup()
-      details.cleanup_restored_fixture = #instrument.phrases == state.phrase_count_before and song.tool_data == state.data_before
+      details.cleanup_restored_fixture = #instrument.phrases == state.phrase_count_before and
+        song.tool_data == state.data_before and state.fixture_baseline == persisted_baseline(song)
       details.status = passed and details.cleanup_restored_fixture and "PASS" or "FAIL"
       details.case = "independence-undo"
       done(details)
@@ -3289,6 +3462,7 @@ end
 
 local function inspect_cold_song(expected_target_note, case_name)
   local song = renoise.song()
+  local reopened_baseline = persisted_baseline(song)
   local instrument_index = song.selected_instrument_index
   local instrument = song.instruments[instrument_index]
   local sequence = require("model.sequencer")
@@ -3369,6 +3543,7 @@ local function inspect_cold_song(expected_target_note, case_name)
     sentinel = sentinel,
     target_policy = policy_read,
     target_pb = pb_read,
+    reopened_baseline = reopened_baseline,
   }
 end
 
@@ -3598,8 +3773,11 @@ local function run_cold_reopen_regenerate(done)
         done({ status = "FAIL", case = "cold-reopen-regenerate", reason = negative_error })
         return
       end
+      local saved_baseline = persisted_baseline(state.song)
       local saved, save_error = save_independent_fixture(state.song, "acceptance-cold-regenerated.xrns")
       done({ status = saved and "PASS" or "FAIL", case = "cold-reopen-regenerate",
+        reopened_baseline = state.reopened_baseline,
+        saved_baseline = saved_baseline,
         roundtrip_fixture = saved and saved.fixture or nil,
         roundtrip_bytes = saved and saved.bytes or nil,
         old_id = state.old_id, target_id = state.target_id,
@@ -3698,6 +3876,7 @@ local function run_cold_reopen_verify(done)
     ownership.compare(state.sentinel.snapshot, ownership.snapshot(state.sentinel.phrase))
   local passed = duplicate_blocked and modified_blocked and missing_blocked and unchanged and sentinel_preserved
   done({ status = passed and "PASS" or "FAIL", case = "cold-reopen-verify",
+    reopened_baseline = state.reopened_baseline,
     old_id = state.old_id,
     target_id = state.target_id,
     duplicate_id = duplicate_id,
@@ -3719,7 +3898,9 @@ function M.run(case_name, done)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name == "make-independent" then return run_make_independent(done) end
   if case_name == "ownership-negatives" then return run_ownership_negatives(done) end
+  if case_name == "import-donor" then return run_ownership_negatives(done, true) end
   if case_name == "independence-undo-prepare" then return run_independence_undo_prepare(done) end
+  if case_name == "independence-undo-fixture" then return run_independence_undo_prepare(done, true) end
   if case_name == "independence-undo" then return run_independence_undo(done) end
   if case_name == "cold-reopen-regenerate" then return run_cold_reopen_regenerate(done) end
   if case_name == "cold-reopen-verify" then return run_cold_reopen_verify(done) end

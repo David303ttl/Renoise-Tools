@@ -90,9 +90,17 @@ Run the native rejection, user-action undo and cold-process checks separately:
 ```
 
 - Undo: guarded Enter to the verified PID; real dialog callback, native undo/redo,
-  blocked collision regeneration and no source repair.
+  reopened collision fixture with empty history, all operation states through
+  undo/redo exhaustion, blocked invalid regeneration and no source repair.
+  Logical grouping is reported separately from safe blocking.
 - Cold reopen: save → fresh process → exact-target regeneration → save → another
-  fresh process; valid sources/settings and blocked saved invalid associations.
+  fresh process; compare complete pre-save baselines (IDs, source/settings,
+  phrase snapshots and raw persisted bytes) across both restarts, including
+  the foreign sentinel. The route uses runtime restoration and the native writer;
+  the production GUI journey remains required under Gate 8.
+- Import: native donor instrument export → separate recipient song → native
+  import; exact donor phrase preservation, missing source, regeneration and
+  Make Independent refusal, and unchanged unrelated recipient records.
 - Isolation: runner-owned processes only; `-RenoiseProcessId` is rejected for cold
   restarts. Temporary fixtures/session files and verified installation restoration.
 

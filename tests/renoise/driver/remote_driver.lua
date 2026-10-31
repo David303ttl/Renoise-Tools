@@ -388,8 +388,8 @@ local function valid_args_for_operation(current, request)
       (args.case == "make-independent" or args.case == "draft-recovery" or
         args.case == "reopen-independent" or args.case == "api-probe" or
         args.case == "integrity-observers" or args.case == "writer-recovery" or
-        args.case == "editor-responsiveness" or args.case == "ownership-negatives" or
-        args.case == "independence-undo-prepare" or args.case == "independence-undo" or
+        args.case == "editor-responsiveness" or args.case == "import-donor" or args.case == "ownership-negatives" or
+        args.case == "independence-undo-fixture" or args.case == "independence-undo-prepare" or args.case == "independence-undo" or
         args.case == "cold-reopen-regenerate" or
         args.case == "cold-reopen-verify")
   elseif operation == "wait.condition" then
