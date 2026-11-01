@@ -69,44 +69,16 @@ policy, phrase LPB, line count, loop endpoints and observed playback for each.
    count, saved source or transport. Switch timing during rendering and confirm
    the last-good destination and source remain unchanged.
 
-## Gate 8 multi-instrument production session
+## Gate 8 production-session acceptance (current contract)
 
-This sustained acceptance journey is pending; the ordered cases and evidence
-boundaries are tracked in [runtime acceptance](runtime_acceptance.md#gate-8-acceptance-plan-2026-10-31).
-Use a disposable song with four tracks playing concurrently, three instruments
-(sampler, VST and another supported instrument), and at least 12 owned and
-foreign phrases. Keep the other tracks playing while editing ACID targets.
+**OPEN / implementation pending.** The three-instrument/four-track, twelve-phrase case documented in older records is a historical limited diagnostic, not certification of real multi-instrument ACID use. Its direct-writer functional checks are accompanied by >30 ms Live Edit latency failures. Production requires both [8x8 and 16x8 native scenarios](production_session_acceptance.md) under the ordered [T8.0–T8.5 playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
 
-1. Open ACID on instrument A / phrase 2. Enable Live Edit and change notes,
-   ties and timing during playback. Record ACID's target and Renoise's selected
-   instrument/phrase before, during and after generation.
-2. During an active render, switch to instrument B / phrase 4, edit it and
-   regenerate. Return to A and verify its exact destination and source. Repeat
-   on C, including an explicit New phrase.
-3. Disable Live Edit, edit a different phrase, navigate away and back, then use
-   explicit Generate. Save the song, fully restart Renoise, reopen it, inspect
-   restored source/settings and regenerate selected phrases.
-4. Check selection stability, phrase isolation, destination object identity,
-   settled phrase count/order, A's preserved draft, other tracks' phrase
-   programs and fresh-process persistence. An explicit Create must add one
-   durable phrase and remove none.
-5. Watch the phrase list during rendering as well as after settlement. Record
-   any visible staging/backup entries independently from final cleanup; correct
-   selection and cleanup do not establish that temporary list churn was hidden.
+Use the existing runner on a disposable real Renoise song: **one ACID GUI instance**, 8 instruments/64 owned phrases/8 foreign, then 16 instruments/128 owned phrases/16 foreign, sample + loaded VST + routed MIDI receivers and 8/16 playing tracks. Create and regenerate owned phrases via the real GUI/runtime, not a test writer shortcut. For each instrument test independent LAST STEP and PITCH spans including 1/16/17/32, NOTE/TIE/REST, accents, slides, Straight/Triplet and Repeat/Play Once; check generated native cells, loop ends and distinct per-phrase source/settings independently. Return to dirty A after B/C navigation. Repeat Live Edit and manual Generate at least 128/512 times, without wrong-target edits, source-history mismatch, native selection jump, observer growth or 30 ms callback overrun.
 
-API 6.2 marks both `song.selected_phrase` and `song.selected_phrase_index`
-read-only in the pinned definitions and offline docs. Do not attempt to restore
-selection by assigning the index. Any reproduced switch from A to B, or removal
-of an existing last phrase, is a P0 blocker and keeps Gate 8 open until the
-native case passes after correction. Complete logical undo grouping remains a
-separate Gate 8 obligation.
+Verify actual phrase-trigger playback and receiver event delivery, not merely transport activity, including MIDI note/OFF/PB through a captured route; actual host sound and external glide behavior remain separately qualified. Native Undo/Redo must restore a coherent phrase/source/settings/editor revision without regenerating. Save full XRNS, terminate Renoise, fresh-process reopen/read-only classification, regenerate across receiver classes, then save and cold-reopen again. Run local failure/rollback/draft-detachment injection and native negative cases. Report missing receiver evidence as BLOCKED, and keep Gate 8 open on any correctness/performance failure.
 
-Renoise 3.5.4 LPB check: phrases 01 and 02 were created and 02 was regenerated
-through the native callback; count stayed two. Phrase preview started and the
-Renoise output meter showed signal; Stop halted preview. Missing callbacks,
-cancellation during rendering, document release during rendering and speed
-timing remain unverified. The open song uses LPB timing; the API exposes
-`transport.timing_model` as read-only, so no live speed-timing song was tested.
+The direct writer is synchronous and does not create staging/backup phrases on regeneration. Navigation can be rapid **between** user callbacks, not literally simultaneous inside one synchronous write; native notification reentry is observed independently. Earlier asynchronous render-stage/staging instructions elsewhere in this manual are historical and must not be applied to the new production writer.
+
 
 ## M3.6 Plugin/MIDI pitch bend
 

@@ -683,6 +683,16 @@ status is tracked above and in playbook 2.9.
 
 **M4 closure:** M4.7 passes the playbook's local/package gates and native acceptance A–E. An unresolved native feasibility or integrity blocker keeps M4 open. No additional acoustic research is required.
 
+### M4.7 Gate 8 production-scale acceptance (normative follow-up, 2026-11-01)
+
+**OPEN — not yet implemented or passed.** Following the synchronous direct-materialization refactor, the existing 3-instrument/12-phrase diagnostic is insufficient for full production use and fails the unchanged 30 ms Live Edit callback budget. Complete the linear T8.0–T8.5 sequence in the [playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance), with exact fixtures, native oracles, performance budgets, command allowlists and evidence specified in [production-session acceptance](../tests/acid/production_session_acceptance.md).
+
+- [ ] **8x8:** 3 sample + 3 loaded VST + 2 routed MIDI; 64 owned plus 8 foreign phrases, eight playing tracks, ≥128 real GUI regenerations, independent LAST STEP/PITCH spans, NOTE/TIE/REST, accent/slide, timing, Repeat/Play Once and PB combinations. Prove source/draft/selection isolation.
+- [ ] **16x8:** 6 sample + 6 loaded VST + 4 routed MIDI; 128 owned plus 16 foreign, 16 playing tracks, ≥512 regenerations and ≥128 cross-instrument switches. Reuse the same parameterized test implementation; verify history growth, observers, heap and late-session latency.
+- [ ] **Both:** independent native musical/receiver-event evidence, first/middle/last target, rejection/recovery, one-step native Undo/Redo and two true fresh-process XRNS reopen stages. **Every** GUI edit callback must be ≤30 ms; missing mandatory MIDI route/capture is BLOCKED, transport progress alone is insufficient.
+- [ ] No new production writer/scheduler, adapter, persisted format/version, test-specific production API or unchecked fast path. Optimize demonstrated duplicate planning/snapshot/history/GUI work without relaxing pre/postimage and rollback safeguards. Gate 8 and M4 remain open until actual native results and independent review pass.
+
+
 ---
 
 ## 7. M5 — Source programming and Renoise workflow

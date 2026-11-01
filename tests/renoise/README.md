@@ -185,6 +185,15 @@ instance. Close Renoise before rebuilding the fixture; ordinary Native runner
 runs support concurrent instances. Fixture construction uses explicit native
 field values, and scenario expectations come from independent golden values.
 
+### Gate 8 real production-session scenarios — implementation pending
+
+The two **future** native acceptance cases are `production-session-8x8` and `production-stress-16x8`. They are **not yet registered** in `scripts/run_interactive_tests.ps1` or `tests/renoise/driver/acceptance_cases.lua`; invoking either name today rejects. The detailed implementation-ready specification is [production_session_acceptance.md](../acid/production_session_acceptance.md); execute its linear T8.0–T8.5 owner sequence in the [M4.7 playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
+
+Implement one parameterized test-only journey, reusing the real production ACID GUI and existing native runner, verified developer bundle, identity-guarded cleanup and per-process report. Seed owned phrases **through** the real GUI rather than the standalone writer request factory. Use 64/128 heterogeneous sources, 8/16 playing tracks, actual sample/loaded VST/MIDI-only routes, 128/512 regenerations, true native Undo/Redo, two cold Renoise process restarts and per-action/periodic native oracles. The invariant is no cross-target write, no lost draft, no accidental selection, complete source revision integrity and **each** edit callback ≤30 ms. Never infer played phrases/MIDI delivery from transport progression. A test-only loopback/real MIDI route is required for MIDI delivery claims; missing availability is BLOCKED, not silent fallback.
+
+Do not create 128 full phrase snapshots per edit: keep small action/peer traces and periodic complete 512×12+8 verification outside timed callbacks. Keep script-specific real GUI driver extensions test-only, package-allowlisted and excluded from the release. No second writer/scheduler/test framework and no production API for tests. The existing `multi-instrument-workflow`, `editor-responsiveness` and `direct-output-feasibility` are narrow runnable prerequisites, not production-scale passes. Both new case commands and the needed cold-process runner extension are defined in the linked contract, and become runnable only after allowlisting and regression coverage.
+
+
 ### Native scenario catalog
 
 Native fixture scenarios are JSON files in `tests/renoise/acid/scenarios/`.

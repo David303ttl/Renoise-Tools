@@ -6,6 +6,24 @@ regeneration slots are historical evidence for the former writer. They do not
 establish acceptance of the current direct writer; its native workflow checks
 remain under Gate 8 until explicitly recorded as passing.
 
+## Gate 8 expanded production-session acceptance (specified 2026-11-01)
+
+**NOT IMPLEMENTED / NOT RUN / Gate 8 OPEN.** The real-user acceptance target now includes a single ACID production GUI controlling **8 instruments × 8 owned phrases (64) + 8 foreign sentinels** and **16 instruments × 8 owned phrases (128) + 16 foreign sentinels**, with actual sample/VST/MIDI receivers, 8/16 playing tracks, heterogeneous LAST STEP/PITCH spans, NOTE/TIE/REST, accents/slides, Straight/Triplet, Repeat/Play Once, PB, drafts, real native Undo/Redo and two cold reopen stages. The existing 3-instrument diagnostic is retained as narrower historical evidence, not an expanded-case PASS.
+
+The full implementation-ready contract, deterministic profiles, real-GUI call path, 128/512 regeneration minimums, phase-specific independent oracles, 30 ms **per edit callback** maximum, source-history/heap/observer budgets, receiver event evidence, failure stop conditions and commands are in [production_session_acceptance.md](production_session_acceptance.md). Execute T8.0–T8.5 in order in the [playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance). The future case names are **not currently allowlisted**; no result is asserted here.
+
+| Requirement | 8x8 | 16x8 |
+| --- | --- | --- |
+| Deterministic fixture and actual mixed receiver preflight | NOT IMPLEMENTED | NOT IMPLEMENTED |
+| One real ACID GUI, full native peer/source/selection isolation | NOT RUN | NOT RUN |
+| 128 / 512 regenerations, dirty drafts and no-op navigation | NOT RUN | NOT RUN |
+| Real native Undo/Redo, failure/recovery and cold reopen twice | NOT RUN | NOT RUN |
+| Actual phrase playback and MIDI route/event observation | NOT RUN | NOT RUN |
+| Every Live Edit GUI callback ≤30 ms; history/memory/observer checks | FAIL at smaller historical scale; expanded run PENDING | PENDING |
+
+Current smaller native evidence records 118.00 ms and 107.72 ms GUI Live Edit callbacks; functional checks **do not** satisfy this speed gate. No large-song results are claimed. Keep historic dated reports below unchanged.
+
+
 ## Direct-writer cleanup verification (2026-11-01)
 
 The runtime has one synchronous materialization path. The former script writer
