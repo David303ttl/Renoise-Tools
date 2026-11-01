@@ -53,17 +53,17 @@ local function find_last_acid_phrase(instrument)
 end
 
 local function validate_phrase(phrase)
-  assert(phrase.lpb == 8 or phrase.lpb == 6,
-    "The generated phrase LPB must be 8 or 6")
-  local mode = phrase.lpb == 8 and "straight" or "triplet"
+  assert(phrase.lpb == 16 or phrase.lpb == 12,
+    "The generated phrase LPB must be 16 or 12")
+  local mode = phrase.lpb == 16 and "straight" or "triplet"
   assert(phrase.looping, "Phrase timing captures require Repeat output")
   assert(phrase.shuffle == 0, "Phrase shuffle must be zero")
-  local steps = (phrase.number_of_lines - 1) / 4
-  assert(steps >= 1 and steps <= 64 and steps == math.floor(steps),
-    "Repeat phrase line count does not encode a 1–64 step source")
-  assert(phrase.number_of_lines == steps * 4 + 1,
+  local steps = (phrase.number_of_lines - 1) / 8
+  assert(steps >= 1 and steps <= 32 and steps == math.floor(steps),
+    "Repeat phrase line count does not encode a 1–32 step source")
+  assert(phrase.number_of_lines == steps * 8 + 1,
     "Repeat phrase must contain two complete cycles and an empty sentinel")
-  assert(phrase.loop_start == steps * 2 + 1 and phrase.loop_end == steps * 4 + 1,
+  assert(phrase.loop_start == steps * 4 + 1 and phrase.loop_end == steps * 8 + 1,
     "Repeat phrase loop endpoints do not match the cold and steady cycles")
 
   local note_count, off_count = 0, 0
@@ -71,11 +71,11 @@ local function validate_phrase(phrase)
   for line_index = 1, phrase.number_of_lines do
     local line = assert(phrase:line(line_index), "Phrase line is unavailable")
     local column = assert(line.note_columns[1], "Phrase note column 1 is unavailable")
-    local within_cycle = (line_index - 1) % (steps * 2)
+    local within_cycle = (line_index - 1) % (steps * 4)
     if line_index == phrase.number_of_lines then
       assert(column.note_value == renoise.PatternLine.EMPTY_NOTE,
         "Repeat sentinel line must be empty")
-    elseif within_cycle % 2 == 0 then
+    elseif within_cycle % 4 == 0 then
       if source_note == nil then
         source_note = column.note_value
         assert(source_note >= 0 and source_note < renoise.PatternLine.EMPTY_NOTE,
@@ -87,10 +87,13 @@ local function validate_phrase(phrase)
       assert(column.delay_value == 0,
         "Timing source NOTE must not carry a sub-line delay")
       note_count = note_count + 1
-    else
+    elseif within_cycle % 4 == 2 then
       assert(column.note_value == renoise.PatternLine.NOTE_OFF,
-        "Every NOTE must have its midpoint OFF on the following line")
+        "Every NOTE must have its midpoint OFF two lines after its start")
       off_count = off_count + 1
+    else
+      assert(column.note_value == renoise.PatternLine.EMPTY_NOTE,
+        "Non-event phrase subdivision must be empty")
     end
   end
   assert(note_count == steps * 2 and off_count == steps * 2,

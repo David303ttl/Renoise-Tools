@@ -1,23 +1,37 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Read-only description of the current Renoise instrument output layers.
 local M = {}
+-- Keep comparison values private so mutable diagnostics cannot change a baseline.
+local comparisons = setmetatable({}, {__mode="k"})
+local COMPARISON_FIELDS = 13
 
 local function has_sample(instrument)
-  for _, sample in ipairs(instrument.samples or {}) do
+  if instrument.samples==nil then error("sample inventory is unavailable") end
+  for _, sample in ipairs(instrument.samples) do
     local buffer = sample.sample_buffer
-    if buffer and buffer.has_sample_data then return true end
+    if not buffer or type(buffer.has_sample_data)~="boolean" then
+      error("sample buffer state is unavailable")
+    end
+    if buffer.has_sample_data then return true end
   end
   return false
 end
 
-function M.inspect(instrument)
-  local instrument_type=type(instrument)
-  if instrument_type ~= "Instrument" and instrument_type ~= "table"
-      and instrument_type ~= "userdata" then
-    return nil, "invalid instrument target"
-  end
+local function inspect(instrument)
   local plugin_properties = instrument.plugin_properties
   local midi_properties = instrument.midi_output_properties
+  if not plugin_properties or not midi_properties or
+      type(plugin_properties.plugin_loaded)~="boolean" or
+      type(midi_properties.device_name)~="string" then
+    error("receiver properties are unavailable")
+  end
+  for _,field in ipairs({"alias_instrument_index","alias_fx_track_index","alias_fx_device_index",
+      "midi_output_routing_index"}) do
+    local value=plugin_properties[field]
+    if type(value)~="number" or value%1~=0 or value<0 then
+      error("receiver property is unavailable: "..field)
+    end
+  end
   local plugin_loaded = plugin_properties and plugin_properties.plugin_loaded == true or false
   local alias_instrument = plugin_properties and plugin_properties.alias_instrument_index or 0
   local alias_fx_track = plugin_properties and plugin_properties.alias_fx_track_index or 0
@@ -58,14 +72,13 @@ function M.inspect(instrument)
     phrase_playback_mode = instrument.phrase_playback_mode,
     phrase_program = instrument.phrase_program,
   }
-  result.signature = table.concat({
-    tostring(result.sample), tostring(result.plugin), tostring(result.midi),
-    tostring(alias_instrument), tostring(alias_fx_track), tostring(alias_fx_device),
-    tostring(midi_device), tostring(midi_routing), tostring(midi_available),
-    tostring(midi_properties and midi_properties.instrument_type or ""),
-    tostring(midi_properties and midi_properties.channel or ""),
-    tostring(result.phrase_playback_mode), tostring(result.phrase_program),
-  }, "|")
+  comparisons[result] = {
+    result.sample, result.plugin, result.midi,
+    alias_instrument, alias_fx_track, alias_fx_device,
+    midi_device, midi_routing, midi_available,
+    midi_properties.instrument_type, midi_properties.channel,
+    result.phrase_playback_mode, result.phrase_program,
+  }
   result.diagnostics={}
   local function warn(message) result.diagnostics[#result.diagnostics+1]=message end
   if kind == "empty" then
@@ -90,6 +103,31 @@ function M.inspect(instrument)
   end
   if #result.diagnostics>0 then result.diagnostic=table.concat(result.diagnostics," ") end
   return result
+end
+
+function M.inspect(instrument)
+  local instrument_type=type(instrument)
+  if instrument_type ~= "Instrument" and instrument_type ~= "table"
+      and instrument_type ~= "userdata" then
+    return nil, "invalid instrument target"
+  end
+  local ok,result=pcall(inspect,instrument)
+  if ok then return result end
+  local reason="Could not inspect receiver: "..tostring(result)
+  local unknown={kind="unknown",read_error=reason,
+    diagnostics={reason},diagnostic=reason}
+  comparisons[unknown]={read_error=reason}
+  return unknown
+end
+
+function M.same(left, right)
+  local a,b=comparisons[left],comparisons[right]
+  if not a or not b then return false end
+  if a.read_error or b.read_error then return false end
+  for index=1,COMPARISON_FIELDS do
+    if a[index]~=b[index] then return false end
+  end
+  return true
 end
 
 return M

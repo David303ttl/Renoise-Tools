@@ -2,6 +2,21 @@
 -- Place note-column glide effects; sample voice continuity is not guaranteed.
 local M = {}
 M.DEFAULT_RATE = 0x20
+M.MIN_RATE = 0x01
+M.MAX_FINITE_RATE = 0xFE
+M.MAX_RATE = 0xFF
+M.CONTINUE_RATE = 0x00
+local RATE_UNITS_PER_SEMITONE = 16
+
+function M.rate_for_interval(interval, lines)
+  return math.ceil(math.abs(interval) * RATE_UNITS_PER_SEMITONE / lines)
+end
+
+function M.command_span(interval, rate)
+  return rate == M.MAX_RATE and 1
+    or math.max(1, math.ceil(math.abs(interval) * RATE_UNITS_PER_SEMITONE / rate))
+end
+local MIN_LINES_PER_STEP=2
 
 local function integer(value, minimum, maximum)
   return type(value)=="number" and value%1==0 and value>=minimum and value<=maximum
@@ -11,11 +26,11 @@ function M.plan(plan, lines_per_step, rate)
   if type(plan) ~= "table" or type(plan.steps) ~= "table"
     or type(plan.length) ~= "number" or plan.length % 1 ~= 0
     or type(lines_per_step) ~= "number" or lines_per_step % 1 ~= 0
-    or lines_per_step < 2 then
+    or lines_per_step < MIN_LINES_PER_STEP then
     return nil, "invalid glide plan or step resolution"
   end
   rate=rate or M.DEFAULT_RATE
-  if not integer(rate,1,255) then return nil,"glide rate must be 01..FF" end
+  if not integer(rate,M.MIN_RATE,M.MAX_RATE) then return nil,"glide rate must be 01..FF" end
   local commands = {}
   for step=1,plan.length do
     local event = plan.steps[step]
@@ -33,7 +48,7 @@ function M.plan(plan, lines_per_step, rate)
       local interval=event.note-event.from_note
       -- Native Gxx advances xx sixteenths of a semitone per command line.
       -- This determines command coverage, not acoustic settling or continuity.
-      local span=rate==255 and 1 or math.max(1,math.ceil(math.abs(interval)*16/rate))
+      local span=M.command_span(interval,rate)
       local available=lines_per_step
       for successor=step+1,plan.length do
         local held=plan.steps[successor]
@@ -48,7 +63,7 @@ function M.plan(plan, lines_per_step, rate)
         -- G00 continues the last rate; it does not cancel glide.
         commands[#commands+1] = {
         line=target_line+offset, note=offset==0 and event.note or nil,
-        command="0G", amount=offset==0 and rate or 0,
+        command="0G", amount=offset==0 and rate or M.CONTINUE_RATE,
         step=step, time_step=event.source_step or event.step or step,
         cycle=event.cycle, pitch_index=event.pitch_index,
         kind=offset==0 and "glide" or "continuation"
@@ -57,30 +72,6 @@ function M.plan(plan, lines_per_step, rate)
     end
   end
   return commands
-end
-
-function M.apply(phrase, plan, lines_per_step, rate, options)
-  if lines_per_step~=2 then return nil,"articulation output requires 2 lines per step" end
-  options=options or {}
-  if type(options)~="table" then return nil,"invalid articulation output options" end
-  local commands,err=M.plan(plan,lines_per_step,rate)
-  if not commands then return nil,err end
-  local control=require("model.control_signals")
-  local gates=require("writers.gate_writer")
-  local timeline
-  timeline,err=control.compile({}, {plan=plan,successor=options.successor,
-    output_policy=options.output_policy or "repeat",gate_fraction=0.5})
-  if not timeline then return nil,err end
-  local merged
-  merged,err=gates.plan(timeline,plan,commands)
-  if not merged then return nil,err end
-  local applied
-  applied,err=gates.apply_plan(phrase,merged)
-  if not applied then return nil,err end
-  local count=0
-  for _,command in ipairs(commands) do if command.kind=="glide" then count=count+1 end end
-  return {slide_count=count,early_releases=applied.early_releases,
-    commands=#merged.operations,rate=rate or M.DEFAULT_RATE,skipped_continuations={}}
 end
 
 return M

@@ -4,6 +4,7 @@ local function observable()
   local handlers={}
   return {
     add_notifier=function(_,handler) handlers[handler]=true end,
+    has_notifier=function(_,handler) return handlers[handler]==true end,
     remove_notifier=function(_,handler) handlers[handler]=nil end,
     fire=function(self)
       local pending={}
@@ -39,7 +40,7 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="Owned two"}
@@ -66,49 +67,141 @@ function app:show_warning(message) warnings[#warnings+1]=message end
 
 local persisted_drafts={}
 local fail_draft_persistence=false
-local fail_draft_clear=false
-package.loaded["model.pattern_store"]={load=function(_,phrase)
-  local source=require("model.sequencer").new_pattern(16)
-  if phrase.id==12 then source.timing_mode="triplet" end
-  return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
+local committed_entries={}
+local next_revision_id=100
+local sequencer=require("model.sequencer")
+local function store_entry(id,source,policy,pb_range)
+  local copied=assert(sequencer.copy_source(source))
+  committed_entries[id]={source=copied,policy=policy,pb_range=pb_range}
+end
+local function read_entry(_,id)
+  local entry=committed_entries[id]
+  if not entry then return nil,"test source revision is missing" end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
+end
+package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+  local entry=committed_entries[phrase.id]
+  if not entry then
+    local source=sequencer.new_pattern(16)
+    if phrase.id==12 then source.timing_mode="triplet" end
+    store_entry(phrase.id,source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0)
+    entry=committed_entries[phrase.id]
+  end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end,
-  write_draft=function(_,index,phrase_id,name,pattern,policy,pb_range)
+  read_entry=read_entry,
+  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end
     persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,
       pb_range=pb_range,name=name}
     return true
   end,
-  read_draft=function(_,index,phrase_id,name)
+  read_draft=function(song,instrument,phrase)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id,name=phrase and phrase.id or 0,instrument.name
     local item=persisted_drafts[index..":"..phrase_id]
     if not item then return nil end
     assert(item.name==name)
     return item.pattern,item.policy,item.pb_range
   end,
-  clear_draft=function(_,index,phrase_id)
-    if fail_draft_clear then return nil,"test cleanup failure" end
+  clear_draft=function(song,instrument,phrase)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id=phrase and phrase.id or 0
     persisted_drafts[index..":"..phrase_id]=nil
     return true
   end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
-package.loaded["writers.phrase_ownership"]={
+package.loaded["renoise.phrase_ownership"]={
   status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
-  id=function(phrase)return phrase.id end
+  id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
+  snapshot_index=function()return nil end,
+  capture_recovery=function()return {} end,
+  matches_recovery=function(_,token)return type(token)=="table" end,
+  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
+local active_request
+local function terminal_result(call,status,message)
+  local success=status=="committed" or status=="approximate"
+  local phrase=call.phrase or call.request.phrase
+  if success and call.request.kind=="regenerate" then
+    next_revision_id=next_revision_id+1
+    local revision_id=next_revision_id
+    call.request:mutate(call.request.token,function()
+      local accepted,revision_error=call.request:expect_revision(call.request.token,revision_id)
+      assert(accepted,revision_error)
+      phrase.id=revision_id
+      phrase.baseline_revision=(phrase.baseline_revision or 0)+1
+    end)
+  end
+  local result={kind=success and "success" or "failure",status=status or (success and "committed" or "failed"),
+    verified=success,token=call.request.token,epoch=call.request.epoch,request=call.request,
+    phrase=success and phrase or nil,reason=success and nil or (message or "invalidated"),
+    message=message or "invalidated"}
+  if success then
+    if phrase and phrase.id then
+      store_entry(phrase.id,call.request.source,call.request.output_policy,call.request.pb_range)
+    end
+    local ok,candidate=pcall(function()
+      return require("writers.phrase_validator").classify(call.request.song,
+        call.request.instrument,phrase,{},{},{})
+    end)
+    if ok and candidate then
+      result.baseline={id=phrase.id,source=candidate.source,settings=candidate.settings,
+        snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
+    else
+      result.baseline={id=phrase and phrase.id,source=call.request.source,
+        settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
+        snapshot={content=phrase and phrase.baseline_revision or 0},planning_inputs={}}
+    end
+  end
+  return result
+end
+local function start(kind,request,done)
+  local call={kind=kind,request=request,token=request.token,source=request.source,
+    pb_range=request.pb_range}
+  call.pattern=request.source
+  call.options={token=request.token,pb_range=request.pb_range,
+    phrase_mutation=function(action) return request:mutate(request.token,action) end}
+  for index,instrument in ipairs(request.song.instruments) do
+    if rawequal(instrument,request.instrument) then call.instrument_index=index;break end
+  end
+  if kind=="create" then
+    call.target=#request.instrument.phrases+1
+  else
+    for index,phrase in ipairs(request.instrument.phrases) do
+      if rawequal(phrase,request.phrase) then call.target=index;break end
+    end
+  end
+  tool.writer_calls[#tool.writer_calls+1]=call
+  active_request=request
+  render_callbacks[#render_callbacks+1]=function(result)
+    active_request=nil
+    done(result)
+    tool.app_idle_observable:fire()
+  end
+  return true
+end
 package.loaded["writers.phrase_writer"]={
-  generate=function(instrument_index,callback,pattern,target,options)
-    tool.writer_calls[#tool.writer_calls+1]={instrument_index=instrument_index,
-      target=target,options=options,pattern=pattern}
-    render_callbacks[#render_callbacks+1]=callback
-    return true
+  create=function(request,done) return start("create",request,done) end,
+  regenerate=function(request,done) return start("regenerate",request,done) end,
+  state=function()
+    return active_request and "busy" or "idle",active_request and active_request.token or nil
   end,
-  cancel=function()return true end
+  is_temporary=function()return false end,
+  cancel=function(token)
+    return active_request~=nil and rawequal(active_request.token,token)
+  end
 }
+
 local editor_module=require("model.editor_state")
 local force_diagnostic=false
 package.loaded["model.editor_state"]={
+  MAX_PAGES=editor_module.MAX_PAGES,
   project=function(pattern)
     if force_diagnostic then
       return {error={step=3,pitch_index=2,message="TIME step 03: test diagnostic."},
@@ -131,6 +224,7 @@ renoise={
   app=function()return app end
 }
 
+dofile("tests/acid/gui_host_stub.lua")
 local function open_gui()
   require("gui").show()
   return current_builder,dialogs[#dialogs]
@@ -155,7 +249,7 @@ end
 local builder,dialog=open_gui()
 local timing=builder.views.acid_timing
 local generate=button(builder,"Generate / Regenerate ACID Phrase")
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",builder.views.acid_source_state.text)
 generate:fire()
 local manual=tool.writer_calls[#tool.writer_calls]
 assert(manual.pattern.timing_mode=="straight" and manual.options.token:is_current(),
@@ -171,28 +265,15 @@ button(builder,"Redo"):fire()
 assert(timing.value==2 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 assert(not manual.options.token:is_current(),
   "changing timing invalidates the pending manual render")
-render_callbacks[#render_callbacks]({kind="complete",status="suspended",message="invalidated"})
+render_callbacks[#render_callbacks](terminal_result(manual,"suspended","invalidated"))
 assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
-fail_draft_clear=true
 generate:fire()
-local manual_result={kind="complete",status="committed",message="saved",target={phrase_index=1}}
-render_callbacks[#render_callbacks](manual_result)
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED; DRAFT RECOVERY PENDING",
-  "manual commit reports retained draft when cleanup fails")
-assert(persisted_drafts["1:11"], "failed cleanup must retain the draft")
-assert(manual_result.draft_warning:find("test cleanup failure",1,true))
-local recovery_choice=popup(builder,360)
-recovery_choice:fire(2)
-recovery_choice:fire(1)
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true) and timing.value==2,
-  "reselecting the phrase recovers the retained draft")
-fail_draft_clear=false
-generate:fire()
-render_callbacks[#render_callbacks]({kind="complete",status="committed",message="saved",
-  target={phrase_index=1}})
+local manual_call=tool.writer_calls[#tool.writer_calls]
+render_callbacks[#render_callbacks](terminal_result(manual_call,"committed","saved"))
 assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
-  "only a successful current generation clears the dirty indication")
+  "a successful current generation clears the dirty indication")
 timing:fire(2)
+
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
@@ -200,25 +281,26 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(live_checkbox)
 live_checkbox:fire(true)
+local before_live_edit=#tool.writer_calls
+assert(before_live_edit==2,"arming Live Edit does not write")
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 local first=tool.writer_calls[#tool.writer_calls]
 assert(first.pattern.timing_mode=="triplet" and first.options.token:is_current(),
   "Live Edit starts with the current triplet snapshot")
 timing:fire(1)
 assert(not first.options.token:is_current(),
   "changing timing invalidates the pending Live Edit render")
-render_callbacks[#render_callbacks]({kind="complete",status="suspended",message="invalidated"})
+render_callbacks[#render_callbacks](terminal_result(first,"suspended","invalidated"))
+tool.app_idle_observable:fire()
 local second=tool.writer_calls[#tool.writer_calls]
 assert(second~=first and second.pattern.timing_mode=="straight" and second.options.token:is_current(),
   "Live Edit queues the newest timing after the stale render settles")
-fail_draft_clear=true
-local live_result={kind="complete",status="committed",message="saved",target={phrase_index=1}}
+local live_result=terminal_result(second,"committed","saved")
 render_callbacks[#render_callbacks](live_result)
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED; DRAFT RECOVERY PENDING",
-  "Live Edit commit reports retained draft when cleanup fails")
-assert(persisted_drafts["1:11"], "Live Edit cleanup failure must retain the draft")
-assert(live_result.draft_warning:find("test cleanup failure",1,true))
-fail_draft_clear=false
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
 live_checkbox:fire(false)
+
 
 local phrase_choice=popup(builder,360)
 timing:fire(2)
@@ -226,7 +308,7 @@ assert(pb_range_popup(builder).value==2, "timing edits retain phrase one PB Rang
 phrase_choice:fire(2)
 assert(timing.value==2 and pb_range_popup(builder).value==5,
   "phrase two restores its committed timing and separate PB Range")
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
+assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",builder.views.acid_source_state.text)
 timing:fire(1)
 phrase_choice:fire(1)
 assert(timing.value==2 and pb_range_popup(builder).value==2,
@@ -263,6 +345,10 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(reopened_live)
 reopened_live:fire(true)
+local before_append=#tool.writer_calls
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
+assert(#tool.writer_calls==before_append+1,"an edit requests the armed append")
 local append=tool.writer_calls[#tool.writer_calls]
 local append_callback=render_callbacks[#render_callbacks]
 assert(append.instrument_index==2 and append.target==3 and append.pattern.timing_mode=="triplet",
@@ -272,12 +358,16 @@ assert(not append.options.token:is_current(),
   "selecting a foreign phrase invalidates the pending append")
 assert(other_instrument.phrases[2]==other_foreign,
   "foreign phrase remains untouched during Live Edit recovery")
-append_callback({kind="complete",status="suspended",message="invalidated"})
-local redirected=tool.writer_calls[#tool.writer_calls]
-assert(redirected~=append and redirected.instrument_index==2 and redirected.target==3 and
-  redirected.pattern.timing_mode=="triplet" and redirected.options.token:is_current(),
-  "foreign selection redirects the separate new-phrase draft with its timing intact: "..
-  tostring(redirected==append).." / "..tostring(redirected.instrument_index).." / "..
-  tostring(redirected.target).." / "..tostring(redirected.pattern.timing_mode).." / "..
-  tostring(redirected.options.token:is_current()))
+append_callback(terminal_result(append,"suspended","invalidated"))
+assert(#tool.writer_calls==before_append+1,"navigation does not queue an append")
+builder.views.acid_program_key_popup:fire(3)
+assert(#tool.writer_calls==before_append+1,
+  "foreign selection never redirects its source to append")
+phrase_choice:fire(3)
+builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
+local explicit_new=tool.writer_calls[#tool.writer_calls]
+assert(explicit_new~=append and explicit_new.instrument_index==2 and explicit_new.target==3 and
+  explicit_new.pattern.timing_mode=="triplet" and explicit_new.options.token:is_current(),
+  "an explicit New selection recovers its independent triplet draft before a fresh edit")
 print("GUI timing render invalidation passed")

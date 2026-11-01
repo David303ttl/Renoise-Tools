@@ -40,9 +40,9 @@ foreach ($case in $oracle.cases) {
     }
   }
   $source = $case.source
-  if ($source.length -lt 1 -or $source.length -gt 64 -or
+  if ($source.length -lt 1 -or $source.length -gt 32 -or
       @($source.time).Count -ne $source.length -or
-      $source.pitch_length -lt 1 -or $source.pitch_length -gt 64 -or
+      $source.pitch_length -lt 1 -or $source.pitch_length -gt 32 -or
       @($source.pitches).Count -lt $source.pitch_length) { throw "$id`: invalid canonical source" }
   foreach ($command in $source.time) {
     if ($command -cnotin @('N', 'T', 'R')) { throw "$id`: invalid TIME command" }
@@ -180,7 +180,7 @@ foreach ($required in @('isolated_note', 'note_tie', 'note_tie_tie', 'adjacent_e
     'transport_stop_start', 'transport_seek', 'keymapped_trigger')) {
   if (-not $ids.Contains($required)) { throw "Required articulation case '$required' is missing" }
 }
-foreach ($length in @(1, 16, 17, 32, 33, 48, 49, 64)) {
+foreach ($length in @(1, 16, 17, 32)) {
   if ($length -notin @($oracle.cases | ForEach-Object { $_.source.length })) { throw "Required structural length $length is missing" }
 }
 

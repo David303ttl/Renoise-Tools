@@ -1,11 +1,19 @@
 package.path = "com.david303ttl.ACID.xrnx/?.lua;" .. package.path
 
 local sequencer = require("model.sequencer")
-package.loaded["writers.phrase_ownership"]={
-  id=function(phrase) return phrase and phrase.id end,
-  status=function(phrase)return phrase and phrase.id and "owned" or "foreign" end
-}
-local cache = require("model.draft_cache")
+local ownership=require("renoise.phrase_ownership")
+ownership.id=function(phrase) return phrase and phrase.id end
+ownership.status=function(phrase)return phrase and phrase.id and "owned" or "foreign" end
+dofile("tests/acid/draft_baseline_stub.lua")
+local validator=require("writers.phrase_validator")
+local retained_snapshots=setmetatable({},{__mode="k"})
+local retain_baseline=validator.retained_baseline
+validator.retained_baseline=function(snapshot)
+  local sealed,index,identity,reference=retain_baseline(snapshot)
+  if sealed then retained_snapshots[sealed]=true end
+  return sealed,index,identity,reference
+end
+local cache = require("runtime.draft_cache")
 
 local instrument_a, instrument_b = {name="A",phrases={}}, {name="B",phrases={}}
 local song_a, song_b = {instruments={instrument_a,instrument_b}}, {instruments={}}
@@ -18,6 +26,9 @@ setmetatable(instrument_b,host_object)
 setmetatable(phrase_a,host_object)
 setmetatable(phrase_b,host_object)
 instrument_a.phrases={phrase_a,phrase_b}
+local pattern_store=require("renoise.pattern_store")
+assert(pattern_store.save(song_a,41,sequencer.new_pattern(17),"repeat",0))
+assert(pattern_store.save(song_a,42,sequencer.new_pattern(8),"repeat",0))
 local source = sequencer.new_pattern(17)
 source.pitch_length = 4
 source.pitch_events[3] = sequencer.new_pitch(5, 1, true, true)
@@ -43,6 +54,28 @@ local pristine,_,pristine_pb = cache.get(song_a, instrument_a, phrase_a)
 assert(pristine.time_events[17] == "R" and pristine.pitch_events[3].accent)
 assert(pristine_pb==24)
 
+-- A sealed native baseline remains private even when exposed through recovery.
+local private_instrument={name="Private baseline",phrases={}}
+local private_phrase={id=56,baseline_revision=911}
+private_instrument.phrases[1]=private_phrase
+local private_song={instruments={private_instrument}}
+assert(pattern_store.save(private_song,private_phrase.id,sequencer.new_pattern(2),"repeat",0))
+assert(cache.put(private_song,private_instrument,private_phrase,sequencer.new_pattern(2),"repeat",0))
+local private_snapshot
+for snapshot in pairs(retained_snapshots) do
+  if snapshot.content==911 then private_snapshot=snapshot end
+end
+assert(private_snapshot and private_snapshot.content==911,
+  "draft proof retains the validator-sealed native snapshot")
+assert(cache.detach(private_song,private_instrument,private_phrase,"Private snapshot check"))
+local recovery_copy=assert(cache.list(private_song)[1])
+assert(recovery_copy.baseline and recovery_copy.baseline.snapshot and
+  not rawequal(recovery_copy.baseline.snapshot,private_snapshot),
+  "recovery callers receive a detached snapshot copy")
+recovery_copy.baseline.snapshot.content=-1
+assert(private_snapshot.content==911,
+  "mutating a recovery result cannot alter the retained native proof")
+
 -- All three host object identities scope a draft independently.
 assert(cache.put(song_a, instrument_a, phrase_b, sequencer.new_pattern(8), "repeat"))
 assert(cache.get(song_a, instrument_a, phrase_b).length == 8)
@@ -57,21 +90,20 @@ assert(cache.get(song_a, instrument_a, phrase_a).length == 17)
 local foreign_phrase={}
 instrument_a.phrases[#instrument_a.phrases+1]=foreign_phrase
 assert(cache.get(song_a,instrument_a,foreign_phrase)==nil)
-assert(cache.clear(song_a,instrument_a,foreign_phrase)==false)
+assert(cache.clear(song_a,instrument_a,foreign_phrase)==nil)
 assert(cache.get(song_a,instrument_a,nil).length==23,
   "clearing a foreign phrase cannot remove the new-phrase draft")
 instrument_a.phrases[#instrument_a.phrases]=nil
 
 -- Drafts survive a new editor session and committed source rewrites preserve them.
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 local durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.pitch_events[3].note==53)
 assert(durable_pb==24)
-local pattern_store=require("model.pattern_store")
 assert(pattern_store.save(song_a,77,sequencer.new_pattern(4),"repeat",12))
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 durable,_,durable_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(durable.length==17 and durable.time_events[17]=="R")
 assert(durable_pb==24)
@@ -79,15 +111,15 @@ assert(durable_pb==24)
 -- Existing phrase drafts resolve by sealed ID after instrument reordering.
 song_a.instruments={instrument_b,instrument_a}
 assert(cache.get(song_a,instrument_a,phrase_a).length==17)
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 assert(cache.get(song_a,instrument_b,nil)==nil,
   "a reordered new-phrase destination is never rebound by index alone")
 local named_instrument={name="Unique",phrases={}}
 local named_song={instruments={named_instrument}}
 assert(cache.put(named_song,named_instrument,nil,sequencer.new_pattern(6),"repeat"))
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 named_song.instruments={named_instrument,{name="Unique",phrases={}}}
 assert(cache.get(named_song,named_instrument,nil)==nil,
   "ambiguous instrument names block new-phrase draft recovery")
@@ -100,7 +132,7 @@ assert(cache.get(song_a,instrument_a,phrase_a)==nil)
 instrument_a.phrases={phrase_a,phrase_b}
 
 -- A draft-only write rebases an in-flight source candidate and survives its commit.
-local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat",48))
+local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat",48,function()return true end))
 local changed=sequencer.new_pattern(19)
 changed.pitch_events[2]=sequencer.new_pitch(7,0,true,false)
 assert(cache.put(song_a,instrument_a,phrase_a,changed,"repeat",12))
@@ -108,8 +140,8 @@ local committed,commit_error=pattern_store.commit(song_a,candidate)
 assert(committed,commit_error)
 local merged=assert(pattern_store.read(song_a))
 assert(merged[88].pattern.length==5 and merged[88].pb_range==48)
-package.loaded["model.draft_cache"]=nil
-cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+cache=require("runtime.draft_cache")
 local recovered,_,recovered_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(recovered.length==19 and recovered.pitch_events[2].note==43,
   "commit preserves the newest dirty draft while storing the rendered source")
@@ -118,13 +150,13 @@ assert(pattern_store.restore(song_a,candidate))
 local rolled_back=assert(pattern_store.read(song_a))
 assert(rolled_back[88]==nil,
   "rollback removes only the source snapshot from the in-flight render")
-local persisted_draft,_,persisted_pb=pattern_store.read_draft(song_a,1,41,"A")
+local persisted_draft,_,persisted_pb=pattern_store.read_draft(song_a,instrument_a,phrase_a)
 assert(persisted_draft.length==19 and persisted_draft.pitch_events[2].note==43,
   "rollback restores the rebased raw data and preserves the newest draft")
 assert(persisted_pb==12)
 
 -- A concurrent source-record change still rejects the prepared candidate.
-local stale_candidate=assert(pattern_store.prepare(song_a,89,sequencer.new_pattern(6),"repeat"))
+local stale_candidate=assert(pattern_store.prepare(song_a,89,sequencer.new_pattern(6),"repeat",nil,function()return true end))
 assert(pattern_store.save(song_a,90,sequencer.new_pattern(7),"repeat"))
 local stale,stale_error=pattern_store.commit(song_a,stale_candidate)
 assert(not stale and stale_error=="ACID song data changed during generation")
@@ -155,24 +187,25 @@ assert(not cache.put(song_a, instrument_a, phrase_a, sequencer.new_pattern(), "i
 assert(not cache.put(song_a,instrument_a,phrase_a,sequencer.new_pattern(),"repeat",4))
 local timing_instrument={name="Timing",phrases={}}
 local timing_song={instruments={timing_instrument}}
-local timing_source=sequencer.new_pattern(64)
+local timing_source=sequencer.new_pattern(32)
 timing_source.timing_mode="triplet"
 assert(cache.put(timing_song,timing_instrument,nil,timing_source,"repeat",0))
-package.loaded["model.draft_cache"]=nil
-local reloaded_cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+local reloaded_cache=require("runtime.draft_cache")
 local timing_copy=assert(reloaded_cache.get(timing_song,timing_instrument,nil))
-assert(timing_copy.timing_mode=="triplet" and timing_copy.length==64)
+assert(timing_copy.timing_mode=="triplet" and timing_copy.length==32 and
+  #timing_copy.pitch_events==32 and #timing_copy.time_events==32)
 
 -- Independently scoped drafts retain their own timing and render settings on reopen.
 local other_instrument={name="Other timing",phrases={}}
 timing_song.instruments[2]=other_instrument
 local straight_source=sequencer.new_pattern(9)
 assert(reloaded_cache.put(timing_song,other_instrument,nil,straight_source,"play_once",12))
-package.loaded["model.draft_cache"]=nil
-reloaded_cache=require("model.draft_cache")
+package.loaded["runtime.draft_cache"]=nil
+reloaded_cache=require("runtime.draft_cache")
 local first,first_policy,first_pb=reloaded_cache.get(timing_song,timing_instrument,nil)
 local second,second_policy,second_pb=reloaded_cache.get(timing_song,other_instrument,nil)
-assert(first.timing_mode=="triplet" and first.length==64 and first_policy=="repeat" and first_pb==0)
+assert(first.timing_mode=="triplet" and first.length==32 and first_policy=="repeat" and first_pb==0)
 assert(second.timing_mode=="straight" and second.length==9 and second_policy=="play_once" and second_pb==12)
 
 -- A corrupt draft mode blocks all writes without discarding the original data.
@@ -180,11 +213,31 @@ local valid_timing_data=timing_song.tool_data
 for _,replacement in ipairs({"|unknown|", "||"}) do
   local corrupt=valid_timing_data:gsub("|triplet|",replacement,1)
   timing_song.tool_data=corrupt
-  local loaded,load_error=pattern_store.read_draft(timing_song,1,0,"Timing")
+  local loaded,load_error=pattern_store.read_draft(timing_song,timing_instrument,nil)
   assert(not loaded and load_error)
-  assert(not pattern_store.write_draft(timing_song,1,0,"Timing",timing_source,"repeat",0))
+  assert(not pattern_store.write_draft(timing_song,timing_instrument,nil,timing_source,"repeat",0))
   assert(not pattern_store.save(timing_song,91,straight_source,"repeat",0))
   assert(timing_song.tool_data==corrupt)
 end
 timing_song.tool_data=valid_timing_data
+
+-- A successful identity rebind clears the persistence warning.
+local rebind_phrase_id=101
+local rebind_pattern_length=5
+local rebind_pb_range=0
+local rebind_instrument={name="Rebind",phrases={}}
+local rebind_phrase={id=rebind_phrase_id}
+rebind_instrument.phrases[1]=rebind_phrase
+local rebind_song={instruments={rebind_instrument}}
+local rebind_source=sequencer.new_pattern(rebind_pattern_length)
+assert(pattern_store.save(rebind_song,rebind_phrase.id,rebind_source,"repeat",rebind_pb_range))
+local _,_,rebind_metadata=cache.put(rebind_song,rebind_instrument,rebind_phrase,
+  rebind_source,"repeat",rebind_pb_range)
+assert(rebind_metadata and rebind_metadata.persistent)
+local rebound,rebind_warning,rebound_metadata=cache.rebind(rebind_song,rebind_instrument,
+  rebind_phrase,rebind_source,"repeat",rebind_pb_range,rebind_metadata)
+assert(rebound and rebind_warning==nil and rebound_metadata.persistent and
+  rebound_metadata.warning==nil,
+  "successful draft identity rebind has no persistence warning")
+
 print("acid_draft_cache_spec: ok")
