@@ -44,6 +44,10 @@ local profiled_acceptance_cases = {
   ["editor-responsiveness"] = true,
   ["multi-instrument-workflow"] = true,
 }
+local production_latency_cases = {
+  ["production-latency-8x8"] = true,
+  ["production-latency-16x8"] = true,
+}
 
 local acceptance_profiles = { Warm = true, Detailed = true }
 
@@ -401,13 +405,18 @@ local function valid_args_for_operation(current, request)
         args.case == "cold-reopen-regenerate" or
         args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow" or
         args.case == "selection-feasibility" or args.case == "direct-output-feasibility" or
-        args.case == "source-undo-feasibility"
+        args.case == "source-undo-feasibility" or production_latency_cases[args.case] == true
     if not case_allowed then return false end
     if args.profile ~= nil and
         (not profiled_acceptance_cases[args.case] or not acceptance_profiles[args.profile]) then
       return false
     end
-    return object_has_only_keys(args, {case = true, profile = true}, {"case"})
+    local production_latency = production_latency_cases[args.case] == true
+    if production_latency then
+      if type(args.midi_output_device) ~= "string" or #args.midi_output_device == 0 or
+          #args.midi_output_device > 256 or args.midi_output_device:match("%c") then return false end
+    elseif args.midi_output_device ~= nil then return false end
+    return object_has_only_keys(args, {case = true, profile = true, midi_output_device = true}, {"case"})
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end
@@ -1001,7 +1010,7 @@ local function process_record(current, record)
     end
     record.acceptance_started = true
     local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete,
-      current.json, record.args.profile)
+      current.json, record.args.profile, {midi_output_device = record.args.midi_output_device})
     if not call_ok then
       finish_error(current, record, "acceptance_error",
         "native acceptance case raised an error: " .. tostring(accepted))
@@ -1126,6 +1135,9 @@ local function enqueue_request(current, client, request)
   end
 
   local default_ms = request.op == "wait.condition" and LIMITS.default_wait_timeout_ms or LIMITS.default_timeout_ms
+  if request.op == "acid.acceptance.run" and production_latency_cases[request.args.case] then
+    default_ms = 300000
+  end
   local timeout_seconds = validate_timeout(request.args, default_ms)
   local record = {
     id = request.id,

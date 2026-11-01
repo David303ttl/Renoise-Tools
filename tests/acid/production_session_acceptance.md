@@ -2,6 +2,8 @@
 
 **Status (2026-11-01): SPECIFIED; NOT IMPLEMENTED OR PASSED.** The future Native acceptance cases `production-session-8x8` and `production-stress-16x8` are not yet supported by the runner. The currently implemented three-instrument `multi-instrument-workflow` does not meet this contract. Gate 8 remains **OPEN**. Execute this contract in the strict order defined by [Step 8 of the M4.7 playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
 
+**Callback-budget decision (2026-11-01):** the release ceiling will be reconsidered after native measurements at both production scales. Until that decision is recorded and validated, the executable 30 ms gate remains in force. Diagnostic measurements may inform the decision but cannot close Gate 8 or substitute for receiver/playback evidence. Historical verdicts retain the budget used when recorded.
+
 ## 1. Objective, scope and architecture boundary
 
 Prove that **one production ACID GUI window**, one ACID runtime/serialized synchronous direct writer and one real Renoise song can reliably edit dozens of independent PITCH/TIME sources across mixed samples, loaded VSTs and MIDI-only instruments while multitrack playback continues.

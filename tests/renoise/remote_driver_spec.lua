@@ -940,9 +940,9 @@ local function test_instrument_navigation_setup_inserts_only_when_needed()
 end
 
 local function test_fixed_native_acceptance_command()
-  local completion, acceptance_json_codec, acceptance_profile
+  local completion, acceptance_json_codec, acceptance_profile, acceptance_options
   local host, driver = start_driver({
-    acceptance_runner = function(case_name, done, json_codec, profile)
+    acceptance_runner = function(case_name, done, json_codec, profile, options)
       assert(type(json_codec) == "table" and type(json_codec.array) == "function",
         "acceptance runner did not receive the shared response codec")
       assert(case_name == "make-independent" or case_name == "reopen-independent" or
@@ -954,11 +954,13 @@ local function test_fixed_native_acceptance_command()
         case_name == "cold-reopen-regenerate" or
         case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow" or
         case_name == "selection-feasibility" or case_name == "direct-output-feasibility" or
-        case_name == "source-undo-feasibility",
+        case_name == "source-undo-feasibility" or
+        case_name == "production-latency-8x8" or case_name == "production-latency-16x8",
         "fixed native acceptance case was not allowlisted")
       completion = done
       acceptance_json_codec = json_codec
       acceptance_profile = profile
+      acceptance_options = options
       return true
     end
   })
@@ -977,6 +979,38 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(invalid, "acceptance-profile-invalid-case").error.code, "invalid_arguments")
   assert_equal(find_response(invalid, "acceptance-profile-invalid-value").error.code, "invalid_arguments")
   assert_equal(completion, nil, "invalid acceptance command reached its runner")
+
+  for index, args in ipairs({
+    {case = "production-latency-8x8"},
+    {case = "production-latency-8x8", midi_output_device = ""},
+    {case = "production-latency-16x8", midi_output_device = "port\nname"},
+    {case = "production-latency-8x8", midi_output_device = string.rep("a", 257)},
+    {case = "make-independent", midi_output_device = "test loopback"},
+  }) do
+    local id = "acceptance-midi-invalid-" .. index
+    send_request(host, client, id, "acid.acceptance.run", args)
+    fire_idle(host)
+    assert_equal(find_response(take_responses(client), id).error.code, "invalid_arguments")
+    assert_equal(completion, nil, "invalid MIDI selection reached its runner")
+  end
+  for _, scale in ipairs({"8x8", "16x8"}) do
+    local id = "acceptance-latency-" .. scale
+    local case_name = "production-latency-" .. scale
+    send_request(host, client, id, "acid.acceptance.run",
+      {case = case_name, midi_output_device = "test loopback"})
+    fire_idle(host)
+    assert_equal(acceptance_options.midi_output_device, "test loopback")
+    assert_equal(acceptance_profile, nil)
+    fake_time = fake_time + 31
+    fire_idle(host)
+    assert_equal(find_response(take_responses(client), id), nil,
+      "populated-song diagnostic expired at the ordinary command deadline")
+    assert(completion({status = "PASS", case = case_name, performance_acceptance = "NOT_CLAIMED",
+      measurements = acceptance_json_codec.array({{elapsed_ms = 80}})}))
+    fire_idle(host)
+    assert_equal(find_response(take_responses(client), id).result.performance_acceptance, "NOT_CLAIMED")
+  end
+  completion = nil
 
   send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "make-independent"})
   fire_idle(host)

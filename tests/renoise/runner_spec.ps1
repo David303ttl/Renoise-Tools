@@ -674,6 +674,26 @@ Assert ($runnerAst.Extent.Text -match "'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
 Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
+foreach ($case in @('production-latency-8x8','production-latency-16x8')) {
+    $rejected = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+        -Suite Native -AcceptanceCase $case -ApproveDisposableSong 2>&1
+    Assert ($LASTEXITCODE -ne 0) 'production latency run accepted an unspecified MIDI output'
+    $reportLine = @($rejected | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+    Assert ($reportLine.Count -eq 1) 'MIDI preflight rejection did not emit a run report'
+    $rejectedReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
+    Assert ($rejectedReport.error -match 'require -MidiOutputDevice' -and
+        @($rejectedReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+        'missing MIDI selection was not rejected before starting Renoise'
+}
+$selectedLatency = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase production-latency-8x8 -MidiOutputDevice 'test loopback' `
+    -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'production latency diagnostics accepted a developer-owned process'
+$selectedReportLine = @($selectedLatency | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+$selectedReport = Get-Content -LiteralPath $selectedReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($selectedReport.error -match 'require a runner-owned Renoise process' -and
+    @($selectedReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+    'selected-process diagnostics were not rejected before launch'
 $startProcessFunction = $runnerAst.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-RunnerOwnedProcess'
 }, $true)

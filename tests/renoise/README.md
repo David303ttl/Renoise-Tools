@@ -202,6 +202,28 @@ The existing responsiveness cases default to the `Warm` profile, which measures 
 ~~~
 
 
+### Populated-song latency diagnostics
+
+`production-latency-8x8` and `production-latency-16x8` share one fixture and reuse
+the Warm editor callback measurements. Setup uses standalone writer requests
+outside the timer: 64/128 owned phrases, one foreign sentinel per instrument,
+and a 3/3/2 or 6/6/4 sample/Surge XT/MIDI receiver mix. One sample target is measured
+after two added revisions per owned phrase; the VST/MIDI instruments remain loaded.
+The editor helper adds one temporary phrase, so the measured song contains
+73/145 native phrases. Surge XT keeps its startup Init patch; the MIDI
+output must exactly match the explicitly approved device name.
+
+~~~powershell
+./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase production-latency-8x8 -MidiOutputDevice '<approved MIDI output>' -CommandTimeoutSeconds 300
+./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase production-latency-16x8 -MidiOutputDevice '<approved MIDI output>' -CommandTimeoutSeconds 300
+~~~
+
+These cases always report `performance_acceptance: NOT_CLAIMED`; functional
+errors still fail. They measure populated-song callback cost, with no playback,
+event-capture or full production-session acceptance claim. Their evidence can
+inform the deferred callback-budget decision. The current 30 ms gate remains
+active until the acceptance contract is deliberately revised and validated.
+
 ### Native scenario catalog
 
 Native fixture scenarios are JSON files in `tests/renoise/acid/scenarios/`.

@@ -5,6 +5,7 @@ param(
     [ValidateSet('Native','Keyboard','All')][string]$Suite = 'Native',
     [string]$Scenario,
     [string]$AcceptanceCase,
+    [string]$MidiOutputDevice,
     [ValidateSet('Warm','Detailed')][string]$AcceptanceProfile = 'Warm',
     [string]$RenoiseExe,
     [int]$RenoiseProcessId = 0,
@@ -314,9 +315,17 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
+    $productionLatency = $AcceptanceCase -cin @('production-latency-8x8','production-latency-16x8')
+    if ($productionLatency -and $RenoiseProcessId -gt 0) {
+        throw 'Production latency diagnostics require a runner-owned Renoise process; omit -RenoiseProcessId.'
+    }
+    if ($productionLatency -and ([string]::IsNullOrWhiteSpace($MidiOutputDevice) -or $MidiOutputDevice.Length -gt 256)) {
+        throw 'Production latency diagnostics require -MidiOutputDevice with the exact approved MIDI output name (1-256 characters).'
+    }
+    if ($MidiOutputDevice -and -not $productionLatency) { throw '-MidiOutputDevice is only valid for production latency diagnostics.' }
     $profileResolution = Resolve-AcidAcceptanceProfile -AcceptanceCase $AcceptanceCase `
         -Profile $AcceptanceProfile -Explicit:($PSBoundParameters.ContainsKey('AcceptanceProfile'))
     $profileApplies = $profileResolution.Applies
@@ -864,6 +873,7 @@ try {
                 Add-Trace -Operation "acceptance.$AcceptanceCase.enter" -Status 'PASS' -Details @{ pid = $processIdentity.Id; keys = '{Enter}'; output = $enterResult.StdOut }
             }
             $acceptanceArguments = @{ case = $AcceptanceCase }
+            if ($productionLatency) { $acceptanceArguments.midi_output_device = $MidiOutputDevice }
             if ($profileApplies) { $acceptanceArguments.profile = $profileResolution.Profile }
             $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments $acceptanceArguments -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
             $acceptanceStatus = [string]$acceptance.status

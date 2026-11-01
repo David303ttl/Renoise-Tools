@@ -13,6 +13,8 @@ local helpers = assert(loadstring(prefix .. [[
     install_profile_wrapper = install_profile_wrapper,
     callback_latency_acceptance = callback_latency_acceptance,
     resolve_acceptance_profile = resolve_acceptance_profile,
+    production_latency_fixture = production_latency_fixture,
+    production_latency_functional_status = production_latency_functional_status,
   }
 ]]))()
 
@@ -166,6 +168,32 @@ assert(helpers.callback_latency_acceptance("Detailed",{edit=1000})=="NOT_CLAIMED
 assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
   helpers.resolve_acceptance_profile("multi-instrument-workflow")=="Warm",
   "profiled native acceptance cases must default to Warm")
+local latency_8=helpers.production_latency_fixture("production-latency-8x8")
+local latency_16=helpers.production_latency_fixture("production-latency-16x8")
+assert(latency_8.instruments==8 and latency_8.owned_per_instrument==8 and
+    latency_8.receiver_counts.sample==3 and latency_8.receiver_counts.vst==3 and
+    latency_8.receiver_counts.midi==2 and latency_16.instruments==16 and
+    latency_16.owned_per_instrument==8 and latency_16.receiver_counts.sample==6 and
+    latency_16.receiver_counts.vst==6 and latency_16.receiver_counts.midi==4 and
+    helpers.production_latency_fixture("production-latency-4x4")==nil,
+  "production latency fixtures must use the explicit 8x8 and 16x8 receiver mixes")
+assert(helpers.production_latency_functional_status({status="PASS",
+    editor_fixture_inventory_restored=true,editor_fixture_native_selection_restored=true,
+    editor_fixture_store_restored=true,
+    gui_live_first_edit_elapsed_ms=80}) and
+    not helpers.production_latency_functional_status({status="FAIL",
+      editor_fixture_inventory_restored=true,editor_fixture_native_selection_restored=true,
+      editor_fixture_store_restored=true,
+      gui_live_first_edit_elapsed_ms=1}) and
+    not helpers.production_latency_functional_status({status="PASS",
+      editor_fixture_inventory_restored=false,editor_fixture_native_selection_restored=true,
+      editor_fixture_store_restored=true,
+      gui_live_first_edit_elapsed_ms=1}) and
+    not helpers.production_latency_functional_status({status="PASS",
+      editor_fixture_inventory_restored=true,editor_fixture_native_selection_restored=true,
+      editor_fixture_store_restored=false,
+      gui_live_first_edit_elapsed_ms=1}),
+  "latency diagnostics must require functional completion and fixture cleanup, independent of elapsed time")
 assert(helpers.resolve_acceptance_profile("editor-responsiveness","Detailed")=="Detailed")
 local ignored_profile,ignored_error=helpers.resolve_acceptance_profile("make-independent","Detailed")
 assert(ignored_profile==nil and ignored_error,"profile selector was accepted by an unrelated native case")

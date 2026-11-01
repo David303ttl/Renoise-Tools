@@ -1981,11 +1981,10 @@ M4 completion.
 
 ## Step 8 — Native Renoise acceptance
 
-**Status (2026-11-01): OPEN.** The former staged-rendering acceptance language in the historical Step 3 and older Gate 8 reports describes replaced code. Current production uses one synchronous direct materializer, immutable retained source revisions and no regeneration staging phrase. The 3-instrument/12-phrase native case has functional checks but fails the unchanged **30 ms** Live Edit budget; it is not full real-world acceptance.
+**Status (2026-11-01): OPEN.** Production uses synchronous direct materialization. The latest smaller-scale Warm callbacks exceed the active **30 ms** maximum; T8.1–T8.5 and Gate 8 remain open. Keep the executable 30 ms gate and defer any threshold review until after production-scale measurements. See [T8.0 acceptance evidence](../tests/acid/runtime_acceptance.md#t80-native-baseline-2026-11-01) for current results and limits.
 
 **Normative executable implementation and evidence specification:** [production-session acceptance contract](../tests/acid/production_session_acceptance.md). Read it before coding. Its exact 8x8 and 16x8 fixture profiles, GUI actions, native oracles, performance requirements, device preconditions, error/recovery requirements, runner commands and cold-process phases supersede any contradictory *future-facing* text in this historical playbook. Existing dated reports remain historical evidence, not current Gate 8 passes.
 
-**T8.0 baseline recorded (2026-11-01):** native and local results, unchanged source/manifest invariants, phase budgets and named defect owners are in the [baseline acceptance record](../tests/acid/runtime_acceptance.md#t80-native-baseline-2026-11-01). Combined local suites pass (ACID 70/70; repository 73/73). Native observer and recovery cases now pass; the latest Warm callbacks still fail the 30 ms gate at 51.88/79.49 ms. Subsequent optimizations have not had a combined native rerun. T8.1–T8.5 and Gate 8 remain open.
 
 **Strict order; a failed stage cannot be bypassed:**
 
@@ -2002,7 +2001,6 @@ M4 completion.
 
 **Native observability rules:** Synchronous writes mean users can switch between actions, not literally navigate mid-callback; reentrant native notifications remain testable. Stable transport and track instrument assignments do not prove notes/phrase-program triggers or MIDI delivery. Keep actual sample/VST output-path and MIDI loopback event verification separate, flag unavailable receiver evidence BLOCKED, and record receiver-dependent audible portamento only for what was heard. On cold reopen, newly resolved native objects are checked by identity **within** each process and by exact source/seal/content/position associations **across** processes; never compare stale userdata pointers across process boundaries.
 
-**Current evidence:** [runtime acceptance](../tests/acid/runtime_acceptance.md) records historical script-writer selection drift, direct-writer native parity/undo and the functional three-instrument check, with 107.72 ms and 118.00 ms responsiveness failures. Do not mark T8.3/T8.4/T8.5 complete using that evidence.
 
 **Gate 8:** CLOSED only when T8.0→T8.5 pass in order and the complete [production-session contract](../tests/acid/production_session_acceptance.md) has independent, actual Renoise evidence for **both** project scales. Missing MIDI capture, unsound rollback, lost drafts, selection jumps, unverified musical playback, or >30 ms callbacks keep it OPEN.
 

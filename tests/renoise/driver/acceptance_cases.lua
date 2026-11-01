@@ -26,6 +26,13 @@ local EDITOR_FIXTURE_OPERATION = "editor-responsiveness fixture lifecycle"
 local REQUIRED_SELECTION_SCOPE = "required"
 local FIXTURE_SELECTION_SCOPE = "harness-fixture"
 local GUI_CALLBACK_BUDGET_MS = 30
+local PRODUCTION_LATENCY_DEVICE_OPTION = "midi_output_device"
+local PRODUCTION_LATENCY_CASES = {
+  ["production-latency-8x8"] = { instruments = 8, owned_per_instrument = 8,
+    receiver_counts = { sample = 3, vst = 3, midi = 2 } },
+  ["production-latency-16x8"] = { instruments = 16, owned_per_instrument = 8,
+    receiver_counts = { sample = 6, vst = 6, midi = 4 } },
+}
 local ACCEPTANCE_PROFILES = { Warm = true, Detailed = true }
 local PROFILED_ACCEPTANCE_CASES = {
   ["editor-responsiveness"] = true,
@@ -152,6 +159,48 @@ local function resolve_acceptance_profile(case_name,profile_mode)
     return nil,"instrumentation profile must be Warm or Detailed"
   end
   return profile_mode
+end
+
+local function production_latency_fixture(case_name)
+  local config=PRODUCTION_LATENCY_CASES[case_name]
+  if not config then return nil end
+  return {
+    instruments=config.instruments,
+    owned_per_instrument=config.owned_per_instrument,
+    receiver_counts={sample=config.receiver_counts.sample,vst=config.receiver_counts.vst,
+      midi=config.receiver_counts.midi},
+  }
+end
+
+local function production_latency_functional_status(gui_result)
+  return type(gui_result)=="table" and gui_result.status=="PASS" and
+    gui_result.editor_fixture_inventory_restored==true and
+    gui_result.editor_fixture_native_selection_restored==true and
+    gui_result.editor_fixture_store_restored==true and
+    type(gui_result.gui_live_first_edit_elapsed_ms)=="number"
+end
+
+local function create_acceptance_sample(instrument,label)
+  if #instrument.samples==0 then instrument:insert_sample_at(1) end
+  local sample=instrument.samples[1]
+  local buffer=sample.sample_buffer
+  local frame_count=256
+  if not buffer:create_sample_data(44100,16,1,frame_count) then
+    return nil,label.." sample allocation failed"
+  end
+  buffer:prepare_sample_data_changes()
+  local finalized=false
+  local ok,err=pcall(function()
+    for frame=1,frame_count do
+      buffer:set_sample_data(1,frame,math.sin(frame*math.pi*2/frame_count)*0.2)
+    end
+    buffer:finalize_sample_data_changes()
+    finalized=true
+  end)
+  if not finalized then pcall(buffer.finalize_sample_data_changes,buffer) end
+  if not ok then return nil,label.." sample data setup failed: "..tostring(err) end
+  sample.name=label.." sample"
+  return true
 end
 
 local function has_eligibility(value)
@@ -3704,30 +3753,8 @@ local function run_multi_instrument_workflow(done, json, profile_mode)
     instrument_indices[index] = native_index
     attach_list_observer(instrument, index)
   end
-  local function create_sample(instrument, label)
-    if #instrument.samples == 0 then instrument:insert_sample_at(1) end
-    local sample = instrument.samples[1]
-    local buffer = sample.sample_buffer
-    local frame_count = 256
-    if not buffer:create_sample_data(44100, 16, 1, frame_count) then
-      return nil, label .. " sample allocation failed"
-    end
-    buffer:prepare_sample_data_changes()
-    local finalized = false
-    local ok, err = pcall(function()
-      for frame = 1, frame_count do
-        buffer:set_sample_data(1, frame, math.sin(frame * math.pi * 2 / frame_count) * 0.2)
-      end
-      buffer:finalize_sample_data_changes()
-      finalized = true
-    end)
-    if not finalized then pcall(buffer.finalize_sample_data_changes, buffer) end
-    if not ok then return nil, label .. " sample data setup failed: " .. tostring(err) end
-    sample.name = label .. " sample"
-    return true
-  end
-  local sample_a, sample_a_error = create_sample(instruments[1], "Workflow A")
-  local sample_c, sample_c_error = create_sample(instruments[3], "Workflow C")
+  local sample_a, sample_a_error = create_acceptance_sample(instruments[1], "Workflow A")
+  local sample_c, sample_c_error = create_acceptance_sample(instruments[3], "Workflow C")
   if not sample_a or not sample_c then
     finish("FAIL", tostring(sample_a_error or sample_c_error))
     return
@@ -4067,7 +4094,7 @@ local function run_multi_instrument_workflow(done, json, profile_mode)
   return true
 end
 
-run_editor_responsiveness = function(done,profile_mode)
+run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrument_index,latency_only)
   profile_mode=profile_mode or "Warm"
   local detailed_profile=profile_mode=="Detailed"
   local song=renoise.song()
@@ -4077,10 +4104,19 @@ run_editor_responsiveness = function(done,profile_mode)
   local selected_instrument_index=song.selected_instrument_index
   local selected_instrument=song.instruments[selected_instrument_index]
   local fixture_instrument,fixture_instrument_index
-  for index,candidate in ipairs(song.instruments) do
-    if not rawequal(candidate,selected_instrument) and #candidate.phrases<renoise.Instrument.MAX_NUMBER_OF_PHRASES then
-      fixture_instrument,fixture_instrument_index=candidate,index
-      break
+  if requested_fixture_instrument_index~=nil then
+    fixture_instrument_index=requested_fixture_instrument_index
+    fixture_instrument=song.instruments[fixture_instrument_index]
+    if rawequal(fixture_instrument,selected_instrument) or not fixture_instrument or
+        #fixture_instrument.phrases>=renoise.Instrument.MAX_NUMBER_OF_PHRASES then
+      fixture_instrument=nil
+    end
+  else
+    for index,candidate in ipairs(song.instruments) do
+      if not rawequal(candidate,selected_instrument) and #candidate.phrases<renoise.Instrument.MAX_NUMBER_OF_PHRASES then
+        fixture_instrument,fixture_instrument_index=candidate,index
+        break
+      end
     end
   end
   if not fixture_instrument then
@@ -4112,8 +4148,9 @@ run_editor_responsiveness = function(done,profile_mode)
   local capture_calls,sink_calls=0,0
   local metrics={}
   metrics.instrumentation_profile=profile_mode
-  metrics.performance_acceptance="NOT_MEASURED"
-  metrics.acceptance_claim=detailed_profile and "FUNCTIONAL_ONLY" or "FUNCTIONAL_AND_LATENCY"
+  metrics.performance_acceptance=latency_only and "NOT_CLAIMED" or "NOT_MEASURED"
+  metrics.acceptance_claim=(detailed_profile or latency_only) and "FUNCTIONAL_ONLY" or "FUNCTIONAL_AND_LATENCY"
+  metrics.latency_diagnostic=latency_only==true
   metrics.callback_budget_ms=GUI_CALLBACK_BUDGET_MS
   local scans=0
   local scans_snapshot_wrapper
@@ -4225,7 +4262,8 @@ run_editor_responsiveness = function(done,profile_mode)
     metrics.editor_fixture_inventory_restored=inventory_restored
     metrics.editor_fixture_native_selection_restored=
       same_native_selection(native_selection_at_start,native_selection(song))
-    pcall(function() song.tool_data=original_store end)
+    local store_set=pcall(function() song.tool_data=original_store end)
+    metrics.editor_fixture_store_restored=store_set and song.tool_data==original_store
   end
   local function fail(reason)
     cleanup()
@@ -5537,7 +5575,8 @@ run_editor_responsiveness = function(done,profile_mode)
       metrics.gui_over_budget_action_count=#over_budget
       metrics.gui_live_synchronous_verified=true
       metrics.detailed_timing_over_budget=#over_budget>0
-      metrics.performance_acceptance=callback_latency_acceptance(profile_mode,action_timings)
+      metrics.performance_acceptance=latency_only and "NOT_CLAIMED" or
+        callback_latency_acceptance(profile_mode,action_timings)
       if metrics.performance_acceptance=="FAIL" then
         finished(false,"GUI actions exceeded "..tostring(GUI_CALLBACK_BUDGET_MS)..
           " ms: "..metrics.gui_over_budget_actions)
@@ -7596,8 +7635,278 @@ local function run_source_undo_feasibility(done, json)
   return true
 end
 
-function M.run(case_name, done, json, profile_mode)
+local function run_production_latency(done,case_name,options,json)
+  local config=production_latency_fixture(case_name)
+  local song=renoise.song()
+  local sequence=require("model.sequencer")
+  local writer=require("writers.phrase_writer")
+  local ownership=require("renoise.phrase_ownership")
+  local store=require("renoise.pattern_store")
+  local factory=dofile(renoise.tool().bundle_path.."\\__dev\\writer_request.lua")
+  options=type(options)=="table" and options or {}
+  local initial_instrument_index=song.selected_instrument_index
+  local initial_instrument_count=#song.instruments
+  local initial_phrase_count=0
+  for _,instrument in ipairs(song.instruments) do initial_phrase_count=initial_phrase_count+#instrument.phrases end
+  local midi_device=options[PRODUCTION_LATENCY_DEVICE_OPTION]
+  local function fail(reason,extra)
+    local selection_set=pcall(function() song.selected_instrument_index=initial_instrument_index end)
+    local selection_restored=selection_set and song.selected_instrument_index==initial_instrument_index
+    local result={status="FAIL",case=case_name,reason=reason,
+      acceptance_claim="FUNCTIONAL_ONLY",performance_acceptance="NOT_CLAIMED",
+      latency_diagnostic=true,instrumentation_profile="Warm",
+      final_native_selection_restored=selection_restored}
+    for key,value in pairs(extra or {}) do result[key]=value end
+    done(result)
+  end
+  if not config then fail("unknown production latency fixture");return true end
+  if initial_phrase_count~=0 or initial_instrument_count<1 then
+    fail("production latency diagnostic requires an empty disposable song")
+    return true
+  end
+  if type(midi_device)~="string" or midi_device=="" then
+    fail("an explicit MIDI output device is required for this diagnostic")
+    return true
+  end
+  local midi_output_available=false
+  for _,name in ipairs(renoise.Midi.available_output_devices()) do
+    if name==midi_device then midi_output_available=true;break end
+  end
+  if not midi_output_available then
+    fail("requested MIDI output device is unavailable: "..midi_device)
+    return true
+  end
+  while #song.instruments<config.instruments do
+    song:insert_instrument_at(#song.instruments+1)
+  end
+  local instruments,receivers,targets={},{},{}
+  for index=1,config.instruments do instruments[index]=song.instruments[index] end
+  for index=1,config.receiver_counts.sample do receivers[#receivers+1]={kind="sample",instrument_index=index} end
+  local vst_start=#receivers+1
+  for offset=1,config.receiver_counts.vst do
+    receivers[#receivers+1]={kind="vst",instrument_index=vst_start+offset-1}
+  end
+  local midi_start=#receivers+1
+  for offset=1,config.receiver_counts.midi do
+    receivers[#receivers+1]={kind="midi",instrument_index=midi_start+offset-1}
+  end
+  local plugin_info
+  for _,info in ipairs(instruments[vst_start].plugin_properties.available_plugin_infos) do
+    local name=type(info.name)=="string" and info.name:lower() or ""
+    if name:find("surge xt",1,true) and type(info.path)=="string" and info.path~="" then
+      plugin_info=info;break
+    end
+  end
+  if not plugin_info then
+    fail("Surge XT is not available in Renoise's plugin registry")
+    return true
+  end
+  for _,receiver in ipairs(receivers) do
+    local instrument=instruments[receiver.instrument_index]
+    instrument.name="Latency receiver "..receiver.kind.." "..tostring(receiver.instrument_index)
+    if receiver.kind=="sample" then
+      local ok,reason=create_acceptance_sample(instrument,instrument.name)
+      if not ok then fail(reason);return true end
+    elseif receiver.kind=="vst" then
+      local properties=instrument.plugin_properties
+      local loaded,load_error=pcall(properties.load_plugin,properties,plugin_info.path)
+      if not loaded or not properties.plugin_loaded then
+        fail("Surge XT could not be loaded: "..tostring(load_error or plugin_info.name));return true
+      end
+    else
+      local assigned,assign_error=pcall(function()
+        instrument.midi_output_properties.device_name=midi_device
+      end)
+      if not assigned or instrument.midi_output_properties.device_name~=midi_device then
+        fail("MIDI output device could not be assigned: "..tostring(assign_error or midi_device));return true
+      end
+    end
+  end
+  local successful_history_regenerations=0
+  local function native_phrase_count()
+    local count=0
+    for _,instrument in ipairs(song.instruments) do count=count+#instrument.phrases end
+    return count
+  end
+  local function source_for(index,revision)
+    local source=sequence.new_pattern(32)
+    for step=1,32 do
+      source.pitch_events[step]=sequence.new_pitch((step+index+revision)%13,0,true,false)
+      source.time_events[step]="N"
+    end
+    return source
+  end
+  local function finish_measurements(measurements)
+    local phrase_count=native_phrase_count()
+    local selection_set=pcall(function() song.selected_instrument_index=initial_instrument_index end)
+    local selection_restored=selection_set and song.selected_instrument_index==initial_instrument_index
+    if not selection_restored then
+      fail("native selection was not restored after diagnostic",{phrase_count_before_measurement=phrase_count})
+      return
+    end
+    local result={status="PASS",case=case_name,
+      acceptance_claim="FUNCTIONAL_ONLY",performance_acceptance="NOT_CLAIMED",
+      latency_diagnostic=true,instrumentation_profile="Warm",
+      instrument_count=config.instruments,song_instrument_count=#song.instruments,owned_phrase_count=#targets,
+      foreign_phrase_count=config.instruments,phrase_count_before_measurement=phrase_count,
+      phrase_count_during_measurement=phrase_count+1,
+      temporary_phrase_count=1,receiver_counts=config.receiver_counts,
+      source_steps=32,history_regenerations=successful_history_regenerations,
+      midi_output_device=midi_device,vst_plugin=plugin_info.name,
+      vst_preset_mode="startup-default",final_native_selection_restored=selection_restored,
+      measurements=measurements}
+    done(result)
+  end
+  local function fail_measurement(reason,measurements,gui_failure)
+    local phrase_count=native_phrase_count()
+    fail(reason,{instrument_count=config.instruments,song_instrument_count=#song.instruments,owned_phrase_count=#targets,
+      foreign_phrase_count=config.instruments,phrase_count_before_measurement=phrase_count,
+      phrase_count_during_measurement=phrase_count+1,temporary_phrase_count=1,
+      source_steps=32,history_regenerations=successful_history_regenerations,
+      measurements=measurements,failed_measurement=gui_failure})
+  end
+  local measurement_targets={1}
+  local measurements=json.array()
+  local function measure_phase(phase,next_step)
+    local cursor=1
+    local function measure_next()
+      local target_index=measurement_targets[cursor]
+      if not target_index then next_step();return end
+      local instrument= song.instruments[target_index]
+      song.selected_instrument_index=target_index==1 and 2 or 1
+      run_editor_responsiveness(function(gui_result)
+        if not production_latency_functional_status(gui_result) then
+          fail_measurement(type(gui_result)=="table" and gui_result.reason or
+            "production GUI latency helper returned no functional result",measurements,gui_result)
+          return
+        end
+        measurements[#measurements+1]={phase=phase,instrument_index=target_index,
+          receiver_kind=receivers[target_index].kind,
+          owned_phrases_on_instrument=config.owned_per_instrument,
+          native_phrase_count_during_measurement=#instrument.phrases+1,
+          elapsed_ms=gui_result.gui_live_first_edit_elapsed_ms,
+          over_budget_actions=gui_result.gui_over_budget_actions,
+          performance_acceptance=gui_result.performance_acceptance,
+          functional_status=gui_result.status}
+        cursor=cursor+1
+        measure_next()
+      end,"Warm",target_index,true)
+    end
+    measure_next()
+  end
+  local function regenerate_all(round,next_step)
+    local cursor=1
+    local function regenerate_next()
+      local target=targets[cursor]
+      if not target then next_step();return end
+      local phrase_index
+      for index,phrase in ipairs(target.instrument.phrases) do
+        if rawequal(phrase,target.phrase) then phrase_index=index;break end
+      end
+      if not phrase_index then fail_measurement("owned latency fixture phrase disappeared",measurements);return end
+      local changed=source_for(target.instrument_index+target.slot,round)
+      local request,request_error=factory.build(song,target.instrument_index,changed,phrase_index)
+      if not request or request.kind~="regenerate" then
+        fail_measurement(tostring(request_error or "history regeneration request was rejected"),measurements);return
+      end
+      local accepted,start_error=writer.regenerate(request,function(result)
+        on_next_idle(function()
+          if type(result)~="table" or result.kind~="success" or result.verified~=true or
+              not rawequal(result.phrase,target.phrase) or ownership.id(target.phrase)==nil then
+            fail_measurement("history regeneration failed: "..describe_failure(result or start_error),measurements);return
+          end
+          target.source=changed
+          successful_history_regenerations=successful_history_regenerations+1
+          cursor=cursor+1
+          regenerate_next()
+        end)
+      end)
+      if not accepted then fail_measurement(describe_failure(start_error),measurements) end
+    end
+    regenerate_next()
+  end
+  local function seed_targets()
+    local cursor=1
+    local function create_next()
+      local target=targets[cursor]
+      if not target then
+        for _,instrument in ipairs(instruments) do
+          local foreign=instrument:insert_phrase_at(#instrument.phrases+1)
+          foreign.name="Latency foreign "..tostring(#instrument.phrases)
+          if ownership.status(foreign)~="foreign" or ownership.id(foreign)~=nil then
+            fail_measurement("foreign latency fixture phrase was not classified as foreign",measurements);return
+          end
+        end
+        local owned_count,foreign_count=0,0
+        for _,instrument in ipairs(instruments) do
+          if #instrument.phrases~=config.owned_per_instrument+1 then
+            fail_measurement("seeded phrase count does not match the latency fixture",measurements);return
+          end
+          for _,phrase in ipairs(instrument.phrases) do
+            if ownership.id(phrase)~=nil and ownership.status(phrase)=="owned" then
+              owned_count=owned_count+1
+            elseif ownership.id(phrase)==nil and ownership.status(phrase)=="foreign" then
+              foreign_count=foreign_count+1
+            else
+              fail_measurement("seeded phrase ownership classification is inconsistent",measurements);return
+            end
+          end
+        end
+        if owned_count~=#targets or foreign_count~=config.instruments or
+            native_phrase_count()~=(config.instruments*(config.owned_per_instrument+1)) then
+          fail_measurement("seeded native owned, foreign, or total phrase counts do not match",measurements);return
+        end
+        regenerate_all(1,function()
+          regenerate_all(2,function() measure_phase("late",function() finish_measurements(measurements) end) end)
+        end)
+        return
+      end
+      local instrument=target.instrument
+      local source=source_for(target.instrument_index+target.slot,0)
+      local request,request_error=factory.build(song,target.instrument_index,source,#instrument.phrases+1)
+      if not request or request.kind~="create" then
+        fail_measurement(tostring(request_error or "owned latency fixture request was rejected"),measurements);return
+      end
+      local accepted,start_error=writer.create(request,function(result)
+        on_next_idle(function()
+          local id=type(result)=="table" and result.phrase and ownership.id(result.phrase) or nil
+          local stored=id and store.read_entry(song,id)
+          if type(result)~="table" or result.kind~="success" or result.verified~=true or
+              not result.phrase or not id or not stored then
+            fail_measurement("owned latency fixture create failed: "..describe_failure(result or start_error),measurements);return
+          end
+          target.phrase=result.phrase
+          target.source=source
+          target.id=id
+          cursor=cursor+1
+          create_next()
+        end)
+      end)
+      if not accepted then fail_measurement(describe_failure(start_error),measurements) end
+    end
+    create_next()
+  end
+  for instrument_index,instrument in ipairs(instruments) do
+    for slot=1,config.owned_per_instrument do
+      targets[#targets+1]={instrument=instrument,instrument_index=instrument_index,slot=slot}
+    end
+  end
+  for _,instrument in ipairs(instruments) do
+    if #instrument.phrases~=0 then fail("instrument phrases must be empty before fixture seeding");return true end
+  end
+  seed_targets()
+  return true
+end
+
+function M.run(case_name, done, json, profile_mode, options)
   if type(done) ~= "function" then return false, "completion callback is required" end
+  if PRODUCTION_LATENCY_CASES[case_name] then
+    if profile_mode~=nil then
+      done({status="ERROR",case=case_name,reason="production latency diagnostics use their fixed Warm functional-only measurement"})
+      return true
+    end
+    return run_production_latency(done,case_name,options,json)
+  end
   local resolved_profile,profile_error=resolve_acceptance_profile(case_name,profile_mode)
   if profile_error then
     done({status="ERROR",case=case_name,reason=profile_error})
