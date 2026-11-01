@@ -336,10 +336,10 @@ assert(not cache.get(song,scratch,nil),"same-index replacement does not preserve
 assert(#cache.list(song)==1 and cache.list(song)[1].pattern.length==7)
 local volatile={name="Volatile",phrases={}}
 song={instruments={volatile}}
-local save_draft=store.write_draft
-store.write_draft=function()return nil,"not persisted"end
+local save_draft=store.write_draft_metadata
+store.write_draft_metadata=function()return nil,"not persisted"end
 assert(not cache.put(song,volatile,nil,seq.new_pattern(2),"repeat",0))
-store.write_draft=save_draft
+store.write_draft_metadata=save_draft
 local sole=assert(cache.detach(song,volatile,nil,"detached volatile draft"))
 assert(cache.has_volatile(song) and cache.discard(song,sole))
 assert(#cache.list(song)==0 and not cache.has_volatile(song) and not cache.has(song),

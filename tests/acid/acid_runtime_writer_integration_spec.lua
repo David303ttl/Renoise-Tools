@@ -208,6 +208,11 @@ assert_success(results[1],phrase,"initial create")
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],phrase))
 assert(materializer_calls==1,"create did not apply exactly one phrase image")
 local created_id=assert(ownership.id(phrase))
+local _,_,_,created_label,created_custom=store.read_entry(song,created_id)
+assert(created_label=="Pattern "..created_id and created_custom==false,
+  "New phrase did not derive its default label from the allocated stable ID")
+assert(ctx:editor_state().label==created_label and ctx:editor_state().label_custom==false,
+  "committed New default label was not adopted into editor/history state")
 local target=ctx:target_state()
 assert(target.kind=="owned" and rawequal(target.phrase,phrase)
   and target.baseline and target.baseline.id==created_id,
@@ -219,6 +224,7 @@ assert(drafts.get(song,instrument,phrase)==nil,
 assert(store.read_draft(song,instrument,phrase)==nil,
   "create retained the durable draft")
 assert(drafts.has(song)==false,"create left a draft behind")
+assert(ctx:rename_label("Explicit",true))
 
 -- Capture may use the cached light target, but the writer must still reject
 -- a native phrase edit that lands before its fresh prepare classification.
@@ -251,6 +257,9 @@ assert(phrase.cells[1].note_value==52)
 local first_revision_id=assert(ownership.id(phrase))
 assert(first_revision_id~=created_id,"first regeneration reused the immutable phrase ID")
 assert(store.read_entry(song,created_id),"first regeneration removed the old source row")
+local _,_,_,first_label,first_custom=store.read_entry(song,first_revision_id)
+assert(first_label=="Explicit" and first_custom==true,
+  "regeneration did not preserve accepted custom label metadata")
 local saved=assert(store.load(song,instrument,phrase))
 assert(first_note(saved)==52,"first regenerate did not persist its source")
 local adopted=ctx:target_state()
@@ -708,6 +717,8 @@ do
   dirty.length=3
   dirty.pitch_events[1].slide=true
   dirty.time_events[3]="R"
+  for index=1,12 do dirty.scale_mask[index]=index==1 end
+  dirty.scale_mask_enabled=true
   assert(target_ctx:transition("edit",{source=dirty,output_policy="play_once",pb_range=12}))
   local draft_before=assert(drafts.capture(target_song,target,target_phrase,target_ctx:draft_options()))
   target.samples[1].sample_buffer.has_sample_data=false
@@ -747,6 +758,9 @@ do
     "new phrase revision did not capture the current receiver")
   assert(sequencer.same_source(assert(store.load(target_song,target,target_phrase)),dirty),
     "receiver-change regenerate did not commit the dirty source")
+  assert(target_phrase.cells[1].note_value==48 and
+      target_ctx:editor_state().prepared_resolution.resolved_records[1].note==48,
+    "masked raw pitch was not shared with the committed render output")
   assert(not ownership.compare(sample_native,assert(ownership.snapshot(target_phrase)),"name"),
     "receiver-change regenerate did not materialize the new receiver output")
   assert(target_song.tool_data~=before_store and drafts.get(target_song,target,target_phrase)==nil and

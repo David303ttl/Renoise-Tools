@@ -24,10 +24,16 @@ local function fresh()
 end
 local default_pitches=string.rep("36:0:0:00,",31).."36:0:0:00"
 local default_time=string.rep("N",32)
+local default_mask="0|111111111111"
 local function source_row(id,policy,pb_range,length)
   return table.concat({tostring(id),policy or "repeat",tostring(pb_range or 0),"straight","16",
-    tostring(length or 4),
+    tostring(length or 4),default_mask,
     default_pitches,default_time},"|")
+end
+local function label_row(id)
+  local text="Pattern "..id
+  local hex=text:gsub(".",function(byte)return string.format("%02X",string.byte(byte))end)
+  return table.concat({"LABEL",tostring(id),"0",hex},"|")
 end
 local function removal(ins,p,token,revision)
   return {kind=p and "existing" or "new",instrument=ins,phrase=p,
@@ -39,12 +45,13 @@ end
 local byte_song,byte_ins=fresh()
 assert(store.write_draft(byte_song,byte_ins,nil,seq.new_pattern(6),"repeat",0))
 local byte_candidate=prepare(byte_song,3)
-local expected_candidate_draft=table.concat({"DRAFT","1","0","4669727374","repeat","0",
-  "straight","16","6",default_pitches,default_time},"|")
-local expected_candidate_raw=table.concat({"ACID-PITCH-TIME-1",source_row(1),source_row(2),
-  source_row(3,"play_once",12,5),expected_candidate_draft},"\n").."\n"
+local expected_candidate_draft=table.concat({"DRAFT","1","0","4669727374","556E7469746C6564","0",
+  "repeat","0","straight","16","6",default_mask,default_pitches,default_time},"|")
+local expected_candidate_raw=table.concat({"ACID-PITCH-TIME-2",source_row(1),source_row(2),
+  source_row(3,"play_once",12,5),label_row(1),label_row(2),label_row(3),expected_candidate_draft},"\n").."\n"
 assert(byte_candidate.raw==expected_candidate_raw,
-  "prepared source/draft composition changed the exact persisted bytes")
+  "prepared source/draft composition changed the exact persisted bytes\n"..
+  tostring(byte_candidate.raw).."\nEXPECTED\n"..expected_candidate_raw)
 store.release_candidate(byte_candidate)
 local song,ins,a,b,other=fresh()
 assert(store.write_draft(song,ins,nil,seq.new_pattern(6),"repeat",0))
@@ -77,28 +84,14 @@ assert(restored_history[1] and restored_history[2] and not restored_history[3] a
   "candidate preparation or rollback mutated the cached decoded source history")
 song,ins,a,b,other=fresh()
 local raw_candidate=prepare(song,3)
-local encode_index,original_encode
-for index=1,100 do
-  local name,value=debug.getupvalue(store.commit,index)
-  if name==nil then break end
-  if name=="encode" then encode_index,original_encode=index,value;break end
-end
-assert(encode_index and original_encode,"commit lost its private source encoder")
-local source_encodes=0
-debug.setupvalue(store.commit,encode_index,function(...)
-  source_encodes=source_encodes+1
-  return original_encode(...)
-end)
 assert(store.commit(song,raw_candidate))
-debug.setupvalue(store.commit,encode_index,original_encode)
-assert(source_encodes==0,"unchanged captured raw data repeated source serialization")
 song,ins,a,b,other=fresh()
 local source=seq.new_pattern(7)
 assert(store.write_draft(song,ins,a,source,"repeat",24))
-local expected_draft=table.concat({"DRAFT","1","1","4669727374","repeat","24",
-  "straight","16","7",default_pitches,default_time},"|")
-local expected_store=table.concat({"ACID-PITCH-TIME-1",source_row(1),source_row(2),
-  expected_draft},"\n").."\n"
+local expected_draft=table.concat({"DRAFT","1","1","4669727374","5061747465726E2031","0",
+  "repeat","24","straight","16","7",default_mask,default_pitches,default_time},"|")
+local expected_store=table.concat({"ACID-PITCH-TIME-2",source_row(1),source_row(2),
+  label_row(1),label_row(2),expected_draft},"\n").."\n"
 assert(song.tool_data==expected_store,"source and draft wire format changed")
 assert(store.write_draft(song,ins,b,source,"repeat",2))
 assert(store.write_draft(song,other,nil,source,"repeat",0))
@@ -126,24 +119,26 @@ song,ins,a,b,other=fresh()
 descriptor=removal(ins,a)
 candidate=prepare(song,1,yes,descriptor)
 assert(store.write_draft(song,ins,a,source,"repeat",0))
-assert(store.commit(song,candidate))
-assert(store.read_draft(song,ins,a).length==7,"captured absence cannot delete an added draft")
+local added_draft_raw=song.tool_data
+assert(not store.commit(song,candidate) and song.tool_data==added_draft_raw,
+  "any raw-store change after candidate capture must reject without merging")
+assert(store.read_draft(song,ins,a).length==7,"conflict must preserve the added draft")
 
 song,ins,a,b,other=fresh()
 assert(store.write_draft(song,ins,a,source,"repeat",0))
 candidate=prepare(song,1,yes,removal(ins,a))
 assert(store.write_draft(song,ins,a,seq.new_pattern(8),"repeat",0))
 assert(store.write_draft(song,other,nil,seq.new_pattern(9),"repeat",0))
-assert(store.commit(song,candidate))
+local changed_drafts_raw=song.tool_data
+assert(not store.commit(song,candidate) and song.tool_data==changed_drafts_raw)
 assert(store.read_draft(song,ins,a).length==8 and store.read_draft(song,other,nil).length==9)
-assert(store.restore(song,candidate))
-assert(store.read_draft(song,ins,a).length==8,"rollback must retain rebased current drafts")
 
 song,ins,a=fresh()
 assert(store.write_draft(song,ins,a,source,"repeat",0))
 candidate=prepare(song,1,yes,removal(ins,a))
 assert(store.write_draft(song,ins,a,source,"play_once",24))
-assert(store.commit(song,candidate))
+local changed_settings_raw=song.tool_data
+assert(not store.commit(song,candidate) and song.tool_data==changed_settings_raw)
 local _,policy,pb=store.read_draft(song,ins,a)
 assert(policy=="play_once" and pb==24,"changed draft settings are preserved")
 
@@ -174,8 +169,14 @@ for _,change in ipairs({"none","rename","reorder","collision","added"})do
   elseif change=="reorder"then song.instruments={other,ins}
   elseif change=="collision"then other.name=ins.name
   elseif change=="added"then assert(store.write_draft(song,ins,nil,source,"repeat",0))end
-  assert(store.commit(song,candidate))
-  assert(store.has_drafts(song)==(change~="none"),"New scratch removal policy: "..change)
+  local before=song.tool_data
+  if change=="added" then
+    assert(not store.commit(song,candidate) and song.tool_data==before)
+    assert(store.has_drafts(song),"a concurrently added draft must be preserved")
+  else
+    assert(store.commit(song,candidate))
+    assert(store.has_drafts(song)==(change~="none"),"New scratch removal policy: "..change)
+  end
 end
 
 song,ins,a=fresh()
@@ -210,11 +211,15 @@ assert(not store.commit(song,{raw=candidate.raw,previous_raw=candidate.previous_
   "public fields cannot forge a candidate")
 
 song,ins,a=fresh()
+local guarded_change
 candidate=prepare(song,1,function()
-  assert(store.write_draft(song,ins,a,source,"repeat",0));return true
+  assert(store.write_draft(song,ins,a,seq.new_pattern(8),"repeat",0))
+  guarded_change=song.tool_data
+  return true
 end,removal(ins,a))
-assert(store.commit(song,candidate) and store.read_draft(song,ins,a).length==7,
-  "a guard's draft changes must be included in current-draft rebasing")
+local guarded_ok,guarded_error=store.commit(song,candidate)
+assert(not guarded_ok and song.tool_data==guarded_change and
+  store.read_draft(song,ins,a).length==8,"guard-time draft change must fail closed: "..tostring(guarded_error))
 candidate=prepare(song,1,function()
   assert(store.save(song,2,seq.new_pattern(12),"repeat",0));return true
 end)

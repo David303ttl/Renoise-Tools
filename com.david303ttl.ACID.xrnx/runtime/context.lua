@@ -447,7 +447,8 @@ function M.new(options)
         preserve_editor(true)
         editor.draft_warning=prior_warning or editor.draft_warning
         local matches_ok,matches_destination=pcall(drafts.matches_values,current_song,
-          request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range)
+          request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range,
+          editor.label,editor.label_custom)
         if matches_ok and matches_destination and new_draft_capture and
             type(drafts.compare_and_clear)=="function" then
           local cleared,clear_error=pcall(drafts.compare_and_clear,current_song,
@@ -462,6 +463,16 @@ function M.new(options)
       observed_target=semantic(inventory:editor_target_state())
     end
     if apply_success then
+      if request.kind=="create" and request.target_kind=="new" and editor and
+          sequencer.same_source(editor.source,request.source) and result.baseline and result.baseline.id then
+        local _,_,_,committed_label,committed_custom=
+          require("renoise.pattern_store").read_entry(current_song,result.baseline.id)
+        if committed_label and (editor.label~=committed_label or
+            editor.label_custom~=(committed_custom==true)) then
+          editor.label,editor.label_custom=committed_label,committed_custom==true
+          transitions:transition("metadata",{changed=true})
+        end
+      end
       editor_dirty=false
       editor_draft=false
     elseif request.kind=="regenerate" and request.baseline and (editor_dirty or editor_draft) and editor and
@@ -469,7 +480,8 @@ function M.new(options)
         rawequal(editor_target.instrument,request.instrument) and
         rawequal(editor_target.phrase,phrase) then
       local draft_ok,draft_matches,metadata=pcall(drafts.matches_values,current_song,
-        request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range)
+        request.instrument,phrase,editor.source,editor.output_policy,editor.pb_range,
+        editor.label,editor.label_custom)
       if draft_ok and draft_matches and type(metadata)=="table" then
         local target=inventory:edit_target_state()
         local rebound_ok,rebound,rebind_warning=pcall(drafts.rebind,current_song,
@@ -965,7 +977,7 @@ function M.new(options)
     if not editor_target or not rawequal(target.instrument,editor_target.instrument) or
         not rawequal(target.phrase,editor_target.phrase) then return end
     local match_ok,matches_current=pcall(drafts.matches_values,current_song,target.instrument,
-      target.phrase,editor.source,editor.output_policy,editor.pb_range)
+      target.phrase,editor.source,editor.output_policy,editor.pb_range,editor.label,editor.label_custom)
     if match_ok and matches_current then
       editor.draft_warning=nil
       editor_dirty=false
@@ -973,7 +985,8 @@ function M.new(options)
     end
     local ok,saved,reason=pcall(drafts.put,current_song,target.instrument,target.phrase,
       editor.source,editor.output_policy,editor.pb_range,
-      verified_target and draft_options_for_target(target) or context:draft_options())
+      verified_target and draft_options_for_target(target) or context:draft_options(),
+      editor.label,editor.label_custom)
     editor.draft_warning=not ok and "Cannot preserve session draft" or (not saved and reason or nil)
     if ok and saved then editor_dirty=false end
   end
@@ -1027,7 +1040,51 @@ function M.new(options)
 
   function context:editor_state()
     if editor_revision_pending then return nil end
-    return editor and ownership.copy_snapshot(editor) or nil
+    if not editor then return nil end
+    local result=ownership.copy_snapshot(editor)
+    if result and editor.prepared_resolution then
+      result.prepared_resolution=require("model.sequencer").detach_prepared(
+        editor.prepared_resolution,editor.source)
+    end
+    return result
+  end
+
+  function context:rename_label(label,label_custom)
+    if not current_song or not opened or not editor or not editor.valid then
+      return false,"No valid editor source is installed"
+    end
+    if type(label_custom)~="boolean" or not require("renoise.pattern_store").valid_label(label) then
+      return false,"Phrase label must be 1..32 valid ASCII bytes"
+    end
+    if editor.label==label and editor.label_custom==label_custom then return true end
+    local target=inventory and inventory:edit_target_state()
+    if not target or not editor_target or not rawequal(target.instrument,editor_target.instrument) or
+        not rawequal(target.phrase,editor_target.phrase) then
+      return false,"Current phrase ownership or source association is unavailable"
+    end
+    if target.kind=="owned" then
+      local baseline=target.baseline
+      if type(baseline)~="table" or not baseline.source or not baseline.settings then
+        return false,"Committed source association is unavailable"
+      end
+    elseif target.kind~="new" then return false,"Current destination is not writable" end
+    local raw,read_error
+    local ok,value=pcall(function()return current_song.tool_data end)
+    if not ok then return false,"Cannot read song metadata: "..tostring(value) end
+    raw=value
+    local pending_source=(target.kind=="new" or editor_dirty) and editor.source or nil
+    local stored,write_result,detail=pcall(require("renoise.pattern_store").update_label,
+      current_song,target.instrument,target.phrase,label,label_custom,raw,
+      pending_source,editor.output_policy,editor.pb_range)
+    if not stored or write_result~=true then
+      return false,stored and detail or write_result or read_error or "Phrase label was not saved"
+    end
+    if drafts and type(drafts.accept_label)=="function" then
+      drafts.accept_label(current_song,target.instrument,target.phrase,label,label_custom)
+    end
+    editor.label,editor.label_custom=label,label_custom
+    transitions:transition("metadata",{changed=true})
+    return true
   end
 
   function context:editor_recovery()
@@ -1296,7 +1353,8 @@ function M.new(options)
     end
     if carry_draft and not draft_rebound then
       local saved_ok,saved,save_error=pcall(drafts.put,current_song,target.instrument,target.phrase,
-        carry_draft.source,carry_draft.output_policy,carry_draft.pb_range,self:draft_options())
+        carry_draft.source,carry_draft.output_policy,carry_draft.pb_range,self:draft_options(),
+        carry_draft.label,carry_draft.label_custom)
       draft_persisted=saved_ok and saved==true
       draft_warning=(saved_ok and not saved) and save_error or (not saved_ok and saved) or nil
     end
@@ -1437,7 +1495,19 @@ function M.new(options)
   local function install_editor(values,destination,is_draft)
       local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
       if not buffer then return nil,copy_error end
-      local changed=not editor or not ownership.compare({source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},buffer)
+      buffer.label=values.label or (editor and editor.label) or "Untitled"
+      buffer.label_custom=values.label_custom==true or
+        (values.label==nil and editor and editor.label_custom==true) or false
+      local prepared,prepared_error
+      if editor and require("model.sequencer").same_source(editor.source,buffer.source) then
+        prepared=editor.prepared_resolution
+      elseif require("model.sequencer").validate(buffer.source) then
+        prepared,prepared_error=require("model.sequencer").prepare_resolution(buffer.source)
+      end
+      buffer.prepared_resolution=prepared
+      local current_values={source=buffer.source,output_policy=buffer.output_policy,pb_range=buffer.pb_range}
+      local changed=not editor or not ownership.compare(
+        {source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},current_values)
       local policies=require("model.policies")
       local source_valid,source_error=require("model.sequencer").validate(buffer.source)
       buffer.valid=source_valid and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
@@ -1482,14 +1552,17 @@ function M.new(options)
       result.reason=target.reason or "Source unavailable"
     end
     if result.source and (target.kind=="owned" or target.kind=="new") then
-      local restored,restore_error,restored_pb,metadata
+      local restored,restore_error,restored_pb,metadata,restored_label,restored_custom
       local options=target.kind=="owned" and draft_options_for_target(target) or self:draft_options()
-      restored,restore_error,restored_pb,metadata=drafts.restore(current_song,instrument,phrase,options)
+      restored,restore_error,restored_pb,metadata,restored_label,restored_custom=
+        drafts.restore(current_song,instrument,phrase,options)
       if restored then
         result.source=restored
         result.output_policy=restore_error
         result.pb_range=restored_pb
         result.draft=metadata and metadata.origin~="committed" or false
+        result.label=restored_label or "Untitled"
+        result.label_custom=restored_custom==true
       elseif restore_error then
         result.draft_error=restore_error
       end
@@ -1498,10 +1571,13 @@ function M.new(options)
       result.source=sequencer.new_pattern()
       result.output_policy=policies.DEFAULT_OUTPUT_POLICY
       result.pb_range=policies.DEFAULT_PB_RANGE
+      result.label=result.label or "Untitled"
+      result.label_custom=result.label_custom==true
     end
     editor_revision_pending=false
     local installed,install_effects=install_editor({source=result.source,
-      output_policy=result.output_policy,pb_range=result.pb_range},target,result.draft)
+      output_policy=result.output_policy,pb_range=result.pb_range,label=result.label,
+      label_custom=result.label_custom},target,result.draft)
     if not installed then return nil,install_effects end
     result.editor=installed
     result.effects=install_effects
@@ -1530,7 +1606,19 @@ function M.new(options)
       if kind~="edit" then pending_trigger=nil end
       local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
       if not buffer then return nil,copy_error end
-      local changed=not editor or not ownership.compare({source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},buffer)
+      buffer.label=values.label or (editor and editor.label) or "Untitled"
+      buffer.label_custom=values.label_custom==true or
+        (values.label==nil and editor and editor.label_custom==true) or false
+      local current_values={source=buffer.source,output_policy=buffer.output_policy,pb_range=buffer.pb_range}
+      local changed=not editor or not ownership.compare(
+        {source=editor.source,output_policy=editor.output_policy,pb_range=editor.pb_range},current_values)
+      if editor and require("model.sequencer").same_source(editor.source,buffer.source) then
+        buffer.prepared_resolution=editor.prepared_resolution
+      elseif require("model.sequencer").validate(buffer.source) then
+        local prepared,prepared_error=require("model.sequencer").prepare_resolution(buffer.source)
+        if not prepared then return nil,prepared_error end
+        buffer.prepared_resolution=prepared
+      end
       local policies=require("model.policies")
       local source_valid,source_error=require("model.sequencer").validate(buffer.source)
       buffer.valid=source_valid and policies.valid_output_policy(buffer.output_policy) and policies.valid_pb_range(buffer.pb_range)
@@ -2030,7 +2118,7 @@ function M.new(options)
         end
         return {song=current_song,epoch=epoch,session=session,open=opened,
           target_revision=revisions.target_revision,edit_revision=revisions.edit_revision,
-          operation_serial=revisions.operation_serial,
+          metadata_revision=revisions.metadata_revision,operation_serial=revisions.operation_serial,
           editor=include_target and include_editor~=false and context:editor_state() or nil,
           target=target}
       end,

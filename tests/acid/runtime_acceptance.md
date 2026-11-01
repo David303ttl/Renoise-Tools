@@ -347,6 +347,78 @@ independent second-pass findings resolved. Gates 1+2 must still execute atomical
 no later implementation gate was started. M5 overall remains incomplete, and all
 new native editor/audition/playback acceptance is unverified.
 
+## M5 Gates 1+2 deterministic exit (2026-11-01)
+
+**Disposition: PASS for the combined deterministic Gates 1+2 cutover.** Source,
+schema, labels/custom metadata, history, draft/request carriers and prepared
+resolution now transition together through the existing compiler, planner,
+control, ownership and writer owners. No Gate 1-only intermediate acceptance
+was taken. No later implementation gate was started.
+
+- Fresh pre-change baseline: `pwsh -File ./scripts/run_tests.ps1 -Tool ACID`;
+  **70 passed, 0 failed** (2026-11-01; per-spec process isolation).
+- Final combined regression: `pwsh -File ./scripts/run_tests.ps1 -Tool ACID`;
+  **71 passed, 0 failed** (2026-11-01; 66.73 seconds, per-spec process
+  isolation). The additional discovered spec is the behavior-named
+  `acid_scale_mask_spec.lua`.
+- Deterministic source assertions cover exact seven-field sources, factory mask
+  defaults, dense boolean mask validation, disabled all-false masks, enabled
+  empty rejection, MIDI 24/60 endpoints, copy/equality, mask immutability,
+  nearest-note resolution and lower-note ties. Prepared bundle tests reject
+  forged provenance, source/mask association drift, source/record tampering and
+  post-capture request mutation. Resolver spies exercise projection, compiler,
+  Repeat/Play Once planning, control fallback/successor validation and private
+  materialization without re-resolution.
+- Codec tests cover exact deterministic schema-2 bytes, SOURCE/LABEL association,
+  custom-bit roundtrip, pending `Untitled`, stable ordering, uppercase hex,
+  schema-1/unsupported rejection, malformed masks/labels and unchanged raw bytes
+  on rejects. Candidate tests cover exact raw-store conflict, draft preservation,
+  setter-before/after-mutation failures, readback uncertainty and exact rollback.
+- History now snapshots label/custom with source/settings, classifies label-only,
+  mixed and musical/output changes, and uses authenticated proposed cursor
+  transitions. Metadata-only label writes advance a separate metadata revision;
+  requests reject stale metadata and preserve frozen prepared provenance.
+- Writer integration verifies default `Pattern <ID>` labels on New create,
+  explicit custom label preservation through regeneration, masked raw-source
+  persistence, coherent resolved output, and rollback of phrase identity when a
+  captured raw-store change revokes the source candidate.
+- Pinned SDK setup/audit remains the Gate 0 receipt; no new Renoise APIs were
+  added. `git diff --check` passed after implementation (only Git's existing
+  LF/CRLF conversion warnings were emitted). No package inputs or runtime layout
+  changed, so packaging was not required.
+- Renoise native checks were not run. Masked host playback, label cold reopen,
+  and actual GUI/native behavior remain **UNVERIFIED**. Lua tests do not assert
+  sound, native playback or host persistence behavior. Gates 3+ and independent
+  Gate 12 review remain pending; this record does not claim M5 completion.
+
+### Independent foundational second-pass follow-up (2026-11-01)
+
+An independent review of the changed Gate 1+2 production and test diff against
+playbook sections 4.1–4.6, 11.2 and 12, using the Gate 0 owner/call-site receipt
+above, found one concrete prepared-resolution provenance defect. The factory
+bundle's exposed `resolved_records` table was also retained as the private
+provenance baseline. Mutating the original bundle in place therefore mutated
+the supposed private baseline and could pass `validate_prepared`. Request
+detachment happened to make its existing tamper test pass, but did not satisfy
+the factory-bundle contract.
+
+Fixed `model.sequencer.prepare_resolution` to retain a separate private copy of
+all 32 canonical records. `same_records` now rejects nonnumeric array keys
+without raising. `acid_scale_mask_spec.lua` now asserts rejection after mutation
+of the original issued bundle and graceful rejection of malformed record keys.
+The focused spec passed when run directly with `lua
+tests/acid/acid_scale_mask_spec.lua`.
+
+After the correction, `pwsh -File ./scripts/run_tests.ps1 -Tool ACID` completed
+**71 specs, 0 failed** in 64.60 seconds using Lua 5.1 with per-spec process
+isolation. `git diff --check` passed; Git emitted only its existing LF/CRLF
+conversion warnings. No other concrete defect was found in the reviewed
+foundational source, schema/label, history, prepared-resolution, source
+association, or writer rollback paths. This is the requested independent
+Gate 1+2 review evidence, not the complete section 12 Gate 12 closeout: later
+gates remain pending, and native Renoise/editor/playback behavior remains
+**UNVERIFIED**.
+
 ## M4 scoped closeout
 
 **M4 / Gate 8 closeout (2026-11-01): PASS — CLOSED by scoped project decision.** The accepted scope includes the 8×8 production workflow, native Undo/Redo, two cold reopens and captured MIDI note/OFF/pitch-bend events. The 16×8 acceptance disposition is also PASS under the scope decision; its retained run stopped at the recorded native-selection interruption after 112 regenerations, and remaining stress execution is waived. Latency has no active acceptance threshold and recovery snapshots remain unchanged.

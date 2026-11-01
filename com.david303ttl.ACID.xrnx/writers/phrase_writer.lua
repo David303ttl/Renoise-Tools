@@ -297,7 +297,8 @@ local function prepare(request, done, kind)
     return nil, failure(request, "safety.phrase_capacity", "safety", "No phrase slot is available for the new phrase")
   end
   local output, planning_error = output_planner.plan_for_materialization(request.source, request.output_policy, request.pb_range,
-    limits, profile, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled })
+    limits, profile, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled },
+    request.prepared_resolution)
   if not output then return nil, failure(request, "phrase.unrepresentable", "phrase", planning_error) end
   if replace then
     local safe, preflight_error = validator.preflight_destination(baseline.snapshot, output)
@@ -315,8 +316,11 @@ local function prepare(request, done, kind)
   local guard = function()
     return token_current(request)
   end
+  local committed_label=request.label
+  if request.target_kind=="new" and request.label_custom~=true then committed_label=nil end
   local candidate, candidate_error = store.prepare_revision(song, id, output.source, request.output_policy,
-    request.pb_range, guard, request.draft_capture)
+    request.pb_range, guard, request.draft_capture,
+    committed_label,request.label_custom)
   if not candidate then return nil, failure(request, "transaction.persistence_prepare", "transaction", candidate_error) end
   local valid, checkpoint_error = checkpoint(request)
   if not valid then
@@ -371,6 +375,10 @@ end
 
 local function restore_source(job)
   local status = store.candidate_status(job.store_candidate)
+  if not status or not status.write_attempted then
+    job.committed=false
+    return true
+  end
   if status and status.written_verified then
     local ok, current = pcall(function() return job.song.tool_data end)
     job.committed = ok and current == status.written_raw
@@ -442,7 +450,22 @@ local function rollback(job, phrase, preimage, reason,restore_phrase)
       end
       if still_authorized then
         local restored, restore_error = materializer.restore(phrase, preimage, limits_for_writer(job.limits))
-        if not restored then errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error) end
+        if not restored then
+          errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error)
+        elseif job.replace and job.written_name then
+          local name_ok,current_name=pcall(function()return phrase.name end)
+          if not name_ok then
+            errors[#errors+1]="phrase name changed before transaction rollback"
+          elseif current_name==job.written_name then
+            local restored_name=pcall(function()phrase.name=job.baseline.snapshot.name end)
+            local verify_name,actual_name=pcall(function()return phrase.name end)
+            if not restored_name or not verify_name or actual_name~=job.baseline.snapshot.name then
+              errors[#errors+1]="phrase name did not restore to its captured preimage"
+            end
+          elseif current_name~=job.baseline.snapshot.name then
+            errors[#errors+1]="phrase name changed before transaction rollback"
+          end
+        end
       else
         errors[#errors + 1]="destination changed before phrase rollback: "..tostring(authorization_error)
       end
@@ -565,6 +588,7 @@ local function mutation_body(job)
   if type(verified_output) ~= "table" then error("Materializer returned no verified output receipt", 0) end
   local named, name_error = set_phrase_name(phrase, job.id, verified_output)
   if not named then error(name_error, 0) end
+  job.written_name=named
   local final_index = phrase_index(job.instrument, phrase)
   if not final_index then error("Committed phrase object is no longer uniquely present", 0) end
   local inventory_after = inventory(job.instrument)

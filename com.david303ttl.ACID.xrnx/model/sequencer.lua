@@ -6,7 +6,9 @@ local M = {}
 M.MAX_STEPS = 32
 M.PAGE_SIZE = 16
 M.BASE_NOTE = 36 -- C-3 in Renoise
-local SOURCE_FIELDS={length=true,pitch_length=true,timing_mode=true,pitch_events=true,time_events=true}
+local SOURCE_FIELDS={length=true,pitch_length=true,timing_mode=true,pitch_events=true,time_events=true,
+  scale_mask_enabled=true,scale_mask=true}
+local prepared_records=setmetatable({},{__mode="k"})
 
 local integer_between = policies.in_integer_range
 
@@ -34,8 +36,10 @@ function M.new_pattern(length,...)
   end
   local time_events = {}
   for i=1,M.MAX_STEPS do time_events[i] = "N" end
+  local mask={}
+  for i=1,12 do mask[i]=true end
   return {length=length, pitch_length=M.PAGE_SIZE, timing_mode="straight", pitch_events=pitches,
-    time_events=time_events}
+    time_events=time_events,scale_mask_enabled=false,scale_mask=mask}
 end
 
 function M.set_pitch_length(pattern, pitch_length)
@@ -85,7 +89,7 @@ function M.new_pitch(key, octave, accent, slide)
 end
 
 function M.pitch_controls(p)
-  if type(p) ~= "table" or not integer_between(p.note, 0, 119) then
+  if type(p) ~= "table" or not integer_between(p.note, 24, 60) then
     return nil, "invalid pitch"
   end
   if not integer_between(p.key, 0, 12) or
@@ -110,6 +114,23 @@ function M.validate(pattern)
   if pattern.timing_mode ~= "straight" and pattern.timing_mode ~= "triplet" then
     return false, "timing mode must be straight or triplet"
   end
+  if type(pattern.scale_mask_enabled)~="boolean" then
+    return false,"scale mask enabled state must be boolean"
+  end
+  if type(pattern.scale_mask)~="table" then return false,"scale mask must be a dense 12-element array" end
+  local mask_count,mask_max=0,0
+  for key,value in pairs(pattern.scale_mask) do
+    if not integer_between(key,1,12) then return false,"scale mask must be a dense 12-element array" end
+    if type(value)~="boolean" then return false,"scale mask entries must be boolean" end
+    mask_count=mask_count+1
+    if key>mask_max then mask_max=key end
+  end
+  if mask_count~=12 or mask_max~=12 then return false,"scale mask must be a dense 12-element array" end
+  if pattern.scale_mask_enabled then
+    local any=false
+    for i=1,12 do any=any or pattern.scale_mask[i] end
+    if not any then return false,"enabled scale mask must allow at least one pitch class" end
+  end
   if array_size(pattern.pitch_events) ~= M.MAX_STEPS then
     return false, "PITCH memory must contain exactly 32 entries"
   end
@@ -121,7 +142,7 @@ function M.validate(pattern)
     return false, "TIME memory must contain exactly 32 entries"
   end
   for i, p in ipairs(pattern.pitch_events) do
-    if type(p) ~= "table" or not integer_between(p.note, 0, 119) then
+    if type(p) ~= "table" or not integer_between(p.note, 24, 60) then
       return false, "invalid pitch at entry " .. i
     end
     for key in pairs(p) do
@@ -156,7 +177,9 @@ function M.copy_source(pattern)
   local valid,err=M.validate(pattern)
   if not valid then return nil,err end
   local copy={length=pattern.length,pitch_length=pattern.pitch_length,
-    timing_mode=pattern.timing_mode,pitch_events={},time_events={}}
+    timing_mode=pattern.timing_mode,pitch_events={},time_events={},
+    scale_mask_enabled=pattern.scale_mask_enabled,scale_mask={}}
+  for i=1,12 do copy.scale_mask[i]=pattern.scale_mask[i] end
   for i=1,M.MAX_STEPS do
     local pitch=pattern.pitch_events[i]
     copy.pitch_events[i]={note=pitch.note,key=pitch.key,octave=pitch.octave,
@@ -169,7 +192,8 @@ end
 function M.same_source(a,b)
   if not M.validate(a) or not M.validate(b) then return false end
   if a.length~=b.length or a.pitch_length~=b.pitch_length or
-      a.timing_mode~=b.timing_mode then return false end
+      a.timing_mode~=b.timing_mode or a.scale_mask_enabled~=b.scale_mask_enabled then return false end
+  for i=1,12 do if a.scale_mask[i]~=b.scale_mask[i] then return false end end
   for i=1,M.MAX_STEPS do
     local x,y=a.pitch_events[i],b.pitch_events[i]
     if x.note~=y.note or x.key~=y.key or x.octave~=y.octave or
@@ -177,6 +201,93 @@ function M.same_source(a,b)
         a.time_events[i]~=b.time_events[i] then return false end
   end
   return true
+end
+
+local function canonical_pitch(note)
+  if note==60 then return {note=60,key=12,octave=1} end
+  return {note=note,key=note%12,octave=math.floor((note-M.BASE_NOTE)/12)}
+end
+
+function M.resolve_pitches(source)
+  local valid,err=M.validate(source)
+  if not valid then return nil,err end
+  local resolved={}
+  for i=1,M.MAX_STEPS do
+    local raw=source.pitch_events[i]
+    local note=raw.note
+    if source.scale_mask_enabled then
+      local best_distance=math.huge
+      for candidate=24,60 do
+        local pitch_class=candidate%12+1
+        if source.scale_mask[pitch_class] then
+          local distance=math.abs(candidate-raw.note)
+          if distance<best_distance then note,best_distance=candidate,distance end
+        end
+      end
+    end
+    resolved[i]=canonical_pitch(note)
+  end
+  return resolved
+end
+
+local function same_records(a,b)
+  if type(a)~="table" or type(b)~="table" then return false end
+  for key in pairs(a) do
+    if type(key)~="number" or key<1 or key>32 or key%1~=0 then return false end
+  end
+  for key in pairs(b) do
+    if type(key)~="number" or key<1 or key>32 or key%1~=0 then return false end
+  end
+  for i=1,32 do
+    local x,y=a[i],b[i]
+    if type(x)~="table" or type(y)~="table" or x.note~=y.note or x.key~=y.key or x.octave~=y.octave then return false end
+    for key in pairs(x) do if key~="note" and key~="key" and key~="octave" then return false end end
+  end
+  return true
+end
+
+function M.prepare_resolution(source)
+  local frozen,err=M.copy_source(source)
+  if not frozen then return nil,err end
+  local records,resolve_error=M.resolve_pitches(frozen)
+  if not records then return nil,resolve_error end
+  local bundle={source=frozen,resolved_records=records}
+  local private_records={}
+  for i=1,M.MAX_STEPS do
+    local pitch=records[i]
+    private_records[i]={note=pitch.note,key=pitch.key,octave=pitch.octave}
+  end
+  local provenance={}
+  prepared_records[provenance]={source=assert(M.copy_source(frozen)),records=private_records}
+  bundle.provenance=provenance
+  return bundle
+end
+
+function M.validate_prepared(prepared,source)
+  if type(prepared)~="table" or getmetatable(prepared)~=nil or
+      type(prepared.provenance)~="table" then return nil,"invalid prepared pitch resolution" end
+  local private=prepared_records[prepared.provenance]
+  if not private or not M.same_source(prepared.source,private.source) or
+      not same_records(prepared.resolved_records,private.records) then
+    return nil,"prepared pitch resolution was changed or forged"
+  end
+  if source and not M.same_source(source,private.source) then
+    return nil,"prepared pitch resolution does not match source"
+  end
+  return true
+end
+
+function M.detach_prepared(prepared,source)
+  local valid,err=M.validate_prepared(prepared,source)
+  if not valid then return nil,err end
+  local detached_source=assert(M.copy_source(prepared.source))
+  local records={}
+  for i=1,32 do
+    local pitch=prepared.resolved_records[i]
+    records[i]={note=pitch.note,key=pitch.key,octave=pitch.octave}
+  end
+  local detached={source=detached_source,resolved_records=records,provenance=prepared.provenance}
+  return detached
 end
 
 return M

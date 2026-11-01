@@ -1422,15 +1422,15 @@ for _,fault in ipairs({'false','throw'}) do
   assert(ctx:transition('edit',{source=outgoing,output_policy='play_once',pb_range=0}))
   assert(cache.put(song,instrument,selected,outgoing,'play_once',0,ctx:draft_options()))
   song.instruments[#song.instruments+1]=helper.instrument({helper.phrase(source,101)})
-  local original_write=store.write_draft
+  local original_write=store.write_draft_metadata
   local calls=0
-  store.write_draft=function(...)
+  store.write_draft_metadata=function(...)
     calls=calls+1
     if fault=='throw' then error('injected draft rebind exception',0) end
     return nil,'injected draft rebind rejection'
   end
   local changed,result=ctx:make_independent()
-  store.write_draft=original_write
+  store.write_draft_metadata=original_write
   local state=ctx:editor_state()
   assert(changed and ownership.id(selected)==result.id,
     fault..' draft persistence failure lost committed identity')

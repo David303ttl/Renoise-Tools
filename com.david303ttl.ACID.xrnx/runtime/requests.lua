@@ -10,8 +10,9 @@ local M={}
 local MAX_PHRASE_ID=2147483647
 local RAW_FIELDS={"song","instrument","phrase","token","draft_capture"}
 local VALUE_FIELDS={"kind","target_kind","trigger","epoch","session","target_revision",
-  "edit_revision","operation_serial","source","output_policy","pb_range","id","baseline",
-  "planning_inputs","capabilities","capacities","timing_model","groove_enabled"}
+  "edit_revision","metadata_revision","operation_serial","source","output_policy","pb_range","id","baseline",
+  "planning_inputs","capabilities","capacities","timing_model","groove_enabled",
+  "label","label_custom"}
 
 local function capacities()
   local api=renoise.InstrumentPhrase
@@ -38,8 +39,8 @@ local function request_values_match(record,request,light_values)
   local actual={}
   for _,key in ipairs(VALUE_FIELDS) do actual[key]=request[key] end
   if not light_values then
-    return ownership.compare(record.values,actual)
-  end
+    if ownership.compare(record.values,actual)~=true then return false end
+  else
   local function same_value(expected,supplied)
     if type(expected)=="table" or type(supplied)=="table" then
       return ownership.compare(expected,supplied)==true
@@ -60,6 +61,13 @@ local function request_values_match(record,request,light_values)
     elseif not same_value(record.values[key],actual[key]) then
       return false
     end
+  end
+  end
+  local prepared_ok=sequencer.validate_prepared(request.prepared_resolution,record.values.source)
+  local captured_ok=sequencer.validate_prepared(record.prepared_resolution,record.values.source)
+  if not prepared_ok or not captured_ok or
+      not rawequal(request.prepared_resolution.provenance,record.prepared_resolution.provenance) then
+    return false
   end
   return true
 end
@@ -107,7 +115,7 @@ local function verify(record,request,admission,light_target,light_values)
   if not state.target or state.target.kind~=record.values.target_kind or
       not rawequal(state.target.instrument,record.instrument) or
       not rawequal(state.target.phrase,record.phrase) then return false,"Runtime target eligibility changed" end
-  for _,key in ipairs({"target_revision","edit_revision","operation_serial"}) do
+  for _,key in ipairs({"target_revision","edit_revision","metadata_revision","operation_serial"}) do
     if state[key]~=record.values[key] then return false,"Request revision changed: "..key end
   end
   local blocked,block_reason=record.access.blocked()
@@ -154,7 +162,8 @@ local function verify(record,request,admission,light_target,light_values)
   local latest=record.access.current()
   if not latest or not rawequal(latest.song,record.song) or latest.epoch~=state.epoch or
       latest.session~=state.session or latest.open~=state.open or latest.target_revision~=state.target_revision or
-      latest.edit_revision~=state.edit_revision or latest.operation_serial~=state.operation_serial or
+       latest.edit_revision~=state.edit_revision or latest.metadata_revision~=state.metadata_revision or
+       latest.operation_serial~=state.operation_serial or
       (not admission and not token_current(record)) then return false,"Request changed during validation" end
   return true
 end
@@ -206,6 +215,8 @@ function M.new(access)
       local limits=capacities()
       local source,source_error=sequencer.copy_source(editor.source)
       if not source then return nil,source_error end
+      local prepared,prepared_error=sequencer.detach_prepared(editor.prepared_resolution,source)
+      if not prepared then return nil,prepared_error end
       local descriptor,draft_guard,draft_state=access.drafts.capture(state.song,target.instrument,target.phrase,
         access.draft_options(target))
       if not descriptor then
@@ -229,10 +240,14 @@ function M.new(access)
       local baseline_metadata=target.baseline and {id=target.baseline.id,
         source=target.baseline.source,settings=target.baseline.settings,
         planning_inputs=target.baseline.planning_inputs}
+      local label=editor.label or "Untitled"
+      local label_custom=editor.label_custom==true
       local values={kind=target.kind=="new" and "create" or "regenerate",
         target_kind=target.kind,trigger=trigger,epoch=state.epoch,session=state.session,
-        target_revision=state.target_revision,edit_revision=state.edit_revision,operation_serial=state.operation_serial,
-        source=source,output_policy=editor.output_policy,pb_range=editor.pb_range,
+        target_revision=state.target_revision,edit_revision=state.edit_revision,
+        metadata_revision=state.metadata_revision,operation_serial=state.operation_serial,
+         source=source,output_policy=editor.output_policy,pb_range=editor.pb_range,
+         label=label,label_custom=label_custom,
         id=target.baseline and target.baseline.id,baseline=baseline_metadata,
         planning_inputs=inputs(profile,limits),capabilities=profile,capacities=limits,
         timing_model=transport.timing_model,groove_enabled=transport.groove_enabled}
@@ -246,9 +261,10 @@ function M.new(access)
       local record={access=access,values=values,profile=profile,song=state.song,
         instrument=target.instrument,phrase=target.phrase,token=token,draft_capture=descriptor,
         draft_guard=draft_guard,baseline_snapshot=baseline_snapshot,
-        baseline_proof_reference=baseline_proof_reference,
+         baseline_proof_reference=baseline_proof_reference,prepared_resolution=prepared,
         request=setmetatable({request},{__mode="v"}),functions={}}
       for _,key in ipairs(RAW_FIELDS) do request[key]=record[key] end
+      request.prepared_resolution=prepared
       request.is_current=function()
         if not token_current(record) then return false end
         if record.values.target_kind=="owned" then
@@ -417,6 +433,8 @@ function M.new(access)
       for _,key in ipairs(RAW_FIELDS) do if key~="token" then rawset(request,key,nil);record[key]=nil end end
       record.values=nil;record.profile=nil;record.access=nil;record.draft_guard=nil;record.baseline_snapshot=nil
       record.baseline_proof_reference=nil
+      record.prepared_resolution=nil
+      rawset(request,"prepared_resolution",nil)
     end
     access=nil
     records=setmetatable({},{__mode="k"})

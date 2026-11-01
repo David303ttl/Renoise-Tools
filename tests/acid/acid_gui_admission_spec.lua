@@ -73,7 +73,7 @@ package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
   if phrase.id==12 then source.timing_mode="triplet" end
   return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
 end,
-  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+  write_draft_metadata=function(song,instrument,phrase,pattern,policy,pb_range)
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end

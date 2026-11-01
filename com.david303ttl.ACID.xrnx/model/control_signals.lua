@@ -90,11 +90,17 @@ function M.compile(pattern,options)
     return nil,"output_policy must be repeat or play_once"
   end
   local plan,successor=options.plan,options.successor
+  local prepared=options.prepared
+  local prepared_ok,prepared_error
+  if prepared~=nil then
+    prepared_ok,prepared_error=require("model.sequencer").validate_prepared(prepared,pattern)
+    if not prepared_ok then return nil,prepared_error end
+  end
   if not plan then
     local exit
-    plan,exit=compiler.compile_cycle(pattern)
+    plan,exit=compiler.compile_cycle(pattern,nil,prepared)
     if not plan then return nil,exit end
-    successor=compiler.compile_cycle(pattern,exit)
+    successor=compiler.compile_cycle(pattern,exit,prepared)
   end
   if output_policy=="repeat" and not successor then
     return nil,"Repeat gate scheduling requires an explicit successor cycle"
@@ -111,7 +117,7 @@ function M.compile(pattern,options)
   if successor then
     local tail=plan.steps[plan.length]
     local expected=compiler.compile_cycle(pattern,{cycle=(tail.cycle or plan.cycle or 1)+1,
-      next_pitch=1,voice=tail.voice,hold_intent=tail.hold_intent})
+      next_pitch=1,voice=tail.voice,hold_intent=tail.hold_intent},prepared)
     if not expected or not equal(expected.steps,successor.steps,true) then
       return nil,"gate scheduling successor does not follow the semantic plan"
     end

@@ -50,9 +50,9 @@ local function verify_rebase(persistence_failure)
  assert(ctx:request_generation('manual'))
  local request=log.requests[1]
  local newer=copy_edit(source,NEWER_EDIT_NOTE)
- local write_draft=store.write_draft
+  local write_draft=store.write_draft_metadata
  if persistence_failure then
-  store.write_draft=function()return false,'injected draft persistence failure'end
+  store.write_draft_metadata=function()return false,'injected draft persistence failure'end
  end
  local edited,edit_error=ctx:transition('edit',{source=newer,output_policy='play_once',pb_range=0})
  assert(edited,edit_error or 'newer edit failed')
@@ -70,7 +70,7 @@ local function verify_rebase(persistence_failure)
 
  log.done[1]({kind='success',status='committed',verified=true,token=request.token,
    epoch=request.epoch,request=request,phrase=phrase,baseline=committed_baseline})
- store.write_draft=write_draft
+  store.write_draft_metadata=write_draft
 
  local state=ctx:generation_state()
  assert(not state.last_commit,'older editor revision was recorded as the current commit')
@@ -99,6 +99,20 @@ end
 verify_rebase(true)
 verify_rebase(false)
 
+-- Label metadata writes do not advance the musical revision or enqueue renders.
+do
+ local ctx,log,song,instrument,_,_,source=fixture(true)
+ local before=ctx:revision_state()
+ assert(ctx:rename_label("Untitled",true))
+ local after=ctx:revision_state()
+ assert(after.edit_revision==before.edit_revision and
+   after.metadata_revision==before.metadata_revision+1 and log.sinks==0)
+ local draft,_,_,label,label_custom=store.read_draft(song,instrument,nil)
+ assert(draft and label=="Untitled" and label_custom==true)
+ local raw=song.tool_data
+ assert(not ctx:rename_label(" bad",true) and song.tool_data==raw)
+end
+
 local function verify_create_transfer(failure)
  local ctx,log,song,instrument,_,_,source=fixture(true)
  assert(ctx:transition('edit',values(copy_edit(source,FIRST_COMMITTED_NOTE))))
@@ -113,10 +127,10 @@ local function verify_create_transfer(failure)
  instrument.phrases[#instrument.phrases+1]=created
  assert(store.save(song,CREATED_PHRASE_ID,request.source,request.output_policy,request.pb_range))
  local durable_before=song.tool_data
- local write_draft=store.write_draft
+  local write_draft=store.write_draft_metadata
  local put=cache.put
  if failure=='persistence' then
-  store.write_draft=function()return false,'injected destination draft persistence failure'end
+  store.write_draft_metadata=function()return false,'injected destination draft persistence failure'end
  elseif failure=='session' then
   cache.put=function(target_song,target_instrument,target_phrase,...)
    if rawequal(target_phrase,created) then return nil,'injected destination session transfer failure'end
@@ -126,7 +140,7 @@ local function verify_create_transfer(failure)
  local baseline=validated_baseline(song,instrument,created,CREATED_PHRASE_ID)
  log.done[1]({kind='success',status='committed',verified=true,token=request.token,
   epoch=request.epoch,request=request,phrase=created,baseline=baseline})
- store.write_draft=write_draft
+  store.write_draft_metadata=write_draft
  cache.put=put
  assert(log.sinks==1,'newer create draft triggered a second render')
  if failure=='session' then
@@ -212,7 +226,7 @@ do
  assert(seq.same_source(ctx:editor_state().source,newer),'closed completion lost the newer New draft')
 end
 
--- Runtime admission validates its detached editor buffer without an extra source copy.
+-- A changed source is detached once to issue its prepared resolution snapshot.
 do
  local ctx,_,_,_,_,_,source=fixture(true)
  local changed=copy_edit(source,7)
@@ -237,7 +251,7 @@ do
  seq.copy_source=copy_source
  cache.put=put
  assert(called and edited,edit_error or 'source edit transition failed')
- assert(validation_copies==0,'edit made a discarded validation copy outside draft persistence')
+ assert(validation_copies>=1,'edit did not issue a detached resolution snapshot')
 end
 
 -- Source values and revision identities remain distinct through A -> B -> A.
@@ -245,7 +259,8 @@ do
  local ctx,log,song,instrument,_,_,source=fixture(true)
  local before=ctx:revision_state()
  ctx:transition('edit',values(source))
- assert(ctx:revision_state().edit_revision==before.edit_revision and log.sinks==0)
+ assert(ctx:revision_state().edit_revision==before.edit_revision and log.sinks==0,
+   tostring(before.edit_revision).." -> "..tostring(ctx:revision_state().edit_revision).." sinks="..log.sinks)
  local changed=copy_edit(source,7)
  ctx:transition('edit',values(changed))
  local middle=ctx:revision_state()

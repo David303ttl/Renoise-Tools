@@ -235,10 +235,10 @@ if (Test-Path -LiteralPath $outputPath) {
 
 $payloadText = [IO.File]::ReadAllText($payloadPath, [Text.UTF8Encoding]::new($false))
 $payloadText = $payloadText -replace "`r`n", "`n"
-if (-not $payloadText.StartsWith("ACID-PITCH-TIME-1`n", [StringComparison]::Ordinal)) {
+if (-not $payloadText.StartsWith("ACID-PITCH-TIME-2`n", [StringComparison]::Ordinal)) {
     throw 'Tool data fixture does not start with the required header.'
 }
-$sourceRows = @($payloadText -split "`n" | Where-Object { $_.StartsWith('2|repeat|24|triplet|3|17|', [StringComparison]::Ordinal) })
+$sourceRows = @($payloadText -split "`n" | Where-Object { $_.StartsWith('2|repeat|24|triplet|3|17|0|111111111111|', [StringComparison]::Ordinal) })
 if ($sourceRows.Count -lt 1) { throw 'Tool data fixture is missing the committed ID 2 source row.' }
 $payloadBytes = [Text.Encoding]::UTF8.GetBytes($payloadText)
 $toolDataHex = [Convert]::ToHexString($payloadBytes).ToLowerInvariant()

@@ -131,25 +131,22 @@ instrument_a.phrases={phrase_b}
 assert(cache.get(song_a,instrument_a,phrase_a)==nil)
 instrument_a.phrases={phrase_a,phrase_b}
 
--- A draft-only write rebases an in-flight source candidate and survives its commit.
+-- A raw draft change invalidates the captured source candidate.
 local candidate=assert(pattern_store.prepare(song_a,88,sequencer.new_pattern(5),"repeat",48,function()return true end))
 local changed=sequencer.new_pattern(19)
 changed.pitch_events[2]=sequencer.new_pitch(7,0,true,false)
 assert(cache.put(song_a,instrument_a,phrase_a,changed,"repeat",12))
-local committed,commit_error=pattern_store.commit(song_a,candidate)
-assert(committed,commit_error)
+local changed_raw=song_a.tool_data
+local committed=pattern_store.commit(song_a,candidate)
+assert(not committed and song_a.tool_data==changed_raw)
 local merged=assert(pattern_store.read(song_a))
-assert(merged[88].pattern.length==5 and merged[88].pb_range==48)
+assert(merged[88]==nil)
 package.loaded["runtime.draft_cache"]=nil
 cache=require("runtime.draft_cache")
 local recovered,_,recovered_pb=cache.get(song_a,instrument_a,phrase_a)
 assert(recovered.length==19 and recovered.pitch_events[2].note==43,
   "commit preserves the newest dirty draft while storing the rendered source")
 assert(recovered_pb==12)
-assert(pattern_store.restore(song_a,candidate))
-local rolled_back=assert(pattern_store.read(song_a))
-assert(rolled_back[88]==nil,
-  "rollback removes only the source snapshot from the in-flight render")
 local persisted_draft,_,persisted_pb=pattern_store.read_draft(song_a,instrument_a,phrase_a)
 assert(persisted_draft.length==19 and persisted_draft.pitch_events[2].note==43,
   "rollback restores the rebased raw data and preserves the newest draft")

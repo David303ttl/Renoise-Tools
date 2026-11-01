@@ -56,7 +56,7 @@ local function validate_state(state)
   return true
 end
 
-local function run_cycle(pattern, state)
+local function run_cycle(pattern, state, prepared)
   local cycle = state and state.cycle or 1
   local voice = state and copy_voice(state.voice) or nil
   local cursor = 1
@@ -67,14 +67,15 @@ local function run_cycle(pattern, state)
     local event = {cycle=cycle, step=step, absolute_step=(cycle-1)*pattern.length+step}
     if command == "N" then
       local pitch = pattern.pitch_events[cursor]
+      local resolved=prepared.resolved_records[cursor]
       event.kind, event.pitch_index = "note", cursor
-      event.note, event.accent, event.slide = pitch.note, pitch.accent == true, pitch.slide == true
-      event.key, event.octave = pitch.key, pitch.octave
+      event.note, event.accent, event.slide = resolved.note, pitch.accent == true, pitch.slide == true
+      event.key, event.octave = resolved.key, resolved.octave
       event.from_note = voice and voice.note or nil
       event.transition = not voice and "attack" or (voice.slide and "slide" or "retrigger")
       event.connected = event.transition == "slide"
-      voice = {note=pitch.note, pitch_index=cursor, accent=event.accent,
-        slide=event.slide, key=pitch.key, octave=pitch.octave,
+      voice = {note=resolved.note, pitch_index=cursor, accent=event.accent,
+        slide=event.slide, key=resolved.key, octave=resolved.octave,
         origin_cycle=cycle, origin_step=step}
       cursor = cursor % pattern.pitch_length + 1
       plan.note_count = plan.note_count + 1
@@ -103,23 +104,34 @@ function M.validate_source(pattern)
   return validate(pattern)
 end
 
-function M.compile_cycle(pattern, state)
+local function prepared_for(pattern,prepared)
+  if prepared==nil then return sequencer.prepare_resolution(pattern) end
+  local ok,err=sequencer.validate_prepared(prepared,pattern)
+  if not ok then return nil,err end
+  return prepared
+end
+
+function M.compile_cycle(pattern, state, prepared)
   local ok, err = validate(pattern)
   if not ok then return nil, err end
   ok, err = validate_state(state)
   if not ok then return nil, err end
-  return run_cycle(pattern, state)
+  prepared,err=prepared_for(pattern,prepared)
+  if not prepared then return nil,err end
+  return run_cycle(pattern, state,prepared)
 end
 
-function M.compile_cycles(pattern, count, state)
+function M.compile_cycles(pattern, count, state, prepared)
   if not integer(count, 1, M.MAX_CYCLES) then return nil, "invalid cycle count" end
   local ok, err = validate(pattern)
   if not ok then return nil, err end
   ok, err = validate_state(state)
   if not ok then return nil, err end
+  prepared,err=prepared_for(pattern,prepared)
+  if not prepared then return nil,err end
   if state and state.cycle + count > EXCLUSIVE_CYCLE_LIMIT then return nil, "invalid cycle count" end
   local plans = {}
-  for i=1,count do plans[i], state = run_cycle(pattern, state) end
+  for i=1,count do plans[i], state = run_cycle(pattern, state,prepared) end
   return plans, state
 end
 
@@ -131,9 +143,9 @@ local function same_voice(a, b)
   return true
 end
 
-function M.plan_loop(pattern)
+function M.plan_loop(pattern,prepared)
   if type(pattern) ~= "table" then return nil, "invalid pattern" end
-  local plans, state_or_error = M.compile_cycles(pattern, 3)
+  local plans, state_or_error = M.compile_cycles(pattern, 3,nil,prepared)
   if not plans then return nil, state_or_error end
   local steady, verification = plans[2], plans[3]
   for step=1,pattern.length do

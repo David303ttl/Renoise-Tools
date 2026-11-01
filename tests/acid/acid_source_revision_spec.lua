@@ -66,9 +66,11 @@ candidate=assert(store.prepare_revision(song,candidate_id,seq.new_pattern(9),
   "play_once",2,guard,descriptor(instrument,first)))
 local changed_draft=seq.new_pattern(8)
 assert(store.write_draft(song,instrument,first,changed_draft,"repeat",24))
+local newer_raw=song.tool_data
 first.name=assert(own.make_name(first,candidate_id))
-assert(store.commit(song,candidate),"a newer draft must not prevent source commit")
-assert(store.has_drafts(song),"a newer draft must survive revision commit")
+assert(not store.commit(song,candidate) and song.tool_data==newer_raw,
+  "a raw-store change after candidate capture must reject source commit")
+assert(store.has_drafts(song),"the concurrently changed draft must survive the rejected commit")
 first.name=assert(own.make_name(first,1))
 assert(store.read_draft(song,instrument,first).length==8,
   "undoing to the old source ID must recover the newer preserved draft")

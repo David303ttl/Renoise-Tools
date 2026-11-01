@@ -28,7 +28,7 @@ local function missing_step(pattern)
   end
 end
 
-function M.project(pattern)
+function M.project(pattern,prepared)
   local out={length=type(pattern)=="table" and pattern.length or 0,
     mapping={},repeat_mapping={},used={},note_count=0,error=nil}
   if type(pattern)~="table" then
@@ -55,7 +55,7 @@ function M.project(pattern)
     end
     return out
   end
-  local plans,compile_error=interpreter.compile_cycles(pattern,2)
+  local plans,compile_error=interpreter.compile_cycles(pattern,2,nil,prepared)
   if not plans then
     out.error={message=compile_error}
     local step=tonumber(tostring(compile_error):match("TIME step (%d+)"))
@@ -106,41 +106,77 @@ local copy_source=seq.copy_source
 
 local function same_state(a,b)
   return a.output_policy==b.output_policy and a.pb_range==b.pb_range and
-    seq.same_source(a.pattern,b.pattern)
+    a.label==b.label and a.label_custom==b.label_custom and seq.same_source(a.pattern,b.pattern)
 end
 
-local function snapshot(pattern,output_policy,pb_range)
+local function snapshot(pattern,output_policy,pb_range,label,label_custom)
   return {pattern=copy_source(pattern),output_policy=output_policy,
-    pb_range=checked_pb_range(pb_range)}
+    pb_range=checked_pb_range(pb_range),label=label or "Untitled",label_custom=label_custom==true}
 end
 
-function M.new_history(pattern,output_policy,pb_range)
-  local history={states={snapshot(pattern,output_policy,pb_range)},position=1}
-  function history:record(next_pattern,next_policy,next_pb_range)
-    local next_state=snapshot(next_pattern,next_policy,next_pb_range)
+function M.classify_difference(left,right)
+  if type(left)~="table" or type(right)~="table" then return "mixed" end
+  local musical=not seq.same_source(left.pattern or left.source,right.pattern or right.source) or
+    left.output_policy~=right.output_policy or left.pb_range~=right.pb_range
+  local metadata=(left.label or "Untitled")~=(right.label or "Untitled") or
+    (left.label_custom==true)~=(right.label_custom==true)
+  if musical and metadata then return "mixed" end
+  if musical then return "musical_or_output" end
+  if metadata then return "label_only" end
+  return "unchanged"
+end
+
+function M.new_history(pattern,output_policy,pb_range,label,label_custom)
+  local history={states={snapshot(pattern,output_policy,pb_range,label,label_custom)},position=1,revision=0}
+  local proposals=setmetatable({},{__mode="k"})
+  function history:record(next_pattern,next_policy,next_pb_range,next_label,next_custom)
+    local next_state=snapshot(next_pattern,next_policy,next_pb_range,next_label,next_custom)
     if same_state(self.states[self.position],next_state) then return false end
     for i=#self.states,self.position+1,-1 do self.states[i]=nil end
     self.states[#self.states+1]=next_state
     self.position=#self.states
+    self.revision=self.revision+1
+    return true
+  end
+  function history:propose(direction)
+    local position=self.position+(direction=="undo" and -1 or direction=="redo" and 1 or 0)
+    if position<1 or position>#self.states or position==self.position then return nil end
+    local proposal={position=position,revision=self.revision,state=snapshot(
+      self.states[position].pattern,self.states[position].output_policy,
+      self.states[position].pb_range,self.states[position].label,self.states[position].label_custom)}
+    proposals[proposal]={position=position,revision=self.revision}
+    return proposal
+  end
+  function history:commit(proposal)
+    local captured=type(proposal)=="table" and proposals[proposal]
+    if not captured or proposal.revision~=self.revision or captured.revision~=self.revision or
+        proposal.position~=captured.position or captured.position<1 or
+        captured.position>#self.states then return false end
+    self.position=captured.position
+    proposals[proposal]=nil
+    self.revision=self.revision+1
     return true
   end
   function history:undo()
     if self.position<=1 then return nil end
     self.position=self.position-1
     local state=self.states[self.position]
-    return copy_source(state.pattern),state.output_policy,state.pb_range
+    self.revision=self.revision+1
+    return copy_source(state.pattern),state.output_policy,state.pb_range,state.label,state.label_custom
   end
   function history:redo()
     if self.position>=#self.states then return nil end
     self.position=self.position+1
     local state=self.states[self.position]
-    return copy_source(state.pattern),state.output_policy,state.pb_range
+    self.revision=self.revision+1
+    return copy_source(state.pattern),state.output_policy,state.pb_range,state.label,state.label_custom
   end
   function history:can_undo() return self.position>1 end
   function history:can_redo() return self.position<#self.states end
-  function history:reset(current_pattern,current_policy,current_pb_range)
-    self.states={snapshot(current_pattern,current_policy,current_pb_range)}
+  function history:reset(current_pattern,current_policy,current_pb_range,current_label,current_custom)
+    self.states={snapshot(current_pattern,current_policy,current_pb_range,current_label,current_custom)}
     self.position=1
+    self.revision=self.revision+1
   end
   return history
 end

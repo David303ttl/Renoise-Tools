@@ -91,7 +91,7 @@ package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
   return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end,
   read_entry=read_entry,
-  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+  write_draft_metadata=function(song,instrument,phrase,pattern,policy,pb_range)
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end
@@ -232,6 +232,7 @@ package.loaded["model.editor_state"]={
     return editor_module.project(pattern)
   end,
   new_history=editor_module.new_history,
+  classify_difference=editor_module.classify_difference,
   index_on_page=editor_module.index_on_page,
   page_for=editor_module.page_for,
   step_text=editor_module.step_text

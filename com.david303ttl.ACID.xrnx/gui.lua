@@ -185,13 +185,14 @@ function M.show()
     return state and state.open and state.session==session
   end
   local output_policy,pb_range
+  local phrase_label,phrase_label_custom="Untitled",false
   local function reset_source(length)
     pattern=sequencer.new_pattern(length)
     output_policy=policies.DEFAULT_OUTPUT_POLICY
     pb_range=policies.DEFAULT_PB_RANGE
   end
   reset_source()
-  local history=editor.new_history(pattern,output_policy,pb_range)
+  local history=editor.new_history(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
   local undo_button
   local redo_button
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
@@ -274,7 +275,8 @@ function M.show()
     if not cached_projection or projected_revision~=revision() or
         not rawequal(projected_instrument,bound_instrument()) or
         not rawequal(projected_phrase,bound_phrase()) then
-      cached_projection=editor.project(pattern)
+      local snapshot=runtime:editor_state()
+      cached_projection=editor.project(pattern,snapshot and snapshot.prepared_resolution)
       projected_revision=revision()
       projected_instrument,projected_phrase=bound_instrument(),bound_phrase()
     end
@@ -309,7 +311,8 @@ function M.show()
   end
   local function save_draft(kind)
     local state,effects=runtime:transition(kind or "edit",{
-      source=pattern,output_policy=output_policy,pb_range=pb_range})
+      source=pattern,output_policy=output_policy,pb_range=pb_range,
+      label=phrase_label,label_custom=phrase_label_custom})
     if not state then
       return false,effects or "Editor state transition failed"
     end
@@ -528,7 +531,7 @@ function M.show()
     update()
   end
   local function changed(request_live)
-    if not history:record(pattern,output_policy,pb_range) then update();return end
+    if not history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom) then update();return end
     local saved,save_error,effects=save_draft(request_live==false and "reset" or "edit")
     update()
     update_live_state(saved==true)
@@ -762,6 +765,8 @@ function M.show()
       pattern=restored.source
       output_policy=restored.output_policy
       pb_range=restored.pb_range or policies.DEFAULT_PB_RANGE
+      phrase_label=restored.label or "Untitled"
+      phrase_label_custom=restored.label_custom==true
       source_available=restored.source_available==true
       selected_pitch=1;selected_step=1
       pitch_page=1;time_page=1
@@ -788,7 +793,7 @@ function M.show()
       render(source_state,"text",is_new and "SOURCE DIRTY: Generate to apply this draft." or
         "SOURCE UNAVAILABLE")
     end
-    history:reset(pattern,output_policy,pb_range)
+    history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
     update()
     if update_live_state then update_live_state() end
   end
@@ -981,6 +986,13 @@ function M.show()
     local success=result.kind=="success" and result.verified==true
     local prefix=request.trigger=="manual" and "GENERATION " or "LIVE EDIT "
     if success then
+      local accepted=runtime:editor_state()
+      if accepted and sequencer.same_source(accepted.source,pattern) and
+          (phrase_label~=accepted.label or phrase_label_custom~=accepted.label_custom) then
+        phrase_label=accepted.label or "Untitled"
+        phrase_label_custom=accepted.label_custom==true
+        history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
+      end
       if result.destination_current~=false and result.phrase then
         refresh_phrase_choices(result.phrase)
       end
@@ -1012,29 +1024,38 @@ function M.show()
     end
   end}
   active_live_checkbox=live_checkbox
-  undo_button=vb:button{text="Undo",active=false,notifier=function()
-    local source,policy,source_pb_range=history:undo()
-    if source then
-      pattern=source
-      output_policy=policy
-      pb_range=source_pb_range or policies.DEFAULT_PB_RANGE
-      local saved,save_error=save_draft()
-      status.text=saved and "Edit undone and saved with the song." or
-        "Edit undone; session recovery only: "..tostring(save_error)
+  local function move_history(direction)
+    local proposal=history:propose(direction)
+    if not proposal then return end
+    local next_state=proposal.state
+    local difference=editor.classify_difference({pattern=pattern,output_policy=output_policy,
+      pb_range=pb_range,label=phrase_label,label_custom=phrase_label_custom},next_state)
+    if difference=="label_only" then
+      local saved,reason=runtime:rename_label(next_state.label,next_state.label_custom)
+      if not saved then status.text="Label history change was not saved: "..tostring(reason);return end
+      if not history:commit(proposal) then return end
+      phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
+      status.text=direction=="undo" and "Label change undone and saved." or "Label change redone and saved."
       update();update_live_state()
+      return
     end
+    pattern=next_state.pattern
+    output_policy=next_state.output_policy
+    pb_range=next_state.pb_range
+    phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
+    if not history:commit(proposal) then return end
+    local saved,save_error=save_draft()
+    status.text=saved and (direction=="undo" and "Edit undone and saved with the song." or
+      "Edit redone and saved with the song.") or
+      (direction=="undo" and "Edit undone; session recovery only: " or
+      "Edit redone; session recovery only: ")..tostring(save_error)
+    update();update_live_state()
+  end
+  undo_button=vb:button{text="Undo",active=false,notifier=function()
+    move_history("undo")
   end}
   redo_button=vb:button{text="Redo",active=false,notifier=function()
-    local source,policy,source_pb_range=history:redo()
-    if source then
-      pattern=source
-      output_policy=policy
-      pb_range=source_pb_range or policies.DEFAULT_PB_RANGE
-      local saved,save_error=save_draft()
-      status.text=saved and "Edit redone and saved with the song." or
-        "Edit redone; session recovery only: "..tostring(save_error)
-      update();update_live_state()
-    end
+    move_history("redo")
   end}
   local recovery_entries={}
   local recovery_choice
@@ -1048,9 +1069,10 @@ function M.show()
     local state=runtime:editor_state()
     if not state then return end
     pattern,output_policy,pb_range=state.source,state.output_policy,state.pb_range
+    phrase_label,phrase_label_custom=state.label or "Untitled",state.label_custom==true
     selected_pitch,selected_step,pitch_page,time_page=1,1,1,1
     invalidate_projection()
-    history:reset(pattern,output_policy,pb_range)
+    history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
     update()
   end
   recovery_choice=vb:popup{id="acid_recovery_choice",width=420,items={"No detached drafts"},value=1,
