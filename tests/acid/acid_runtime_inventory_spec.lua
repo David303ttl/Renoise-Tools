@@ -213,20 +213,28 @@ for _,fault in ipairs({'missing','corrupt','incompatible','content','collision',
  assert(song.tool_data==before and #inst.phrases==2)
 end
 
--- Instrument removal and changed receiver planning inputs revoke the saved proof.
+-- Receiver changes do not rewrite the historical source/output association.
 do
  local song,inst,a=fixture()
  local ctx=runtime(song)
  assert(ctx:bind_phrase(inst,a).kind=='owned')
+ local stored=song.tool_data
+ local native=assert(ownership.snapshot(a))
  inst.plugin_properties.plugin_loaded=true
- assert(ctx:refresh_inventory().kind=='unavailable')
+ local refreshed=ctx:refresh_inventory()
+ assert(refreshed.kind=='owned',refreshed.reason)
+ assert(refreshed.baseline.planning_inputs.capabilities.plugin==false,
+  'target baseline was relabeled with the current receiver')
+ assert(song.tool_data==stored and ownership.compare(native,assert(ownership.snapshot(a))),
+  'receiver refresh changed native phrase data or persisted source')
+ assert(ctx:refresh_inventory().kind=='owned','receiver refresh poisoned the retained target')
  assert(ctx:bind_new(inst).kind=='new')
  song.instruments={instrument({})}
  assert(ctx:refresh_inventory().kind=='unavailable')
  assert(rawequal(ctx:target_state().instrument,inst))
 end
 
--- The compact native matcher still reads receiver capabilities afresh.
+-- A fresh target check preserves its original compatibility inputs after a receiver change.
 do
  local song,inst,a=fixture()
  local ctx=runtime(song)
@@ -239,10 +247,16 @@ do
  assert(fresh.kind=='owned' and snapshot_calls==0 and status_calls==0,
   'fresh exact native proof rebuilt a snapshot or repeated its seal hash')
  ownership.snapshot,ownership.status=original_snapshot,original_status
+ local stored=song.tool_data
+ local native=assert(ownership.snapshot(a))
  inst.plugin_properties.plugin_loaded=true
  local changed=ctx:target_state()
- assert(changed.kind=='unavailable' and changed.baseline==nil,
-  'fresh receiver capability change reused the cached phrase snapshot as authorization')
+ assert(changed.kind=='owned' and changed.baseline~=nil,
+  'fresh receiver change discarded an unchanged committed phrase')
+ assert(changed.baseline.planning_inputs.capabilities.plugin==false,
+  'fresh target check replaced historical compatibility inputs')
+ assert(song.tool_data==stored and ownership.compare(native,assert(ownership.snapshot(a))),
+  'fresh receiver check changed the saved phrase or source')
 end
 
 -- A retained draft validator cannot keep the released document alive or prove it current.

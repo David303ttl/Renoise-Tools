@@ -5,6 +5,13 @@ generate a new phrase. Change the source and output policy and regenerate the
 selected owned phrase. Confirm the source and phrase policy restore when the
 destination is selected again and after saving and reopening the XRNS.
 
+While ACID holds an owned phrase and an unsaved edit, load or remove a plugin,
+sample, or MIDI receiver on that instrument. Confirm the edit remains attached
+and Generate uses the current receiver without reporting a changed committed
+baseline. With pitch slides enabled, include a receiver change that alters the
+required pitch-bend commands. Edit a native phrase cell separately and confirm
+that genuine output drift still blocks regeneration.
+
 Append a second phrase and confirm the first phrase remains unchanged. Select a
 foreign phrase and confirm it cannot be replaced. Manually edit an owned phrase
 and confirm ACID refuses to regenerate it. Rejected older snapshots and seals

@@ -330,12 +330,11 @@ local function cache_compatibility(retained,candidate)
   if cached then retained.compatibility=cached end
 end
 
-local function same_compatibility_inputs(retained,source,policy,pb_range,inputs)
+local function same_committed_source(retained,source,policy,pb_range)
   local cached=retained and retained.compatibility
   if not cached or type(cached.settings)~="table" or cached.settings.output_policy~=policy or
       cached.settings.pb_range~=pb_range then return false end
-  return ownership.compare(cached.source,source)==true and
-    ownership.compare(cached.planning_inputs,inputs)==true
+  return ownership.compare(cached.source,source)==true
 end
 
 local function compatibility(phrase,committed,capabilities,capacities,options,verified_snapshot,verified_index,
@@ -371,17 +370,21 @@ local function compatibility(phrase,committed,capabilities,capacities,options,ve
     local status=ownership.status(phrase)
     if status~="owned" then return nil,"Phrase is not an unchanged ACID-owned phrase" end
   end
+  local retained=verified_snapshot and retained_record(verified_snapshot)
+  if retained and not trusted_output and not expected_inputs and same_committed_source(retained,committed.pattern,
+      committed.output_policy,committed.pb_range) then
+    -- Ownership describes the committed revision, including its receiver at
+    -- generation time. The next request plans against the current receiver.
+    local committed_inputs,copy_error=ownership.copy_snapshot(retained.compatibility.planning_inputs)
+    if not committed_inputs then return nil,copy_error end
+    return {kind="owned",baseline=baseline,source=committed.pattern,
+      settings={output_policy=committed.output_policy,pb_range=committed.pb_range},
+      planning_inputs=committed_inputs}
+  end
   local inputs,input_error=compatibility_inputs(capabilities,capacities,options)
   if not inputs then return nil,input_error end
   if expected_inputs and ownership.compare(inputs,expected_inputs)~=true then
     return nil,"Phrase planning inputs differ from the authorized request"
-  end
-  local retained=verified_snapshot and retained_record(verified_snapshot)
-  if retained and not trusted_output and same_compatibility_inputs(retained,committed.pattern,
-      committed.output_policy,committed.pb_range,inputs) then
-    return {kind="owned",baseline=baseline,source=committed.pattern,
-      settings={output_policy=committed.output_policy,pb_range=committed.pb_range},
-      planning_inputs=inputs}
   end
   local output,planning_error=trusted_output
   if output then

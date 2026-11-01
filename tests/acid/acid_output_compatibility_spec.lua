@@ -211,26 +211,30 @@ assert(validator.classify_against(song,instrument,phrase,sample,capacities,optio
  candidate.baseline,sealed_index))
 assert(plan_calls==0,"unchanged committed inputs must reuse the retained compatibility proof")
 local plugin_profile={sample=false,plugin=true,midi=false,alias=false,read_error=false}
-assert(validator.classify_against(song,instrument,phrase,plugin_profile,capacities,options,
+local receiver_changed=assert(validator.classify_against(song,instrument,phrase,plugin_profile,capacities,options,
  candidate.baseline,sealed_index))
-assert(plan_calls==1,"changed receiver capabilities must rebuild compatibility proof")
-assert(validator.classify_against(song,instrument,phrase,sample,capacities,
+assert(plan_calls==0 and receiver_changed.planning_inputs.capabilities.sample==true,
+ "receiver changes must preserve the verified committed receiver association")
+local delivery_changed=assert(validator.classify_against(song,instrument,phrase,sample,capacities,
  {pitch_bend_delivery=false},candidate.baseline,sealed_index))
-assert(plan_calls==2,"changed planning options must rebuild compatibility proof")
-assert(validator.classify_against(song,instrument,phrase,sample,capacities,
+assert(plan_calls==0 and delivery_changed.planning_inputs.options.pitch_bend_delivery==true,
+ "current delivery options must not relabel the committed output")
+local volume_changed=assert(validator.classify_against(song,instrument,phrase,sample,capacities,
  {pitch_bend_delivery=true,normal_volume=0.5},candidate.baseline,sealed_index))
-assert(plan_calls==3,"changed renderer options must rebuild compatibility proof")
+assert(plan_calls==0 and volume_changed.planning_inputs.options.normal_volume==
+ receiver_changed.planning_inputs.options.normal_volume,
+ "current renderer options must not relabel the committed output")
 local changed_source=assert(seq.copy_source(source))
 changed_source.pitch_events[1]=seq.new_pitch(2,0,false,false)
 assert(store.save(song,1,changed_source,'play_once',0))
 assert(not validator.classify_against(song,instrument,phrase,sample,capacities,options,
  candidate.baseline,sealed_index))
-assert(plan_calls==4,"changed committed source must rebuild and reject incompatible output")
+assert(plan_calls==1,"changed committed source must rebuild and reject incompatible output")
 assert(store.save(song,1,source,'repeat',0))
 local changed_policy=validator.classify_against(song,instrument,phrase,sample,capacities,options,
  candidate.baseline,sealed_index)
 assert(not changed_policy,"changed committed settings cannot reuse old compatibility proof")
-assert(plan_calls==5,"changed committed settings must rebuild compatibility proof")
+assert(plan_calls==2,"changed committed settings must rebuild compatibility proof")
 assert(store.save(song,1,source,'play_once',0))
 planner.plan=original_plan
 local retained_lpb=candidate.baseline.properties.lpb

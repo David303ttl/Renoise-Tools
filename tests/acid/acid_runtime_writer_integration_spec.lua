@@ -660,4 +660,103 @@ do
   guarded_ctx:release_document()
 end
 
+-- A dirty sample-render draft remains editable after switching to a plugin;
+-- the next real writer request uses the new MIDI/PB-capable output plan.
+do
+  local previous_song_accessor=renoise.song
+  local previous_note_capacity,previous_effect_capacity=MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS
+  local phrase_api_values=getmetatable(renoise.InstrumentPhrase).__index
+  MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS=12,8
+  phrase_api_values.MAX_NUMBER_OF_NOTE_COLUMNS=MAX_NOTE_COLUMNS
+  phrase_api_values.MAX_NUMBER_OF_EFFECT_COLUMNS=MAX_EFFECT_COLUMNS
+  local target={name="Receiver change integration",phrases={},phrase_mappings={},
+    samples={{sample_buffer={has_sample_data=true}}},
+    plugin_properties={plugin_loaded=false,alias_instrument_index=0,
+      alias_fx_track_index=0,alias_fx_device_index=0,midi_output_routing_index=0},
+    midi_output_properties={device_name="",instrument_type=0,channel=1},
+    phrase_playback_mode=2,phrase_program=7,phrase_editor_visible=false}
+  function target:insert_phrase_at(index)
+    assert(index==#self.phrases+1)
+    local created=make_phrase();self.phrases[index]=created;return created
+  end
+  function target:delete_phrase_at(index) table.remove(self.phrases,index) end
+  local target_song={instruments={target},tool_data="",transport={timing_model=2,lpb=16,tpl=12,
+    groove_enabled=false}}
+  function target_song:is_undo_redoing() return false end
+  renoise.song=function() return target_song end
+  local target_ctx=new_context()
+  local target_results,target_delivery=delivered()
+  target_ctx:attach_document(target_song)
+  target_ctx:open_dialog(target_delivery)
+  target_ctx:bind_new(target)
+  local sample_source=source(48)
+  sample_source.length=3
+  sample_source.pitch_events[1].slide=true
+  sample_source.time_events[3]="R"
+  assert(target_ctx:transition("edit",{source=sample_source,
+    output_policy="play_once",pb_range=12}))
+  assert(target_ctx:request_generation("manual"))
+  drain(target_results,1,"initial sample receiver create")
+  local target_phrase=assert(target_results[1].phrase)
+  assert_success(target_results[1],target_phrase,"initial sample receiver create")
+  local sample_native=assert(ownership.snapshot(target_phrase))
+  assert(target_results[1].baseline.planning_inputs.capabilities.sample==true and
+      target_results[1].baseline.planning_inputs.capabilities.plugin==false,
+    "initial phrase did not retain its sample receiver association")
+
+  local dirty=source(49)
+  dirty.length=3
+  dirty.pitch_events[1].slide=true
+  dirty.time_events[3]="R"
+  assert(target_ctx:transition("edit",{source=dirty,output_policy="play_once",pb_range=12}))
+  local draft_before=assert(drafts.capture(target_song,target,target_phrase,target_ctx:draft_options()))
+  target.samples[1].sample_buffer.has_sample_data=false
+  target.plugin_properties.plugin_loaded=true
+  local refreshed=target_ctx:target_state()
+  assert(refreshed.kind=="owned" and refreshed.baseline.planning_inputs.capabilities.sample==true and
+      refreshed.baseline.planning_inputs.capabilities.plugin==false,
+    "receiver change discarded or rewrote the committed sample proof: "..tostring(refreshed.reason))
+  local restored=assert(target_ctx:restore_editor_target(target,target_phrase))
+  assert(sequencer.same_source(restored.source,dirty),
+    "receiver change detached or replaced the dirty source")
+  local draft_after=assert(drafts.capture(target_song,target,target_phrase,target_ctx:draft_options()))
+  assert(draft_after.token==draft_before.token and draft_after.revision==draft_before.revision,
+    "receiver change replaced the dirty draft revision")
+
+  local target_capabilities=require("renoise.target_capabilities")
+  local planner=require("model.output_planner")
+  local limits={max_lines=MAX_LINES,max_note_columns=MAX_NOTE_COLUMNS,
+    max_effect_columns=MAX_EFFECT_COLUMNS,play_pattern=renoise.InstrumentPhrase.PLAY_PATTERN,
+    key_tracking_none=renoise.InstrumentPhrase.KEY_TRACKING_NONE}
+  local plugin_profile=assert(target_capabilities.inspect(target))
+  local plugin_plan=assert(planner.plan(dirty,"play_once",12,limits,plugin_profile,
+    {pitch_bend_delivery=true}))
+  local sample_profile={sample=true,plugin=false,midi=false,alias=false}
+  local sample_plan=assert(planner.plan(dirty,"play_once",12,limits,sample_profile,
+    {pitch_bend_delivery=true}))
+  assert(not ownership.compare(sample_plan.expected,plugin_plan.expected),
+    "receiver-change fixture does not alter generated native output")
+  local before_store=target_song.tool_data
+  assert(target_ctx:request_generation("manual"),"compatible receiver-change regeneration was rejected")
+  drain(target_results,2,"plugin receiver regenerate")
+  assert_success(target_results[2],target_phrase,"plugin receiver regenerate")
+  assert(ownership.id(target_phrase)~=target_results[1].baseline.id,
+    "receiver-change regenerate reused the committed phrase revision")
+  assert(target_results[2].baseline.planning_inputs.capabilities.sample==false and
+      target_results[2].baseline.planning_inputs.capabilities.plugin==true,
+    "new phrase revision did not capture the current receiver")
+  assert(sequencer.same_source(assert(store.load(target_song,target,target_phrase)),dirty),
+    "receiver-change regenerate did not commit the dirty source")
+  assert(not ownership.compare(sample_native,assert(ownership.snapshot(target_phrase)),"name"),
+    "receiver-change regenerate did not materialize the new receiver output")
+  assert(target_song.tool_data~=before_store and drafts.get(target_song,target,target_phrase)==nil and
+      store.read_draft(target_song,target,target_phrase)==nil,
+    "successful receiver-change regenerate did not commit and clear its exact draft")
+  target_ctx:release_document()
+  renoise.song=previous_song_accessor
+  MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS=previous_note_capacity,previous_effect_capacity
+  phrase_api_values.MAX_NUMBER_OF_NOTE_COLUMNS=previous_note_capacity
+  phrase_api_values.MAX_NUMBER_OF_EFFECT_COLUMNS=previous_effect_capacity
+end
+
 print("ACID runtime writer integration checks passed (native playback unverified)")

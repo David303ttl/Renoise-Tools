@@ -27,6 +27,7 @@ function M.new(song,writer)
   end
 
   local function classify(instrument,phrase,adopt,expose_candidate)
+    local matched_reference
     local ok,candidate,reason,kind=pcall(function()
       local profile,profile_error=capabilities.inspect(instrument)
       if not profile then return nil,profile_error,"unavailable" end
@@ -38,7 +39,8 @@ function M.new(song,writer)
       local bucket=baselines[instrument]
       local previous=bucket and bucket[phrase]
       local options={pitch_bend_delivery=pitch_bend.delivery_enabled}
-      if not adopt and not expose_candidate and previous and not previous.reason and previous.index then
+      if not adopt and previous and not previous.reason and previous.index then
+        matched_reference=previous.proof_reference
         return validator.classify_against(song,instrument,phrase,profile,limits,options,
           previous.proof_reference,previous.index)
       end
@@ -105,6 +107,7 @@ function M.new(song,writer)
       previous={baseline=baseline,index=retained_index,proof_reference=proof_reference}
       bucket[phrase]=previous
     end
+    if expose_candidate and matched_reference then candidate.baseline=matched_reference end
     return expose_candidate and candidate or true,nil,"owned",previous.baseline
   end
 
@@ -150,19 +153,6 @@ function M.new(song,writer)
     return result
   end
 
-  local function same_planning_inputs(baseline,profile,limits)
-    local inputs=baseline and baseline.planning_inputs
-    if type(inputs)~="table" or type(inputs.capabilities)~="table" or
-        type(inputs.capacities)~="table" or type(inputs.options)~="table" then return false end
-    for _,key in ipairs({"sample","plugin","midi","alias","read_error"}) do
-      if inputs.capabilities[key]~=profile[key] then return false end
-    end
-    for _,key in ipairs({"max_lines","max_note_columns","max_effect_columns","play_pattern","key_tracking_none"}) do
-      if inputs.capacities[key]~=limits[key] then return false end
-    end
-    return inputs.options.pitch_bend_delivery==pitch_bend.delivery_enabled
-  end
-
   local function editor_target_state(force_full)
     if force_full or not target then return target_state(false) end
     local instrument,phrase=target.instrument,target.phrase
@@ -182,16 +172,6 @@ function M.new(song,writer)
         previous.baseline.settings.output_policy~=policy or previous.baseline.settings.pb_range~=pb_range then
       return target_state(false)
     end
-    local capability_ok,profile,limits=pcall(function()
-      local inspected,profile_error=capabilities.inspect(instrument)
-      if not inspected then return nil,profile_error end
-      local api=renoise.InstrumentPhrase
-      return inspected,{max_lines=api.MAX_NUMBER_OF_LINES,max_note_columns=api.MAX_NUMBER_OF_NOTE_COLUMNS,
-        max_effect_columns=api.MAX_NUMBER_OF_EFFECT_COLUMNS,play_pattern=api.PLAY_PATTERN,
-        key_tracking_none=api.KEY_TRACKING_NONE}
-    end)
-    if not capability_ok or not profile or not limits or
-        not same_planning_inputs(previous.baseline,profile,limits) then return target_state(false) end
     return {kind="owned",instrument=instrument,phrase=phrase,
       instrument_name=label(instrument,"Unavailable instrument"),phrase_name=label(phrase,"Unavailable phrase"),
       instrument_index=index,phrase_index=position,baseline=previous.baseline}
