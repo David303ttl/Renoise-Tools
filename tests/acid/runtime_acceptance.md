@@ -6,6 +6,8 @@ regeneration slots are historical evidence for the former writer. They do not
 establish acceptance of the current direct writer; its native workflow checks
 remain under Gate 8 until explicitly recorded as passing.
 
+**Current Gate 8: CLOSED by user decision (2026-11-01).** Latency has no acceptance threshold; recovery snapshots remain unchanged. 8×8 functional/Undo/Redo/cold-reopen and MIDI checks passed. 16×8 stopped after 128 creations, one additional Create and 112 successful regenerations; further runs and audio capture are waived. Audio is not verified.
+
 ## Bounded production-scale investigation (2026-11-01)
 
 **Gate 8: FAIL; OPEN. Implementation/acceptance remains INCOMPLETE.** The current

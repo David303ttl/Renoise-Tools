@@ -348,7 +348,8 @@ local function expected_output(plan,layout,native,operations,capacities,volumes,
       end
     end
     for line,command in pairs(native.midi_commands or {}) do
-      local carrier=mutable_note(line,native.columns)
+      -- Preserved visibility must never leave a column to the right of M1.
+      local carrier=mutable_note(line,capacities.max_note_columns)
       carrier.panning_value=command_value("M1")
       carrier.instrument_value=command.instrument_value
       local effect=mutable_effect(line,1)

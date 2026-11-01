@@ -955,7 +955,9 @@ local function test_fixed_native_acceptance_command()
         case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow" or
         case_name == "selection-feasibility" or case_name == "direct-output-feasibility" or
         case_name == "source-undo-feasibility" or
-        case_name == "production-latency-8x8" or case_name == "production-latency-16x8",
+        case_name == "production-latency-8x8" or case_name == "production-latency-16x8" or
+        case_name == "production-session-8x8" or case_name == "production-stress-16x8" or
+        case_name == "phrase-midi-delivery",
         "fixed native acceptance case was not allowlisted")
       completion = done
       acceptance_json_codec = json_codec
@@ -986,6 +988,10 @@ local function test_fixed_native_acceptance_command()
     {case = "production-latency-16x8", midi_output_device = "port\nname"},
     {case = "production-latency-8x8", midi_output_device = string.rep("a", 257)},
     {case = "make-independent", midi_output_device = "test loopback"},
+    {case = "production-session-8x8"},
+    {case = "phrase-midi-delivery"},
+    {case = "production-stress-16x8", midi_output_device = "test loopback", stage = "unchecked"},
+    {case = "production-latency-8x8", midi_output_device = "test loopback", stage = "undo"},
   }) do
     local id = "acceptance-midi-invalid-" .. index
     send_request(host, client, id, "acid.acceptance.run", args)
@@ -1011,6 +1017,22 @@ local function test_fixed_native_acceptance_command()
     assert_equal(find_response(take_responses(client), id).result.performance_acceptance, "NOT_CLAIMED")
   end
   completion = nil
+
+  for _,case_name in ipairs({"production-session-8x8","production-stress-16x8"}) do
+    for _,stage in ipairs({"undo","cold-regenerate","cold-verify","playback-all",
+        "playback-sample","playback-vst","playback-silence","playback-stop"}) do
+      local id=case_name.."-"..stage
+      send_request(host,client,id,"acid.acceptance.run",
+        {case=case_name,midi_output_device="test loopback",stage=stage})
+      fire_idle(host)
+      assert_equal(acceptance_options.stage,stage,"production continuation stage was lost")
+      assert_equal(acceptance_options.midi_output_device,"test loopback")
+      assert(completion({status="PASS",case=case_name}))
+      fire_idle(host)
+      assert_equal(find_response(take_responses(client),id).result.status,"PASS")
+    end
+  end
+  completion=nil
 
   send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "make-independent"})
   fire_idle(host)

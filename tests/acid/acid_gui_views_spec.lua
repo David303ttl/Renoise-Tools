@@ -732,6 +732,20 @@ local function inventory_idle()
     string.format("instrument inventory notifications never request a writer operation (before=%d after=%d)",before_inventory_render_calls,render_calls))
 end
 local inventory_host=dofile("tests/acid/observer_host_fixture.lua")
+local added_phrase={name="Imported observer sentinel",foreign=true}
+table.insert(instrument_two.phrases,added_phrase)
+inventory_host.attach(song,observable)
+instrument_two.phrases_observable:fire()
+assert(added_phrase.name_observable:listener_count()==0,
+  "phrase inventory callbacks defer observer attachment")
+builder.views.acid_live_edit:fire(true)
+tool.app_idle_observable:fire()
+builder.views.acid_live_edit:fire(false)
+assert(added_phrase.name_observable:listener_count()==1,
+  "a GUI callback before idle must not discard pending phrase observer attachment")
+table.remove(instrument_two.phrases)
+instrument_two.phrases_observable:fire()
+inventory_idle()
 local added_instrument={name="Inventory add",phrases={},samples={},sample_modulation_sets={},
   sample_device_chains={},phrase_program=1}
 table.insert(song.instruments,added_instrument)

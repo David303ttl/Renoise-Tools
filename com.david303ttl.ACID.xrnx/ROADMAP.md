@@ -661,15 +661,14 @@ Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_R
 - [x] Draft precedence, recovery chooser, read-only revalidation and one manual/Live Edit pipeline; **Gate 5 complete.** Full local suites, exact-revision late-completion regressions, independent second-pass reviews and targeted Native/Keyboard checks pass. See the [Gate 5 acceptance map](../tests/acid/runtime_acceptance.md#gate-5-acceptance-2026-10-31). Broader native acceptance remains Gate 8.
 - [x] Native observers, internal mutation reconciliation, and release/late-callback handling; **Gate 6 complete.** Local fault injection, independent review and the native observer matrix pass, including a rerun after notifier postcondition and idle-registration corrections. See the [Gate 6 acceptance map](../tests/acid/runtime_acceptance.md#gate-6-observer-contracts-2026-10-31).
 - [x] **Gate 7 complete:** strict T7.0–T7.5 closeout, assertion-level R01–R36 map, proven notifier lifecycle corrections and instrument-choice regressions; final ACID/repository suites, native observer/writer-recovery reruns, package equivalence and independent review pass. See the [Gate 7 acceptance record](../tests/acid/runtime_acceptance.md#gate-7-integration-closeout-2026-10-31). Gate 8 and M4 remain open.
-- [ ] Pass native acceptance A–E, including field preservation, drafts, cancellation, copies, and undo. Targeted draft recovery, Make Independent undo/redo and cold-process save/reopen/regenerate checks passed in Renoise 3.5.4 under T4.8/T4.8a. **Gate 8 remains open** for broader A–E acceptance, including playback, musical-writer undo grouping and actual field preservation.
+- [x] **Gate 8 closed by user decision:** accepted production GUI, integrity, Undo/Redo, cold-reopen and MIDI evidence; remaining 16×8 run and audio capture waived. See the production-scale acceptance status below.
 - [ ] Final M4 documentation/review and release closeout after native acceptance; the Gate 2 follow-up commit does not satisfy this independent gate. **Gate 9 open.**
 
 **Gate 0 / Steps 0–1A:** complete. The pinned API review, initial 34-spec
 baseline, repository inventory and native feasibility findings are recorded in
 the [prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record).
 The native undo/source mismatch found there is addressed by the independent
-source/output compatibility contract; full native undo and cold-reopen
-acceptance remain open under Gate 8. Current M4.7 implementation and test
+source/output compatibility contract; 8×8 native Undo/Redo and cold reopen passed. Gate 8 is closed by user decision. Current M4.7 implementation and test
 status is tracked above and in playbook 2.9.
 
 - **Live Edit scheduling:** real edits dispatch immediately through one serialized request pipeline, retaining only the latest pending trigger and capturing current source/settings at dispatch. Arming, no-op edits, navigation and restoration enqueue nothing. A canceled in-flight render retains occupancy until its terminal callback; stale or blocked completion cannot automatically authorize another write. No debounce timer.
@@ -685,14 +684,14 @@ status is tracked above and in playbook 2.9.
 
 ### M4.7 Gate 8 production-scale acceptance (normative follow-up, 2026-11-01)
 
-**Status (2026-11-01): OPEN.** T8.0 baseline and scope are recorded; the latest smaller-scale Warm callbacks exceed the active 30 ms maximum. T8.1–T8.5 and Gate 8 remain open. Keep the executable 30 ms gate; defer any threshold review until after production-scale measurements. See [T8.0 acceptance evidence](../tests/acid/runtime_acceptance.md#t80-native-baseline-2026-11-01) for checkout, timings, offline/package results and limits. Complete the ordered sequence in the [playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance) under the [production-session contract](../tests/acid/production_session_acceptance.md).
+**Status: CLOSED by user decision (2026-11-01).** Latency is recorded without an acceptance threshold. Recovery snapshots remain unchanged; further performance engineering is out of scope.
 
-- [ ] **8x8:** 3 sample + 3 loaded VST + 2 routed MIDI; 64 owned plus 8 foreign phrases, eight playing tracks, ≥128 real GUI regenerations, independent LAST STEP/PITCH spans, NOTE/TIE/REST, accent/slide, timing, Repeat/Play Once and PB combinations. Prove source/draft/selection isolation.
-- [ ] **16x8:** 6 sample + 6 loaded VST + 4 routed MIDI; 128 owned plus 16 foreign, 16 playing tracks, ≥512 regenerations and ≥128 cross-instrument switches. Reuse the same parameterized test implementation; verify history growth, observers, heap and late-session latency.
-- [ ] **Both:** independent native musical/receiver-event evidence, first/middle/last target, rejection/recovery, one-step native Undo/Redo and two true fresh-process XRNS reopen stages. **Every** GUI edit callback must be ≤30 ms; missing mandatory MIDI route/capture is BLOCKED, transport progress alone is insufficient.
-Functional diagnostics may continue after latency FAIL only under the [execution-mode contract](../tests/acid/production_session_acceptance.md). Controlled investigation evidence and incomplete production journeys remain in the [canonical acceptance record](../tests/acid/runtime_acceptance.md).
+- [x] **8×8:** 64 creations plus one explicit Create; 133 regenerations; draft/source/foreign-phrase isolation, native Undo/Redo, two cold reopens and MIDI receipts passed.
+- [x] **16×8 accepted by decision:** 128 creations plus one explicit Create; 112 regenerations passed before a native-selection interruption. Remaining execution waived; no full stress pass claimed.
+- [x] **Audio capture:** waived; no audio pass claimed. No further Gate 8 runs required.
+Record callback latency without an acceptance threshold.
 
-- [ ] No new production writer/scheduler, adapter, persisted format/version, test-specific production API or unchecked fast path. Optimize demonstrated duplicate planning/snapshot/history/GUI work without relaxing pre/postimage and rollback safeguards. Gate 8 and M4 remain open until actual native results and independent review pass.
+- [x] One production runtime/writer retained; recovery snapshots, persisted format and manifest versions unchanged. Local suites and package checks passed.
 
 
 ---

@@ -660,6 +660,14 @@ $runnerTokens = $null
 $runnerErrors = $null
 $runnerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'scripts/run_interactive_tests.ps1'), [ref]$runnerTokens, [ref]$runnerErrors)
 Assert ($runnerErrors.Count -eq 0) 'interactive runner did not parse'
+$audioSignalFunction = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ProductionAudioSignal'
+}, $true)
+. ([scriptblock]::Create($audioSignalFunction.Extent.Text))
+Assert (-not (Test-ProductionAudioSignal -Rms 0.0000165537 -MutedRms 0.0000165218)) 'input noise was accepted as production audio'
+Assert (-not (Test-ProductionAudioSignal -Rms 0.1 -MutedRms 0.099)) 'unchanged loud background was accepted as production audio'
+Assert (-not (Test-ProductionAudioSignal -Rms ([double]::NaN) -MutedRms 0)) 'invalid audio RMS was accepted'
+Assert (Test-ProductionAudioSignal -Rms 0.02 -MutedRms 0.0000165) 'audible signal above muted noise was rejected'
 $coldAcceptanceFunction = $runnerAst.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-ColdProcessAcceptance'
 }, $true)
@@ -674,7 +682,7 @@ Assert ($runnerAst.Extent.Text -match "'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
 Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
-foreach ($case in @('production-latency-8x8','production-latency-16x8')) {
+foreach ($case in @('production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery')) {
     $rejected = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
         -Suite Native -AcceptanceCase $case -ApproveDisposableSong 2>&1
     Assert ($LASTEXITCODE -ne 0) 'production latency run accepted an unspecified MIDI output'
@@ -685,6 +693,32 @@ foreach ($case in @('production-latency-8x8','production-latency-16x8')) {
         @($rejectedReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
         'missing MIDI selection was not rejected before starting Renoise'
 }
+$artifactSaver = $runnerAst.Find({ param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Save-ProductionFixtureArtifacts'
+}, $true)
+Assert ($null -ne $artifactSaver) 'production fixture artifact saver is missing'
+& {
+    param($Definition, $Root)
+    . ([scriptblock]::Create($Definition))
+    $productionSessionAcceptance = $true
+    $fixturesDeployed = $true
+    $fixturesSourcePath = Join-Path $Root 'source'
+    $installedFixturesPath = Join-Path $Root 'installed'
+    $artifactRoot = Join-Path $Root 'artifacts'
+    $null = New-Item -ItemType Directory -Path $fixturesSourcePath,$installedFixturesPath,$artifactRoot -Force
+    Set-Content -LiteralPath (Join-Path $fixturesSourcePath 'source.xrns') -Value 'original'
+    Copy-Item -LiteralPath (Join-Path $fixturesSourcePath 'source.xrns') -Destination $installedFixturesPath
+    Set-Content -LiteralPath (Join-Path $installedFixturesPath 'acceptance-production.xrns') -Value 'generated'
+    Save-ProductionFixtureArtifacts
+    Assert ((Get-FileHash (Join-Path $artifactRoot 'acceptance-production.xrns')).Hash -ceq
+        (Get-FileHash (Join-Path $installedFixturesPath 'acceptance-production.xrns')).Hash) `
+        'generated production fixture was not retained before restoration'
+    Set-Content -LiteralPath (Join-Path $installedFixturesPath 'unexpected.xrns') -Value 'unrecognized'
+    $rejected = $false
+    try { Save-ProductionFixtureArtifacts } catch { $rejected = $_.Exception.Message -match 'unexpected fixture path' }
+    Assert $rejected 'production fixture cleanup accepted an unrecognized generated file'
+} $artifactSaver.Extent.Text (Join-Path $repoRoot ('tmp/production-fixture-test-' + [guid]::NewGuid().ToString('N')))
 $selectedLatency = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
     -Suite Native -AcceptanceCase production-latency-8x8 -MidiOutputDevice 'test loopback' `
     -RenoiseProcessId 123 -ApproveDisposableSong 2>&1

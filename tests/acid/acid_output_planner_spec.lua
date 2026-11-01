@@ -132,12 +132,16 @@ assert(overlap.expected.lines[5].note_columns[1].delay_value==1)
 assert(overlap.expected.lines[5].note_columns[2].note_value==43)
 local bent=assert(run(connected,"play_once",plugin,12))
 local bent_public,bent_private=assert_materialization_parity(connected,"play_once",plugin,12)
-assert(not rawequal(bent_private.expected.lines[1].note_columns[3],bent_private.expected.empty_note) and
+assert(not rawequal(bent_private.expected.lines[1].note_columns[12],bent_private.expected.empty_note) and
   not rawequal(bent_private.expected.lines[1].effect_columns[1],bent_private.expected.empty_effect),
   "private native pitch-bend cells were not copied from canonical defaults")
-assert(bent.expected.lines[1].note_columns[3].panning_value==5633)
+assert(bent.expected.lines[1].note_columns[12].panning_value==5633)
+local preserved_visible_columns=4
+local final_visible_columns=math.max(preserved_visible_columns,bent.required_visibility.visible_note_columns)
+assert(bent.expected.lines[1].note_columns[final_visible_columns].panning_value==5633,
+  "MIDI carrier must remain rightmost when native note-column visibility is preserved")
 assert(bent.expected.lines[1].effect_columns[1].number_value==1024)
-assert(bent.required_visibility.visible_note_columns==3 and bent.required_visibility.visible_effect_columns==1)
+assert(bent.required_visibility.visible_note_columns==12 and bent.required_visibility.visible_effect_columns==1)
 assert(bent.required_visibility.instrument_column_visible and bent.required_visibility.panning_column_visible)
 assert(bent.expected.lines[1].note_columns[1].delay_value==1)
 local disabled=assert(run(connected,"play_once",plugin,12,nil,{pitch_bend_delivery=false}))

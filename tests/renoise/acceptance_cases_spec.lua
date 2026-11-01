@@ -8,6 +8,7 @@ local helpers = assert(loadstring(prefix .. [[
     recovery_check_results = recovery_check_results,
     selection_trace_passes = selection_trace_passes,
     same_native_selection = same_native_selection,
+    production_output_matches = production_output_matches,
     editor_fixture_passes = editor_fixture_passes,
     draft_values_preserved = draft_values_preserved,
     install_profile_wrapper = install_profile_wrapper,
@@ -16,8 +17,45 @@ local helpers = assert(loadstring(prefix .. [[
     production_latency_fixture = production_latency_fixture,
     production_latency_functional_status = production_latency_functional_status,
     diagnostic_performance = diagnostic_performance,
+    source_value = source_value,
+    canonical_baseline = canonical_baseline,
   }
 ]]))()
+
+local codec=dofile("tests/renoise/driver/json.lua")
+local expected_output={properties={lpb=16},lines={},empty_note={},empty_effect={}}
+local native_output={properties={lpb=16},lines={}}
+for line=1,2 do
+  expected_output.lines[line]={note_columns={{note_value=48,delay_value=0}},
+    effect_columns={{number_value=0,amount_value=0}}}
+  native_output.lines[line]={notes={{note_value=48,delay_value=0}},
+    effects={{number_value=0,amount_value=0}}}
+end
+assert(helpers.production_output_matches(native_output,expected_output))
+for _,change in ipairs({{"notes","note_value",49},{"notes","delay_value",1},
+    {"effects","number_value",1},{"effects","amount_value",127}}) do
+  local cell=native_output.lines[2][change[1]][1]
+  local before=cell[change[2]]
+  cell[change[2]]=change[3]
+  assert(not helpers.production_output_matches(native_output,expected_output),
+    "native oracle accepted corrupted tail "..change[2])
+  cell[change[2]]=before
+end
+native_output.lines[2].notes={}
+assert(not helpers.production_output_matches(native_output,expected_output),
+  "native oracle accepted a missing column")
+local hidden_source={length=1,pitch_length=1,timing_mode="triplet",pitch_events={},time_events={}}
+for step=1,32 do
+  hidden_source.pitch_events[step]={key=step%12,note=36+step%12,octave=0,
+    accent=step%2==0,slide=step%3==0}
+  hidden_source.time_events[step]=step%2==0 and "R" or "N"
+end
+local encoded_source=codec.encode(helpers.source_value(hidden_source,true,codec))
+local reopened_source=helpers.source_value(assert(codec.decode(encoded_source)),false)
+assert(helpers.canonical_baseline(reopened_source)==helpers.canonical_baseline(hidden_source),
+  "checkpoint JSON lost hidden PITCH/TIME memory or source settings")
+assert(getmetatable(reopened_source.pitch_events)==nil and reopened_source.pitch_events[32].key==8,
+  "checkpoint decoder must restore ordinary source arrays with inactive values intact")
 
 local recovery_metrics=helpers.recovery_check_results({
   revalidation_attempted=true,revalidation_verified=false,
@@ -160,10 +198,10 @@ end)
 assert(installed and rawequal(original,warm_callback) and wrapper_target.callback(2)==3 and
   detailed_wrapped_calls==1,"Detailed mode did not install its requested diagnostic wrapper")
 wrapper_target.callback=original
-assert(helpers.callback_latency_acceptance("Warm",{edit=30})=="PASS",
-  "Warm must accept the exact unchanged 30 ms boundary")
-assert(helpers.callback_latency_acceptance("Warm",{edit=30.001})=="FAIL",
-  "Warm must fail any measured callback over 30 ms")
+assert(helpers.callback_latency_acceptance("Warm",{edit=30})=="NOT_GATED",
+  "Warm latency must be record-only")
+assert(helpers.callback_latency_acceptance("Warm",{edit=1100})=="NOT_GATED",
+  "Latency must not fail functional acceptance")
 assert(helpers.callback_latency_acceptance("Detailed",{edit=1000})=="NOT_CLAIMED",
   "Detailed timing must remain diagnostic and cannot claim latency acceptance")
 assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
@@ -172,11 +210,11 @@ assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
 local latency_8=helpers.production_latency_fixture("production-latency-8x8")
 assert(helpers.diagnostic_performance({})=="NOT_MEASURED")
 assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=30,
-  performance_acceptance="PASS"}})=="PASS")
+  performance_acceptance="PASS"}})=="NOT_GATED")
 assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=31,
   performance_acceptance="NOT_CLAIMED"},{instrumentation_profile="Warm",elapsed_ms=1,
-  performance_acceptance="PASS"}})=="FAIL",
-  "later successful diagnostics must not erase an earlier release-ceiling violation")
+  performance_acceptance="PASS"}})=="NOT_GATED",
+  "latency diagnostics must not impose an acceptance ceiling")
 assert(helpers.diagnostic_performance({{instrumentation_profile="Detailed",elapsed_ms=31,
   performance_acceptance="NOT_CLAIMED"}})=="NOT_MEASURED",
   "Detailed instrumentation must not determine the Warm release judgement")
@@ -234,4 +272,4 @@ assert(not helpers.draft_values_preserved(nil,nil,nil,{mismatched_recovery},
   expected_source,"play_once",0,same_source),
   "different recovery source values must not satisfy captured draft preservation")
 
-print("Acceptance driver regressions pass: profile modes, 30 ms gate, recovery, drafts and selection")
+print("Acceptance driver regressions pass: profile modes, record-only latency, recovery, drafts and selection")

@@ -1709,7 +1709,7 @@ No extra scheduler, compatibility path, persisted format or manifest change.
 through the shared target resolver without cloning a discarded phrase baseline.
 Public `target_state()` still returns a detached baseline. The focused assertion
 in `tests/acid/acid_runtime_inventory_spec.lua` covers both boundaries; this spec
-is included in T4.7's scope. Keep the native callback budget at 30 ms.
+is included in T4.7's scope. Record native callback latency.
 
 ### T4.8 — Independent acceptance and debt closeout
 
@@ -1981,31 +1981,19 @@ M4 completion.
 
 ## Step 8 — Native Renoise acceptance
 
-**Status (2026-11-01): OPEN.** Production uses synchronous direct materialization. The latest smaller-scale Warm callbacks exceed the active **30 ms** maximum; T8.1–T8.5 and Gate 8 remain open. Keep the executable 30 ms gate and defer any threshold review until after production-scale measurements. See [T8.0 acceptance evidence](../tests/acid/runtime_acceptance.md#t80-native-baseline-2026-11-01) for current results and limits.
+**Status: CLOSED by user decision (2026-11-01).** No further Gate 8 runs are required.
 
-**Normative executable implementation and evidence specification:** [production-session acceptance contract](../tests/acid/production_session_acceptance.md). Read it before coding. Its exact 8x8 and 16x8 fixture profiles, GUI actions, native oracles, performance requirements, device preconditions, error/recovery requirements, runner commands and cold-process phases supersede any contradictory *future-facing* text in this historical playbook. Existing dated reports remain historical evidence, not current Gate 8 passes.
-
-The contract distinguishes strict release acceptance from functional diagnostic execution. Only the latter may continue after recorded latency FAIL, including progression to 16x8 after a complete 8x8 functional PASS. Safety failures stop both modes. Current investigation evidence and remaining implementation gaps are recorded only in [runtime acceptance](../tests/acid/runtime_acceptance.md).
-
-
-**Strict order; a failed stage cannot be bypassed:**
-
-| Substep | Required work and exit |
+| Check | Outcome |
 | --- | --- |
-| **T8.0 — Baseline and scope** | Verify latest commit, current direct writer and source/manifest invariants. Run existing 3-instrument, responsiveness, direct-output, Undo/Redo, cold/release and focused Lua cases. Classify real P0/P1 defects and record 107.72/118.00 ms historical failures without rewriting them. **Exit:** repro, current results and phase budgets recorded; no unowned defect. |
-| **T8.1 — Deterministic musical fixtures** | Implement one test-only parameterized source/profile table: 8 slots × 8/16 receiver instances; 1/2/7/15/16/17/31/32 LAST STEP, asymmetric PITCH spans, NOTE/TIE/REST, accent/slide, Straight/Triplet, Repeat/Play Once, PB, hidden memory, repeat seams and foreign sentinels. Validate against independent native golden data and focused Lua specs; do not yet run a project-scale host test. **Exit:** complete deterministic fixture coverage, supported receiver preflight and no new production dependency. |
-| **T8.2 — Real GUI / oracle extraction** | Reuse the existing ViewBuilder capture, production GUI/runtime/writer, native driver, PowerShell runner and development package. Seed/modify owned phrases through the same ACID GUI; instrument independently observable phrase identity, selection, playback program, sources/settings, compact peer checks and bounded phase checkpoint digests. Add both allowlisted case names and negative runner/packaging tests. **Exit:** exact one-window user-action route proven; no test-only shortcut around request admission; runner-owned process and cold stage boundaries proved. |
-| **T8.3 — 8x8 real production session** | Complete production-session-8x8: 8 real instruments (3 sample/3 VST/2 MIDI), 64 owned plus 8 foreign phrases, 8 playing tracks, 128 regenerations with manual/Live Edit, nonlocal navigation and dirty drafts, one explicit additional Create, Undo/Redo, negative/recovery paths, twice-cold XRNS reopen, and independent musical/receiver checks. Require **every** GUI edit callback ≤30 ms. **Exit:** full real host and required receiver evidence PASS; stop on first defect and fix owning code before advancing. |
-| **T8.4 — 16x8 stress** | Reuse the **same** scenario implementation, not a second suite. Run 16 real instruments (6 sample/6 VST/4 MIDI), 128 owned plus 16 foreign, 16 playing tracks, ≥512 regenerations and ≥128 cross-target switches; repeat native Undo/Redo, fault/peer/oracle checks and two fresh-process saves/reopens. Profile source-history size/latency, heap, observers and edit callbacks; **every** GUI edit ≤30 ms. **Exit:** stress correctness, latency and receiver evidence PASS with no unbounded accidental growth. |
-| **T8.5 — Full closure** | Rerun existing A–E and single-target first/middle/last cases, relevant native failure/Make Independent/cold cases, full ACID/repo/18 offline groups, dev+release package checks and independent review. Reconcile the actual failure chronology, current SHA, phrase count, native event traces, playback/MIDI observations, process/XRNS hashes and per-action timing in runtime_acceptance.md. **Exit:** no open P0/P1, both production cases genuinely PASS, complete native logical Undo/Redo, no missing receiver/latency evidence; only then Gate 8 GREEN. |
+| 8×8 production GUI | PASS: 64 creations plus one explicit Create; 133 regenerations; drafts, source isolation, foreign phrases, Undo/Redo and two cold reopens |
+| MIDI delivery | PASS: notes, OFFs, center and expected pitch-bend values on both channels |
+| 16×8 production GUI | 128 creations plus one explicit Create; 112 regenerations passed before native selection changed; remaining run waived |
+| Audio capture | Waived; no audio pass claimed |
+| Local verification | 73 Lua specs, 18 offline groups and package checks passed |
 
-**Architecture/performance rules:** Retain one runtime, one writer, immutable source history and native pre/postimage/rollback safety. Don't replace direct materialization with staging, drop field guards, create a scheduler, cache unchecked authority, change the persisted format or add compatibility glue. Profile the synchronous pipeline first; remove demonstrated duplicate full-history encode/decode, repeated snapshots, unnecessary native reads or GUI copies only with regression proof. Avoid an O(actions × 128 phrases × 512 lines × 20 columns) verifier: compact action/peer checks plus periodic full native checkpoints **outside** measured callbacks. Capture CPU-time and wall-time semantics separately. The 30 ms per-edit maximum is not negotiable or averaged away; the evidence must include late-session latency as immutable revisions accumulate.
+Record latency without an acceptance threshold. Preserve recovery snapshots unchanged. Further performance investigation and runtime optimization are out of scope. Historical result records remain unchanged.
 
-**Native observability rules:** Synchronous writes mean users can switch between actions, not literally navigate mid-callback; reentrant native notifications remain testable. Stable transport and track instrument assignments do not prove notes/phrase-program triggers or MIDI delivery. Keep actual sample/VST output-path and MIDI loopback event verification separate, flag unavailable receiver evidence BLOCKED, and record receiver-dependent audible portamento only for what was heard. On cold reopen, newly resolved native objects are checked by identity **within** each process and by exact source/seal/content/position associations **across** processes; never compare stale userdata pointers across process boundaries.
-
-
-**Gate 8:** CLOSED only when T8.0→T8.5 pass in order and the complete [production-session contract](../tests/acid/production_session_acceptance.md) has independent, actual Renoise evidence for **both** project scales. Missing MIDI capture, unsound rollback, lost drafts, selection jumps, unverified musical playback, or >30 ms callbacks keep it OPEN.
-
+Driver protocol: [production-session acceptance contract](../tests/acid/production_session_acceptance.md).
 
 ## Step 9 — Final documentation and review
 

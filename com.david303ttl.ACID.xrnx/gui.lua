@@ -868,6 +868,7 @@ function M.show()
   end
   apply_pending_selected_phrase_selection=function()
     if not current_session() then return false end
+    if native_projection_dirty then native_observers:refresh() end
     local before=destination()
     local target,effects=runtime:reconcile()
     if native_projection_dirty then
@@ -1249,7 +1250,6 @@ function M.show()
       return
     end
     if observed_dialog.visible then
-      if native_projection_dirty then native_observers:refresh() end
       apply_pending_selected_phrase_selection()
       runtime:flush_pending()
       return

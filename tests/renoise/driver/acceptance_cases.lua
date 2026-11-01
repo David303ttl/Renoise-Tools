@@ -25,7 +25,6 @@ local WORKFLOW_FOREIGN_PER_INSTRUMENT = 2
 local EDITOR_FIXTURE_OPERATION = "editor-responsiveness fixture lifecycle"
 local REQUIRED_SELECTION_SCOPE = "required"
 local FIXTURE_SELECTION_SCOPE = "harness-fixture"
-local GUI_CALLBACK_BUDGET_MS = 30
 local PRODUCTION_LATENCY_DEVICE_OPTION = "midi_output_device"
 local PRODUCTION_LATENCY_CASES = {
   ["production-latency-8x8"] = { instruments = 8, owned_per_instrument = 8,
@@ -113,6 +112,39 @@ local function same_native_selection(left, right)
     left.instrument_index == right.instrument_index and left.phrase_index == right.phrase_index
 end
 
+local function production_output_matches(snapshot,expected)
+  if #snapshot.lines~=#expected.lines then return false,"line inventory" end
+  for field,value in pairs(expected.properties) do
+    if snapshot.properties[field]~=value then return false,"property "..field end
+  end
+  local note_fields={"note_value","instrument_value","volume_value","panning_value",
+    "delay_value","effect_number_value","effect_amount_value","is_empty"}
+  local effect_fields={"number_value","amount_value","is_empty"}
+  for line,actual in ipairs(snapshot.lines) do
+    local wanted=expected.lines[line]
+    if #actual.notes~=#wanted.note_columns or #actual.effects~=#wanted.effect_columns then
+      return false,"column inventory at line "..line
+    end
+    for column,cell in ipairs(actual.notes) do
+      local target=wanted and wanted.note_columns[column] or expected.empty_note
+      for _,field in ipairs(note_fields) do
+        if cell[field]~=target[field] then
+          return false,"note "..line..":"..column.." "..field
+        end
+      end
+    end
+    for column,cell in ipairs(actual.effects) do
+      local target=wanted and wanted.effect_columns[column] or expected.empty_effect
+      for _,field in ipairs(effect_fields) do
+        if cell[field]~=target[field] then
+          return false,"effect "..line..":"..column.." "..field
+        end
+      end
+    end
+  end
+  return true
+end
+
 local function editor_fixture_passes(prerequisites, result)
   return prerequisites == true and type(result) == "table" and
     result.editor_fixture_inventory_restored == true and
@@ -143,10 +175,15 @@ end
 
 local function callback_latency_acceptance(profile_mode,action_timings)
   if profile_mode=="Detailed" then return "NOT_CLAIMED" end
-  for _,elapsed in pairs(action_timings) do
-    if elapsed>GUI_CALLBACK_BUDGET_MS then return "FAIL" end
-  end
-  return "PASS"
+  return "NOT_GATED"
+end
+
+local function source_value(value,encode,json)
+  if type(value)~="table" then return value end
+  local copy={}
+  for key,item in pairs(value) do copy[key]=source_value(item,encode,json) end
+  if encode and #value>0 then return json.array(copy) end
+  return copy
 end
 
 local function resolve_acceptance_profile(case_name,profile_mode)
@@ -181,17 +218,10 @@ local function production_latency_functional_status(gui_result)
 end
 
 local function diagnostic_performance(measurements)
-  local measured=false
   for _,measurement in ipairs(measurements or {}) do
-    if measurement.instrumentation_profile=="Warm" then
-      measured=true
-      if measurement.performance_acceptance=="FAIL" or
-          (type(measurement.elapsed_ms)=="number" and measurement.elapsed_ms>GUI_CALLBACK_BUDGET_MS) then
-        return "FAIL"
-      end
-    end
+    if measurement.instrumentation_profile=="Warm" then return "NOT_GATED" end
   end
-  return measured and "PASS" or "NOT_MEASURED"
+  return "NOT_MEASURED"
 end
 
 local function create_acceptance_sample(instrument,label)
@@ -4163,9 +4193,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   local metrics={}
   metrics.instrumentation_profile=profile_mode
   metrics.performance_acceptance=latency_only and "NOT_CLAIMED" or "NOT_MEASURED"
-  metrics.acceptance_claim=(detailed_profile or latency_only) and "FUNCTIONAL_ONLY" or "FUNCTIONAL_AND_LATENCY"
+  metrics.acceptance_claim="FUNCTIONAL_ONLY"
   metrics.latency_diagnostic=latency_only==true
-  metrics.callback_budget_ms=GUI_CALLBACK_BUDGET_MS
   local scans=0
   local scans_snapshot_wrapper
   local profile={}
@@ -5402,18 +5431,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     metrics.gui_callback_paths_verified=true
     metrics.gui_callbacks_per_control=3
-    metrics.gui_callback_budget_ms=GUI_CALLBACK_BUDGET_MS
     metrics.gui_draft_save_verified=true
     metrics.gui_view_refresh_verified=true
     metrics.gui_unarmed_phrase_unchanged=true
-    local slow_actions={}
-    for name,elapsed in pairs(action_timings) do
-      if elapsed>GUI_CALLBACK_BUDGET_MS then
-        slow_actions[#slow_actions+1]=name.."="..string.format("%.2f",elapsed)
-      end
-    end
-    table.sort(slow_actions)
-    metrics.gui_over_budget_actions=table.concat(slow_actions,",")
     local live_control=controls.acid_live_edit
     local live_notifier=callbacks.acid_live_edit
     if not live_control or type(live_notifier)~="function" then
@@ -5591,24 +5611,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         (live_checkbox_dispatches-live_dispatches_before_disarm)
       metrics.gui_live_note_callback_dispatches=live_note_dispatches
       action_timings["live-note"]=metrics.gui_live_first_edit_elapsed_ms
-      local over_budget={}
-      for name,elapsed in pairs(action_timings) do
-        if elapsed>GUI_CALLBACK_BUDGET_MS then
-          over_budget[#over_budget+1]=name.."="..string.format("%.2f",elapsed)
-        end
-      end
-      table.sort(over_budget)
-      metrics.gui_over_budget_actions=table.concat(over_budget,",")
-      metrics.gui_over_budget_action_count=#over_budget
       metrics.gui_live_synchronous_verified=true
-      metrics.detailed_timing_over_budget=#over_budget>0
       metrics.performance_acceptance=callback_latency_acceptance(profile_mode,action_timings)
-      if metrics.performance_acceptance=="FAIL" and not latency_only then
-        finished(false,"GUI actions exceeded "..tostring(GUI_CALLBACK_BUDGET_MS)..
-          " ms: "..metrics.gui_over_budget_actions)
-      else
-        finished(true)
-      end
+      finished(true)
     end
     return true,nil,live_probe
   end
@@ -7855,9 +7860,7 @@ local function run_production_latency(done,case_name,options,json)
           owned_phrases_on_instrument=phase=="empty-phrase-inventory" and 0 or config.owned_per_instrument,
           native_phrase_count_during_measurement=#instrument.phrases+1,
           elapsed_ms=gui_result.gui_live_first_edit_elapsed_ms,
-          observed_callback_budget_status=gui_result.gui_live_first_edit_elapsed_ms>GUI_CALLBACK_BUDGET_MS and "FAIL" or "WITHIN_BUDGET",
           wall_seconds=gui_result.gui_live_edit_wall_seconds,
-          over_budget_actions=gui_result.gui_over_budget_actions,
           performance_acceptance=gui_result.performance_acceptance,
           functional_status=gui_result.status}
         if measurement_profile=="Detailed" then
@@ -7987,8 +7990,989 @@ local function run_production_latency(done,case_name,options,json)
   return true
 end
 
+local PRODUCTION_SESSION_CASES = {
+  ["production-session-8x8"] = {instruments=8, samples=3, plugins=3, rounds=2},
+  ["production-stress-16x8"] = {instruments=16, samples=6, plugins=6, rounds=4},
+}
+local prepared_production_session
+
+local function run_production_session(done,case_name,options,json)
+  options=options or {}
+  if options.stage=="undo" then
+    if not prepared_production_session or prepared_production_session.case~=case_name then
+      done({status="FAIL",case=case_name,reason="no prepared production user action"})
+    else prepared_production_session.resume(done) end
+    return true
+  end
+  local config=PRODUCTION_SESSION_CASES[case_name]
+  local song=renoise.song()
+  local sequence=require("model.sequencer")
+  local ownership=require("renoise.phrase_ownership")
+  local store=require("renoise.pattern_store")
+  local context_module=require("runtime.context")
+  local controls,callbacks,targets,foreign={},{},{},{}
+  local context,dialog,suppress,settled,key_handler,midi_input,expected_native_selection
+  local trace=json.array()
+  local original_builder,original_app=renoise.ViewBuilder,renoise.app
+  local original_context_new=context_module.new
+  local result={case=case_name,status="FAIL",performance_acceptance="NOT_GATED",
+    complete=false,
+    instrument_count=config.instruments,created=0,regenerated=0,
+    actions=trace,edits=json.array(),phases={seed="NOT_RUN",edits="NOT_RUN",drafts="NOT_RUN",
+      native_undo="NOT_RUN",cold_reopen="NOT_RUN",playback="NOT_RUN"}}
+  local fixture_name="acceptance-production.xrns"
+  local later
+  local baseline_path=renoise.tool().bundle_path.."\\..\\fixtures\\acceptance-production-baseline.json"
+  local function record_state(phase)
+    local path=renoise.tool().bundle_path.."\\..\\fixtures\\acceptance-production-state.json"
+    local file=io.open(path,"wb")
+    if not file then return false end
+    local ok=pcall(function()
+      assert(file:write(json.encode({phase=phase,case=case_name,created=result.created,
+        regenerated=result.regenerated,status=result.status})))
+    end)
+    local closed=pcall(function() file:close() end)
+    return ok and closed
+  end
+  local function phrase_value(instrument_index,slot)
+    local phrase=song.instruments[instrument_index].phrases[slot]
+    assert(phrase,"persisted phrase missing")
+    local id=ownership.id(phrase)
+    local source,policy,pb
+    if id then source,policy,pb=store.read_entry(song,id) end
+    return canonical_baseline({snapshot=assert(ownership.snapshot(phrase)),source=source,
+      output_policy=policy,pb_range=pb,id=id})
+  end
+  local function signature(raw)
+    local value=0
+    for index=1,#raw do value=(value*131+raw:byte(index))%4294967296 end
+    return tostring(#raw)..":"..string.format("%08x",value)
+  end
+  local function save_session(callback)
+    local manifest={case=case_name,targets=json.array(),phrases=json.array(),tool_data=song.tool_data}
+    for _,target in ipairs(targets) do
+      manifest.targets[#manifest.targets+1]={instrument_index=target.instrument_index,slot=target.slot,
+        source=json.encode(source_value(target.source,true,json)),policy=target.policy,pb=target.pb}
+    end
+    local index,slot=1,1
+    record_state("saving")
+    local function collect_next()
+      if index>config.instruments then
+        local raw=json.encode(manifest)
+        local file=assert(io.open(baseline_path,"wb"))
+        assert(file:write(raw))
+        assert(file:close())
+        result.saved_baseline=signature(raw)
+        result.roundtrip_fixture=fixture_name
+        assert(save_independent_fixture(song,fixture_name))
+        record_state("saved")
+        callback()
+        return
+      end
+      manifest.phrases[index]=manifest.phrases[index] or json.array()
+      manifest.phrases[index][slot]=phrase_value(index,slot)
+      slot=slot+1
+      if slot>#song.instruments[index].phrases then index=index+1;slot=1 end
+      later(collect_next)
+    end
+    later(collect_next)
+  end
+  local function finish(status,reason)
+    if settled then return end
+    settled=true
+    record_state("closing")
+    prepared_production_session=nil
+    renoise.ViewBuilder,renoise.app=original_builder,original_app
+    context_module.new=original_context_new
+    if dialog then pcall(function() dialog:close() end) end
+    if context then pcall(function() context:release_document() end) end
+    pcall(function() song.transport:stop() end)
+    if midi_input then pcall(function() midi_input:close() end) end
+    result.status,result.reason=status,reason
+    record_state("reporting")
+    done(result)
+    record_state("reported")
+  end
+  local function checked(action)
+    if settled then return end
+    local ok,err=pcall(action)
+    if not ok then finish("FAIL",tostring(err)) end
+  end
+  later=function(action) after_delivery_idle(function() checked(action) end) end
+  local function invoke(id,value)
+    local view,callback=assert(controls[id],"missing control: "..id),assert(callbacks[id],"missing callback: "..id)
+    assert(view.active~=false,"inactive control: "..id.."; length="..
+      tostring(controls.last_step and controls.last_step.value).."; time="..
+      tostring(controls.acid_program_time_position and controls.acid_program_time_position.value))
+    local before=native_selection(song)
+    expected_native_selection=expected_native_selection or before
+    assert(same_native_selection(expected_native_selection,before),
+      "native selection changed between GUI actions; disposable session requires exclusive input")
+    if value~=nil then
+      suppress=true
+      view.value=value
+      suppress=false
+    end
+    local started,wall=os.clock(),os.time()
+    callback(value)
+    result.action_count=(result.action_count or 0)+1
+    local elapsed=(os.clock()-started)*1000
+    result.maximum_callback_ms=math.max(result.maximum_callback_ms or 0,elapsed)
+    trace[#trace+1]={control=id,cpu_ms=elapsed,
+      wall_seconds=os.difftime(os.time(),wall),ordinal=result.action_count,
+      value=value,length=controls.last_step and controls.last_step.value,
+      instrument=controls.instrument and controls.instrument.value,
+      phrase=controls.phrase and controls.phrase.value,
+      target_kind=context:target_projection().kind}
+    if #trace>512 then table.remove(trace,1) end
+    assert(same_native_selection(before,native_selection(song)),"GUI action changed native selection: "..id)
+    assert(not context:integrity_state().blocked,"runtime integrity blocked after "..id)
+  end
+  local function alias(kind,p)
+    if p.id then return p.id end
+    if kind=="valuebox" then return "last_step" end
+    if kind=="popup" then
+      if p.width==290 then return "instrument" end
+      if p.width==360 then return "phrase" end
+      if p.items and #p.items==32 and p.items[1]=="1" then return "pitch_span" end
+      if p.items and p.items[1]=="Play Once" then return "policy" end
+    end
+    if kind=="button" and p.text=="Generate / Regenerate ACID Phrase" then return "generate" end
+  end
+  local function capture(id,callback)
+    callbacks[id]=callback
+    return function(...) if not suppress then return callback(...) end end
+  end
+  local function open_gui()
+    context_module.new=function(...)
+      assert(context==nil,"production journey opened multiple runtime contexts")
+      context=original_context_new(...)
+      result.native_changes=json.array()
+      local notify=context.notify_native_change
+      context.notify_native_change=function(owner,kind,subject,...)
+        local events=result.native_changes
+        events[#events+1]={kind=kind,action=result.action_count or 0,
+          undo=song:is_undo_redoing(),instrument=song.selected_instrument_index,
+          phrase=song.selected_phrase_index}
+        if #events>64 then table.remove(events,1) end
+        return notify(owner,kind,subject,...)
+      end
+      return context
+    end
+    renoise.ViewBuilder=function(...)
+      local builder=original_builder(...)
+      return setmetatable({},{__index=function(_,kind)
+        local constructor=builder[kind]
+        if type(constructor)~="function" then return constructor end
+        return function(_,p,...)
+          local id=type(p)=="table" and alias(kind,p)
+          if id and p.notifier then p.notifier=capture(id,p.notifier) end
+          local view=constructor(builder,p,...)
+          if id then
+            controls[id]=view
+            local add
+            if kind=="popup" or kind=="checkbox" or kind=="valuebox" then add=view.add_notifier end
+            if type(add)=="function" then
+              view.add_notifier=function(_,callback) return add(view,capture(id,callback)) end
+            end
+          end
+          return view
+        end
+      end})
+    end
+    renoise.app=function(...)
+      local app=original_app(...)
+      return setmetatable({},{__index=function(_,key)
+        local member=app[key]
+        if key=="show_custom_dialog" then
+          return function(_,title,view,handler,settings)
+            dialog=member(app,title,view,function(window,event)
+              if key_handler then return key_handler(window,event) end
+              if handler then return handler(window,event) end
+              return event
+            end,settings)
+            return dialog
+          end
+        end
+        if type(member)=="function" then return function(_,...) return member(app,...) end end
+        return member
+      end})
+    end
+    local ok,err=pcall(function() require("gui").show() end)
+    renoise.ViewBuilder,renoise.app=original_builder,original_app
+    context_module.new=original_context_new
+    assert(ok,err)
+    assert(context and dialog and dialog.visible,"production GUI capture failed")
+  end
+  local function select_target(target)
+    local raw=song.tool_data
+    invoke("instrument",target.instrument_index)
+    invoke("phrase",target.slot)
+    local projection=context:target_projection()
+    assert(projection.kind=="owned" and rawequal(projection.phrase,target.phrase),
+      "GUI did not bind the owned destination")
+    assert(song.tool_data==raw,"navigation wrote persisted source state")
+    local source,policy,pb=store.read_entry(song,ownership.id(target.phrase))
+    assert(sequence.same_source(source,target.source) and policy==target.policy and pb==target.pb,
+      "committed source belongs to another target")
+  end
+  local function verify(target)
+    assert(rawequal(song.instruments[target.instrument_index].phrases[target.slot],target.phrase),
+      "destination membership changed")
+    local id=assert(ownership.id(target.phrase),"destination lost ownership")
+    local source,policy,pb=store.read_entry(song,id)
+    assert(sequence.same_source(source,target.source) and policy==target.policy and pb==target.pb,
+      "source/settings mismatch")
+    local expected_lines=target.policy=="repeat" and target.source.length*8+1 or target.source.length*4
+    assert(target.phrase.number_of_lines==expected_lines,"native phrase length mismatch")
+    assert(target.phrase.lpb==(target.source.timing_mode=="triplet" and 12 or 16),"native timing mismatch")
+    assert(target.phrase.looping==(target.policy=="repeat"),"native loop policy mismatch")
+    if target.policy=="repeat" then
+      assert(target.phrase.loop_start==target.source.length*4+1 and
+        target.phrase.loop_end==target.source.length*8+1,"native loop boundaries mismatch")
+    end
+    assert(target.phrase:line(1):note_column(1).note_value==target.source.pitch_events[1].note,
+      "native first note mismatch")
+    assert(target.phrase:line(1):note_column(1).volume_value==
+      (target.source.pitch_events[1].accent and 255 or 89),"native first-note accent mismatch")
+    local function release_at(line)
+      for column=1,target.phrase.visible_note_columns do
+        if target.phrase:line(line):note_column(column).note_value==120 then return true end
+      end
+      return false
+    end
+    local active=false
+    for step=1,target.source.length do
+      local command=target.source.time_events[step]
+      if command=="N" then active=true
+      elseif command=="R" then
+        if active then assert(release_at((step-1)*4+1),"native REST release mismatch") end
+        active=false
+      end
+    end
+    if target.policy=="play_once" and active then
+      assert(release_at(target.source.length*4-1),"native final one-shot release mismatch")
+    end
+    local sample=target.instrument_index<=config.samples
+    local plugin=not sample and target.instrument_index<=config.samples+config.plugins
+    local output=assert(require("model.output_planner").plan(target.source,target.policy,target.pb,
+      {max_lines=512,max_note_columns=12,max_effect_columns=8,
+        play_pattern=renoise.InstrumentPhrase.PLAY_PATTERN,
+        key_tracking_none=renoise.InstrumentPhrase.KEY_TRACKING_NONE},
+      {sample=sample,plugin=plugin,midi=not sample and not plugin,alias=false},
+      {pitch_bend_delivery=true}))
+    local matches,reason=production_output_matches(assert(ownership.snapshot(target.phrase)),output.expected)
+    assert(matches,"source-planned native output mismatch: "..tostring(reason))
+    target.id=id
+  end
+  local function checkpoint(callback)
+    local owned_index,foreign_index=1,1
+    record_state("verifying")
+    local function next_phrase()
+      local target=targets[owned_index]
+      if target then
+        verify(target)
+        if target.native_value then
+          assert(canonical_baseline(assert(ownership.snapshot(target.phrase)))==target.native_value,
+            "unrelated native phrase changed")
+        end
+        owned_index=owned_index+1
+      else
+        local sentinel=foreign[foreign_index]
+        if not sentinel then callback();return end
+        assert(ownership.id(sentinel.phrase)==nil,"foreign phrase became owned")
+        local matches,reason=ownership.matches_snapshot(sentinel.phrase,sentinel.snapshot,nil,sentinel.index)
+        assert(matches,reason or "foreign phrase changed")
+        foreign_index=foreign_index+1
+      end
+      later(next_phrase)
+    end
+    later(next_phrase)
+  end
+  local lengths={1,2,7,15,16,17,31,32}
+  local spans={1,3,5,4,16,8,13,32}
+  local function configure(instrument_index,slot,callback)
+    local source=sequence.new_pattern(32)
+    invoke("acid_live_edit",false)
+    invoke("last_step",32)
+    invoke("pitch_span",32)
+    local step=0
+    local function configure_next()
+      step=step+1
+      if step>32 then
+        source.length,source.pitch_length=lengths[slot],spans[slot]
+        source.timing_mode=(instrument_index+slot)%2==0 and "straight" or "triplet"
+        local policy=slot%2==0 and "repeat" or "play_once"
+        invoke("last_step",source.length)
+        invoke("pitch_span",source.pitch_length)
+        invoke("acid_timing",source.timing_mode=="straight" and 1 or 2)
+        invoke("policy",policy=="repeat" and 2 or 1)
+        local pb=instrument_index>config.samples and ({0,2,12,24,48,0,2,12})[slot] or 0
+        invoke("acid_pb_range",({[0]=1,[2]=2,[12]=3,[24]=4,[48]=5})[pb])
+        callback(source,policy,pb)
+        return
+      end
+      local key=(instrument_index+slot+step)%12
+      local octave=slot==3 and step<=2 and 0 or (instrument_index+slot+step)%3-1
+      local command=step<=2 and "N" or ({"N","T","R"})[(step+slot)%3+1]
+      invoke("acid_program_pitch_position",step)
+      invoke("acid_program_key_popup",key+1)
+      invoke("acid_program_octave_popup",octave+2)
+      invoke("acid_program_accent",step%3==0)
+      invoke("acid_program_slide",step==1 or step%4==0)
+      invoke("acid_program_time_position",step)
+      invoke("acid_program_time_command",command=="N" and 1 or command=="T" and 2 or 3)
+      source.pitch_events[step]=sequence.new_pitch(key,octave,step%3==0,step==1 or step%4==0)
+      source.time_events[step]=command
+      later(configure_next)
+    end
+    later(configure_next)
+  end
+  local function start_playback()
+    while song.sequencer_track_count<config.instruments do
+      song:insert_track_at(song.sequencer_track_count+1)
+    end
+    local pattern=song.patterns[song.sequencer.pattern_sequence[1]]
+    pattern.number_of_lines=512
+    for index=1,config.instruments do
+      local instrument=song.instruments[index]
+      instrument.phrase_playback_mode=renoise.Instrument.PHRASES_PLAY_SELECTIVE
+      instrument.phrase_program=8
+      local column=pattern.tracks[index]:line(1):note_column(1)
+      column.note_value,column.instrument_value=48,index-1
+      pattern.tracks[index]:line(509):note_column(1).note_value=120
+    end
+    local counts={note=0,off=0,bend=0}
+    result.midi_events=json.array()
+    result.midi_counts=counts
+    midi_input=renoise.Midi.create_input_device(options.midi_output_device,function(message)
+      local channel=message[1]%16+1
+      if channel<=config.samples+config.plugins or channel>config.instruments then return end
+      local kind=math.floor(message[1]/16)
+      if kind==9 and message[3]>0 then counts.note=counts.note+1
+      elseif kind==8 or (kind==9 and message[3]==0) then counts.off=counts.off+1
+      elseif kind==14 then counts.bend=counts.bend+1 end
+      if #result.midi_events<256 then
+        result.midi_events[#result.midi_events+1]={status=message[1],data1=message[2],data2=message[3]}
+      end
+    end)
+    song.transport:start(renoise.Transport.PLAYMODE_RESTART_PATTERN)
+    assert(song.transport.playing,"multitrack transport did not start")
+    result.playing_tracks=config.instruments
+    expected_native_selection=nil
+  end
+  local function prepare_native_undo()
+    local action_index=1
+    local action_target,before,after,before_source,after_source,action_error,action_started
+    local function await_editor(expected,callback)
+      local deadline=os.time()+UNDO_ACTION_WAIT_TIMEOUT_SECONDS
+      local stable=0
+      local function poll()
+        local state=context:editor_state()
+        stable=state and sequence.same_source(state.source,expected) and stable+1 or 0
+        if stable>=2 then callback();return end
+        if os.time()>=deadline then
+          result.undo_expected_source=canonical_baseline(expected)
+          result.undo_actual_source=state and canonical_baseline(state.source) or "pending"
+          result.gui_state=require("gui").get_ui_state()
+          result.gui_key=controls.acid_program_key_popup.value
+          result.selected_instrument_index=song.selected_instrument_index
+          result.selected_phrase_index=song.selected_phrase_index
+          error("GUI source did not follow native Undo/Redo",0)
+        end
+        later(poll)
+      end
+      later(poll)
+    end
+    local function arm_action()
+      action_target=targets[action_index==1 and 1 or #targets]
+      select_target(action_target)
+      invoke("acid_live_edit",false)
+      invoke("acid_program_pitch_position",1)
+      before=assert(ownership.snapshot(action_target.phrase))
+      before_source=sequence.copy_source(action_target.source)
+      action_started=false
+      result.action_ready=true
+      result.action_mode=action_index==1 and "manual" or "live"
+      result.status="PASS"
+      done(result)
+    end
+    key_handler=function(_,event)
+      if (event.name=="enter" or event.name=="return") and event.state~="released" then
+        if action_started then return nil end
+        action_started=true
+        local ok,err=pcall(function()
+          local key=(action_target.source.pitch_events[1].key+1)%12
+          if action_index==2 then invoke("acid_live_edit",true) end
+          invoke("acid_program_key_popup",key+1)
+          if action_index==1 then invoke("generate") end
+          after_source=sequence.copy_source(before_source)
+          local pitch=after_source.pitch_events[1]
+          after_source.pitch_events[1]=sequence.new_pitch(key,pitch.octave,pitch.accent,pitch.slide)
+          action_target.source=after_source
+          verify(action_target)
+          after=assert(ownership.snapshot(action_target.phrase))
+          action_target.native_value=canonical_baseline(after)
+        end)
+        if not ok then action_error=tostring(err) end
+        return nil
+      end
+      return event
+    end
+    prepared_production_session={case=case_name,resume=function(callback)
+      done=callback
+      checked(function()
+        assert(action_started,"guarded Enter did not dispatch the production action")
+        assert(not action_error,action_error)
+        invoke("acid_live_edit",false)
+        song:undo()
+        after_delivery_idle(function() checked(function()
+          assert(ownership.compare(before,assert(ownership.snapshot(action_target.phrase))),
+            "native Undo did not restore phrase cells/name")
+          local source,policy,pb=store.read_entry(song,ownership.id(action_target.phrase))
+          assert(sequence.same_source(source,before_source) and policy==action_target.policy and pb==action_target.pb,
+            "native Undo restored an incoherent source/settings revision")
+          await_editor(before_source,function()
+            song:redo()
+            after_delivery_idle(function() checked(function()
+              assert(ownership.compare(after,assert(ownership.snapshot(action_target.phrase))),
+                "native Redo did not restore phrase cells/name")
+              verify(action_target)
+              await_editor(after_source,function()
+                checkpoint(function()
+                if action_index==1 then
+                  action_index=2
+                  arm_action()
+                else
+                  result.phases.native_undo="PASS"
+                  result.action_ready=false
+                  save_session(function() finish("PASS") end)
+                end
+                end)
+              end)
+            end) end)
+          end)
+        end) end)
+      end)
+    end}
+    arm_action()
+  end
+  local function run_edits()
+    local ordinal=0
+    local function finish_edits()
+      checkpoint(function()
+        result.observer_final=require("gui").get_ui_state()
+        assert(result.observer_final.native_listener_count==result.observer_baseline.native_listener_count,
+          "native listener count grew during regeneration")
+        result.phases.edits="PASS"
+        prepare_native_undo()
+      end)
+    end
+    local function boundary_edit(cursor)
+      local value=({16,17,32})[cursor]
+      if not value then finish_edits();return end
+      local target=targets[8]
+      select_target(target)
+      invoke("acid_live_edit",false)
+      local old_id=target.id
+      invoke("last_step",value)
+      invoke("pitch_span",value)
+      invoke("generate")
+      local timing=trace[#trace]
+      result.edits[#result.edits+1]={ordinal=#result.edits+1,instrument_index=target.instrument_index,
+        phrase_index=target.slot,mode="boundary",cpu_ms=timing.cpu_ms,wall_seconds=timing.wall_seconds}
+      target.source.length,target.source.pitch_length=value,value
+      later(function()
+        verify(target)
+        assert(target.id~=old_id,"boundary regeneration did not create a source revision")
+        target.native_value=canonical_baseline(assert(ownership.snapshot(target.phrase)))
+        result.regenerated=result.regenerated+1
+        result.boundary_regenerated=cursor
+        later(function() boundary_edit(cursor+1) end)
+      end)
+    end
+    local function edit_next()
+      ordinal=ordinal+1
+      if ordinal>#targets*config.rounds then
+        boundary_edit(1)
+        return
+      end
+      local cursor=(ordinal-1)%#targets
+      local base_count=config.instruments*8
+      local position=cursor==base_count and #targets or
+        ((cursor%config.instruments*3)%config.instruments)*8+math.floor(cursor/config.instruments)+1
+      local target=targets[position]
+      select_target(target)
+      local key=(target.source.pitch_events[1].key+1)%12
+      local before_id=target.id
+      local before_source=sequence.copy_source(target.source)
+      local before_policy,before_pb=target.policy,target.pb
+      local round=math.floor((ordinal-1)/#targets)
+      local live=round%2==1
+      local final_round=round==config.rounds-1
+      local slot=target.profile_slot
+      local length=final_round and lengths[slot] or ({16,17,32})[round+1]
+      local span=final_round and spans[slot] or ({17,16,32})[round+1]
+      local timing_mode=(target.instrument_index+slot)%2==0 and "straight" or "triplet"
+      local policy=slot%2==0 and "repeat" or "play_once"
+      if not final_round and round%2==0 then
+        timing_mode=timing_mode=="straight" and "triplet" or "straight"
+        policy=policy=="repeat" and "play_once" or "repeat"
+      end
+      local octave=slot==3 and 0 or (target.instrument_index+slot+1)%3-1
+      if not final_round then octave=(target.instrument_index+round)%3-1 end
+      local accent=not final_round and round%2==0
+      local slide=final_round or round%2==1
+      local command=final_round and "N" or (round%2==0 and "R" or "T")
+      invoke("acid_live_edit",false)
+      invoke("last_step",32)
+      invoke("acid_program_pitch_position",1)
+      invoke("acid_program_octave_popup",octave+2)
+      invoke("acid_program_accent",accent)
+      invoke("acid_program_slide",slide)
+      invoke("acid_program_time_position",2)
+      invoke("acid_program_time_command",command=="N" and 1 or command=="T" and 2 or 3)
+      invoke("last_step",length)
+      invoke("pitch_span",span)
+      invoke("acid_timing",timing_mode=="straight" and 1 or 2)
+      invoke("policy",policy=="repeat" and 2 or 1)
+      assert(ownership.id(target.phrase)==before_id,"unarmed settings edit regenerated the phrase")
+      invoke("acid_program_pitch_position",1)
+      invoke("acid_live_edit",live)
+      invoke("acid_program_key_popup",key+1)
+      if not live then invoke("generate") end
+      local timing=trace[#trace]
+      result.edits[#result.edits+1]={ordinal=ordinal,instrument_index=target.instrument_index,
+        phrase_index=target.slot,mode=live and "live" or "manual",cpu_ms=timing.cpu_ms,
+        wall_seconds=timing.wall_seconds}
+      target.source.length,target.source.pitch_length=length,span
+      target.source.timing_mode=timing_mode
+      target.source.time_events[2]=command
+      target.source.pitch_events[1]=sequence.new_pitch(key,octave,accent,slide)
+      target.policy=policy
+      later(function()
+        verify(target)
+        assert(target.id~=before_id,"regeneration did not commit a new immutable revision")
+        local retained,retained_policy,retained_pb=store.read_entry(song,before_id)
+        assert(sequence.same_source(retained,before_source) and retained_policy==before_policy and retained_pb==before_pb,
+          "regeneration changed or removed the previous immutable source revision")
+        target.native_value=canonical_baseline(assert(ownership.snapshot(target.phrase)))
+        for _,offset in ipairs({1,math.floor(#targets/2)}) do
+          local peer=targets[(position+offset-1)%#targets+1]
+          assert(canonical_baseline(assert(ownership.snapshot(peer.phrase)))==peer.native_value,
+            "regeneration changed an unrelated phrase")
+          local source,policy,pb=store.read_entry(song,ownership.id(peer.phrase))
+          assert(sequence.same_source(source,peer.source) and policy==peer.policy and pb==peer.pb,
+            "regeneration changed an unrelated source/settings revision")
+        end
+        invoke("acid_live_edit",false)
+        result.regenerated=result.regenerated+1
+        if ordinal==1 then result.observer_baseline=require("gui").get_ui_state() end
+        if ordinal%16==0 then checkpoint(function() later(edit_next) end)
+        else later(edit_next) end
+      end)
+    end
+    later(edit_next)
+  end
+  local function verify_dirty_navigation()
+    local target=targets[1]
+    select_target(target)
+    invoke("acid_live_edit",false)
+    invoke("acid_program_pitch_position",1)
+    local old_id=target.id
+    local key=(target.source.pitch_events[1].key+2)%12
+    invoke("acid_program_key_popup",key+1)
+    local expected=sequence.copy_source(target.source)
+    expected.pitch_events[1]=sequence.new_pitch(key,expected.pitch_events[1].octave,
+      expected.pitch_events[1].accent,expected.pitch_events[1].slide)
+    select_target(targets[9])
+    select_target(targets[17])
+    select_target(target)
+    local draft,policy,pb=store.read_draft(song,song.instruments[1],target.phrase)
+    assert(sequence.same_source(draft,expected) and policy==target.policy and pb==target.pb,
+      "dirty draft lost across instrument switches")
+    assert(ownership.id(target.phrase)==old_id,"unarmed draft navigation regenerated a phrase")
+    assert(controls.acid_program_key_popup.value==key+1,"GUI did not restore dirty draft")
+    invoke("acid_program_key_popup",target.source.pitch_events[1].key+1)
+    result.phases.drafts="PASS"
+  end
+  local function seed()
+    local ordinal=0
+    local additional_created=false
+    local function create_next()
+      ordinal=ordinal+1
+      if ordinal>config.instruments*8 then
+        if not additional_created then
+          additional_created=true
+          invoke("instrument",1)
+          invoke("phrase",#controls.phrase.items)
+          configure(1,1,function(source,policy,pb)
+          local instrument=song.instruments[1]
+          local count=#instrument.phrases
+          invoke("generate")
+          later(function()
+            assert(#instrument.phrases==count+1,"additional explicit Create did not append one phrase")
+            local target={instrument_index=1,slot=count+1,profile_slot=1,phrase=instrument.phrases[count+1],
+              source=source,policy=policy,pb=pb}
+            verify(target)
+            assert(target.id~=targets[1].id and not rawequal(target.phrase,targets[1].phrase),
+              "equal-content Create reused an existing identity")
+            target.native_value=canonical_baseline(assert(ownership.snapshot(target.phrase)))
+            targets[#targets+1]=target
+            result.explicit_created=1
+            later(create_next)
+          end)
+          end)
+          return
+        end
+        checkpoint(function()
+          result.phases.seed="PASS"
+          result.owned_phrase_count=#targets
+          result.foreign_phrase_count=#foreign
+          result.song_instrument_count=#song.instruments
+          verify_dirty_navigation()
+          start_playback()
+          run_edits()
+        end)
+        return
+      end
+      local index=math.floor((ordinal-1)/8)+1
+      local slot=(ordinal-1)%8+1
+      invoke("instrument",index)
+      invoke("phrase",#controls.phrase.items)
+      configure(index,slot,function(source,policy,pb)
+      local instrument=song.instruments[index]
+      local before=#instrument.phrases
+      invoke("generate")
+      later(function()
+        assert(#instrument.phrases==before+1,"Create did not append exactly one phrase")
+        local target={instrument_index=index,slot=slot,profile_slot=slot,phrase=instrument.phrases[#instrument.phrases],
+          source=source,policy=policy,pb=pb}
+        verify(target)
+        target.native_value=canonical_baseline(assert(ownership.snapshot(target.phrase)))
+        targets[#targets+1]=target
+        result.created=result.created+1
+        if slot==8 then
+          local phrase=instrument:insert_phrase_at(#instrument.phrases+1)
+          phrase.name="Production foreign "..index
+          phrase.number_of_lines=64
+          phrase:line(1):note_column(1).note_value=37
+          phrase:line(1):note_column(1).volume_value=101
+          phrase:line(1):effect_column(1).number_string="0A"
+          phrase:line(1):effect_column(1).amount_value=7
+          phrase:line(64):note_column(2).note_value=53
+          phrase:set_column_name(2,"Foreign memory")
+          phrase:set_column_is_muted(2,true)
+          phrase.number_of_lines=16
+          local snapshot=assert(ownership.snapshot(phrase))
+          foreign[#foreign+1]={phrase=phrase,snapshot=snapshot,index=assert(ownership.snapshot_index(snapshot))}
+        end
+        later(create_next)
+      end)
+      end)
+    end
+    later(create_next)
+  end
+  checked(function()
+    options=options or {}
+    if options.stage=="cold-regenerate" or options.stage=="cold-verify" then
+      local file=assert(io.open(baseline_path,"rb"))
+      local raw=file:read("*a")
+      file:close()
+      local manifest=assert(json.decode(raw))
+      assert(manifest.case==case_name,"cold baseline belongs to another scale")
+      assert(song.tool_data==manifest.tool_data,"persisted source/drafts changed on cold load")
+      result.reopened_baseline=signature(raw)
+      local function finish_cold()
+        result.phases.cold_reopen="PASS"
+        finish("PASS")
+      end
+      local function regenerate_cold()
+        local positions={1,config.samples*8+1,config.instruments*8}
+        local cursor=0
+        local function next_target()
+          cursor=cursor+1
+          local position=positions[cursor]
+          if not position then save_session(finish_cold);return end
+          local target=targets[position]
+          select_target(target)
+          invoke("acid_program_pitch_position",1)
+          local pitch=target.source.pitch_events[1]
+          local key=(pitch.key+1)%12
+          invoke("acid_program_key_popup",key+1)
+          invoke("generate")
+          target.source.pitch_events[1]=sequence.new_pitch(key,pitch.octave,pitch.accent,pitch.slide)
+          verify(target)
+          result.regenerated=result.regenerated+1
+          later(next_target)
+        end
+        later(next_target)
+      end
+      local function navigate_cold()
+        open_gui()
+        local cursor=0
+        local function next_target()
+          cursor=cursor+1
+          local target=targets[cursor]
+          if target then select_target(target);later(next_target);return end
+          assert(song.tool_data==manifest.tool_data,"cold GUI navigation wrote persisted state")
+          if options.stage=="cold-regenerate" then regenerate_cold()
+          else finish_cold() end
+        end
+        later(next_target)
+      end
+      local function restore_targets()
+        local cursor=0
+        local function next_target()
+          cursor=cursor+1
+          local value=manifest.targets[cursor]
+          if not value then navigate_cold();return end
+          value.source=source_value(assert(json.decode(value.source)),false)
+          value.phrase=song.instruments[value.instrument_index].phrases[value.slot]
+          targets[#targets+1]=value
+          verify(value)
+          later(next_target)
+        end
+        later(next_target)
+      end
+      local index,slot=1,1
+      local function verify_next()
+        local values=manifest.phrases[index]
+        if not values then restore_targets();return end
+        assert(#song.instruments[index].phrases==#values,"cold phrase inventory changed")
+        assert(phrase_value(index,slot)==values[slot],"cold native/source association mismatch")
+        slot=slot+1
+        if slot>#values then index=index+1;slot=1 end
+        later(verify_next)
+      end
+      record_state("cold-verifying")
+      later(verify_next)
+      return
+    end
+    for _,instrument in ipairs(song.instruments) do assert(#instrument.phrases==0,"requires empty disposable song") end
+    local device=options.midi_output_device
+    assert(type(device)=="string" and device~="","explicit MIDI output device required")
+    local available=false
+    for _,name in ipairs(renoise.Midi.available_output_devices()) do if name==device then available=true end end
+    assert(available,"MIDI output unavailable: "..device)
+    while #song.instruments<config.instruments do song:insert_instrument_at(#song.instruments+1) end
+    local plugin
+    for _,info in ipairs(song.instruments[1].plugin_properties.available_plugin_infos) do
+      if info.name:lower():find("surge xt",1,true) then plugin=info;break end
+    end
+    assert(plugin,"Surge XT unavailable")
+    result.vst_plugin=plugin.name
+    result.midi_output_device=device
+    result.receiver_counts={sample=config.samples,vst=config.plugins,
+      midi=config.instruments-config.samples-config.plugins}
+    for index=1,config.instruments do
+      local instrument=song.instruments[index]
+      if index<=config.samples then assert(create_acceptance_sample(instrument,"Production "..index))
+      elseif index<=config.samples+config.plugins then
+        assert(instrument.plugin_properties:load_plugin(plugin.path),"VST load failed")
+        assert(instrument.plugin_properties.plugin_loaded,"VST not loaded")
+      else
+        instrument.midi_output_properties.device_name=device
+        instrument.midi_output_properties.channel=index
+      end
+      instrument.name=string.format("Production receiver %02d",index)
+    end
+    open_gui()
+    seed()
+  end)
+  return true
+end
+
+local playback_state
+local function run_production_playback(done,case_name,options,json)
+  local song=renoise.song()
+  local config=PRODUCTION_SESSION_CASES[case_name]
+  local stage=options.stage
+  local result={case=case_name,stage=stage,tracks=config.instruments}
+  local ok,err=pcall(function()
+    if stage=="playback-stop" then
+      song.transport:stop()
+      if playback_state then
+        for index,state in ipairs(playback_state.mutes) do song.tracks[index].mute_state=state end
+        for index,program in ipairs(playback_state.programs) do song.instruments[index].phrase_program=program end
+        if playback_state.input then playback_state.input:close() end
+        result.midi_counts=playback_state.counts
+        result.midi_events=playback_state.events
+        result.receiver_proofs=playback_state.proofs
+      end
+      playback_state=nil
+      return
+    end
+    assert(song.sequencer_track_count>=config.instruments,"production playback tracks are missing")
+    playback_state=playback_state or {mutes={},programs={},channels={},proofs=json.array(),
+      counts={note=0,off=0,bend=0},events=json.array()}
+    for index=1,config.instruments do
+      local instrument=song.instruments[index]
+      assert(instrument.phrases[8] and require("renoise.phrase_ownership").id(instrument.phrases[8]),
+        "production playback phrase is missing")
+      local kind=index<=config.samples and "sample" or
+        (index<=config.samples+config.plugins and "vst" or "midi")
+      if kind=="vst" then assert(instrument.plugin_properties.plugin_loaded,"production VST is not loaded") end
+      playback_state.mutes[index]=playback_state.mutes[index] or song.tracks[index].mute_state
+      playback_state.programs[index]=playback_state.programs[index] or instrument.phrase_program
+      local audible=stage=="playback-all" or stage=="playback-"..kind
+      song.tracks[index].mute_state=audible and renoise.Track.MUTE_STATE_ACTIVE or renoise.Track.MUTE_STATE_MUTED
+      if stage=="playback-midi" and kind=="midi" then
+        instrument.phrase_program=3
+        local id=assert(require("renoise.phrase_ownership").id(instrument.phrases[3]))
+        local source,policy,pb=require("renoise.pattern_store").read_entry(song,id)
+        assert(source and policy=="play_once" and pb>0 and source.pitch_events[1].slide,
+          "MIDI playback requires a committed one-shot bend fixture")
+        local delta=source.pitch_events[2].note-source.pitch_events[1].note
+        assert(delta~=0 and math.abs(delta)<=pb,"MIDI fixture has no in-range pitch transition")
+        local value=math.floor(8192+delta/pb*(delta<0 and 8192 or 8191)+0.5)
+        local proof={channel=index,expected_note=source.pitch_events[1].note,expected_bend=value,
+          note=false,off=false,center=false,bend=false}
+        playback_state.channels[index]=proof
+        playback_state.proofs[#playback_state.proofs+1]=proof
+      end
+    end
+    if stage=="playback-midi" then
+      local capture=playback_state
+      capture.input=renoise.Midi.create_input_device(options.midi_output_device,function(message)
+        local proof=capture.channels[message[1]%16+1]
+        if not proof then return end
+        local kind=math.floor(message[1]/16)
+        if kind==9 and message[3]>0 then
+          capture.counts.note=capture.counts.note+1
+          if message[2]==proof.expected_note then proof.note=true end
+        elseif kind==8 or (kind==9 and message[3]==0) then
+          capture.counts.off=capture.counts.off+1
+          if message[2]==proof.expected_note then proof.off=true end
+        elseif kind==14 then
+          capture.counts.bend=capture.counts.bend+1
+          local value=message[2]+message[3]*128
+          if value==8192 then proof.center=true end
+          if proof.center and value==proof.expected_bend then proof.bend=true end
+        end
+        if #capture.events<256 then
+          capture.events[#capture.events+1]={status=message[1],data1=message[2],data2=message[3]}
+        end
+      end)
+    end
+    song.transport:start(renoise.Transport.PLAYMODE_RESTART_PATTERN)
+    assert(song.transport.playing,"production transport did not start")
+  end)
+  after_delivery_idle(function()
+    result.status=ok and "PASS" or "FAIL"
+    result.reason=not ok and tostring(err) or nil
+    result.playing=song.transport.playing
+    done(result)
+  end)
+  return true
+end
+
+local function run_phrase_midi_delivery(done,options,json)
+  local song=renoise.song()
+  local case_name="phrase-midi-delivery"
+  local input,settled
+  local measurements=json.array()
+  local function finish(status,reason)
+    if settled then return end
+    settled=true
+    pcall(function() song.transport:stop() end)
+    if input then pcall(function() input:close() end) end
+    done({case=case_name,status=status,reason=reason,measurements=measurements})
+  end
+  local function checked(callback)
+    if settled then return end
+    local ok,err=pcall(callback)
+    if not ok then finish("FAIL",tostring(err)) end
+  end
+  local function later(callback) after_delivery_idle(function() checked(callback) end) end
+  checked(function()
+    local device=assert(options and options.midi_output_device,"explicit MIDI device required")
+    for _,instrument in ipairs(song.instruments) do assert(#instrument.phrases==0,"requires empty disposable song") end
+    local instrument=song.instruments[1]
+    instrument.midi_output_properties.device_name=device
+    instrument.midi_output_properties.channel=8
+    local phrase=instrument:insert_phrase_at(1)
+    phrase.playback_mode=renoise.InstrumentPhrase.PLAY_PATTERN
+    phrase.number_of_lines=16
+    phrase.lpb=16
+    phrase.key_tracking=renoise.InstrumentPhrase.KEY_TRACKING_NONE
+    phrase.looping=false
+    phrase.visible_note_columns=2
+    phrase.visible_effect_columns=1
+    phrase.instrument_column_visible=true
+    phrase.panning_column_visible=true
+    phrase:line(1):note_column(1).note_value=48
+    phrase:line(13):note_column(1).note_value=120
+    for _,item in ipairs({{1,8192},{5,12288},{9,8192}}) do
+      local line,value=item[1],item[2]
+      phrase:line(line):note_column(2).panning_string="M1"
+      local effect=phrase:line(line):effect_column(1)
+      effect.number_string=string.format("%02X",math.floor(value/128))
+      effect.amount_value=value%128
+    end
+    instrument.phrase_playback_mode=renoise.Instrument.PHRASES_PLAY_SELECTIVE
+    instrument.phrase_program=1
+    local pattern=song.patterns[song.sequencer.pattern_sequence[1]]
+    pattern.number_of_lines=64
+    pattern.tracks[1]:line(1):note_column(1).note_value=48
+    pattern.tracks[1]:line(1):note_column(1).instrument_value=0
+    local active
+    input=renoise.Midi.create_input_device(device,function(message)
+      if not active then return end
+      local kind=math.floor(message[1]/16)
+      if kind==14 then
+        active.bends=active.bends+1
+        if #active.events<32 then
+          active.events[#active.events+1]={status=message[1],low=message[2],high=message[3]}
+        end
+      elseif kind==9 and message[3]>0 then active.notes=active.notes+1 end
+    end)
+    local variants={255,0,7}
+    local cursor=0
+    local function next_variant()
+      cursor=cursor+1
+      local channel=variants[cursor]
+      if channel==nil then
+        for _,measurement in ipairs(measurements) do
+          assert(measurement.notes>0,"probe did not trigger phrase notes")
+          assert(measurement.bends==3,"probe did not deliver its three MIDI bend commands")
+          for index,high in ipairs({64,96,64}) do
+            local event=measurement.events[index]
+            assert(event and event.status==231 and event.low==0 and event.high==high,
+              "probe bend value/order/channel mismatch")
+          end
+        end
+        finish("PASS");return
+      end
+      song.transport:stop()
+      for _,line in ipairs({1,5,9}) do phrase:line(line):note_column(2).instrument_value=channel end
+      active={carrier=channel,bends=0,notes=0,events=json.array(),
+        panning_value=phrase:line(1):note_column(2).panning_value,
+        effect_number_value=phrase:line(1):effect_column(1).number_value}
+      measurements[#measurements+1]=active
+      song.transport:start(renoise.Transport.PLAYMODE_RESTART_PATTERN)
+      active.start_line=song.transport.playback_pos.line
+      local deadline=os.time()+3
+      local function wait_playback()
+        if os.time()<deadline then later(wait_playback)
+        else active.end_line=song.transport.playback_pos.line;later(next_variant) end
+      end
+      later(wait_playback)
+    end
+    later(next_variant)
+  end)
+  return true
+end
+
 function M.run(case_name, done, json, profile_mode, options)
   if type(done) ~= "function" then return false, "completion callback is required" end
+  if case_name=="phrase-midi-delivery" then return run_phrase_midi_delivery(done,options,json) end
+  if PRODUCTION_SESSION_CASES[case_name] then
+    if options and type(options.stage)=="string" and options.stage:match("^playback%-") then
+      return run_production_playback(done,case_name,options,json)
+    end
+    return run_production_session(done,case_name,options,json)
+  end
   if PRODUCTION_LATENCY_CASES[case_name] then
     if profile_mode~=nil then
       done({status="ERROR",case=case_name,reason="production latency diagnostics use their fixed Warm functional-only measurement"})
