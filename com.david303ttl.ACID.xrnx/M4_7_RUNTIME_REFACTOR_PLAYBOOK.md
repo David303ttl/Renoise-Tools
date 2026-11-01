@@ -2,9 +2,9 @@
 
 **Branch:** `feature/hardening4`
 
-**Execution:** Steps 0–1A completed in order. The atomic production cutover at `6413e5f` implemented the runtime/writer/scheduler path from Steps 2/3/5; Gates 2–9 are independent acceptance gates, not a requirement to restore an obsolete serial migration. Failed evidence sends work back to the responsible contract and affected gates. Tests accompany their behavior rather than waiting for Step 7. Step 0 supplied early native feasibility; Step 8 remains full native acceptance. One runtime authority/scheduler dispatches directly to the explicit writer; the legacy scheduler, adapter, old writer entry points and unwired GUI paths are gone. No step adds a legacy adapter, second scheduler, old callback path, feature flag, dual dispatch or compatibility API. Saved-song formats remain unchanged.
+**Execution:** Steps 0–7 are complete. Gate 8 closed under the scoped decision dated 2026-11-01; its evidence and accepted limits appear under Step 8. Step 9 documentation and review are complete. Dated gate plans below preserve the evidence and state recorded at their checkpoints. Earlier script-render and staging requirements are historical and do not describe current production. No further Gate 8 runs are required.
 
-**Final status:** M4 stays OPEN until all remaining independent gates, including native Renoise acceptance, pass.
+**Final status:** M4 is closed under the accepted scope. M5.0 is next; waived work and other unverified limits remain explicit in the acceptance records.
 
 **Scope:** Post-Gate-1 dependency/policy/duplication cleanup plus runtime binding, writer safety, native synchronization, Live Edit, explicit copied-ID resolution, and source/draft recovery. Preserve sequencer/compiler semantics, timing, articulation, current persistence formats, manifest versions, and M5 layout. Refactor existing owners in place; do not introduce shadow state, wrapper APIs, or a transitional production path.
 
@@ -56,20 +56,20 @@ a candidate for test-helper relocation or removal after checking its assertions,
 rather than assuming a runtime responsibility. Neither cleanup satisfies a
 write-safety gate.
 
-This plan retains the existing asynchronous phrase-script renderer, staging/backup transaction, and song-local source/draft store, refactored in place. The atomic production cutover landed at `6413e5f` as one change; it joined the explicit writer contract and single scheduler to the GUI and deleted the legacy paths. No legacy adapter, parallel scheduler, old callback path, or compatibility API exists to preserve. It does not require a new renderer, persistence layer, event bus, general transaction framework, or controller hierarchy.
+The current production path is the atomic cutover at `6413e5f`: one runtime context and scheduler dispatch to the explicit writer, which synchronously materializes the final phrase. It does not use the phrase-script render callback or insert a separate staging/backup phrase during regeneration. A newly inserted destination is tracked as temporary while its create transaction is in progress; it is not a second destination. The song-local source/draft store and persisted formats remain unchanged. No legacy adapter, parallel scheduler, old writer entry point, or compatibility API exists to preserve.
 
 | Responsibility | Single owner / existing home |
 |---|---|
 | Active target, session/revision checks, native reconciliation | One runtime context used by `gui.lua`; consolidate existing state, adding a small private module only if needed |
 | User controls and presentation | `gui.lua`; widgets dispatch user actions and render state |
 | Serialized generation and cancellation | One runtime scheduler (a single queue owned by the runtime context; a private helper is allowed only if it remains the sole queue) and the writer's final job/terminal contract. The `model.live_regen` scheduling and arming path was deleted at the `6413e5f` cutover, never wrapped |
-| Musical phrase mutation, staging, backup, verification, cleanup | `writers.phrase_writer`; two explicit musical operations sharing private helpers |
+| Musical phrase mutation, verification, rollback, cleanup | `writers.phrase_writer`; explicit create and regenerate operations share private helpers |
 | Identity-only name/source mutation | `runtime.independence`; one explicit Make Independent executor under the existing `runtime.context` mutation guard, sharing store/ownership authorities |
 | Ownership parsing, seal, complete phrase comparison | `renoise.phrase_ownership`; no second ownership implementation |
 | Canonical source/settings and durable draft serialization | `renoise.pattern_store`; preserve its format and guarded commit/restore helpers |
 | Object-keyed session drafts and restoration precedence | `runtime.draft_cache`; preserve existing durable drafts where unambiguous |
 
-Validation at the request boundary and writer boundary is intentional. Share pure validation helpers; the writer still checks live membership and ownership independently. Ownership inventory has no exclusions: writer-private temporary objects must be neutral before validation or asynchronous waits; their registry filters UI choices and identifies cleanup/recovery objects only.
+Validation at the request boundary and writer boundary is intentional. Share pure validation helpers; the writer still checks live membership and ownership independently. Ownership inventory counts every live phrase. The writer registry tracks an in-progress create or retained recovery object, prevents it from being selected as a destination, and supports exact cleanup; it does not hide a second staging or backup phrase.
 
 **Ownership is two coordinated pieces:** the current ID/seal in `phrase.name`, and canonical source plus output policy/PB range under that ID in `song.tool_data`. A phrase does not carry its own complete source record. Same-song copies may retain a name referencing the shared song record; cross-song or imported instrument copies may have no such record. Never infer source from matching notes.
 
@@ -87,7 +87,7 @@ The current-song ID record and valid seal identify a candidate source associatio
 2. Only Generate or an actual source/settings edit while Live Edit is armed requests create/regenerate. A no-op edit does not. Make Independent is its own explicit action.
 3. Targets carry live song/instrument/phrase objects. Use `rawequal` for host-object identity, including membership, selection pairs, returned destinations, and cleanup; phrase `==` compares line content, not identity. Preserve existing raw-identity checks and object-keyed tables. Resolve indices immediately before documented indexed API calls; never persist an index as object identity.
 4. Regenerate changes only the exact validated owned destination. It never falls back to create, another object, or another instrument.
-5. Temporary staging/backup insertions are permitted inside an authorized writer job for both modes. They are not new owned destinations. Successful create leaves exactly one extra phrase; successful regenerate leaves phrase count and destination object unchanged.
+5. Create inserts one final destination and binds the returned phrase object after success. Regenerate updates the exact existing phrase in place, preserving its object and phrase count; it inserts no separate staging or backup phrase. Failed or uncertain cleanup retains identifiable recovery evidence and blocks later writes.
 6. A stale operation cannot commit destination/source changes or update a newer GUI session. Cancellation may perform narrowly scoped rollback/cleanup of that job's own objects while its song is still current.
 7. No native selection property is assigned. Structural operations may change Renoise selection; reconcile that fact without treating ACID's own changes as user navigation.
 8. Ambiguity, external modification, removal, invalid source, or failed rollback blocks writing and preserves recoverable drafts.
@@ -719,7 +719,8 @@ runtime interface. The later `6413e5f` cutover replaced capture and state
 authorities in one change. Temporary-registry release scrubbing, writer safety
 and native slot reservation remain the owning later gates, not passes inferred
 from these mocks. No new native Renoise playback, undo or lifecycle acceptance
-was performed; M4 remains open and Step 8 remains required.
+was performed at this Gate 2 checkpoint; M4 was then open and Step 8 was still
+required. Step 8 later closed under the scoped decision recorded below.
 
 
 ### Real-Renoise tests
@@ -1970,14 +1971,14 @@ tests, not more modules or infrastructure.
 | R35 | Song integrity blocker survives dialog reopen in the same live song; release drops exact recovery refs; reload reclassifies persisted state; read-only revalidation never auto-retries; unrelated song usable once global render settles |
 | R36 | Cold reopen reclassifies valid persisted ID/seal + song source/output as Owned using fresh runtime objects; no epoch/token/index persistence, auto-render, accidental append or foreign adoption; explicit regenerate retains the intended target |
 
-**Gate 7:** T7.0–T7.5 pass in order with current assertion-level evidence for all
+**Gate 7 (CLOSED at the 2026-10-31 checkpoint):** T7.0–T7.5 pass in order with current assertion-level evidence for all
 36 local contracts, integrated suites/package checks and independent review; no
 unresolved P0/P1 local defect remains. Reuse targeted native R29/R36 evidence
 already recorded under T4.8/T4.8a for its exact assertions. Local lifecycle/reload
 mocks do not expand those native claims. Playback, broader undo grouping, actual
 field preservation and full Step 8 A–E acceptance remain open. Gate 7 establishes
 verified local integration contracts, not absence of all undiscovered defects or
-M4 completion.
+M4 completion. Step 8 later closed under the scoped decision recorded below.
 
 ## Step 8 — Native Renoise acceptance
 
@@ -1989,7 +1990,7 @@ M4 completion.
 | MIDI delivery | PASS: notes, OFFs, center and expected pitch-bend values on both channels |
 | 16×8 production GUI | 128 creations plus one explicit Create; 112 regenerations passed before native selection changed; remaining run waived |
 | Audio capture | Waived; no audio pass claimed |
-| Local verification | 73 Lua specs, 18 offline groups and package checks passed |
+| Local verification | Recorded results: 73 Lua specs, 18 offline groups and package checks passed. This documentation closeout did not rerun them. |
 
 Record latency without an acceptance threshold. Preserve recovery snapshots unchanged. Further performance investigation and runtime optimization are out of scope. Historical result records remain unchanged.
 
@@ -1997,10 +1998,12 @@ Driver protocol: [production-session acceptance contract](../tests/acid/producti
 
 ## Step 9 — Final documentation and review
 
-1. Update the existing roadmap/checklist and relevant README/manual guidance with final responsibilities, explicit copy resolution, capacity/staging limits, draft recovery guarantees, and actual acceptance outcomes. Remove superseded statements.
-2. Review diff, file list, local/package results, and native A–E results. Keep diagnostics only when they have continuing regression value. No machine-specific paths or implementation-history prose in code.
-3. Commit only the verified in-scope changes on `feature/hardening4` using Conventional Commits. Do not merge into `develop` or close M4 before acceptance.
-4. Report touched areas, verification results, remaining blockers, and commit ID if created. A blocked/native-unverified implementation is not a completed M4.
+**Status: COMPLETE (2026-11-01).** The product README and acceptance guidance now describe the synchronous direct writer, explicit duplicate resolution, phrase limits, draft recovery, and scoped Gate 8 outcomes. The review reconciled current summaries with historical checkpoints and retained the partial 16×8 report and waived audio result as such. M4 is closed under the Step 8 scope decision; no merge into `develop` is part of this closeout.
+
+1. [x] Update the existing roadmap/checklist and relevant README/manual guidance with final responsibilities, explicit copy resolution, capacity/staging limits, draft recovery guarantees, and actual acceptance outcomes. Remove superseded current-status statements.
+2. [x] Review the diff, file list, recorded local/package results, and native evidence. Keep the 16×8 partial result, audio waiver, and remaining timing/audio limitations explicit. No machine-specific paths or implementation-history prose were added to code.
+3. [x] Commit only verified in-scope documentation changes on `feature/hardening4` using Conventional Commits. Do not merge into `develop` as part of this step.
+4. [x] Report touched areas, verification results, remaining unverified checks, and commit ID in the closeout response.
 
 ## Stop conditions
 

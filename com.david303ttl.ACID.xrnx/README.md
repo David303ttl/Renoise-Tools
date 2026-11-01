@@ -28,8 +28,8 @@ both memories intact. Phrase timing is local to the phrase; ACID does not change
 the song tempo, LPB or meter. Timing is saved with the source and is included
 in Undo, Redo and Reset. Phrase output and PB Range are separate phrase settings.
 At N=32, Play Once has 128 lines. Repeat has 257 lines: the steady loop starts
-at line 129 and ends exclusively at line 257, the empty sentinel. The 512-line
-phrase capacity is unchanged.
+at line 129 and ends exclusively at line 257, the empty sentinel. The phrase
+capacity is 512 lines. Renoise API 6.2 allows at most 126 phrases per instrument.
 
 A NOTE consumes the next active PITCH entry. TIE holds the current semantic
 voice without consuming pitch memory, and REST releases it. ACCENT and outgoing
@@ -53,30 +53,36 @@ Native instrument and phrase changes refresh the choices without inferring
 that a copied phrase belongs to ACID.
 
 Manual Generate and Regenerate remain available. Live Edit optionally applies
-each valid source edit immediately, with one render in flight. Edits made during
-rendering apply automatically as soon as that render finishes. Undo and Redo cover source edits and
-phrase output policy and PB Range. A failed Live Edit remains armed; correct the source or
-use Retry Live Edit. Enabling Live Edit arms subsequent edits without rendering.
+each valid source/settings edit immediately through the single serialized,
+synchronous writer. The write finishes inside the initiating user action; if a
+writer job is already active, only the latest pending trigger is retained.
+Undo and Redo cover source edits and phrase output policy and PB Range. A failed
+Live Edit remains armed; correct the source or use Retry Live Edit. Enabling
+Live Edit arms subsequent edits without writing.
 Only an explicitly selected **New Phrase** destination can create a phrase.
 Foreign, modified, deleted and colliding phrases block generation; choose New
 explicitly to create separate output.
-Uncommitted drafts are stored separately from the last committed phrase in
-song tool data and recover after saving and reopening the XRNS. If a new draft
-has an ambiguous destination or persistence fails, it remains available in the
-open session and ACID reports the unsaved state. Give a new draft's instrument
-a unique name or generate its phrase before closing the song. ACID protects
+Uncommitted drafts with an unambiguous song key are stored separately from the
+last committed phrase in song tool data and recover after saving and reopening
+the XRNS. A successful write clears only the exact draft revision it commits;
+later edits remain dirty. If a draft has an ambiguous destination or persistence
+fails, it remains available in the open session and ACID reports the unsaved
+state. Give a new draft's instrument a unique name or generate its phrase before
+closing the song. Detached recovery entries are session-only. ACID protects
 foreign or modified phrases and uses ownership checks, source persistence and
-verified rollback when updating an owned phrase in place. The current WIP source schema is
-`ACID-PITCH-TIME-1`. With Live Edit off,
-the source is marked dirty until a successful Generate applies the draft.
+verified rollback when updating an owned phrase in place. The persisted source
+schema is `ACID-PITCH-TIME-1`. With Live Edit off, the source remains dirty until
+a successful Generate applies the draft.
 
 Native copies with the same ACID ID block every holder of that ID. Select the
 particular copied phrase in Destination phrase and use **Make Independent**.
-The action requires every holder to match the saved committed source and
-unchanged phrase content. It assigns the selected phrase a fresh ID and clones
-its committed source/settings without rendering or changing its music. Other
-holders keep their IDs; remaining collisions stay blocked. Missing source or
-changed content prevents resolution. ACID never automatically adopts an import.
+The action requires every holder to match its saved committed source/settings,
+compatible output, and unchanged phrase content. It assigns a fresh ID only to
+the selected phrase and clones its committed source/settings without rendering
+or changing its music. Other holders keep their IDs and any remaining collision
+stays blocked until resolved explicitly. Missing or incompatible source and
+changed content prevent resolution. ACID never automatically re-keys a copy or
+adopts an import.
 
 **Recover Draft** lists detached drafts with their captured instrument/phrase
 labels and reason. **Copy to New** restores the selected source and settings to
@@ -86,9 +92,11 @@ The original recovery entry remains until that exact copied revision creates a
 phrase or you explicitly discard it. Detached recovery entries are session-only;
 save or generate wanted drafts before closing the song.
 
-Create needs one free phrase slot. Regenerate updates the exact existing phrase
-without inserting, deleting or reordering phrases, including when its instrument
-has no free phrase slots. The write completes inside the initiating user action.
+Create needs one free phrase slot under Renoise's 126-phrase instrument limit;
+it inserts the final destination. Regenerate updates the exact existing phrase
+without inserting a separate staging/backup phrase, deleting, or reordering
+phrases, including when its instrument has no free phrase slots. The write
+completes inside the initiating user action.
 Each successful generation receives a fresh source revision ID; older source
 rows remain in the song so native Undo and Redo can restore matching music,
 source and settings. The revision number in the phrase name changes while its
@@ -132,18 +140,28 @@ owned phrase and restore on selection/save/reopen; PITCH/TIME memory stays
 unchanged. Out-of-range slides fall back to ordered notes with an approximation
 warning. Hybrid sample layers may respond differently.
 
-Phrase-contained pitch bend and center-reset playback checks are pending for
-the current LPB16/12 four-line layout. This does not establish delivery for
-other receivers or routes. A receiver that
-ignores these commands will not produce the intended bend; use PB Off for
+## Native acceptance status
+
+The 2026-11-01 M4.7 scoped acceptance passed the 8×8 production GUI workflow,
+native Undo/Redo, two cold reopens, and MIDI event capture (6 notes, 6 OFFs,
+12 pitch-bend events). The project accepted 16×8 under the scoped decision; its
+run created 128 base phrases plus one explicit Create and completed 112
+regenerations before native selection changed. The remaining run was waived,
+and the retained native report is partial. Sample/VST audio capture was waived
+and no audio pass is claimed. No 30 ms latency threshold is active. See the
+[native evidence and scope](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+
+Recorded local checks passed 73/73 repository Lua specs, 18/18 offline groups,
+and package verification; this documentation-only closeout did not rerun them.
+
+Max-length timing/layout playback and PB center-reset alignment at LPB 16/12,
+host-groove behavior, and receiver-dependent audio remain unverified; these are
+recorded in the [manual checklist](../tests/acid/acid_m35_s_manual.md) and
+[timing checklist](../tests/acid/acid_timing_manual.md). A receiver that ignores
+pitch-bend commands will not produce the intended bend; use PB Off for
 receiver-controlled note overlap.
 
-Phrase generation has been checked with Lua mocks for the current renderer
-contract. Renoise playback and routing checks for Program/Grid switching,
-Repeat/Play Once, plugin, MIDI, empty slots, and Live Edit recovery are still
-pending; see the [M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md).
-The full M3.5 instrument and Live Edit gates remain tracked in
-[ROADMAP.md](ROADMAP.md). Generation requires LPB transport timing and rejects
+Generation requires LPB transport timing and rejects
 unsupported speed timing before changing phrases or saved source. Straight and
 triplet playback, including host groove, remain subject to the
 [timing checklist](../tests/acid/acid_timing_manual.md).

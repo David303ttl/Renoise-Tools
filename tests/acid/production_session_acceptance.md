@@ -6,7 +6,10 @@
 
 **Accepted scope:** 8×8 functional checks, Undo/Redo, two cold reopens and MIDI note/OFF/pitch-bend receipts passed. 16×8 acceptance is **PASS by scope decision**. The retained run created 128 phrases plus one explicit Create and completed 112 regenerations before a native-selection interruption; remaining execution is waived; the native runner report is FAIL because it records a partial run rather than a completed 16×8 stress execution. Audio capture is waived and no audio pass is claimed. See the [native report identities](runtime_acceptance.md#production-session-native-evidence).
 
-The protocol below describes driver behavior, not outstanding release work.
+The remaining sections preserve the original test matrix and driver constraints
+for historical reference. They are not outstanding release work under the
+scoped decision above; the waived 16×8 remainder and audio capture are not
+reported as passed checks.
 
 ## 1. Objective, scope and architecture boundary
 
