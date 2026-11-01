@@ -3,6 +3,47 @@
 ARP and ACID target Renoise 3.5 / scripting API 6.2. The existing frozen
 DigitaktSampleChain tool retains its API 6.1 manifest.
 
+## Required tools
+
+Repository PowerShell scripts require PowerShell 7 (`pwsh`). On Windows, install
+it with WinGet:
+
+```powershell
+winget install --id Microsoft.PowerShell --source winget
+```
+
+Open a new terminal and check `$PSVersionTable.PSVersion` reports version 7 or
+later. Microsoft also documents [other PowerShell installation methods](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows).
+
+Local tests and development-package checks accept Lua 5.1 or newer, including
+LuaJIT 2.x (which reports Lua 5.1 through `_VERSION`). Scripts use `lua` from
+`PATH` by default and report the executable and language version used. Override
+it with `-LuaCommand` when needed:
+
+```powershell
+./scripts/run_tests.ps1
+./tests/renoise/test_package_dev.ps1 -LuaCommand lua5.4
+```
+
+Lua 5.0 and older are rejected. Future versions are accepted when compatible
+with the test harness. Production ARP and ACID code must retain Lua 5.1
+compatibility for Renoise's LuaJIT runtime. Run the baseline specs explicitly
+with `./scripts/run_tests.ps1 -LuaCommand lua5.1`;
+passing locally with a newer interpreter does not establish baseline
+compatibility. Keep `.luarc.json` set to Lua 5.1.
+
+The development package suite uses Windows ACLs and therefore runs on Windows.
+Native integration checks require a Windows installation of Renoise. ARP and
+ACID target Renoise 3.5 / API 6.2; get Renoise from its
+[downloads page](https://renoise.com/downloads).
+
+The Renoise `Keyboard` and `All` interactive suites additionally require
+AutoHotkey v2. Download it from the
+[official AutoHotkey releases](https://github.com/AutoHotkey/AutoHotkey/releases).
+The current developer keymap assigns Ctrl+Alt+B to `Global:ACID:Show`; the runner
+configuration represents it as `^!b`. Renoise stores shortcut assignments per
+user, and ACID supplies no default. On a shared desktop, keyboard testing will not activate Renoise or steal foreground focus. It requires an existing `-RenoiseProcessId` and fails safely when Renoise is not foreground. Genuine unattended keyboard tests require a separate interactive Windows session and explicit `-AllowKeyboardFocusActivation`; Native API tests remain focus-free and require no AutoHotkey.
+
 ## Install the API reference
 
 Use PowerShell 7 (`pwsh`) for all repository scripts. From the repository root:
@@ -62,7 +103,7 @@ or local workspace locations.
 
 1. Check the relevant API definitions and documentation.
 2. Edit one tool inside its `.xrnx` directory, preserving self-contained imports.
-3. Run the pure-Lua specs with a separately installed Lua 5.1-compatible interpreter:
+3. Run the pure-Lua specs with a separately installed Lua 5.1 or newer interpreter:
 
    ```powershell
    pwsh -NoProfile -File ./scripts/run_tests.ps1
@@ -75,8 +116,30 @@ or local workspace locations.
    ```
 
 5. Install the archive from `dist/` into Renoise, or use the tool's documented
-   development installation. Perform the relevant [manual checks](../tests/README.md)
+   development installation. Perform the relevant [Renoise checks](../tests/README.md)
    in a disposable song.
 
+## Real Renoise testing
+
+Run `./scripts/run_offline_tests.ps1` for all 18 offline groups, including Lua,
+PowerShell analyzers, oracle validation, harness and packaging checks.
+
+Use your normal Renoise installation. Other Renoise instances and virtual desktops
+may remain in use; no separate account, VM, profile attestation or trace evidence
+is required. The Windows Native runner starts a fresh instance by default:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong
+```
+
+Use `-RenoiseProcessId <pid>` to select an existing instance with a disposable
+song. Override discovery with `-RenoiseExe '<path>'` or `-ToolsDirectory '<path>'`.
+The runner verifies its target, backs up the installation, stops its test driver,
+and restores unchanged files. Existing Renoise instances remain open. See
+[Renoise testing](../tests/renoise/README.md) for offline harness checks and details.
+Keyboard E2E is available through the documented `Keyboard` or `All` suite;
+its setup and host acceptance are separate from the Native suite.
+Release XRNX tools have no dependency on the harness or its developer setup.
+
 Plain-Lua tests verify model logic and mocked API interactions. Actual playback,
-native phrase rendering, GUI behavior, undo, and save/reload require Renoise.
+native phrase rendering, GUI behavior, undo and save/reload require Renoise.

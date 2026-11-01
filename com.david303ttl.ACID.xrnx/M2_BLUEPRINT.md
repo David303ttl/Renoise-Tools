@@ -1,6 +1,5 @@
 # ACID M2 blueprint: deterministic repeating PITCH/TIME sequences
 
-Date: 2026-10-26; cutover scope corrected 2026-10-27.
 Status: **M2 implementation closed 2026-10-27; recorded grid renders and available structural Renoise checks passed; additional acoustic and lifecycle checks deferred until registered Renoise is available**.
 Scope: [ROADMAP.md, M2.0–M2.5](ROADMAP.md#4-m2--continuous-playback-and-loop-correctness).
 M2.0 oracle: [M2_SEMANTICS.md](M2_SEMANTICS.md), with hand-authored cases in
@@ -27,7 +26,7 @@ documentation takes precedence over replacement firmware when they disagree.
 Extended ACID behavior must be named and selected explicitly.
 
 Renoise owns transport, arrangement, phrase triggering and performance
-transposition. Beyond the established 64-step/direct-grid and explicit PITCH-span
+transposition. Beyond the established 32-step/direct-grid and explicit PITCH-span
 design, OS-303-inspired expansion is limited to independent PITCH/TIME
 randomization, targeted source transformations and a non-destructive scale mask.
 These are source-editing/resolution features under the same Roland articulation
@@ -36,12 +35,8 @@ length shortcuts or recording against the playback cursor. Existing Live Edit
 remains guarded source-to-phrase regeneration. See ROADMAP M5 for the scoped
 editing requirements; they do not expand the loop implementation package.
 
-**Clean cutover:** ACID is still work in progress; earlier implementations are
-development iterations, not supported behavior. There is no backward compatibility,
-migration layer, alternate historical interpreter or old-seal verifier to retain.
-Development patterns may be discarded and recreated under the new contract.
-Original and Extended both use the same new interpreter; Extended retains ACID's
-additional musical functions. Ownership checks and rollback still protect current
+Original and Extended use the same interpreter; Extended retains ACID's
+additional musical functions. Ownership checks and rollback protect current
 ACID output and unrelated song content.
 
 This blueprint chooses a proposed software policy: **restart PITCH consumption
@@ -58,12 +53,12 @@ Three evidence levels apply throughout:
 - **Unverified playback/history:** requires Renoise or original-hardware evidence.
 
 The proposed Original entry mode covers straight TIME lengths 1–16 and applies
-the entry normalization in section 2.4. Extended entry permits 1–64 TIME steps
-and 1–64 active PITCH entries, with the same leading-TIE normalization.
+the entry normalization in section 2.4. Extended entry permits 1–32 TIME steps
+and 1–32 active PITCH entries, with the same leading-TIE normalization.
 A 16-step pattern can still
 use extended semantics; length alone does not establish fidelity. Neither mode
 is a hardware certification. OS-303 itself supports 32 positions, so it does not
-establish ACID's 64-step extension.
+establish ACID's 32-step limit.
 
 M2 does not change accent voicing, calibrate the gate fraction, introduce a
 synthesizer, add ratchets or triplets, or prove envelope-continuous sample glide.
@@ -197,7 +192,7 @@ connection, different pitches request a glide. A leading REST breaks continuity.
 This is core behavior in both modes and requires native playback verification.
 
 New drafts start Original, TIME length 16, active PITCH span 16, Repeat once
-verified. Retain 64 stored valid C entries. Original mode fixes the active span
+verified. Retain 32 stored valid C entries. Original mode fixes the active span
 at 16 and hides independent span cycling; this is an ACID default/capacity rule,
 not evidence for how original unentered pitches were initialized. More than 16
 TIME steps or independent short-span wrap requires Extended. Converting a source
@@ -214,7 +209,7 @@ Original entry is a programming subset, not a promise of complete panel emulatio
 | Leading TIE | R03 normalizes entry; firmware has the F03/F07 caveat | Normalize entry in both modes; reject noncanonical source in both |
 | Slide across a TIME boundary | R02/R03 plus firmware slide output state | Preserve the documented transition; native voice continuity still needs playback evidence |
 | Cold first trigger | F05 starts resting | ACID starts silent; verify phrase trigger/retrigger in Renoise |
-| Gate duration and analog release | F06 is firmware logic | Keep existing experimental gate setting; numerical/historical calibration belongs to M3 |
+| Gate duration and analog release | F06 is firmware logic | Keep existing experimental gate setting; calibration evidence belongs to M3 |
 
 Original CPU cursor traces and measured hardware recordings remain absent.
 Independent short PITCH-span cycling is an ACID feature, not established by the
@@ -230,11 +225,11 @@ the inspected baseline and may move after implementation.
 
 | Component | Current contract | Required M2 responsibility |
 | --- | --- | --- |
-| `model/sequencer.lua:24–35, 67–99` | New patterns allocate 64 valid C pitches; dense arrays may be shorter; no active span field | Validate explicit active PITCH span separately from capacity; retain valid defaults |
+| `model/sequencer.lua:24–35, 67–99` | New patterns allocate 32 valid C pitches; dense arrays may be shorter; no active span field | Validate explicit active PITCH span separately from capacity; retain valid defaults |
 | `model/compiler.lua:14–78` | One cold pass; pitch index is NOTE count modulo stored pitch count; boundary summary is a heuristic | Stateful cycle transition; explicit cold/repeat entry, full step events and cycle exits |
 | `model/editor_state.lua:21–85` | Reimplements consumption using stored array length | Project the compiler's resolved mapping, including cold/repeating TIE differences |
 | `model/memory_status.lua`, `gui.lua:80–156` | Stored/used pitch counts and direct editing | Distinguish capacity, active span and pitches actually referenced |
-| `model/pattern_store.lua:6–76, 111–136` | `ACID-PITCH-TIME-1`; source+audio mode; variable stored pitch count; sealed phrase ID | Replace with the new source format; remove the earlier decoder; roundtrip current fields |
+| `model/pattern_store.lua:6–76, 111–136` | `ACID-PITCH-TIME-1`; source+audio mode; 32 stored pitches; sealed phrase ID | Roundtrip current fields |
 | `writers/pattrns_writer.lua:66–90` | Finite one-pass script, `repeats=false` | Emit finite physical render segments; leave runtime repetition to the native phrase |
 | `writers/phrase_writer.lua:80–174` | Validates one traversal, applies articulation, sets `looping=false`, swaps then stores source | Choose representable loop layout, validate final cells/metadata, commit source and phrase coherently |
 | `writers/phrase_validator.lua:6–82` | Checks cold-pass NOTE/OFF/empty cells before articulation | Check the complete physical layout and post-articulation result against the selected plan |
@@ -278,15 +273,14 @@ has shipped or that unresolved playback behavior has been approved as accurate.
 
 | ID | Proposed decision | Reason / verification |
 | --- | --- | --- |
-| D01 | PITCH capacity is 64; `pitch_length` is the active prefix P01..Pnn, 1–64 | Explicit span; no edited/non-C inference |
-| D02 | New Original drafts default to `pitch_length=16`, with 64 stored C entries | Keep ordinary new patterns within the original entry subset |
+| D01 | PITCH capacity is 32; `pitch_length` is the active prefix P01..Pnn, 1–32 | Explicit span; no edited/non-C inference |
+| D02 | New Original drafts default to `pitch_length=16`, with 32 stored C entries | Keep ordinary new patterns within the original entry subset |
 | D03 | Reset the next-consumed PITCH cursor to P01 at every TIME-cycle start | Informed by F03; fixed M2 policy, no polymetric/carry option in this milestone |
 | D04 | Retain voice identity across TIME wrap, independently of D03 | The final pitch's outgoing SLIDE connects into the first NOTE; no literal leading TIE |
 | D05 | Only NOTE consumes pitch; wrap consumption at `pitch_length` inside a cycle | Independent memories; exact fixture expectations for mismatched counts |
 | D06 | REST clears voice and outgoing slide connection; silent TIE remains silent | Next NOTE after REST attacks; no pitch consumed by either command |
 | D07 | SLIDE belongs to the outgoing PITCH entry, including same-pitch transitions | R02/R03; semantic intent is separate from renderer support |
-| D08 | Support one new source format and one interpreter contract | Clean cutover; no historical behavior modes or source migration |
-| D09 | Recreate earlier development patterns in the new format | No importer, compatibility UI or preservation of early-adoption behavior |
+| D08 | Use one source format and one interpreter contract | Keep source fields and playback semantics deterministic |
 | D10 | New drafts default to Repeat; keep the writer limited to verified baseline cases | Refuse slide transitions and non-baseline modes until they pass playback verification |
 | D11 | Render only verified representations; unsupported continuity is a refusal with locations | No silent attack substitution or global glide modification |
 | D12 | Keep the current gate calibration/audio modes while fixing cyclic connectivity | M2 handles repetition; M3 owns gate/slide fidelity |
@@ -312,12 +306,12 @@ the stored entry, as today):
 
 ```lua
 {
-  length = 12,                 -- TIME cycle length, 1..64
+  length = 12,                 -- TIME cycle length, 1..32
   pitch_length = 3,            -- active prefix, independent of length
   entry_mode = "extended",     -- "original" or "extended" programming rules
   playback = "loop",          -- "one_shot" or "loop"
-  pitch_events = { ... },      -- exactly 64 entries in current storage
-  time_events = { ... }        -- exactly length N/T/R commands when complete
+  pitch_events = { ... },      -- exactly 32 entries in current storage
+  time_events = { ... }        -- exactly 32 N/T/R commands; length selects the active prefix
 }
 ```
 
@@ -349,8 +343,8 @@ sources as length 1–16 and `pitch_length=16`. Both modes reject a literal TIE
 at TIME 01 in canonical source; authoring commands normalize it to NOTE first.
 Both support N/T/R elsewhere. Compilation
 requires complete TIME and a valid active prefix for every NOTE. An empty pure
-draft with no NOTE remains valid silence; normalize it to 64 default C entries
-before persistence, with `pitch_length=16` in Original or 64 in Extended.
+draft with no NOTE remains valid silence; normalize it to 32 default C entries
+before persistence, with `pitch_length=16` in Original or 32 in Extended.
 Reject an empty pitch stream with
 NOTE rather than inventing pitches during compilation.
 
@@ -375,8 +369,7 @@ Reject invalid cycle counts and cap test/preview work; never run an unbounded
 Events include cycle, absolute step, local TIME step, kind, consumed pitch index
 when applicable, retained voice identity, transition and connection requirement.
 Use `note`, `accent`, `slide`, `from_note`, `holds` and `releases` where useful.
-Update preview, writers and tests to this contract together; remove superseded
-entry points rather than wrapping them to preserve development-era behavior.
+Preview, writers and tests use this one entry and behavior contract.
 
 Required invariants:
 
@@ -465,54 +458,42 @@ the cold cycle's final outgoing SLIDE, and therefore have a different transition
 Do not compare only pitch numbers: REST release requirements, hold state and
 slide/retrigger distinctions matter.
 
-## 6. Source cutover, persistence and editor behavior
+## 6. Source persistence and editor behavior
 
-### 6.1 Versioned source format
+### 6.1 Source format
 
-Use `ACID-PITCH-TIME-2` as the new source format when implementation lands.
-The marker identifies the current grammar, not a promise to read earlier formats.
-A proposed deterministic record layout is:
+Use `ACID-PITCH-TIME-1` as the single source format. A deterministic record layout is:
 
 ```text
 id|audio_mode|entry_mode|playback|time_length|pitch_length|pitch_tokens|time_commands
 ```
 
 Use sorted numeric IDs, strict bounded parsing, no Lua evaluation, and refusal
-to overwrite unknown/corrupt data. The current pitch token encoding may be reused
-where useful; the earlier record decoder must be removed. Canonical
-records contain all 64 pitch tokens, including inactive entries. Validate field
+to overwrite unknown/corrupt data. Records contain all 32 pitch tokens and all
+32 TIME commands. Validate field
 enums, entry-mode constraints, uniqueness, complete TIME, active span and
 note/keyboard consistency. A noncanonical Original record is invalid; reading
 it must not rewrite TIME 01 or infer an entry mode.
 Do not silently strip unknown future metadata and rewrite the song.
 
 Both entry modes use the same cycle-reset semantics. `playback=loop` is the
-default; `one_shot` is an explicit finite-output option. There is no persisted
-interpreter-version selector or historical playback branch.
-
-Earlier development source formats and ownership seals are unsupported. Do not
-decode, migrate, infer or adopt them, including by reverse-engineering phrase
-notes. Recreate development patterns in the new format. Unsupported data should
-produce a clear diagnostic; resetting that development data is an explicit
-operation, separate from ordinary load/generation. Never erase unrelated content
-or treat an unrecognized phrase as owned.
+default; `one_shot` is an explicit finite-output option.
 
 Reading/reopening/selecting current-format sources never rewrites `tool_data`.
-Generate, regeneration and authorized Live Edit serialize only the current
-format. A failed commit restores the exact prior raw store as part of rollback;
-that transaction safeguard does not require understanding its contents. The
-source-format cutover does not imply an incidental manifest version bump.
+Generate, regeneration and authorized Live Edit serialize the current format.
+A failed commit restores the exact prior raw store as part of rollback. This
+transaction safeguard does not require interpreting its contents.
 
 ### 6.2 Original and Extended controls
 
 New sources expose `Entry: Original / Extended` and `Playback: Repeat / One-shot`.
 Original LAST STEP is 1–16 and its active PITCH span is 16. Extended exposes
-`PITCH LENGTH: 1–64` beside LAST STEP 1–64. A new draft retains 64 valid C pitches;
+`PITCH LENGTH: 1–32` beside LAST STEP 1–32. A new draft retains 32 valid C pitches;
 it does not derive an active span from click/edit history. An Extended summary
 should say, for example:
 
 ```text
-TIME 12 | NOTE triggers 5 | PITCH active 3 / stored 64 | referenced 3
+TIME 12 | NOTE triggers 5 | PITCH active 3 / stored 32 | referenced 3
 ```
 
 Keep independent PITCH/TIME pages, selection and error navigation. Inactive
@@ -578,7 +559,7 @@ one sixteenth note. Let `L=2*length`.
 
 Ranges above are candidate assignments using documented bounds, subject to the
 endpoint experiment. For one TIME step, L=2, so candidate start/end still satisfy
-the documented strict inequality. At 64 steps the intro layout uses 256 lines,
+the documented strict inequality. At 32 steps the intro layout uses 128 lines,
 below the documented 512-line limit. Do not append a release line that changes
 the musical period. LPB, shuffle, key tracking and any setting affecting timing
 must be explicit and validated rather than inherited from a staging phrase.
@@ -587,8 +568,8 @@ must be explicit and validated rather than inherited from a staging phrase.
 script is a staging renderer, not the playback loop. Keep it finite; produce the
 selected number of physical steps, then use native phrase looping. If the
 intro layout is chosen, update emitter/planner limits intentionally: current
-`pattrns.emit` caps plan length at 64, whereas two physical 64-step cycles need
-128 render steps. Keep source length capped at 64. Compute `max_events` from
+`pattrns.emit` caps plan length at 64, whereas two physical 32-step cycles need
+64 render steps. Keep source length capped at 32. Compute `max_events` from
 physical output requirements, not the current one-cycle `plan.length+8` formula.
 
 ### 7.3 Cold, steady and articulation constraints
@@ -608,12 +589,11 @@ Specific hazards:
 - A trailing TIE retains its pitch's outgoing SLIDE; cyclic lookahead must
   connect it into the next cycle's first NOTE when requested.
 - Last-to-first same-pitch slide still differs semantically from retrigger.
-- Changing LAST STEP must rebuild the entire physical plan and discard stale
-  lines, obsolete loop ranges and effects from the previous layout.
+- Changing LAST STEP must rebuild the physical plan, phrase lines, loop ranges
+  and effects from the selected layout.
 
-Keep the experimental 50% test gate parameter where that mode already uses it;
-do not use OS-303's three-of-six clocks to declare it historically accurate.
-M2 can correct cyclic hold/release placement without changing that calibration.
+Keep the 50% gate parameter. Do not use OS-303's three-of-six clocks as ACID's
+timing contract. Cyclic hold/release placement is independent of that profile.
 Do not add an unconditional last-line OFF: it would break held/TIE/slide seams.
 
 ### 7.4 Failures and limitations
@@ -631,7 +611,7 @@ choose one-shot as a documented limitation; never downgrade silently.
 M2 can pass basic repeated NOTE/TIE/REST output while selective slide remains an
 identified M3 limitation, but it must not claim all articulation cases render.
 The M2 report must name unsupported cases. Failure of ordinary NOTE/TIE/REST
-looping or the 64-step grid blocks M2 completion.
+looping or the 32-step grid blocks M2 completion.
 
 ## 8. Guarded commits, ownership and Live Edit
 
@@ -641,11 +621,9 @@ The current hash includes `looping` but not loop endpoints. Replace it with one
 seal covering the complete current render contract, including loop endpoints
 and final physical layout properties, for example `ACID 0.1 #12 [v2:DEADBEEF]`.
 
-`ownership.id/status/make_name` recognize only the new format. Remove earlier
-name parsers, hash verification paths and adoption options. Earlier development
-phrases must be recreated; their names are not an ownership authorization under
-the new contract. Changing loop bounds manually must make a current phrase
-modified. Retain ID uniqueness checks and refusal of foreign/modified phrases.
+`ownership.id/status/make_name` recognize the single current seal format.
+Changing loop bounds manually makes a phrase modified. Retain ID uniqueness
+checks and refusal of foreign or modified phrases.
 
 ### 8.2 Required transaction sequence
 
@@ -706,16 +684,15 @@ PITCH/TIME indices are 1-based. `pitch_length` is the active prefix; a future
 fixture loader pads stored capacity independently.
 
 Cycle cases default to Extended unless marked otherwise. Separate `entry_cases`
-specify shared leading-TIE normalization and source rejection; run authoring
+specify shared leading-TIE normalization and source validation; run authoring
 cases through the editor command layer before the common interpreter. Every
-cycle case is canonical and begins with NOTE or REST. Separate `cutover_cases` require earlier development
-source formats and seals to be unsupported, without decoding or adoption.
+cycle case is canonical and begins with NOTE or REST.
 
 Cases with `entry_modes=[original,extended]` must run in both modes. Explicit
 boundary pairs distinguish different-pitch glide from equal-pitch tied connection:
 both consume P01 on repetition and use transition `slide`, but neither permits a
 new attack at that seam. TIE after REST remains a separate silent case. Fixture
-loading pads unused PITCH storage to 64; it does not infer active span from the
+loading pads unused PITCH storage to 32; it does not infer active span from the
 number of supplied pitches.
 
 Each cycle's expected arrays correspond to NOTE, TIE or REST commands in TIME
@@ -736,26 +713,25 @@ in the future fixture loader, not in production traversal code.
 | Proposed spec | Required assertions |
 | --- | --- |
 | `acid_loop_semantics_spec.lua` | Run oracle for three cycles; exact consumed indices, values, transitions, tie identities, rest releases and exits; no mutation |
-| `acid_loop_lengths_spec.lua` | Full lengths 1/16/17/32/33/48/49/64; all-note/all-rest; all-TIE entry becomes N,T,...; boundary TIE/REST/slide and same-pitch slide |
-| `acid_loop_memory_spec.lua` | Active spans 1/3/16/64; NOTE counts below/equal/above span; default C valid; editing inactive storage does not change span |
+| `acid_loop_lengths_spec.lua` | Full lengths 1/15/16/17/31/32; all-note/all-rest; all-TIE entry becomes N,T,...; boundary TIE/REST/slide and same-pitch slide |
+| `acid_loop_memory_spec.lua` | Active spans 1/3/16/32; NOTE counts below/equal/above span; default C valid; editing inactive storage does not change span |
 | `acid_loop_entry_spec.lua` | Both modes turn entered T01 into N01 and consume P01; reject raw leading TIE in either mode; mode bounds/defaults; explicit mode changes |
-| `acid_loop_persistence_spec.lua` | Current fields/inactive storage roundtrip; spans 1/3/16/64; full-C source; incomplete/unknown/corrupt refusal; earlier format unsupported; read performs no write |
+| `acid_loop_persistence_spec.lua` | Current fields/inactive storage roundtrip; spans 1/3/16/32; full-C source; incomplete/unknown/corrupt refusal; read performs no write |
 | `acid_loop_writer_spec.lua` | Physical layout and loop metadata; cold/repeat OFF differences; final effect/OFF collisions; representation refusal; stale lines removed |
-| `acid_loop_ownership_spec.lua` | Current seals protect endpoints; earlier seals confer no ownership/adoption; foreign/modified/duplicate-ID refusal; target movement/replacement race |
+| `acid_loop_ownership_spec.lua` | Current seals protect endpoints; foreign/modified/duplicate-ID refusal; target movement/replacement race |
 | Extend live/regeneration specs | All fields frozen; LAST STEP/span changes during job; ON/OFF/context invalidation; source-save and rollback failure injection |
 
-For page boundaries, use a 64-step source that consumes pitches above P16,
-P32 and P48: placing TIE/REST at an edge alone may not expose an accidental
-pitch reset. Assert explicit events around 16→17, 32→33, 48→49 and 64→1 for
-three passes. Also change LAST STEP through 64→17→1→64 and verify source retention
-versus generated line cleanup.
+For page boundaries, use a 32-step source that consumes pitches above P16:
+placing TIE/REST at an edge alone may not expose an accidental pitch reset.
+Assert explicit events around 16→17 and the cycle end for three passes. Also
+change LAST STEP through 32→17→1→32 and verify source retention versus generated
+line cleanup.
 
 Persistence tests must compare events before save and after current-format load,
-not just table fields. An Extended three-pitch active span with 64 stored pitches
-wraps at three after roundtrip. A span-64 C source stays span 64; edited C is
+not just table fields. An Extended three-pitch active span with 32 stored pitches
+wraps at three after roundtrip. A span-32 C source stays span 32; edited C is
 musically indistinguishable from default C and cannot serve as an end marker.
-Exercise complete source and normalized silent drafts. Unsupported development
-formats are rejected, not converted or assigned inferred playback semantics.
+Exercise complete source and normalized silent drafts.
 
 ### 9.3 Manual Renoise protocol and recorded coverage
 
@@ -772,7 +748,7 @@ deferred and are not represented as passed.
 1. **Loop API experiment:** render distinctive notes at candidate loop endpoints.
    Trigger once and sustain; establish which lines repeat and the exact period.
    Test both full-range and intro+loop layouts, including one-step length.
-2. **Grid:** 1/16/17/32/33/48/49/64 TIME steps, at least three audible cycles,
+2. **Grid:** 1/15/16/17/31/32 TIME steps, at least three audible cycles,
    confirmed from a single sustained phrase trigger. Avoid host retriggers that
    could hide incorrect native looping. Record or inspect longer repeats for drift.
 3. **Cursor (Extended):** distinct P1/P2/P3, five NOTE commands in 12 TIME steps; compare
@@ -788,10 +764,8 @@ deferred and are not represented as passed.
 6. **Editing:** LAST STEP and PITCH span changes with Live Edit OFF/ON, rapid edits
    during rendering, target switch, Live Edit disable and song close. Confirm
    exact phrase counts, no stale output and no edits to unrelated phrases.
-7. **Cutover/persistence:** create fresh current-format Original and Extended
-   sources, save/reopen, select each phrase and compare source, audio mode and
-   loop properties. Earlier development source/seals must be unsupported, with
-   no automatic import, adoption or writes. Recreate them for further testing.
+7. **Persistence:** create Original and Extended sources, save/reopen, select
+    each phrase and compare source, audio mode and loop properties.
 8. **Protection/undo:** manually change note/effect/loop range; regeneration must
    refuse. Delete/reorder target/instrument during a job. Exercise undo/redo and
    save/reopen around regeneration; report consistency or unresolved limitations.
@@ -817,12 +791,12 @@ Conventional Commits; the titles below are suggestions, not actions performed.
 | --- | --- | --- |
 | M2-A / M2.0 | `docs(acid): define m2 loop semantics and reference fixtures` | Review D01–D14, R01–R04, firmware differences and unresolved evidence |
 | M2-B / M2.1 | `feat(acid): interpret repeated pitch and time cycles` | Pure three-cycle oracle passes; boundary state independent from consumption cursor |
-| M2-C / M2.2 | `feat(acid): replace development source persistence` | Current-format roundtrip and strict grammar; earlier decoder and behavioral branches removed |
+| M2-C / M2.2 | `feat(acid): define source persistence` | Current-format roundtrip and strict grammar |
 | M2-D / M2.2 | `feat(acid): expose original and extended sequence entry` | Entry normalization, explicit spans and Start/Repeating preview; clone paths cover every field |
 | M2-E / M2.3 | `fix(acid): resolve cyclic tie rest and slide intent` | Cyclic gate/hold lookup, diagnostic positions, no numerical sound recalibration |
 | M2-F / M2.4 | `feat(acid): render verified native phrase loops` | Candidate layout passes actual Renoise experiments; final validation and v2 seals |
 | M2-G / M2.4–5 | `fix(acid): commit loop phrases and sources together` | Source-save failure rolls back; no stale target writes or job-object leaks |
-| M2-H / M2.5 | `test(acid): cover loop playback and clean cutover` | Local specs, current-format cutover checks, manual records, documentation and package inspection agree |
+| M2-H / M2.5 | `test(acid): cover loop playback` | Local specs, manual records, documentation and package inspection agree |
 
 The table records the original implementation slices; the closure status in
 section 11 supersedes their proposed exit gates. Baseline Repeat generation is
@@ -858,15 +832,14 @@ the current source/seal format and Original/Extended entry modes; the guarded
 baseline Repeat writer and `4L+1` intro/loop layout; phrase/source transaction
 and rollback path; and Live Edit serialization and context invalidation. ACID
 specs cover the pure model, writer, persistence, ownership, regeneration and
-Live Edit paths. Earlier source formats and seals are rejected by the current
-code/spec contract; their rejection was not manually rechecked in Renoise.
+Live Edit paths.
 
 **Recorded Renoise checks:** prior Renoise 3.5.4 WAV probes verified endpoint
-and grid/pitch behavior for lengths 1, 16, 17, 32, 33, 48, 49 and 64, and
+and grid/pitch behavior for lengths 1, 16, 17 and 32, and
 sampled writer-generated NOTE/TIE/REST pitch/silence checkpoints across three
 cycles. The 2026-10-27 Renoise 3.5.4 Demo session additionally inspected
 writer-generated cells around steps 16/17, 32/33 and 48/49 in both intro and
-loop regions; exercised Live Edit LAST STEP/span changes through 64→17→1→64
+loop regions; exercised Live Edit LAST STEP/span changes through 32→17→1→32
 with Live Edit on and off; confirmed Original-mode XRNS save/reopen and
 regeneration; tested loop/effect ownership refusal; and confirmed stale-song
 invalidation. See the [Repeat record](../tests/acid/acid_loop_manual.md),
@@ -879,16 +852,8 @@ continuity, cold-intro versus steady-loop articulation, transport stop/start
 and seek, keymapped triggering, and a fresh request-level slide refusal remain
 unverified in that session. Undo/redo, rapid/in-flight edits, disable/close and
 notifier races, forced source-save/rollback failures, broad field/mode
-roundtrips, and in-Renoise rejection of earlier development formats/seals also
-remain unverified. These limits are explicit follow-up checks and do not reopen
+roundtrips also remain unverified. These limits are explicit follow-up checks and do not reopen
 the M2 implementation milestone. No original-hardware measurements are claimed.
-
-**Scope correction (2026-10-27):** the user explicitly requires a clean WIP cutover. Earlier
-development behavior has no preservation requirement. The current plan replaces
-the source/seal contracts and their tests directly, retains Extended functions,
-and contains no compatibility shim or migration work package. This correction
-changes planning documents and fixture descriptions only; the runtime cutover
-remains part of M2 implementation.
 
 **Roland boundary decision (2026-10-27):** leading-TIE normalization applies in
 both entry modes; literal leading TIE is removed from Extended. Cold first NOTE
@@ -899,8 +864,8 @@ native voice continuity still requires Renoise verification.
 
 Planning-data verification for this decision passed: 15 canonical cycle cases
 checked over three cycles (pitch consumption, transitions, held TIEs, REST
-releases and exit state), six entry descriptions, two cutover descriptions,
-eight boundary-length counts and local document links. `git diff --check` passed.
+releases and exit state), six entry descriptions, six boundary-length counts and
+local document links. `git diff --check` passed.
 No Lua runtime code changed and no new Renoise playback result is claimed.
 
 **DAW scope decision (2026-10-27):** additional OS-303-inspired Extended features

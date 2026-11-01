@@ -1,5 +1,8 @@
 -- Create a disposable flat-velocity reference phrase for accent response measurements.
 local song=assert(renoise.song(),"Open the disposable ACID song first")
+local LINES_PER_STEP=4
+local HALF_STEP_LINE_OFFSET=2
+local PHRASE_LPB=16
 local case_id=rawget(_G,"ACID_ACCENT_CONTROL_CASE") or "alternating"
 assert(case_id=="alternating" or case_id=="consecutive","Accent control must be alternating or consecutive")
 local probe
@@ -27,10 +30,10 @@ sample.sample_mapping.map_velocity_to_volume=true
 assert(sample.modulation_set_index==0 and sample.sample_mapping.map_velocity_to_volume,"Could not configure the flat mapped-velocity profile")
 local phrase=probe:insert_phrase_at(#probe.phrases+1)
 phrase.name=phrase_name
-phrase.number_of_lines=8
+phrase.number_of_lines=event_count*LINES_PER_STEP
 phrase.visible_note_columns=1
 phrase.visible_effect_columns=1
-phrase.lpb=8
+phrase.lpb=PHRASE_LPB
 phrase.looping=false
 phrase.loop_start=1
 phrase.loop_end=phrase.number_of_lines
@@ -42,17 +45,18 @@ local event_count=case_id=="alternating" and 4 or 3
 local velocities={}
 for step=1,event_count do velocities[step]=accent_by_step[step] and 255 or 89 end
 for step=1,event_count do
-  local note=phrase:line((step-1)*2+1).note_columns[1]
+  local start_line=(step-1)*LINES_PER_STEP+1
+  local note=phrase:line(start_line).note_columns[1]
   note.note_value=48
   note.volume_value=velocities[step]
-  phrase:line((step-1)*2+2).note_columns[1].note_value=renoise.PatternLine.NOTE_OFF
+  phrase:line(start_line+HALF_STEP_LINE_OFFSET).note_columns[1].note_value=renoise.PatternLine.NOTE_OFF
 end
 probe.phrase_program=#probe.phrases
 for index,instrument in ipairs(song.instruments) do if rawequal(instrument,probe) then song.selected_instrument_index=index; break end end
 local output=assert(io.open(output_path,"wb"))
 output:write("format=ACID-NATIVE-ACCENT-1\ncase_id=native_accent_"..case_id.."\nmapping.map_velocity_to_volume=true\nsample.modulation_set_index=0\n")
 output:write("sample.frame_count="..sample.sample_buffer.number_of_frames.."\naccent_velocity_cells=89,255\naccent_steps="..table.concat(accent_steps,",").."\n")
-output:write("event_count="..event_count.."\nphrase_program="..probe.phrase_program.."\nphrase.name="..phrase.name.."\nphrase.line_count="..phrase.number_of_lines.."\nphrase.looping=false\n")
+output:write("event_count="..event_count.."\nphrase_program="..probe.phrase_program.."\nphrase.name="..phrase.name.."\nphrase.lpb="..phrase.lpb.."\nphrase.line_count="..phrase.number_of_lines.."\nphrase.looping=false\n")
 output:write("transport.bpm="..song.transport.bpm.."\ntransport.lpb="..song.transport.lpb.."\ntransport.tpl="..song.transport.tpl.."\n")
 for line=1,phrase.number_of_lines do local cell=phrase:line(line).note_columns[1]; output:write("phrase.line."..line.."="..cell.note_value..","..cell.volume_value.."\n") end
 output:close()

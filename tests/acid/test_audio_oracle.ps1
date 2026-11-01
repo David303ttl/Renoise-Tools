@@ -14,6 +14,7 @@ $mutations = @(
   @{ name = 'silence across attack'; change = { param($o) $o.cases[0].expected.silence_windows[0].start_step = 0 }; error = 'silence window overlaps expected onset' },
   @{ name = 'premature calibration silence'; change = { param($o) ($o.cases | Where-Object id -eq $o.capture_requirements.calibration_case).expected.silence_windows[0].start_step = 0.54 }; error = 'start silence after the release-tail deadline' },
   @{ name = 'invalid TIME'; change = { param($o) $o.cases[0].source.time[0] = 'X' }; error = 'invalid TIME command' },
+  @{ name = 'source length over capacity'; change = { param($o) $c=$o.cases[0];$c.source.length=33;$c.source.time=@('N')+@('T')*32 }; error = 'invalid canonical source' },
   @{ name = 'profile mismatch'; change = { param($o) $o.cases[0].profile.id = 'wrong' }; error = 'reference profile mismatch' },
   @{ name = 'missing window coordinate'; change = { param($o) $o.cases[0].expected.pitch_windows[0].Remove('start_step') }; error = 'finite nonnegative number' },
   @{ name = 'unknown control'; change = { param($o) $o.cases[0].controls[0].id = 'missing-control' }; error = 'unresolved control reference' },
@@ -71,7 +72,7 @@ try {
       throw "$id must release at the REST boundary"
     }
   }
-  foreach ($length in @(16, 17, 32, 33, 48, 49, 64)) {
+  foreach ($length in @(16, 17, 32)) {
     $case = $authored.cases | Where-Object id -eq "repeat_slide_seam_length_$length"
     if (@($case.expected.onsets).Count -ne 1 -or
         @($case.expected.continuity_windows).Count -ne 3 -or

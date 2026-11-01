@@ -126,11 +126,11 @@ $oracle = [ordered]@{
   format='ACID-AUDIO-ORACLE-1'
   status='Independent native 0G rate, REST-interruption, and post-glide NOTE protocols. Ready means the windows are authored; native playback is unverified.'
   index_base=0
-  step_unit='one straight TIME sixteenth; 1 step = 2 phrase lines at phrase LPB 8'
+  step_unit='one straight TIME sixteenth; 1 step = 4 phrase lines at phrase LPB 16'
   capture_requirements=@{sample_rate=48000;preferred_channels=1;allowed_channels=@(1,2);preferred_pcm_bits=24;allowed_pcm_bits=@(16,24,32);peak_ceiling_dbfs=-6;calibration_case='grid_calibration_all_note_pitch_span_16';align_once_to_first_onset=$true;no_per_cycle_realign=$true}
   profile=@{sample_rate=44100;sample_fundamental_hz=262.5;sample_frames=168;root_note=48;id='acid-reference-168-frame-saw';envelope=@{attack_ms=10;decay_ms=20;sustain=0.65;release_ms=5}}
   analysis_defaults=@{silence_rms_dbfs=-60;release_tail_tolerance_ms=5;onset_tolerance_ms=5;pitch_tolerance_cents=15}
-  sweep_model='Four-semitone coverage prediction: ceil(4*16/effect-amount) command lines, each 7500/BPM ms at LPB8/TPL12; two phrase lines per straight step. Compare native 0G08/20/40 at 90 and 150 BPM. This is a protocol prediction based on the existing independent native control, not a runtime support claim.'
+  sweep_model='Four-semitone coverage prediction: ceil(4*16/effect-amount) command lines, each 3750/BPM ms at phrase LPB16; four phrase lines per straight step. Compare native 0G08/20/40 at 90 and 150 BPM.'
   cases=@($cases)
 }
 $fullPath = [System.IO.Path]::GetFullPath($OutputPath)

@@ -4,6 +4,7 @@ local function observable()
   local handlers={}
   return {
     add_notifier=function(_,handler) handlers[handler]=true end,
+    has_notifier=function(_,handler) return handlers[handler]==true end,
     remove_notifier=function(_,handler) handlers[handler]=nil end,
     fire=function(self)
       local pending={}
@@ -39,17 +40,19 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
 
 local phrase_one={id=11,name="Owned one"}
-local phrase_two={id=12,name="Owned two"}
+local phrase_two={id=12,name="ACID 0.1 #12 [v3:00000000]",invalid_seal=true}
 local instrument={name="Target",phrases={phrase_one,phrase_two},phrase_program=1,
+  name_observable=observable(),phrases_observable=observable(),
   samples={},sample_modulation_sets={},sample_device_chains={}}
 local other_owned={id=21,name="Other owned"}
 local other_foreign={id=22,name="Other foreign",foreign=true}
 local other_instrument={name="Other target",phrases={other_owned,other_foreign},
   phrase_program=1,samples={},sample_modulation_sets={},sample_device_chains={}}
 local song={selected_instrument_index=1,selected_instrument=instrument,
+  instruments_observable=observable(),selected_instrument_observable=observable(),
   selected_phrase=phrase_one,selected_phrase_observable=observable(),
   instruments={instrument,other_instrument}}
 local current_builder
@@ -66,48 +69,161 @@ function app:show_warning(message) warnings[#warnings+1]=message end
 
 local persisted_drafts={}
 local fail_draft_persistence=false
-local fail_draft_clear=false
-package.loaded["model.pattern_store"]={load=function(_,phrase)
-  local source=require("model.sequencer").new_pattern(16)
-  return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
+local committed_entries={}
+local next_revision_id=100
+local sequencer=require("model.sequencer")
+local function store_entry(id,source,policy,pb_range)
+  local copied=assert(sequencer.copy_source(source))
+  committed_entries[id]={source=copied,policy=policy,pb_range=pb_range}
+end
+local function read_entry(_,id)
+  local entry=committed_entries[id]
+  if not entry then return nil,"test source revision is missing" end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
+end
+package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+  local entry=committed_entries[phrase.id]
+  if not entry then
+    local source=sequencer.new_pattern(16)
+    store_entry(phrase.id,source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0)
+    entry=committed_entries[phrase.id]
+  end
+  return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end,
-  write_draft=function(_,index,phrase_id,name,pattern,policy,pb_range)
+  read_entry=read_entry,
+  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end
     persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,
       pb_range=pb_range,name=name}
     return true
   end,
-  read_draft=function(_,index,phrase_id,name)
+  read_draft=function(song,instrument,phrase)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id,name=phrase and phrase.id or 0,instrument.name
     local item=persisted_drafts[index..":"..phrase_id]
     if not item then return nil end
     assert(item.name==name)
     return item.pattern,item.policy,item.pb_range
   end,
-  clear_draft=function(_,index,phrase_id)
-    if fail_draft_clear then return nil,"test cleanup failure" end
+  clear_draft=function(song,instrument,phrase)
+    local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
+    local phrase_id=phrase and phrase.id or 0
     persisted_drafts[index..":"..phrase_id]=nil
     return true
   end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
-package.loaded["writers.phrase_ownership"]={
-  status=function(phrase)return phrase.foreign and "foreign" or "owned" end,
-  id=function(phrase)return phrase.id end
+package.loaded["renoise.phrase_ownership"]={
+  status=function(phrase)
+    if phrase.foreign then return "foreign" end
+    return phrase.invalid_seal and "modified" or "owned"
+  end,
+  id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
+  snapshot_index=function()return nil end,
+  capture_recovery=function()return {} end,
+  matches_recovery=function(_,token)return type(token)=="table" end,
+  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
+local active_request
+local sync_next_result
+local function terminal_result(call,status,message)
+  local success=status=="committed" or status=="approximate"
+  local phrase=call.phrase or call.request.phrase
+  if success and call.request.kind=="regenerate" then
+    next_revision_id=next_revision_id+1
+    local revision_id=next_revision_id
+    call.request:mutate(call.request.token,function()
+      local accepted,revision_error=call.request:expect_revision(call.request.token,revision_id)
+      assert(accepted,revision_error)
+      phrase.id=revision_id
+      phrase.baseline_revision=(phrase.baseline_revision or 0)+1
+    end)
+  end
+  local result={kind=success and "success" or "failure",status=status or (success and "committed" or "failed"),
+    verified=success,token=call.request.token,epoch=call.request.epoch,request=call.request,
+    phrase=success and phrase or nil,reason=success and nil or (message or "invalidated"),
+    message=message or "invalidated"}
+  if success then
+    if phrase and phrase.id then
+      store_entry(phrase.id,call.request.source,call.request.output_policy,call.request.pb_range)
+    end
+    local ok,candidate=pcall(function()
+      return require("writers.phrase_validator").classify(call.request.song,
+        call.request.instrument,phrase,{},{},{})
+    end)
+    if ok and candidate then
+      result.baseline={id=phrase.id,source=candidate.source,settings=candidate.settings,
+        snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
+    else
+      result.baseline={id=phrase and phrase.id,source=call.request.source,
+        settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
+        snapshot={content=phrase and phrase.baseline_revision or 0},planning_inputs={}}
+    end
+  end
+  return result
+end
+local function start(kind,request,done)
+  local call={kind=kind,request=request,token=request.token,source=request.source,
+    pb_range=request.pb_range}
+  call.pattern=request.source
+  for index,instrument in ipairs(request.song.instruments) do
+    if rawequal(instrument,request.instrument) then call.instrument_index=index;break end
+  end
+  if kind=="create" then
+    call.target=#request.instrument.phrases+1
+  else
+    for index,phrase in ipairs(request.instrument.phrases) do
+      if rawequal(phrase,request.phrase) then call.target=index;break end
+    end
+  end
+  call.options={token=request.token,pb_range=request.pb_range,
+    phrase_mutation=function(action)
+      local values={n=0}
+      local function packed(...) return {n=select("#",...),...} end
+      local ok,out=pcall(function() return packed(request:mutate(request.token,action)) end)
+      if not ok then error(out,0) end
+      if kind=="create" and out.n>0 and type(out[1])=="table" then call.phrase=out[1] end
+      return (unpack or table.unpack)(out,1,out.n)
+    end}
+  tool.writer_calls[#tool.writer_calls+1]=call
+  active_request=request
+  local callback_index=#render_callbacks+1
+  call.completed=false
+  render_callbacks[callback_index]=function(result)
+    active_request=nil
+    call.completed=true
+    done(result)
+    tool.app_idle_observable:fire()
+  end
+  if sync_next_result then
+    local status=sync_next_result
+    sync_next_result=nil
+    local result=terminal_result(call,status)
+    render_callbacks[callback_index](result)
+  end
+  return true
+end
 package.loaded["writers.phrase_writer"]={
-  generate=function(instrument_index,callback,pattern,target,options)
-    tool.writer_calls[#tool.writer_calls+1]={instrument_index=instrument_index,
-      target=target,options=options,pattern=pattern}
-    render_callbacks[#render_callbacks+1]=callback
-    return true
+  create=function(request,done) return start("create",request,done) end,
+  regenerate=function(request,done) return start("regenerate",request,done) end,
+  state=function()
+    return active_request and "busy" or "idle",active_request and active_request.token or nil
   end,
-  cancel=function()return true end
+  is_temporary=function()return false end,
+  cancel=function(token)
+    return active_request~=nil and rawequal(active_request.token,token)
+  end,
+  release=function()end
 }
+
 local editor_module=require("model.editor_state")
 local force_diagnostic=false
 package.loaded["model.editor_state"]={
+  MAX_PAGES=editor_module.MAX_PAGES,
   project=function(pattern)
     if force_diagnostic then
       return {error={step=3,pitch_index=2,message="TIME step 03: test diagnostic."},
@@ -130,6 +246,7 @@ renoise={
   app=function()return app end
 }
 
+dofile("tests/acid/gui_host_stub.lua")
 local function open_gui()
   require("gui").show()
   return current_builder,dialogs[#dialogs]
@@ -153,6 +270,12 @@ end
 
 local builder,dialog=open_gui()
 local phrase_choice=popup(builder,360)
+assert(phrase_choice.items[2]:find("%(tagged%)$") and
+  not phrase_choice.items[2]:find("%(ACID%)"),
+  "a recognized ID with an invalid seal is labeled tagged, not verified ownership: "..
+    tostring(phrase_choice.items[2]))
+phrase_two.name="Owned two"
+phrase_two.invalid_seal=nil
 assert(pb_range_popup(builder).value==2,"the selected phrase restores its stored PB Range")
 builder.views.acid_program_key_popup:fire(2)
 phrase_choice:fire(2)
@@ -183,6 +306,12 @@ assert(recovered_status.text:find("Recovered saved draft",1,true),
   "draft recovery reports song persistence")
 tool.app_release_document_observable:fire()
 assert(#warnings==0,"song-persistent drafts do not show a loss warning")
+dialog.visible=false
+builder,dialog=open_gui()
+phrase_choice=popup(builder,360)
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="multiline_textfield" then recovered_status=node end
+end
 pb_range_popup(builder):fire(1)
 button(builder,"Undo"):fire()
 assert(pb_range_popup(builder).value==2,"Undo restores the previous PB Range")
@@ -190,14 +319,17 @@ button(builder,"Redo"):fire()
 assert(pb_range_popup(builder).value==1,"Redo restores the changed PB Range")
 pb_range_popup(builder):fire(3)
 force_diagnostic=true
+song.selected_phrase_observable:fire()
 builder.views.acid_editor_view:fire(2)
 local go_to_error=button(builder,"Go to source error")
 assert(go_to_error.active,"invalid source exposes diagnostic navigation: "..builder.views.acid_source_diagnostic.text)
 go_to_error:fire()
+builder.views.acid_editor_view:fire(1)
 assert(builder.views.acid_program_time_position.value==3 and
   builder.views.acid_program_pitch_position.value==2,
   "diagnostic navigation selects the failing TIME and PITCH positions")
 force_diagnostic=false
+song.selected_phrase_observable:fire()
 builder.views.acid_editor_view:fire(1)
 fail_draft_persistence=true
 builder.views.acid_program_key_popup:fire(6)
@@ -207,6 +339,10 @@ tool.app_release_document_observable:fire()
 assert(#warnings==1 and warnings[1]:find("could not be saved",1,true),
   "volatile draft persistence failure warns before song close")
 fail_draft_persistence=false
+dialog.visible=false
+builder,dialog=open_gui()
+phrase_choice=popup(builder,360)
+builder.views.acid_program_pitch_position:fire(2)
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
@@ -214,14 +350,19 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
-assert(builder.views.acid_live_edit_state.text:find("RENDERING",1,true),
-  "arming Live Edit immediately renders the current source")
+assert(#render_callbacks==0,"arming Live Edit does not write")
+builder.views.acid_program_key_popup:fire(5)
+assert(builder.views.acid_live_edit_state.text=="LIVE EDIT DIRTY",
+  "editing the armed source leaves a queued edit: "..builder.views.acid_live_edit_state.text)
+assert(#render_callbacks==1,"source editing starts Live Edit inside the user edit callback")
+tool.app_idle_observable:fire()
 assert(#render_callbacks==1 and tool.writer_calls[1].options.token,
-  "Live Edit passes a cancellation token to the writer")
+  "idle does not start a duplicate writer call and Live Edit passes its token")
 assert(tool.writer_calls[1].options.pb_range==12,
   "Live Edit passes the selected PB Range to the renderer")
-render_callbacks[1]({kind="complete",status="error",message="temporary render failure",
-  diagnostics={"temporary render failure"}})
+local first_failure=terminal_result(tool.writer_calls[1],"error","temporary render failure")
+first_failure.diagnostics={"temporary render failure"}
+render_callbacks[1](first_failure)
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
 assert(builder.views.acid_live_edit_state.text:find("ERROR",1,true),
   "last Live Edit failure remains visible")
@@ -231,6 +372,7 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(status.text=="LIVE EDIT ERROR: temporary render failure",status.text)
 builder.views.acid_program_key_popup:fire(6)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key==5,
   "a source edit immediately retries the armed Live Edit: callbacks="..
     #render_callbacks.." calls="..#tool.writer_calls.." key="..
@@ -239,98 +381,273 @@ builder.views.acid_program_key_popup:fire(7)
 assert(#render_callbacks==2 and #tool.writer_calls==2,
   "rapid edits coalesce while one render is active")
 local long_diagnostic=string.rep("TIME step 05: SLIDE approximated: bend range exceeded; ",40)
-render_callbacks[2]({kind="complete",status="error",message=long_diagnostic,
-  diagnostics={long_diagnostic}})
+local stale_failure=terminal_result(tool.writer_calls[2],"error",long_diagnostic)
+stale_failure.diagnostics={long_diagnostic}
+render_callbacks[2](stale_failure)
 assert(#render_callbacks==3 and tool.writer_calls[3].pattern.pitch_events[2].key==6,
   "the in-flight follow-up renders the newest source immediately: P1="..
     tostring(tool.writer_calls[3].pattern.pitch_events[1].key).." P2="..
     tostring(tool.writer_calls[3].pattern.pitch_events[2].key))
-assert(status.text:find(long_diagnostic,1,true),
-  "the bounded details field retains the complete diagnostic")
+assert(not status.text:find(long_diagnostic,1,true), "a superseded request cannot replace current details with a stale error")
 assert(not builder.views.acid_live_edit_state.text:find(long_diagnostic,1,true),
   "the live status does not duplicate long diagnostics into an auto-sizing text view")
-fail_draft_clear=true
-render_callbacks[3]({kind="complete",status="approximate",message="recovered with approximation",
-  diagnostics={"slide approximated"}})
+local approximate_result=terminal_result(tool.writer_calls[3],"approximate","recovered with approximation")
+approximate_result.diagnostics={"slide approximated"}
+render_callbacks[3](approximate_result)
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
-assert(status.text=="LIVE EDIT APPROXIMATE: recovered with approximation\nslide approximated\n"..
-  "DRAFT WARNING: Phrase committed, but its saved draft could not be cleared: test cleanup failure",
-  status.text)
+assert(status.text:find("LIVE EDIT APPROXIMATE: recovered with approximation",1,true),status.text)
 assert(builder.views.acid_live_edit_state.text:find("APPROXIMATE",1,true),
   "draft cleanup failure does not change a successful render status")
-fail_draft_clear=false
+
 
 phrase_choice:fire(2)
+assert(#render_callbacks==3,"destination navigation does not write")
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==4,
-  "selecting a destination with a recovered draft resumes Live Edit")
+  "editing a destination with a recovered draft resumes Live Edit")
 assert(tool.writer_calls[4].options.pb_range==48,
   "Live Edit restores and passes the newly selected phrase's PB Range")
-render_callbacks[4]({kind="complete",status="committed",message="owned phrase rebound"})
+render_callbacks[4](terminal_result(tool.writer_calls[4],"committed","owned phrase rebound"))
 local target_popup=popup(builder,290)
 target_popup:fire(2)
+phrase_choice:fire(1)
+assert(#render_callbacks==4,"instrument navigation does not write")
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==5,
   "explicit instrument selection rebinds Live Edit to its selected owned phrase")
-render_callbacks[5]({kind="complete",status="committed",message="instrument rebound"})
+render_callbacks[5](terminal_result(tool.writer_calls[5],"committed","instrument rebound"))
 phrase_choice:fire(3)
+assert(#render_callbacks==5,"new phrase navigation does not write")
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==6 and tool.writer_calls[6].target==3,
-  "selecting NEW PHRASE immediately starts an append render")
-builder.views.acid_program_key_popup:fire(9)
+  "editing NEW PHRASE starts an append render: "..#render_callbacks.." / "..tostring(tool.writer_calls[#tool.writer_calls].target).." / "..status.text)
 local explicit_append={id=23,name="ACID explicit append"}
-other_instrument.phrases[3]=explicit_append
-render_callbacks[6]({kind="complete",status="committed",message="initial append",
-  target={instrument_index=2,phrase_index=3}})
+tool.writer_calls[6].options.phrase_mutation(function()
+  other_instrument.phrases[3]=explicit_append
+  return explicit_append
+end)
+builder.views.acid_program_key_popup:fire(9)
+render_callbacks[6](terminal_result(tool.writer_calls[6],"committed","initial append"))
+builder.views.acid_program_key_popup:fire(9)
+
 assert(phrase_choice.value==3 and #render_callbacks==7 and tool.writer_calls[7].target==3,
-  "an edit during first append moves to its committed phrase and renders the newest source")
+  "an edit after accepted create regenerates the returned destination")
 assert(tool.writer_calls[7].pattern.pitch_events[1].key==8,
-  "the follow-up append render uses the edit made while the first render was active")
-render_callbacks[7]({kind="complete",status="committed",message="explicit phrase updated",
-  target={instrument_index=2,phrase_index=3}})
+  "the follow-up regeneration uses the newest source")
+render_callbacks[7](terminal_result(tool.writer_calls[7],"committed","explicit phrase updated"))
 phrase_choice:fire(2)
-assert(live_checkbox.value and #render_callbacks==8 and tool.writer_calls[8].target==4,
-  "foreign phrase selection redirects to a new append slot")
-assert(other_instrument.phrases[2]==other_foreign,
-  "foreign phrase remains untouched while Live Edit appends a separate phrase")
-local separate_owned={id=24,name="ACID foreign replacement"}
-other_instrument.phrases[4]=separate_owned
-render_callbacks[8]({kind="complete",status="committed",message="foreign redirected",
-  target={instrument_index=2,phrase_index=4}})
-assert(phrase_choice.value==4,"successful redirect binds the new owned phrase")
+assert(#render_callbacks==7,"foreign phrase navigation does not write")
+builder.views.acid_program_key_popup:fire(2)
+assert(live_checkbox.value and #render_callbacks==7,
+  "foreign phrase edits reject without overwriting or appending")
+assert(other_instrument.phrases[2]==other_foreign)
+phrase_choice:fire(4)
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
+assert(#render_callbacks==8 and tool.writer_calls[8].target==4,
+  "only explicit New selection allows creating a separate phrase")
+local separate_owned={id=24,name="ACID explicit New phrase"}
+tool.writer_calls[8].options.phrase_mutation(function()
+  other_instrument.phrases[4]=separate_owned
+  return separate_owned
+end)
+render_callbacks[8](terminal_result(tool.writer_calls[8],"committed","foreign redirected"))
+assert(phrase_choice.value==4,"successful explicit create binds the returned phrase")
 builder.views.acid_program_key_popup:fire(8)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==9 and tool.writer_calls[9].target==4,
-  "the edit after foreign redirection regenerates its new owned phrase")
-render_callbacks[9]({kind="complete",status="committed",message="separate phrase updated",
-  target={instrument_index=2,phrase_index=4}})
+  "the next edit regenerates the explicit created phrase")
+render_callbacks[9](terminal_result(tool.writer_calls[9],"committed","separate phrase updated"))
 assert(#other_instrument.phrases==4 and other_instrument.phrases[2]==other_foreign,
   "foreign phrase stays in place and repeated edits do not append duplicates")
 assert(live_checkbox.value and status.text=="LIVE EDIT COMMITTED: separate phrase updated",status.text)
 builder.views.acid_program_key_popup:fire(8)
-other_instrument.phrases[4].foreign=true
-render_callbacks[10]({kind="complete",status="suspended",code="safety.target_changed",
-  category="safety",message="target phrase changed during generation"})
-assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
-  "a target ownership change during rendering immediately redirects to append")
-assert(other_instrument.phrases[4]==separate_owned,
-  "the changed target object is retained without overwrite")
-local safety_append={id=25,name="ACID safety append"}
-other_instrument.phrases[5]=safety_append
-render_callbacks[11]({kind="complete",status="committed",message="safety append committed",
-  target={instrument_index=2,phrase_index=5}})
-assert(phrase_choice.value==5,"safety redirect binds the separately appended owned phrase")
+assert(#render_callbacks==9,"an unchanged PITCH value does not render")
 builder.views.acid_program_key_popup:fire(9)
+tool.app_idle_observable:fire()
+other_instrument.phrases[4].foreign=true
+render_callbacks[10](terminal_result(tool.writer_calls[10],"suspended",
+  "target phrase changed during generation"))
+assert(#render_callbacks==10,
+  "a target ownership change during rendering cannot redirect to append")
+assert(other_instrument.phrases[4]==separate_owned)
+phrase_choice:fire(5)
+builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
+assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
+  "a fresh edit on explicitly selected New can create after blocked target rejection")
+local safety_append={id=25,name="ACID explicit recovery"}
+tool.writer_calls[11].options.phrase_mutation(function()
+  other_instrument.phrases[5]=safety_append
+  return safety_append
+end)
+render_callbacks[11](terminal_result(tool.writer_calls[11],"committed","safety append committed"))
+assert(phrase_choice.value==5,"explicit recovery create binds the returned phrase")
+builder.views.acid_program_key_popup:fire(10)
+tool.app_idle_observable:fire()
 assert(#render_callbacks==12 and tool.writer_calls[12].target==5,
-  "edits after safety redirect regenerate the appended phrase")
-render_callbacks[12]({kind="complete",status="committed",message="safety phrase updated",
-  target={instrument_index=2,phrase_index=5}})
+  "edits after explicit recovery regenerate the created phrase")
+render_callbacks[12](terminal_result(tool.writer_calls[12],"committed","safety phrase updated"))
 builder.views.acid_program_key_popup:fire(8)
-render_callbacks[13]({kind="complete",status="error",message="later render failed"})
+tool.app_idle_observable:fire()
+render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnostic))
+assert(status.text:find(long_diagnostic,1,true),
+  "the bounded details field retains a current request complete diagnostic")
 local live_state=builder.views.acid_live_edit_state.text
 local live_state_view=builder.views.acid_live_edit_state
 assert(live_state_view.kind=="multiline_text" and live_state_view.width==820 and
   live_state_view.height==48,
   "live status uses a fixed-size wrapping view so long diagnostics cannot widen the dialog")
 assert(live_state:find("LIVE EDIT ERROR",1,true) and
-  live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID safety append",1,true) and
+  live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID explicit recovery",1,true) and
   not live_state:find("safety phrase updated",1,true),
   "a later render error preserves a concise summary of the prior successful commit")
+
+local before_reset=#render_callbacks
+builder.views.acid_program_key_popup:fire(3)
+tool.app_idle_observable:fire()
+assert(#render_callbacks==before_reset+1,"a source edit starts the held render")
+local held=render_callbacks[#render_callbacks]
+local held_request=tool.writer_calls[#tool.writer_calls]
+builder.views.acid_program_key_popup:fire(4)
+button(builder,"Reset Source"):fire()
+assert(not held_request.options.token:is_current(),"reset invalidates the held render")
+held(terminal_result(held_request,"suspended","source reset"))
+assert(#render_callbacks==before_reset+1 and live_checkbox.value,
+  "reset discards pending edits without rendering and keeps Live Edit armed")
+builder.views.acid_program_key_popup:fire(2)
+tool.app_idle_observable:fire()
+assert(#render_callbacks==before_reset+2,"the next real edit renders the reset source")
+assert(tool.writer_calls[#tool.writer_calls].pattern.pitch_events[1].key==1)
+
+render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed","last edit settled"))
+local before_sync=#render_callbacks
+sync_next_result="committed"
+local next_key=builder.views.acid_program_key_popup.value==1 and 2 or 1
+builder.views.acid_program_key_popup:fire(next_key)
+assert(#render_callbacks==before_sync+1 and tool.writer_calls[#tool.writer_calls].completed,
+  "Live Edit write and completion finish before the native edit callback returns")
+assert(builder.views.acid_live_edit_state.text:find("LIVE EDIT COMMITTED",1,true),
+  "the synchronous commit is visible before the callback returns")
+live_checkbox:fire(false)
+local draft_cache=require("runtime.draft_cache")
+local recovered_source=require("model.sequencer").new_pattern(8)
+recovered_source.pitch_events[1]=require("model.sequencer").new_pitch(10,0,true,false)
+assert(draft_cache.put(song,instrument,phrase_one,recovered_source,"play_once",24))
+local recovery_token=assert(draft_cache.detach(song,instrument,phrase_one,"Native phrase changed"))
+target_popup:fire(1)
+phrase_choice:fire(#phrase_choice.items)
+builder.views.acid_program_key_popup:fire(4)
+local count_before_copy=#render_callbacks
+live_checkbox:fire(true)
+local recovery_popup=builder.views.acid_recovery_choice
+local recovery_rows=draft_cache.list(song)
+local recovery_index
+for index,entry in ipairs(recovery_rows) do
+  if entry.token==recovery_token then recovery_index=index end
+end
+assert(recovery_index,"detached draft is listed")
+recovery_popup:fire(recovery_index)
+assert(builder.views.acid_recovery_detail.text:find("Native phrase changed",1,true))
+builder.views.acid_recovery_copy:fire()
+assert(#render_callbacks==count_before_copy,"armed recovery never invokes the writer")
+assert(phrase_choice.value==#phrase_choice.items,"recovery binds explicit New")
+assert(builder.views.acid_program_key_popup.value==11 and pb_range_popup(builder).value==4,
+  "recovery projects source and bend range")
+local source,policy,pb=draft_cache.get(song,instrument,nil)
+assert(source.pitch_events[1].key==10 and policy=="play_once" and pb==24)
+local found_original,found_scratch=false,false
+for _,entry in ipairs(draft_cache.list(song)) do
+  found_original=found_original or entry.token==recovery_token
+  found_scratch=found_scratch or entry.pattern.pitch_events[1].key==3
+end
+assert(found_original and found_scratch,"copy retains original and occupied outgoing scratch")
+builder.views.acid_recovery_discard:fire()
+for _,entry in ipairs(draft_cache.list(song)) do assert(entry.token~=recovery_token) end
+assert(#render_callbacks==count_before_copy,"discard never invokes the writer")
+source=draft_cache.get(song,instrument,nil)
+assert(source.pitch_events[1].key==10,"discarding recovery keeps the copied editor draft")
+assert(builder.views.acid_make_independent.active==false,"unique targets cannot be rekeyed")
+assert(builder.views.acid_revalidate.active==false,"unblocked songs need no revalidation")
+instrument.name="Renamed target"
+instrument.name_observable:fire()
+tool.app_idle_observable:fire()
+assert(target_popup.items[target_popup.value]:find("Renamed target",1,true),
+  "native rename refreshes instrument choices")
+assert(phrase_choice.value==#phrase_choice.items,"native rename preserves explicit New")
+song.instruments={other_instrument,instrument}
+song.selected_instrument_index=2
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
+song.instruments_observable:fire()
+tool.app_idle_observable:fire()
+assert(target_popup.value==2 and target_popup.items[2]:find("Renamed target",1,true),
+  "native reorder keeps the exact bound instrument")
+song.instruments={instrument}
+song.selected_instrument_index=1
+dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
+song.instruments_observable:fire()
+tool.app_idle_observable:fire()
+assert(#target_popup.items==1 and target_popup.value==1,"native removal refreshes instrument choices")
+assert(phrase_choice.value==#phrase_choice.items and #render_callbacks==count_before_copy,
+  "native inventory notifications neither redirect New nor generate")
+
+-- A failed explicit create must keep the selected recovery origin available;
+-- only the exact copied revision consumed by a later verified create clears it.
+local retry_source=require("model.sequencer").new_pattern(8)
+retry_source.pitch_events[1]=require("model.sequencer").new_pitch(7,0,true,false)
+assert(draft_cache.put(song,instrument,phrase_two,retry_source,"repeat",12))
+local retry_origin=assert(draft_cache.detach(song,instrument,phrase_two,"Retry recovered create"))
+live_checkbox:fire(true)
+recovery_rows=draft_cache.list(song)
+local retry_index
+for index,entry in ipairs(recovery_rows) do
+  if entry.token==retry_origin then retry_index=index end
+end
+assert(retry_index,"newly detached origin appears in the recovery chooser")
+recovery_popup:fire(retry_index)
+builder.views.acid_recovery_copy:fire()
+assert(phrase_choice.value==#phrase_choice.items and live_checkbox.value,
+  "recovery copy keeps the explicit New destination and armed state")
+local before_retry=#render_callbacks
+button(builder,"Generate / Regenerate ACID Phrase"):fire()
+assert(#render_callbacks==before_retry+1 and tool.writer_calls[#tool.writer_calls].kind=="create",
+  "manual Generate starts an explicit recovered create")
+render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"error",
+  "temporary recovered create failure"))
+assert(phrase_choice.value==#phrase_choice.items,"failed create retains the selected New destination")
+assert(recovery_popup.value==retry_index,
+  "failed create keeps the exact recovery row selected")
+local origin_present=false
+for _,entry in ipairs(draft_cache.list(song)) do
+  origin_present=origin_present or entry.token==retry_origin
+end
+assert(origin_present,"failed create preserves its exact selected recovery origin")
+local retained_tokens={}
+for _,entry in ipairs(draft_cache.list(song)) do retained_tokens[entry.token]=true end
+before_retry=#render_callbacks
+button(builder,"Generate / Regenerate ACID Phrase"):fire()
+assert(#render_callbacks==before_retry+1 and tool.writer_calls[#tool.writer_calls].kind=="create",
+  "the unchanged recovered draft can retry its explicit create")
+local recovered_created={id=31,name="Recovered create"}
+tool.writer_calls[#tool.writer_calls].options.phrase_mutation(function()
+  instrument.phrases[#instrument.phrases+1]=recovered_created
+  return recovered_created
+end)
+render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed",
+  "recovered create committed"))
+assert(phrase_choice.value==#phrase_choice.items-1 and
+  phrase_choice.items[phrase_choice.value]:find("Recovered create",1,true),
+  "successful create binds its exact returned phrase")
+local remaining_tokens={}
+for _,entry in ipairs(draft_cache.list(song)) do remaining_tokens[entry.token]=true end
+assert(not remaining_tokens[retry_origin],"verified create clears only its exact recovery origin")
+for token in pairs(retained_tokens) do
+  if token~=retry_origin then
+    assert(remaining_tokens[token],"successful create preserves unrelated recovery entries")
+  end
+end
 
 print("ACID GUI draft recovery and typed Live Edit outcome checks passed")

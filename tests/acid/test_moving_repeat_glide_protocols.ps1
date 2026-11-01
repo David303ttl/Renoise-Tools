@@ -123,7 +123,7 @@ foreach ($case in $oracle.cases) { $caseById[$case.id] = $case }
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $tempRoot = Join-Path $repositoryRoot 'tmp/acid-moving-glide-tests'
 $null = New-Item -ItemType Directory -Path $tempRoot -Force
-$runPath = Join-Path $tempRoot "run-$PID"
+$runPath = Join-Path $tempRoot ('run-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runPath | Out-Null
 
 function Test-Protocol(

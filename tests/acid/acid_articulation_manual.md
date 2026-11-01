@@ -1,76 +1,23 @@
-# ACID articulation evidence
+# ACID articulation acceptance
 
-This page records M3 profile-specific measurements. Its former runtime
-eligibility rules are superseded by M3.5: valid source is rendered through the
-automatic pipeline, with target limits reported as approximations. Current
-manual acceptance is tracked in [acid_m35_s_manual.md](acid_m35_s_manual.md).
+Articulation is scheduled from source NOTE/TIE/REST, SLIDE, ACCENT, and the
+successor-aware gate timeline. Renoise playback acceptance for the current
+four-line source-step layout remains pending.
 
-The M3 harness, successor-aware gate scheduler, fixed-rate glide cases and native volume measurements remain historical evidence. All 21 authored one-shot-tail, fresh-successor and Repeat REST gate protocols pass across 90/120/150 BPM on the declared diagnostic profile. Four-semitone/octave Repeat glide passes at the tested 8/9-step layouts across the same tempos; same-pitch Repeat length 16 passes at all three tempos, with lengths 17/32/33/48/49/64 also passing at 120 BPM. Flat mapped NOTE and TIE accent response passes three native and three actual-writer analyses, retaining TIE level within 0.086 dB. A previously packaged tool passed normal GUI Generate, Live Edit 8→9→8, ownership and save/reopen. Earlier high-peak two-TIE takes remain retained as invalid history; fresh renders now pass. Current source accepts connected slide-chain accents and reports their limits as approximations. These measurements do not define current runtime eligibility. Identical render hashes establish deterministic offline output, not independent loopback captures or soundcard behavior. See the [evidence record](audio_capture_evidence.md) for exact scope and retained records. No arbitrary-instrument or hardware-fidelity claim follows from these results.
-## Reproduce the checks
+## Pending checks
 
-Use PowerShell 7 from the repository root:
+Use a disposable song, max-length N=32 sources where applicable, and both
+Straight (LPB 16) and Triplet (LPB 12). Record source, output policy, phrase
+metadata, instrument setup, and observed cells and playback separately.
 
-```powershell
-./tests/acid/validate_audio_oracle.ps1
-./tests/acid/test_audio_oracle.ps1
-./tests/acid/test_audio_analyzer.ps1
-./scripts/run_tests.ps1 -Tool ACID
-./tests/acid/analyze_articulation_audio.ps1 -CaseId grid_calibration_all_note_pitch_span_16 -WavPath tmp/acid-articulation/calibration_gated_fresh.wav -OutputPath tmp/acid-articulation/calibration_review.json
-```
+- Verify NOTE attacks and release, TIE hold, REST release, and fresh NOTE attack.
+- Verify connected and same-pitch SLIDE behavior, including Repeat seams.
+- Verify ACCENT response for NOTE and TIE cases; record target-specific limits.
+- Verify Play Once final release and Repeat cold/steady gate behavior.
+- Verify PB reset and attack alignment at the current phrase layout. A 1/256-line
+  ordering delay is bounded and host-tick-quantized, not sample-accurate.
+- Keep target-specific sound response separate from semantic/cell correctness.
 
-Output files must be new paths. Raw captures, reports, profile read-backs and writer records remain under ignored `tmp/acid-articulation/`. Record SHA-256 with `Get-FileHash -Algorithm SHA256`. Follow the [probe procedure](renoise_articulation_probe_manual.md) for disposable song setup, capture settings and writer output. A synthetic pass verifies analyzer discrimination and cannot establish native playback.
-
-## Oracle qualification
-
-`fixtures/audio_cases.json` contains authored native and writer protocols, with explicit blockers on cases whose analysis or acoustic acceptance is incomplete. The [gate procedure](acid_gate_manual.md) documents one-shot-tail, fresh-successor and Repeat REST-seam cases across 90/120/150 BPM. Analyzer readiness is not acoustic acceptance; consult the support matrix and evidence record for actual measured scope. Source flags use one-based PITCH indices; acoustic positions use zero-based straight TIME steps. One step is 60000/(BPM*4) milliseconds. Expected windows were authored independently of the runtime gate scheduler.
-
-The writer fixtures now freeze independently authored semantic attacks, held pitches, forbidden attacks, continuity spans, OFF edges and silence windows wherever those follow from source intent. REST successors release exactly at the REST boundary; disconnected NOTE successors and one-shot tails release halfway through the final held step. Repeating fixtures cover cold plus three steady passes at every structural length. Slide seams require continuity and no fresh attack, including same-pitch connections. The informational release_edges array lists all OFFs; silence windows enforce each gap and release measures the final edge.
-
-Each case records qualification.protocol_status and explicit blockers. Authored means the semantic protocol is specified, not acoustically accepted. The analyzer can pass only cases whose windows and controls are qualified; planned or blocked cases remain unsupported. The authored gate matrix, named glide layouts and NOTE/TIE accent protocol now pass. Remaining manual evidence includes transport stop/start, seek and Live Edit during playback; current-desktop soundcard playback is unclaimed. Other moving layouts/pitches and connected-slide accents remain explicitly unsupported. Lifecycle cases cannot pass on their initial NOTE alone. These evidence gates prevent a broad runtime support claim.
-## Analyzer implementation and limits
-
-The analyzer reads RIFF/WAVE chunks directly without an audio-library dependency. It accepts mono or stereo integer PCM16/24/32 and supported 32-bit IEEE float, checks chunk geometry and truncation, decodes signed samples, and records the WAV SHA-256. Capture checks require the configured sample rate, peak below -6 dBFS, dual-mono stereo difference at most -60 dB relative RMS, detectable alignment and enough retained tail. Stereo measurements use the left channel after the channel check.
-
-Alignment occurs once at the first detected expected onset; later expected times use BPM without per-cycle correction. The onset detector uses 10 ms RMS windows and 1 ms hops. It detects floor crossings or a trough at most 0.75 of a five-window median baseline followed by a 1.4-fold recovery within 10 ms. It compensates the look-ahead window and uses a refractory interval (40 ms normally, 90 ms for calibration). A normalization receipt shifts the onset floor by its recorded gain in dB and reports both source and used floors; this preserves the source-relative detector threshold across a linear gain change. Silence thresholds remain in analyzed-copy dBFS. This is an envelope-restart heuristic, not a fitted attack/decay template; native attack timing still needs control qualification.
-
-Stable pitch uses linearly interpolated rising zero crossings and the median period, with at least four crossings and 40 ms of audio. Frequency targets use `(44100/168)*2^((note-48)/12)`, with ±15 cents tolerance. This estimator is intended for the reference saw, not arbitrary polyphonic recordings. Silence uses window RMS below -60 dBFS. Continuity uses 5 ms RMS windows with 1 ms hops against the authored baseline window; a dip greater than 6 dB lasting 4 ms, or a detected onset, fails. Native pitch-dependent comparisons still need matching hold controls.
-
-Glide measurements require intermediate directional movement and a settled target window; an instantaneous pitch jump is insufficient. Release checks require audible sustain before OFF, inspect 2 ms RMS windows with 1 ms hops for the silence crossing, and confirm that crossing over 8 ms by default. The threshold is the lower of -60 dBFS and 40 dB below pre-OFF sustain. Calibration marker silence windows begin after the configured profile release plus a 5 ms tolerance; the current 5 ms release profile therefore starts measurement 10 ms after its half-step OFF marker. Reports include onset, pitch, silence, continuity, glide and release measurements where specified. Missing onset origin, malformed files and capture-quality failures are `invalid`; excess repeated-position cycle drift is `invalid`; other measured deviations are `fail`; planned protocols are `unsupported`. Exit codes are 0 for pass, 1 for fail and 2 for invalid/unsupported. Treat uncertain estimates as inconclusive in the manual record, regardless of a numerical result.
-
-## Support matrix
-
-| Profile / trigger / operation | Evidence | Support decision |
-| --- | --- | --- |
-| Reference diagnostic profile, selective, grid marker | Rebuilt wall-clock profile calibration passes 68/68; peak -6.24 dBFS, stereo difference -81.45 dB | Capture route qualified for that recorded marker configuration only |
-| Reference diagnostic profile, selective, held/retrigger/REST controls | Corrected held/REST captures and reference-specific retrigger reanalysis pass | Reference controls only; repeated full matrix remains open |
-| Reference diagnostic profile, selective, 0G08/20/40 | Native rate controls pass at90/150; native and fixed20 writer 4-semitone/octave Repeat cases pass at90/120/150 | Fixed20 support remains limited to measured intervals/layouts; not universal glide support |
-| Reference diagnostic profile, same-pitch Repeat slide | Length16 passes at90/120/150 BPM; lengths17/32/33/48/49/64 pass at120 | Exact tested length/tempo classes only |
-| Reference diagnostic profile, moving Repeat glide | Native and writer four-semitone/octave cases pass at90/120/150 BPM for tested 8/9-step layouts with pitch-matched holds | Exact measured TIME/pitch classes only; other intervals/layouts remain refused |
-| Separate native Mono/Glide variant | Not captured | Unsupported experiment; no instrument-wide strategy enabled |
-| ACID writer gate modes and Repeat seams | All21 authored tail/fresh-successor/REST protocols pass across90/120/150 BPM | Exact diagnostic profile only; deterministic offline renders |
-| ACID writer NOTE/TIE accent | Native and writer flat response +3.088 dB vs +3.156 dB predicted; TIE level error ≤0.086 dB | Declared flat reference only; accent on connected slide chains is refused |
-| Accent on connected slide chains | Writer preflight refuses accented source or target before mutation; regression verifies refusal | Unsupported; no slide-chain accent behavior claimed |
-| Host OFF, fresh retrigger and keymapped phrase controls | Native controls pass offline render analysis | Does not enable ACID keymapped runtime; manual stop/start and seek remain unverified |
-
-Runtime eligibility is profile-scoped. Repeat retrigger generation and measured Repeat glide classes admit the checked diagnostic profile at90/120/150 BPM. Same-pitch Repeat length16 is measured at all three tempos; additional same-pitch lengths are measured only at120 BPM. Moving glide is measured only for the authored 8/9-step layouts and tested four-semitone/octave destinations. Probe creation, protocol readiness and synthetic tests alone never enable another class. Accent on connected slide chains remains refused; manual stop/start, seek and Live Edit during playback are unverified. These files are deterministic offline Renoise renders, not soundcard-loopback recordings. No internal voice-count or TB-303 hardware-fidelity claim follows from a mixed WAV.
-
-For a tempo sweep, set `ACID_ARTICULATION_BPM` to 90, 120 or 150 before running both development trigger/start helpers. Unset means 120 BPM. Rebuild the host trigger after each change: hold duration remains in TIME steps, tail duration remains in seconds and pattern lines are recomputed at that BPM. Start rejects a transport BPM differing from the override. Use the printed wrap deadline and matching authored analyzer timing. The evidence record lists the families that have passed at each tempo; helper duration checks alone do not qualify other cases or a soundcard route.
-
-## Authorized normalized analysis copies
-
-The user permits peak normalization for analysis. Raw exports remain unchanged. Create a separately named copy with `normalize_articulation_audio.ps1`, targeting -6.1 dBFS with a common scalar across all channels, and retain its gain receipt. Record original/copy SHA-256, original/copy peak, applied linear/dB gain and script settings. Pass the receipt to the analyzer so the machine-readable result preserves processing provenance and applies the gain-compensated onset floor. No resampling, time edits, compression, limiting or denoising belongs to this protocol. Optional `-Mono` records an arithmetic L/R average only when source stereo difference is at most -40 dB; it qualifies a separate mono-copy path, not original stereo agreement.
-
-Recalibrate the known grid under the same documented normalization policy before evaluating normalized native controls. Capture all three A/B repetitions with unchanged playback settings. Prefer a shared gain for amplitude comparisons; with independently normalized copies, subtract their gain difference from measured level deltas before comparing emitted-cell ratios or accent repeatability. For A then B, `source_delta_db = copy_delta_db - (gain_b_db - gain_a_db)`. A normalized absolute noise floor is a different measurement from the original one; onset/silence control qualification must be rerun. Retain and label both result sets. Gain normalization preserves channel disagreement and signal-to-noise ratio. Optional recorded mono averaging has a separate result and cannot replace the original stereo finding.
-
-
-## Diagnostic signature and native comparison helpers
-
-Attack/decay reports include RMS windows at 0–5, 8–18 and 32–52 ms relative to each detected attack. The provisional diagnostic matches only when early/peak is below 0.75, sustain/peak is 0.45–0.90, peak RMS exceeds 0.001 and the complete window exists. Other results are explicitly inconclusive. These measurements do not gate native acceptance until positive retrigger, held and silent native controls qualify the thresholds. Repeated-source-position drift above 5 ms invalidates a capture.
-
-`renoise_articulation_mono.lua` creates a separately named `ACID ARTICULATION MONO PROBE` copied from the diagnostic instrument. It uses native monophonic glide (default amount 32, optional `ACID_ARTICULATION_MONO_GLIDE`) without 0G commands. Its two phrases compare 48→55 and 48→48. Set `ACID_ARTICULATION_PROBE_NAME = "ACID ARTICULATION MONO PROBE"` before the trigger/start helpers; unset it to return to the polyphonic reference. Switching the trigger requires rerunning its builder. Duplicate variants are refused. This instrument-wide candidate cannot implement selective flags unless unflagged transitions independently pass.
-
-`renoise_articulation_readback.lua` prints the selected named profile, realized envelope points and `fade_amount` from the ordinary application terminal. API 6.2 defines the fade range as 0–4095 but gives no timing conversion. Renoise's manual says higher Release values shorten the volume-envelope release. The current Renoise 3.5.4 device parameter reports a runtime maximum of 765.765, so the builder now reads that maximum dynamically for its shortest-release trial. The earlier reference profile read back as 23.936 and cannot qualify the rebuilt profile. Audio capture must establish the new value's timing; neither the API range nor the runtime maximum proves a millisecond release.
-
-The diagnostic builder sets `tempo_synced=false` before assigning the original envelope points (1/11/31/32/36/37). On the observed Renoise 3.5.4 runtime, `true` uses beat timing despite the API prose; changing that property rescales existing points (11→21 and 31→60 were observed). Set the time base first, then assign and read back the original wall-clock points. Preserve historical tempo-synced captures as evidence of their original profile; they cannot qualify the rebuilt profile. The matching held attack remains diagnostic until deliberate retrigger, hold and silent controls qualify the detector.
-
-The official effect-command description states that `0G00` continues the previous glide rate; it does not cancel glide. The two-line `0G08`/`0G20` trials therefore establish insufficient movement for that authored command span, not that Renoise lacks native glide. `0G40` is the next rate candidate for reaching note 55 in this span, but no capture establishes its result. Revise and verify cancellation behavior before writer integration. Renoise and Audacity were exited after this session; no further audio results or three-take acceptance are claimed.
+No current-layout Renoise articulation checks have been performed. Lua or
+synthetic audio checks do not establish host playback behavior or hardware
+fidelity.

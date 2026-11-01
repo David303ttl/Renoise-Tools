@@ -63,7 +63,7 @@ $originMs = 1000.0
 $sampleRate = 48000
 $stepMs = 60000.0 / (120.0 * 4.0)
 $frequency = 262.5
-$lengths = @(17, 32, 33, 48, 49, 64)
+$lengths = @(16, 17, 32)
 
 foreach ($length in $lengths) {
   $caseId = "repeat_slide_seam_length_$length"
@@ -114,4 +114,4 @@ foreach ($length in $lengths) {
   }
 }
 
-Write-Output 'Same-pitch Repeat seam analyzer controls passed for six lengths: continuous seam positives, seeded gap negatives and seeded retrigger negatives.'
+Write-Output 'Same-pitch Repeat seam analyzer controls passed for three supported lengths: continuous seam positives, seeded gap negatives and seeded retrigger negatives.'

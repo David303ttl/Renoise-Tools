@@ -1,12 +1,12 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Resolve complete TIME traversals without relying on Renoise playback.
 local sequencer = require("model.sequencer")
+local policies = require("model.policies")
 local M = { MAX_CYCLES = 128 }
+local MAX_STATE_CYCLE = 1000000
+local EXCLUSIVE_CYCLE_LIMIT = MAX_STATE_CYCLE + 1
 
-local function integer(value, minimum, maximum)
-  return type(value) == "number" and value % 1 == 0 and
-    value >= minimum and value <= maximum
-end
+local integer = policies.in_integer_range
 
 local function copy_voice(voice)
   if not voice then return nil end
@@ -19,12 +19,12 @@ local function validate(pattern)
   local ok, err = sequencer.validate(pattern)
   if not ok then return nil, err end
   if not integer(pattern.pitch_length, 1, sequencer.MAX_STEPS) then
-    return nil, "pitch length must be 1..64"
+    return nil, "pitch length must be 1..32"
   end
   if #pattern.time_events < pattern.length then
     return nil, "time memory must have one N/T/R value per active step"
   end
-  if pattern.time_events[1] == "T" then
+  if sequencer.is_leading_tie(1, pattern.time_events[1]) then
     return nil, "leading TIE must be entered as NOTE"
   end
   for _, command in ipairs(pattern.time_events) do
@@ -37,7 +37,7 @@ end
 
 local function validate_state(state)
   if state == nil then return true end
-  if type(state) ~= "table" or not integer(state.cycle, 1, 1000000) then
+  if type(state) ~= "table" or not integer(state.cycle, 1, MAX_STATE_CYCLE) then
     return nil, "invalid cycle state"
   end
   local voice = state.voice
@@ -54,15 +54,6 @@ local function validate_state(state)
     if key==nil then return nil,"invalid cycle voice: "..octave_or_error end
   end
   return true
-end
-
-function M.normalize_time_entry(step, command)
-  if not integer(step, 1, sequencer.MAX_STEPS) then return nil, "invalid time step" end
-  if command ~= "N" and command ~= "T" and command ~= "R" then
-    return nil, "invalid timing command"
-  end
-  if step == 1 and command == "T" then return "N" end
-  return command
 end
 
 local function run_cycle(pattern, state)
@@ -108,6 +99,10 @@ local function run_cycle(pattern, state)
   return plan, exit
 end
 
+function M.validate_source(pattern)
+  return validate(pattern)
+end
+
 function M.compile_cycle(pattern, state)
   local ok, err = validate(pattern)
   if not ok then return nil, err end
@@ -122,7 +117,7 @@ function M.compile_cycles(pattern, count, state)
   if not ok then return nil, err end
   ok, err = validate_state(state)
   if not ok then return nil, err end
-  if state and state.cycle + count > 1000001 then return nil, "invalid cycle count" end
+  if state and state.cycle + count > EXCLUSIVE_CYCLE_LIMIT then return nil, "invalid cycle count" end
   local plans = {}
   for i=1,count do plans[i], state = run_cycle(pattern, state) end
   return plans, state

@@ -69,11 +69,13 @@ local function check_case(case)
 end
 
 for _, case in ipairs(oracle.cases) do
-  check_case(case)
-  local loop = assert(interpreter.plan_loop(source(case)))
-  equal(loop.cold.cycle, 1, case.id .. ' cold cycle')
-  equal(loop.steady.cycle, 2, case.id .. ' steady cycle')
-  equal(loop.verification.cycle, 3, case.id .. ' verification cycle')
+  if case.length<=seq.MAX_STEPS and case.pitch_length<=seq.MAX_STEPS then
+    check_case(case)
+    local loop = assert(interpreter.plan_loop(source(case)))
+    equal(loop.cold.cycle, 1, case.id .. ' cold cycle')
+    equal(loop.steady.cycle, 2, case.id .. ' steady cycle')
+    equal(loop.verification.cycle, 3, case.id .. ' verification cycle')
+  end
 end
 
 for _, entry in ipairs(oracle.entry_cases) do
@@ -81,7 +83,7 @@ for _, entry in ipairs(oracle.entry_cases) do
     local case = {length=entry.length, pitch_length=entry.pitch_length,
       pitches=entry.pitches, time={}}
     for step, command in ipairs(entry.input_time) do
-      case.time[step] = assert(interpreter.normalize_time_entry(step, command))
+      case.time[step] = assert(seq.normalize_time_entry(step, command))
       equal(case.time[step], entry.expected_time[step], entry.id)
     end
     local p = source(case)
@@ -116,9 +118,10 @@ end
 
 local family = oracle.boundary_family
 for _, length_case in ipairs(family.length_cases) do
+  if length_case.length<=seq.MAX_STEPS then
   local p = seq.new_pattern(length_case.length)
-  p.pitch_length = 64
-  for i=1,64 do
+  p.pitch_length = 32
+  for i=1,32 do
     p.pitch_events[i] = pitch(24+(i-1)%37,false,
       i==15 or i==30 or i==45 or i==60)
   end
@@ -157,12 +160,13 @@ for _, length_case in ipairs(family.length_cases) do
       equal(final_state.voice[key], length_case.exit_voice[key], 'boundary exit ' .. key)
     end
   end
+  end
 end
 
-for _, length in ipairs({1,16,17,32,33,48,49,64}) do
+for _, length in ipairs({1,16,17,31,32}) do
   for _, command in ipairs({'N','R'}) do
     local p = seq.new_pattern(length)
-    p.pitch_length = 64
+    p.pitch_length = 32
     for i=1,length do p.time_events[i] = command end
     local plans = assert(interpreter.compile_cycles(p, 3))
     for cycle, plan in ipairs(plans) do
@@ -199,13 +203,18 @@ equal(first.steps[1].from_note, 40, 'incoming voice preserved')
 equal(incoming.voice.note, 40, 'incoming state remains unchanged')
 returned.voice.note = 0
 equal(incoming.voice.note, 40, 'returned state does not alias input')
+local last, exhausted = interpreter.compile_cycles(p, 1, {cycle=1000000})
+assert(last and exhausted.cycle==1000001)
+assert(not interpreter.compile_cycle(p, exhausted))
+assert(not interpreter.compile_cycles(p, 2, {cycle=1000000}))
 p.time_events[1] = 'T'
 assert(not interpreter.compile_cycle(p))
 assert(not interpreter.compile_cycles(p, 0))
 assert(not interpreter.compile_cycles(p, interpreter.MAX_CYCLES+1))
 assert(not interpreter.compile_cycle(p, {cycle=1, voice=pitch(36)}))
-assert(interpreter.normalize_time_entry(64, 'T')=='T')
-assert(not interpreter.normalize_time_entry(65, 'T'))
-assert(not interpreter.normalize_time_entry(1, 'X'))
+assert(not pcall(seq.new_pattern,33))
+assert(seq.normalize_time_entry(32, 'T')=='T')
+assert(not seq.normalize_time_entry(33, 'T'))
+assert(not seq.normalize_time_entry(1, 'X'))
 
 print('ACID repeating cycle interpreter checks passed')

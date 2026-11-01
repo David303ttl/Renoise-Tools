@@ -9,7 +9,10 @@ locally in VS Code. No GitHub workflows.
 
 1. Load a Renoise instrument with an existing ACID-owned phrase and its
    saved source. Open ACID. Ensure Live Edit is OFF by default.
-2. Enable Live Edit. Verify it applies the current source to the destination.
+2. Enable Live Edit. Verify phrase content and phrase count stay unchanged.
+   Switch Program/Grid, pages, preview cycle and phrase/instrument targets;
+   verify navigation does not generate. Reset Source and verify only the editor
+   and its recoverable draft change. Generate explicitly to apply the reset.
 3. Change a PITCH key, octave, ACCENT and SLIDE, then change a TIME action.
    Allow Renoise's event loop to process the edits. Check the *same phrase*
    changes and no additional phrase remains in the instrument.

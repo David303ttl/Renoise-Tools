@@ -1,6 +1,13 @@
 -- Build a disposable sampler profile and native phrases for audio capture.
 local song = renoise.song()
 assert(song, "Open the disposable ACID song copy first")
+local LINES_PER_STEP=4
+local HALF_STEP_LINE_OFFSET=2
+local FIRST_PHRASE_LINE=1
+local CONTINUATION_LINE_OFFSET=1
+local EXCLUSIVE_END_SENTINEL_LINES=1
+local NO_SENTINEL_LINES=0
+local PHRASE_LPB=16
 assert(#song.instruments < renoise.Song.MAX_NUMBER_OF_INSTRUMENTS,
   "Song has no free instrument slot")
 for _, instrument in ipairs(song.instruments) do
@@ -47,26 +54,28 @@ local function make_phrase(name, steps, notes, looping, loop_start, loop_end)
   local phrase = instrument:insert_phrase_at(#instrument.phrases + 1)
   phrase.name = name
   phrase.playback_mode = renoise.InstrumentPhrase.PLAY_PATTERN
-  phrase.number_of_lines = steps * 2 + (looping and 1 or 0)
+  phrase.number_of_lines = steps * LINES_PER_STEP +
+    (looping and EXCLUSIVE_END_SENTINEL_LINES or NO_SENTINEL_LINES)
   phrase.visible_note_columns = 1
   phrase.visible_effect_columns = 1
   phrase.instrument_column_visible = false
   phrase.key_tracking = renoise.InstrumentPhrase.KEY_TRACKING_NONE
-  phrase.lpb = 8
+  phrase.lpb = PHRASE_LPB
   phrase.shuffle = 0
   phrase.autoseek = false
   phrase.loop_start = loop_start or 1
   phrase.loop_end = loop_end or phrase.number_of_lines
   phrase.looping = looping
   for _, event in ipairs(notes) do
-    set_note(phrase, event.step * 2 + 1, event.note)
+    local start_line=event.step*LINES_PER_STEP+FIRST_PHRASE_LINE
+    set_note(phrase, start_line, event.note)
     if event.effect then
-      local cell = phrase:line(event.step * 2 + 1).note_columns[1]
+      local cell = phrase:line(start_line).note_columns[1]
       cell.effect_number_string = event.effect
       cell.effect_amount_value = event.amount
     end
     if event.continue_glide then
-      local cell = phrase:line(event.step * 2 + 2).note_columns[1]
+      local cell = phrase:line(start_line+CONTINUATION_LINE_OFFSET).note_columns[1]
       cell.effect_number_string = "0G"
       cell.effect_amount_value = 0
     end
@@ -234,37 +243,39 @@ local ok, err = pcall(function()
   end
   local calibration_phrase = make_phrase(
     "Grid calibration: pitch span 16 / TIME 17",
-    34, calibration, true, 35, 69)
+    34, calibration, true, 17*LINES_PER_STEP+FIRST_PHRASE_LINE,
+    34*LINES_PER_STEP+FIRST_PHRASE_LINE)
   for step = 0, 33 do
-    set_off(calibration_phrase, step * 2 + 2)
+    set_off(calibration_phrase,
+      step*LINES_PER_STEP+FIRST_PHRASE_LINE+HALF_STEP_LINE_OFFSET)
   end
-  assert(calibration_phrase.number_of_lines == 69,
+  assert(calibration_phrase.number_of_lines == 34*LINES_PER_STEP+FIRST_PHRASE_LINE,
     "Calibration phrase must retain its exclusive-end sentinel")
 
   local held = make_phrase("Reference: held NOTE then OFF", 8, {
     { step = 0, note = 48 },
   }, false)
-  set_off(held, 11)
+  set_off(held, 5*LINES_PER_STEP+FIRST_PHRASE_LINE)
 
   local retrigger = make_phrase("Control: same-pitch retrigger", 8, {
     { step = 0, note = 48 },
     { step = 2, note = 48 },
   }, false)
-  set_off(retrigger, 11)
+  set_off(retrigger, 5*LINES_PER_STEP+FIRST_PHRASE_LINE)
 
   local rest = make_phrase("Control: REST release before NOTE", 8, {
     { step = 0, note = 48 },
     { step = 3, note = 52 },
   }, false)
-  set_off(rest, 5)
-  set_off(rest, 15)
+  set_off(rest, 2*LINES_PER_STEP+FIRST_PHRASE_LINE)
+  set_off(rest, 7*LINES_PER_STEP+FIRST_PHRASE_LINE)
 
   for _, rate in ipairs({ 0x08, 0x20, 0x40 }) do
     local glide = make_phrase(string.format("0G%02X candidate 48 to 55", rate), 8, {
       { step = 0, note = 48 },
       { step = 2, note = 55, effect = "0G", amount = rate, continue_glide = true },
     }, false)
-    set_off(glide, 11)
+    set_off(glide, 5*LINES_PER_STEP+FIRST_PHRASE_LINE)
   end
 
   instrument.phrase_playback_mode = renoise.Instrument.PHRASES_PLAY_SELECTIVE
