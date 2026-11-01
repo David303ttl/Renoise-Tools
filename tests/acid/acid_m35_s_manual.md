@@ -1,6 +1,6 @@
 # ACID — Renoise functional acceptance
 
-**Current acceptance:** instrument/phrase synchronization, ownership, in-place regeneration, persistence, plus pending host validation of the max-32 timing/layout contract. See [M4](../../com.david303ttl.ACID.xrnx/ROADMAP.md#6-m4--exact-timing-modes-and-tempo-independent-phrase-output).
+**Current acceptance:** M4/Gate 8 is closed under the scoped decision recorded in [runtime acceptance](runtime_acceptance.md#production-session-native-evidence). The separate max-32 timing/layout checklist and receiver-dependent audio remain unverified accepted limitations.
 
 ## Program/Grid and source
 
@@ -57,7 +57,9 @@ policy, phrase LPB, line count, loop endpoints and observed playback for each.
 - MIDI-only, hybrid and alias fidelity are receiver-dependent release checks, not M4 blockers.
 - Straight/Triplet playback and PB attack/reset alignment at LPB16/12 remain pending in the timing checklist.
 
-## Native render lifecycle
+## Historical asynchronous render lifecycle (retired)
+
+The following checklist describes the replaced asynchronous staging writer. It is reference history only and is not a current acceptance requirement for the synchronous direct writer.
 
 1. Generate and regenerate under normal and busy host load. Confirm committed
    source renders correctly or reports an error without replacing last-good output.
@@ -69,18 +71,13 @@ policy, phrase LPB, line count, loop endpoints and observed playback for each.
    count, saved source or transport. Switch timing during rendering and confirm
    the last-good destination and source remain unchanged.
 
-## Gate 8 production-session acceptance (closed)
+## Gate 8 production-session acceptance (closed by scoped decision)
 
-**Closed by user decision (2026-11-01).** Remaining 16×8 execution and audio capture are waived. The checks below remain a reference protocol, not a request for further runs.
+**PASS — closed by project decision (2026-11-01).** The accepted 8×8 production GUI workflow, native Undo/Redo, two cold reopens and captured MIDI events passed. The 16×8 acceptance also passed under the scoped decision; its retained run stopped after 128 owned phrase creations, one additional Create and 112 successful regenerations when native selection changed. The cause is unknown; the native runner report is FAIL for the partial execution, and remaining 16×8 execution is waived. Sample/VST audio capture is waived and audio remains unverified. The 30 ms threshold is not active. See the [native evidence and artifact identities](runtime_acceptance.md#production-session-native-evidence).
 
-**OPEN / implementation pending.** The three-instrument/four-track, twelve-phrase case documented in older records is a historical limited diagnostic, not certification of real multi-instrument ACID use. Its direct-writer functional checks are accompanied by >30 ms Live Edit latency failures. Production requires both [8x8 and 16x8 native scenarios](production_session_acceptance.md) under the ordered [T8.0–T8.5 playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
+Gate 8 passed under the accepted scope; this does not represent completion of every item in the original test matrix. No additional Gate 8 or performance run is required.
 
-Use the existing runner on a disposable real Renoise song: **one ACID GUI instance**, 8 instruments/64 owned phrases/8 foreign, then 16 instruments/128 owned phrases/16 foreign, sample + loaded VST + routed MIDI receivers and 8/16 playing tracks. Create and regenerate owned phrases via the real GUI/runtime, not a test writer shortcut. For each instrument test independent LAST STEP and PITCH spans including 1/16/17/32, NOTE/TIE/REST, accents, slides, Straight/Triplet and Repeat/Play Once; check generated native cells, loop ends and distinct per-phrase source/settings independently. Return to dirty A after B/C navigation. Repeat Live Edit and manual Generate at least 128/512 times, without wrong-target edits, source-history mismatch, native selection jump or observer growth.
-
-Verify actual phrase-trigger playback and receiver event delivery, not merely transport activity, including MIDI note/OFF/PB through a captured route; actual host sound and external glide behavior remain separately qualified. Native Undo/Redo must restore a coherent phrase/source/settings/editor revision without regenerating. Save full XRNS, terminate Renoise, fresh-process reopen/read-only classification, regenerate across receiver classes, then save and cold-reopen again. Run local failure/rollback/draft-detachment injection and native negative cases. Report missing receiver evidence as BLOCKED, and keep Gate 8 open on any correctness or integrity failure.
-
-The direct writer is synchronous and does not create staging/backup phrases on regeneration. Navigation can be rapid **between** user callbacks, not literally simultaneous inside one synchronous write; native notification reentry is observed independently. Earlier asynchronous render-stage/staging instructions elsewhere in this manual are historical and must not be applied to the new production writer.
-
+The production writer is synchronous and does not create staging/backup phrases on regeneration. Navigation can occur between settled user callbacks; native notification reentry is observed independently. The old asynchronous render/staging protocol is retained only in the full [production acceptance specification](production_session_acceptance.md) as historical context.
 
 ## M3.6 Plugin/MIDI pitch bend
 
@@ -95,13 +92,8 @@ PB Off/on safety, range overflow and receiver-independent structural behavior be
 
 1. Save and reopen the XRNS. Confirm current source and Repeat/Play Once policy
 restore for each owned phrase.
-2. Explicitly select New Phrase, then enable Live Edit and confirm no phrase is created. Make a source edit and confirm exactly one owned phrase is created and bound, with rendering starting
-   immediately without Generate or a debounce wait. Make several edits during
-   rendering and confirm the latest source applies automatically next.
-   Disable Live Edit during an in-flight
-   render and confirm the destination remains consistent.
-3. Change songs while ACID is open, then close/reopen the tool. Confirm stale
-   jobs are invalidated and no phrase in the new song is changed.
+2. Explicitly select New Phrase, then enable Live Edit and confirm no phrase is created. Make a source edit and confirm exactly one owned phrase is created and bound, through a synchronous write, without Generate or a debounce wait. After that callback settles, make further edits and confirm each write remains bound to the selected destination. After the write settles, disable Live Edit and confirm the destination remains consistent.
+3. Change songs while ACID is open, then close/reopen the tool. Confirm the new song selection is rebound and no request can write to a phrase from the prior song.
 4. Edit without generating, switch destinations and return, then close and
    reopen ACID. Confirm the draft is restored. Save the XRNS with an ungenerated
    edit, reopen the song and confirm the draft restores separately from the
@@ -110,19 +102,13 @@ restore for each owned phrase.
    the selected edit and the final generated phrase matches the source. Change
    BPM, LPB/TPL and groove during playback, then stop/start/seek. Confirm Live
    Edit remains armed and note/OFF order stays correct.
-6. Cause a recoverable render failure and confirm Live Edit stays enabled.
-   Correct the problem by editing the source; confirm it renders immediately
-   and preserves the last-good phrase until success. Modify or delete the destination externally; confirm Live Edit suspends safely without appending, preserves the draft and last-good/unrelated phrases, and requires an explicit new destination.
+6. Cause a recoverable direct-write failure and confirm Live Edit stays enabled. Correct the problem by editing the source; confirm the next synchronous write is attempted immediately and preserves the last-good phrase until success. Modify or delete the destination externally; confirm Live Edit suspends safely without appending, preserves the draft and last-good/unrelated phrases, and requires an explicit new destination.
 
 
-## Async generation and draft safety
+## Direct write and draft safety
 
-1. Generate a new phrase, edit its draft while rendering, then switch to a
-   different phrase or instrument before completion. Return to the generated
-   phrase and confirm the pending edit survives. Confirm the other destination
-   and its draft remain unchanged.
-2. Change plugin, MIDI route or sample availability while rendering. Confirm
-   the commit suspends, preserves the last-good phrase and reports the change.
+1. Generate a new phrase, then make another edit after the write callback settles and switch to a different phrase or instrument. Return to the generated phrase and confirm its source and output remain consistent. Confirm the other destination and its draft remain unchanged.
+2. Change plugin, MIDI route or sample availability before the next write. Confirm preflight preserves the last-good phrase and reports the change.
 3. Reorder instruments and phrases, delete the selected target and duplicate an
    owned ID. Confirm writes never reach a different destination. Recovering a
    draft does not authorize overwriting a foreign or modified phrase.
@@ -378,5 +364,5 @@ tool version or persisted schema changed, so packaging was not required.
 | Target deleted, modified or foreign: no automatic append/overwrite | Pending |
 | Explicit new phrase creates exactly one bound owned phrase | Passed in Renoise 3.5.4; created phrases 01 and 02 |
 | Draft/source PB/timing/output settings survive switching and save/reopen | Pending |
-| Live Edit context changes and stale asynchronous completion | Pending |
+| Live Edit changes between settled direct writes | Asynchronous completion is not applicable to the current synchronous writer |
 | One playback/transport smoke in Renoise | Passed; phrase preview produced output-meter activity |

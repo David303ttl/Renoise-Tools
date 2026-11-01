@@ -86,6 +86,7 @@ $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
 $lastExpected = 'Runner preflight completes without changing developer-owned Renoise state'
 $lastActual = $null
 $lastDiff = $null
+$productionPlaybackSummary = $null
 $inventoryDiff = $null
 $report = [ordered]@{
     schema_version = 1
@@ -1042,24 +1043,32 @@ try {
                 $acceptance | Add-Member -NotePropertyName midi_receiver_proofs -NotePropertyValue $midiEvidence.receiver_proofs -Force
                 $acceptance.status='FAIL'
                 if ($acceptance.midi_counts.note -le 0 -or $acceptance.midi_counts.off -le 0 -or $acceptance.midi_counts.bend -le 0) {
+                    $acceptance | Add-Member -NotePropertyName midi_status -NotePropertyValue 'FAIL' -Force
+                    $acceptance | Add-Member -NotePropertyName audio_status -NotePropertyValue 'NOT_RUN' -Force
                     $acceptance.phases.playback='FAIL'
                     $acceptance | Add-Member -NotePropertyName reason -NotePropertyValue 'multitrack MIDI note/OFF/pitch-bend events were not captured' -Force
                 }
                 else {
+                    $acceptance | Add-Member -NotePropertyName midi_status -NotePropertyValue 'PASS' -Force
                     if ($AudioInputDevice) {
                         $audioEvidence = Invoke-ProductionAudioCapture
                         $acceptance | Add-Member -NotePropertyName audio_evidence -NotePropertyValue $audioEvidence -Force
+                        $acceptance | Add-Member -NotePropertyName audio_status -NotePropertyValue 'PASS' -Force
                         $acceptance.phases.playback='PASS'
                         $acceptance.status='PASS'
                         $acceptance.complete=-not [bool]$ProductionCheckpoint
                     }
                     else {
+                        $acceptance | Add-Member -NotePropertyName audio_status -NotePropertyValue 'WAIVED' -Force
                         $acceptance.phases.playback='PASS'
                         $acceptance.status='PASS'
                         $acceptance.complete=-not [bool]$ProductionCheckpoint
                         $acceptance | Add-Member -NotePropertyName playback_evidence -NotePropertyValue 'MIDI_CAPTURED_AUDIO_NOT_REQUIRED' -Force
                     }
                 }
+            }
+            if ($productionSessionAcceptance -and $acceptance.midi_status -and $acceptance.audio_status) {
+                $productionPlaybackSummary = 'MIDI {0}; audio {1}' -f $acceptance.midi_status, $acceptance.audio_status
             }
             $acceptanceStatus = [string]$acceptance.status
             if ($acceptanceStatus -cnotin @('PASS','FAIL','ERROR') -or $acceptance.case -cne $AcceptanceCase) {
@@ -1328,6 +1337,9 @@ finally {
     }
 }
 
+if ($productionPlaybackSummary) {
+    Write-Output "Production playback summary: $productionPlaybackSummary"
+}
 if ($report.status -eq 'PASS') {
     Write-Output 'PASS interactive Renoise runner'
     exit 0

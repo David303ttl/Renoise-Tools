@@ -1,12 +1,19 @@
 # Runtime integration acceptance map
 
-Recorded reports below describe the implementation present at each dated
-checkpoint. Results involving staged rendering, render callbacks or two free
-regeneration slots are historical evidence for the former writer. They do not
-establish acceptance of the current direct writer; its native workflow checks
-remain under Gate 8 until explicitly recorded as passing.
+**M4 / Gate 8 closeout (2026-11-01): PASS — CLOSED by scoped project decision.** The accepted scope includes the 8×8 production workflow, native Undo/Redo, two cold reopens and captured MIDI note/OFF/pitch-bend events. The 16×8 acceptance disposition is also PASS under the scope decision; its retained run stopped at the recorded native-selection interruption after 112 regenerations, and remaining stress execution is waived. Latency has no active acceptance threshold and recovery snapshots remain unchanged.
 
-**Current Gate 8: CLOSED by user decision (2026-11-01).** Latency has no acceptance threshold; recovery snapshots remain unchanged. 8×8 functional/Undo/Redo/cold-reopen and MIDI checks passed. 16×8 stopped after 128 creations, one additional Create and 112 successful regenerations; further runs and audio capture are waived. Audio is not verified.
+The 16×8 acceptance is **PASS by scope decision**, with the remaining stress execution waived. Its retained run created 128 owned phrases plus one explicit Create and completed 112 regenerations before a native-selection change stopped the run. The cause is unknown; the native runner report status is FAIL because it records a partial execution, not a completed 16×8 stress run. Sample/VST audio capture is **WAIVED** and audio is **UNVERIFIED**. No further Gate 8 or performance investigation is required.
+
+## Production-session native evidence
+
+| Scenario | Acceptance disposition / run result | Existing artifact and identity |
+| --- | --- | --- |
+| 8×8 production-session-8x8 | **PASS:** 64 base creations, one additional Create, 133 regenerations; seed, edits, drafts, native Undo/Redo, cold reopen and playback phases passed. MIDI is **PASS** (6 notes, 6 OFFs, 12 pitch-bend events); audio is **WAIVED**, with no audio pass claimed. | [Native report](../../tmp/interactive-74c947cf55204a5da1e53b0edc30610e/report.json), run 74c947cf55204a5da1e53b0edc30610e, SHA-256 8484522B90D3482A94101D23F34F4498C73AD741ABCE374DAA9FC51EA5008D74. Development bundle: tmp/acid-dev-74c947cf55204a5da1e53b0edc30610e/. |
+| 16×8 production-stress-16x8 | **PASS (scope accepted; native runner report FAIL/partial):** the project accepted the 16×8 result at the recorded scope and waived remaining execution. The retained run created 128 base phrases, one additional Create and completed 112 regenerations before native selection changed. This PASS records the acceptance disposition; the execution stopped at the interruption and is not a completed full stress run. | [Native report](../../tmp/interactive-87d1837cdf674a6abb393275a0c481db/report.json), run 87d1837cdf674a6abb393275a0c481db, SHA-256 9CA21E450EE6A3E7CE57ED60B63FF7F29B860D200D7C8F6847355AAF496B042D. Development bundle: tmp/acid-dev-87d1837cdf674a6abb393275a0c481db/. |
+
+Both reports record source commit 06b20b31b098971750d70355aa8fc706615ac315 (the parent of reviewed commit 2258920) and Renoise 3.5.4 / API 6.2. The report and per-run development-bundle paths identify the retained native evidence; these are not post-commit executions of 2258920. The 8×8 report's overall playback phase is interpreted here as MIDI PASS with audio WAIVED.
+
+The dated sections below preserve the state and plans recorded at their checkpoints. Their historical OPEN/PENDING statuses and staging/render-callback instructions are superseded by this closeout and the synchronous direct-writer architecture.
 
 ## Bounded production-scale investigation (2026-11-01)
 

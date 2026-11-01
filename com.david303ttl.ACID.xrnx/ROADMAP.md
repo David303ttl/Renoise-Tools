@@ -3,9 +3,9 @@
 **Project:** ARP/SEQ / ACID.xrnx  
 **Target:** Renoise 3.5+, Lua 5.1-compatible XRNX, scripting API 6.2  
 **Integration target:** `develop`
-**Document status:** implementation plan; M4 timing contract implementation-ready; M3.5/M3.6 audio acceptance and TB-303 hardware fidelity remain separately evidence-gated  
+**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision; M5.0 Program view is next. Remaining 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
-**Updated:** 2026-10-30
+**Updated:** 2026-11-01
 
 ## 1. Product objective and scope
 
@@ -79,8 +79,8 @@ Renoise checks; deterministic tests do not establish audio behavior.
 | Completed (implementation); live acceptance open | **M3 — Articulation measurement and reference-profile renderer** | Scoped reference audio evidence; remaining host transport/live-playback checks | M2 semantic contracts |
 | **Implementation complete; Renoise acceptance open** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
 | **Implementation complete; P0 playback acceptance open** | **M3.6 — Plugin/MIDI pitch-bend slide (small follow-up)** | Optional PB Range selector; existing Renoise MIDI pitch bend for instruments without usable portamento | M3.5 source/output/ownership contract |
-| Implementation planned on `feature/M4` | **M4 — Timing modes and tempo robustness** | Exact straight/triplet phrase timing independent of song LPB/BPM/meter | M3.5/3.6 renderer contracts; unresolved PB audio evidence tracked as a scoped gate |
-| After M3.6 | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M3.5 editor and source guarantees |
+| Completed (scoped closeout) | **M4 — Timing modes and tempo robustness** | Exact straight/triplet phrase timing independent of song LPB/BPM/meter | Closed by accepted scope; remaining host/audio limitations are recorded under M4.7 |
+| Next | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M4 scoped closeout |
 | Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5, including M3.6 |
 
 **Milestone completion** normally requires deterministic Lua checks and targeted Renoise verification for rendered notes, audio, GUI, phrases, persistence, or undo. If a user accepts deferring a check, record the scope decision and keep the deferred claim explicitly unverified; a passing mock test alone is not an audio conformance result.
@@ -358,7 +358,7 @@ not run in this workspace; functional acceptance remains open.
 
 - The current WIP source/seal schema is `ACID-PITCH-TIME-1`: canonical sequence excludes editor view, source playback switch and audio-mode fields; phrase-specific output policy is stored separately.
 - Update **gui.lua**, **model/sequencer.lua**, **model/cycle_interpreter.lua**, **model/editor_state.lua**, **model/pattern_store.lua**, **writers/phrase_writer.lua** and tests together. Remove deprecated mode selectors/branches/constants, positional mode parameters, mode-owned source fields, mode-dependent refusal messages and mode-specific test fixtures.
-- Preserve safe destination ownership, no changes to unrelated content, staging, rollback, source-draft recovery, undo/redo, and atomic phrase/source/output-settings commit.
+- Preserve destination ownership, protect unrelated content, retain rollback and source/draft recovery, and keep phrase/source/output settings consistent through the synchronous direct write.
 
 **Mandatory Gate S acceptance**
 
@@ -425,14 +425,14 @@ not run in this workspace; functional acceptance remains open.
 ### M3.5.4 — Live Edit: persistent, transactional and observable
 
 - Keep Live Edit **armed** across arbitrary valid STEP/PITCH/ACCENT/SLIDE changes, BPM changes, TPL/LPB changes, groove changes and playback stop/start/seek. Never uncheck on a nonfatal fidelity limitation.
-- Model states explicitly: **CLEAN, RENDERING, COMMITTED, APPROXIMATE, ERROR**. Expose last successful commit, current pending edit, active target and any error; "APPROXIMATE" means successful audio-limited render.
-- Serialize regeneration and coalesce intermediate edits. Validate job token/document identity both before mutation and before commit. An edit while rendering enqueues the latest full canonical source and regenerates once the in-flight job resolves.
-- On transient failure, retain the last-good sealed phrase, keep source draft and pending status, remain armed, and retry on the next relevant change or user Retry. Do not spin on a permanent error. Start valid edits immediately without a debounce timer or manual Generate prerequisite. Edits arriving during a render apply immediately after it settles; editor-view and cursor-only changes never rebuild.
+- Expose the current source's dirty/committed state, active target and structured error/approximation result. The direct writer completes synchronously within the user-action callback.
+- Route source/settings changes through the existing guarded request pipeline. Capture canonical source, settings and target for each request, then validate target identity and ownership at the synchronous write boundary. User edits and navigation cannot interleave inside the callback.
+- On a transient failure, retain the last-good sealed phrase and source draft; remain armed and retry on the next relevant source/settings edit or explicit Retry. Do not spin on a permanent error. Start valid edits through the guarded path without a debounce timer or manual Generate prerequisite. Editor-view and cursor-only changes never rebuild.
 - Only explicit New Phrase plus Generate or a real source/settings edit while Live Edit is armed may create a destination. Arming, navigation and draft restoration never render. Foreign, modified or deleted destinations block writes and preserve drafts; they never fall back to creation. Song changes invalidate and stop the session; missing instrument or corrupt persistence reports an error without disabling Live Edit.
 - Closing/switching the dialog does not create a partially owned phrase. Define and test save/reopen of a dirty canonical draft separately from the last committed seal; user is warned before any unsaved draft would be lost.
 - Avoid string-matching success messages as the Live Edit completion API: use typed success/failure/approximation results with structured diagnostics; manual Generate uses the same result contract.
 
-**Gate L:** rapid edits (including while audio plays), failed render then corrected edit, tempo/groove changes, cancellation, undo/redo, target mutation, dialog close/reopen and song switch never silently disable an armed session or corrupt last-good content. Valid source edits never require Generate or an explicit resume step.
+**Gate L:** sequential edits between settled synchronous callbacks, failed direct write then corrected edit, tempo/groove changes, undo/redo, target mutation, dialog close/reopen and song switch never silently disable an armed session or corrupt last-good content. Valid source edits never require Generate or an explicit resume step.
 
 ### M3.5.5 — Diagnostics and editing UI
 
@@ -554,7 +554,7 @@ not establish delivery or glide behavior for other receivers or routes.
 
 ## 6. M4 — Exact timing modes and tempo-independent phrase output
 
-**Status:** Straight/Triplet max-length playback, both output policies, loop seam/sentinel, and targeted PB attack/reset checks are pending. M4 remains open for these checks and instrument/phrase synchronization and regeneration safety (M4.7). [Timing checklist](../tests/acid/acid_timing_manual.md).
+**Status:** M4 / Gate 8 passed by scoped project decision on 2026-11-01. The 8×8 production workflow, native Undo/Redo, cold reopens and MIDI event checks passed. The 16×8 acceptance passed under the scope decision; its retained run stopped after 112 regenerations and remaining execution is waived. Audio capture is waived. Separate max-32 timing/layout and PB attack/reset playback checks remain unverified accepted limitations. See the [native evidence and scope](../tests/acid/runtime_acceptance.md#production-session-native-evidence) and [timing checklist](../tests/acid/acid_timing_manual.md).
 
 ### M4.0 — Fixed product and API contract (P0; decisions closed)
 
@@ -587,19 +587,19 @@ not establish delivery or glide behavior for other receivers or routes.
 
 ### M4.2 — Rendering and collision rules (P0)
 
-1. **Single layout, propagated end-to-end.** Freeze the selected layout in the staged job: Straight LPB 16, Triplet LPB 12, four phrase lines per source step. Both script rendering and final phrase metadata must use the same layout; validate before sealing/replacement. Always set and verify `phrase.shuffle=0`. Do not change the source or destination on a failed job.
-2. **Pattrns exact pulses.** In `writers/pattrns_writer.lua`, emit the appropriate `unit` and `resolution` from the layout and otherwise retain existing finite source, pulse/event ordering, volume/accent expectations and async render handling. The API documents the triplet factor; do **not** emit unsupported `unit="1/12"` or assume changing LPB alone makes `unit="1/16"` a triplet. The fractional Pattrns factor is an emitter detail, **not** the timing truth: read back and validate every expected line against the integer layout, including step 32 and both physical cycles.
-3. **Bounded renderer contingency.** If Pattrns on the pinned Renoise build quantizes a triplet event onto the wrong line, refuses the `resolution`, or accumulates an offset, stop using that triplet render output. Implement the *smallest* staged native-cell NOTE/OFF emitter from the same semantic plan and exact line map; reuse existing articulation, validator, ownership and rollback. No tempo-specific tolerance, adaptive grid search, silently rounded note positions or separate playback engine. Do not change straight rendering unless a failing test requires it.
+1. **Single layout, propagated end-to-end.** Capture one immutable request for the direct write: Straight LPB 16, Triplet LPB 12, four phrase lines per source step. The output plan and final phrase metadata use the same layout; validate before native mutation. Always set and verify phrase.shuffle=0. Do not change the source or destination on a failed write.
+2. **Historical Pattrns plan.** The former Pattrns render path is no longer a production writer; renderer references remain test-only parity oracles. Preserve the integer layout contract and native readback checks in the direct planner/materializer. No asynchronous render callback is part of the current write path.
+3. **Direct materialization.** The current planner produces native-cell operations from the semantic plan and exact line map. Keep that work synchronous and use the existing validator, ownership checks and rollback. Do not reintroduce temporary phrases, asynchronous rendering or a second playback engine.
 4. **Gate and sample glide.** Keep the semantic gate timeline at 256 units per source step and map it to the four-line layout. Release after a terminating NOTE, not across a valid TIE/connected SLIDE, and leave REST releases at the semantic step start. Keep `0Gxx` on available phrase lines and retain collision/approximation policy. Do not silently drop a gate or required effect.
 5. **Plugin/MIDI legato and PB.** Keep NOTE-before-delayed-OFF ordering, column isolation, same-pitch hold, range-overflow fallback, 14-bit bend anchor/centering and cold-to-steady/steady-to-steady checks. A fresh NOTE uses delay 1 plus center reset only when the bend channel is not known centered; otherwise it uses delay 0. The 1/256-line ordering unit is per event, Renoise-host-tick-quantized, bounded and not sample-accurate. Targeted host verification of reset/attack alignment remains pending. Protect M1 cells and reset at a loop seam. Any unreproducible slide is a **named per-step approximation**, not a source rejection or stuck receiver note.
 6. **One collision policy.** Build/validate sparse NOTE, REST/OFF, gate, glide, legato and PB operations before mutating phrase cells. If two operations need an incompatible cell or native event ordering, preserve required note/gate/release safety, attempt the already-defined bounded articulation fallback and report its TIME step/cycle/line. Never overwrite a NOTE with an OFF, clobber M1/effect data, silently skip an operation or damage the existing target. Do not introduce extra effect columns/automation as an unreviewed workaround.
 7. **Host and resource bounds.** Preflight API-reported phrase line/column capacity, actual instrument phrase slots, loop endpoints, selected instrument identity, validity of sealed ownership and persistable source before writing. All 1–32 length/mode and output-policy combinations fit the 512-line contract (maximum 257). Preserve source and last-good/foreign phrases on host errors; never truncate the musical phrase.
-8. **Post-render verification and commit.** Validate phrase LPB, shuffle, every NOTE/REST/OFF and empty half-step, volumes, effects, pitch-bend commands/reset, loop start/end and exclusive-end sentinel *before* making the staged phrase live. Keep the current asynchronous token invalidation, temporary phrase lifecycle, ownership seal, guarded copy, rollback and Live Edit serialization. Successful generation of an all-REST pattern still has the expected line/loop/LPB metadata.
+8. **Verification and commit.** Validate phrase LPB, shuffle, every NOTE/REST/OFF and empty half-step, volumes, effects, pitch-bend commands/reset, loop start/end and exclusive-end sentinel against the exact destination. The synchronous direct writer materializes the plan in place and uses the existing ownership seal and rollback. Successful generation of an all-REST pattern still has the expected line/loop/LPB metadata.
 
 ### M4.3 — Source, editor and persistence (P0)
 
 - Add `timing_mode` to the canonical source and `sequencer.new_pattern` default/validation. Keep both 32-entry memories and their independent active lengths. Mode changes do not alter source entries or pitch consumption.
-- Include timing mode in source equality/history so one dropdown change produces exactly one Undo step; Undo, Redo and Reset restore it. Extend Program/Grid summaries, preview duration/step division and diagnostics to show the selected mode and exact N/4 or N/3 beat cycle. No hidden dependence on selected Renoise pattern LPB. With Live Edit Off show the source as dirty until Generate; with Live Edit On regenerate once through the existing guarded queue. Rapid mode toggling while rendering must invalidate stale output.
+- Include timing mode in source equality/history so one dropdown change produces exactly one Undo step; Undo, Redo and Reset restore it. Extend Program/Grid summaries, preview duration/step division and diagnostics to show the selected mode and exact N/4 or N/3 beat cycle. No hidden dependence on selected Renoise pattern LPB. With Live Edit Off show the source as dirty until Generate; with Live Edit On submit real source edits through the existing guarded request pipeline. Each request captures its source/settings and exact target, then writes synchronously after boundary validation; rapid edits between settled callbacks cannot authorize a stale-target write.
 - Persist the field with committed records and drafts in the sole current WIP schema, `ACID-PITCH-TIME-1`. Invalid, missing or unknown timing modes are rejected, not guessed as Straight.
 - Keep `output_policy` and `pb_range` as phrase-specific render settings separate from canonical `timing_mode`. Selecting an existing owned phrase restores the correct source mode and existing PB/output settings. Switching instruments, selecting another phrase, closing/reopening a song, unsaved session drafts and new/foreign-phrase Live Edit recovery must not cross-wire timing between sources.
 - Update `README.md` and a short Renoise manual verification checklist *during implementation*, not as a substitute for it. Keep `manifest.xml` at experimental 0.1 and API 6.2, package just ACID runtime files. No GitHub workflow or background listener for BPM/LPB changes.
@@ -614,29 +614,31 @@ not establish delivery or glide behavior for other receivers or routes.
 | Note-delay/PB center-reset ordering uses 1/256 phrase line | Conditional reset: delay 1 plus center reset only if bend channel is not known centered; otherwise delay 0. Host-tick-quantized, not sample-accurate; targeted Renoise check pending |
 | Pitch-bend command generation does not establish receiver delivery | Keep receiver support bounded to actual Renoise checks; preserve safe overlap fallback/diagnostic if unsupported. Do not infer general receiver support from command generation |
 | Transport speed timing model or unverified song groove | Detect/document; never rewrite global settings or silently certify musical timing not established in that host mode |
-| Async render during a timing toggle/target change | Snapshot timing/target, cancel stale jobs, commit only current tokens; keep last-good phrase on cancellation/error |
+| Source or destination invalid before a synchronous write | Revalidate captured source, target identity and ownership before mutation; reject unsafe requests and preserve the last-good phrase and editable draft |
 | Invalid current source data / modified phrase | Reject safely; preserve tool data and do not adopt or mutate foreign content |
 | Renoise host/resource cap or collision | Precise error + source retained + no partial destination replacement; allow scoped sonic approximation only when notes and releases remain correct |
 
 **Blocker discipline:** first reproduce a failure in a deterministic local Lua spec or one small in-Renoise fixture; identify the source/host capability; use the specified narrow fallback; re-run full regression tests. If no safe fallback can produce the correct NOTE/REST musical timeline, report a hard phrase render failure without committing. Never claim every arbitrary VST, external MIDI receiver or host groove obeys ACID's articulation solely because valid note cells were written.
 
-Phrase timing contract is LPB 16/12 with four lines per source step and protected staged commits. New host validation remains pending. Receiver-specific sound quality remains separately bounded.
+Phrase timing contract is LPB 16/12 with four lines per source step and protected in-place commits. The scoped 8×8 acceptance passed; separate max-32 playback/PB checks and receiver-specific sound remain unverified accepted limitations.
 
-### M4.5 — Closure gates
+### M4.5 — Original closure gates (superseded by scoped closeout)
 
 1. **Timing:** exact model, strict source/draft persistence, phrase LPB 16/12, four lines per step, output-policy lengths and repeat sentinel; structural validation and targeted Renoise playback checks.
 2. **Renoise behavior:** complete M4.7 instrument and phrase synchronization, in-place regeneration, new-phrase intent, Live Edit cancellation, source/draft preservation and native selection safety.
 3. **Manual smoke:** one disposable song; switch instruments and owned phrases while ACID is open, create once, regenerate in place, save/reopen and exercise Live Edit during playback. Check transport stop/start/seek and tempo response. No new WAV export or measurement required.
 4. **Local:** `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID` and `pwsh -NoProfile -File ./scripts/package.ps1 -Tool ACID` after implementation changes.
 
-### M4.6 — Acceptance status
+### M4.6 — Scoped acceptance status
 
 | Scope | Result |
 | --- | --- |
-| Current max-32 Straight/Triplet playback | Pending: LPB 16/12 and four lines per step |
-| Play Once and Repeat boundaries | Pending: N=32 lengths, loop seam and exclusive-end sentinel |
-| Targeted plugin PB attack/reset alignment | Pending after conditional-reset/layout change |
-| Local verification | Historical M4.6 pass: 32 ACID specs, oracle controls, 25-file ACID package and archive licenses. Current cutover evidence is recorded under M4.7. |
+| 8×8 production workflow | PASS: native GUI/runtime, 64 base creates, one additional Create, 133 regenerations, drafts, Undo/Redo, cold reopens and MIDI receipts |
+| 16×8 stress | PASS (scope accepted; runner report FAIL/partial): 128 base creates, one additional Create and 112 regenerations before native-selection interruption; remaining execution is waived. The report records a partial execution, not a completed full stress run |
+| Sample/VST audio capture | WAIVED; audio remains unverified |
+| Latency threshold | Removed from active acceptance; no new ceiling selected |
+| Separate max-32 playback/PB attack-reset checklist | UNVERIFIED; accepted nonblocking limitation |
+| Local verification and packaging | Earlier results remain historical; this closeout did not rerun suites or package the tool. See native report identities under M4.7. |
 
 Articulation resolution is layout-driven through planning and validation.
 Pitch-bend center reset is conditional on whether the channel is known centered;
@@ -649,7 +651,7 @@ defect.
 
 ### M4.7 — Instrument/phrase synchronization and regeneration safety (P0)
 
-Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). Its fixed policies are normative. The atomic cutover landed at `6413e5f`; Gates 4–9 remain independent acceptance for the implemented runtime, writer and scheduler, and failed evidence returns to the responsible contract.
+Implementation followed the dependency-ordered [runtime refactor playbook](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md). The atomic cutover landed at 6413e5f; Gate 8 and Step 9 closeout are recorded below.
 
 - [x] Inventory, API 6.2 references, baseline, and early native copy/restore, notification, and undo feasibility; findings incorporated into the playbook contracts.
 - [x] Shared validation/store contracts and complete field-preservation policy; [Gate 1 verification](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#18--close-gate-1-and-hand-contracts-to-runtime-integration).
@@ -658,11 +660,11 @@ Implementation follows the dependency-ordered [runtime refactor playbook](M4_7_R
 - [x] Runtime context and GUI state cutover through [Step 2 implementation and closeout 2.1–2.9](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-2--centralize-runtime-state-transitions-and-operation-guards): **Gate 2 complete.** One runtime authority/scheduler, explicit create/regenerate, no legacy path; current full suites, packaging, hygiene and independent final correction review pass. Exact totals, timings and case mapping are in playbook 2.9. Gates 4–9 remain independent acceptance.
 - [x] Explicit create/regenerate writer and one cancellation/completion handshake; **Gate 3 complete.** Direct writer acceptance covers capacity, uncertain insertion, exact rollback, source/draft failures, cleanup/blockers, terminal results and native-render lifetime. Exceptional recovery regressions cover post-commit wrapper failure, contradictory success, retryable blocker clearance and facade getters. See the [Gate 3 acceptance matrix](M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#gate-3-direct-acceptance-evidence) for passing local checks and native limits.
 - [x] Explicit Make Independent for matching valid collision groups; no automatic re-keying or source-less adoption. **Gate 4 complete.** Local runtime/GUI cases and targeted native Make Independent, undo/redo, source-less rejection and cold-process checks pass; see [Gate 4 acceptance](../tests/acid/runtime_acceptance.md#task-4-acceptance-2026-10-31).
-- [x] Draft precedence, recovery chooser, read-only revalidation and one manual/Live Edit pipeline; **Gate 5 complete.** Full local suites, exact-revision late-completion regressions, independent second-pass reviews and targeted Native/Keyboard checks pass. See the [Gate 5 acceptance map](../tests/acid/runtime_acceptance.md#gate-5-acceptance-2026-10-31). Broader native acceptance remains Gate 8.
+- [x] Draft precedence, recovery chooser, read-only revalidation and one manual/Live Edit pipeline; **Gate 5 complete.** Full local suites, exact-revision late-completion regressions, independent second-pass reviews and targeted Native/Keyboard checks pass. See the [Gate 5 acceptance map](../tests/acid/runtime_acceptance.md#gate-5-acceptance-2026-10-31). The later scoped production acceptance is recorded under Gate 8.
 - [x] Native observers, internal mutation reconciliation, and release/late-callback handling; **Gate 6 complete.** Local fault injection, independent review and the native observer matrix pass, including a rerun after notifier postcondition and idle-registration corrections. See the [Gate 6 acceptance map](../tests/acid/runtime_acceptance.md#gate-6-observer-contracts-2026-10-31).
-- [x] **Gate 7 complete:** strict T7.0–T7.5 closeout, assertion-level R01–R36 map, proven notifier lifecycle corrections and instrument-choice regressions; final ACID/repository suites, native observer/writer-recovery reruns, package equivalence and independent review pass. See the [Gate 7 acceptance record](../tests/acid/runtime_acceptance.md#gate-7-integration-closeout-2026-10-31). Gate 8 and M4 remain open.
-- [x] **Gate 8 closed by user decision:** accepted production GUI, integrity, Undo/Redo, cold-reopen and MIDI evidence; remaining 16×8 run and audio capture waived. See the production-scale acceptance status below.
-- [ ] Final M4 documentation/review and release closeout after native acceptance; the Gate 2 follow-up commit does not satisfy this independent gate. **Gate 9 open.**
+- [x] **Gate 7 complete:** strict T7.0–T7.5 closeout, assertion-level R01–R36 map, proven notifier lifecycle corrections and instrument-choice regressions; final ACID/repository suites, native observer/writer-recovery reruns, package equivalence and independent review pass. See the [Gate 7 acceptance record](../tests/acid/runtime_acceptance.md#gate-7-integration-closeout-2026-10-31). Gate 8 was later closed by scope/risk decision.
+- [x] **Gate 8 PASS, closed by scope/risk decision:** 8×8 production GUI, integrity, Undo/Redo, cold-reopen and MIDI evidence passed; 16×8 acceptance passed under scope decision with remaining execution waived, and audio capture is waived. See the [production-scale evidence](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+- [x] Final M4 documentation/review and scoped closeout completed 2026-11-01; see accepted limitations and evidence paths under M4.6 and Gate 8. **Step 9 closed; M4 closed.**
 
 **Gate 0 / Steps 0–1A:** complete. The pinned API review, initial 34-spec
 baseline, repository inventory and native feasibility findings are recorded in
@@ -671,25 +673,25 @@ The native undo/source mismatch found there is addressed by the independent
 source/output compatibility contract; 8×8 native Undo/Redo and cold reopen passed. Gate 8 is closed by user decision. Current M4.7 implementation and test
 status is tracked above and in playbook 2.9.
 
-- **Live Edit scheduling:** real edits dispatch immediately through one serialized request pipeline, retaining only the latest pending trigger and capturing current source/settings at dispatch. Arming, no-op edits, navigation and restoration enqueue nothing. A canceled in-flight render retains occupancy until its terminal callback; stale or blocked completion cannot automatically authorize another write. No debounce timer.
+- **Live Edit scheduling:** real edits dispatch immediately through one serialized request pipeline, retaining only the latest pending trigger and capturing current source/settings plus the exact target at dispatch. Arming, no-op edits, navigation and restoration enqueue nothing. The direct writer completes synchronously; native notification reentry remains guarded. No debounce timer.
 - **Live inventory:** newly added, deleted, renamed and reordered Renoise instruments appear in ACID without reopening. Track native selected instrument and phrase using supported API 6.2 observables and a guarded idle update. Detach notifiers on close/song change.
-- **Binding:** resolve the exact instrument object and ACID-owned phrase identity, not a cached index. Follow user-initiated native selection; ignore internal staging selection changes. Preserve per-phrase source, timing, PB Range, output policy and uncommitted drafts on A → B → C → A switches.
+- **Binding:** resolve the exact instrument object and ACID-owned phrase identity, not a cached index. Follow user-initiated native selection and preserve per-phrase source, timing, PB Range, output policy and uncommitted drafts on A → B → C → A switches.
 - **Regenerate:** require a valid, explicit bound owned phrase. Replace it in place; keep phrase count, identity and native playback program stable. Do not fall back to the first phrase or to append on missing, modified, foreign or deleted destinations.
-- **Create:** create exactly one final destination through Generate or a real source/settings edit while Live Edit is armed and New Phrase is explicitly bound. Navigation, arming, and draft recovery never generate. Create needs one staging slot; regenerate needs two temporary slots and keeps the same destination object.
-- **Asynchronous safety:** capture instrument/phrase identity and selection revision; reject stale or deleted targets and in-flight output on user context changes without touching unrelated content. Failed commits preserve last-good phrases and editable drafts. No automatic reroute to a different instrument.
+- **Create:** create exactly one final destination through Generate or a real source/settings edit while Live Edit is armed and New Phrase is explicitly bound. Navigation, arming and draft recovery never generate. Create appends one phrase; regeneration updates the exact existing destination in place without changing phrase count or identity.
+- **Synchronous safety:** validate instrument/phrase identity and ownership at the write boundary; reject stale or deleted targets without touching unrelated content. Failed commits preserve last-good phrases and editable drafts. No automatic reroute to a different instrument.
 - **UI:** keep instrument and destination options current and show a clear Create versus Regenerate action. A missing or unsafe destination reports the actual reason and requires explicit resolution.
 - **Tests:** deterministic notifier, add/delete/reorder/rename, duplicate-ID, rapid-switch, stale-callback, ownership and rollback regressions; one Renoise session exercising selection, generation, Live Edit and save/reopen.
 
-**M4 closure:** M4.7 passes the playbook's local/package gates and native acceptance A–E. An unresolved native feasibility or integrity blocker keeps M4 open. No additional acoustic research is required.
+**M4 closure:** M4 / Gate 8 passed under the scoped acceptance decision on 2026-11-01. The 8×8 journey passed; 16×8 acceptance passed with its remaining execution waived after the retained run's native-selection interruption at 112 regenerations. Audio capture is waived, and no 30 ms ceiling remains active.
 
 ### M4.7 Gate 8 production-scale acceptance (normative follow-up, 2026-11-01)
 
 **Status: CLOSED by user decision (2026-11-01).** Latency is recorded without an acceptance threshold. Recovery snapshots remain unchanged; further performance engineering is out of scope.
 
 - [x] **8×8:** 64 creations plus one explicit Create; 133 regenerations; draft/source/foreign-phrase isolation, native Undo/Redo, two cold reopens and MIDI receipts passed.
-- [x] **16×8 accepted by decision:** 128 creations plus one explicit Create; 112 regenerations passed before a native-selection interruption. Remaining execution waived; no full stress pass claimed.
-- [x] **Audio capture:** waived; no audio pass claimed. No further Gate 8 runs required.
-Record callback latency without an acceptance threshold.
+- [x] **16×8 PASS (scope accepted; native runner report FAIL/partial):** 128 creations plus one explicit Create; 112 regenerations completed before native selection changed. Remaining execution is waived; the report records a partial execution rather than a completed full stress run.
+- [x] **Audio capture:** waived; no audio pass claimed. MIDI event receipt remains a separate PASS.
+Callback latency is recorded without an acceptance threshold.
 
 - [x] One production runtime/writer retained; recovery snapshots, persisted format and manifest versions unchanged. Local suites and package checks passed.
 
@@ -697,6 +699,8 @@ Record callback latency without an acceptance threshold.
 ---
 
 ## 7. M5 — Source programming and Renoise workflow
+
+**Next milestone:** M5.0 — Roland-style Program view, using the same canonical source as Grid.
 
 **Goal:** complete source programming and editing, with native Renoise handling arrangement and performance. Program and Grid edit the same canonical source; optional Extended transformations operate on that source without switching semantic Entry mode.
 
@@ -733,7 +737,7 @@ Record callback latency without an acceptance threshold.
 
 - Improve page/current-step indicators, keyboard legibility, used versus unused PITCH markers and precise error navigation.
 - Distinguish **stored C entry**, **referenced PITCH entry**, and **user-modified PITCH entry**; avoid conflating edit history with musical validity.
-- Refine M3.5's dirty/queued/rendering/committed/approximate/suspended/error states and durable draft workflow; do not reinvent the Live Edit scheduler in M5.
+- Refine M3.5's dirty/committed/approximate/error status and diagnostic text; do not reinvent the Live Edit request path in M5.
 - Maintain responsive Live Edit with many phrases and max-32-step patterns; avoid regenerating on selection-only UI clicks.
 
 **M5 done when:** a user can program through Program or Grid, apply the three scoped Extended transformations, duplicate/select and revisit current-format ACID source in a saved XRNS. Preview and output agree, edits are reversible, and Renoise provides arrangement/performance without an ACID substitute. Native playback limitations remain documented.
@@ -744,9 +748,9 @@ Record callback latency without an acceptance threshold.
 
 ### M6.1 — Data safety, undo and persistence
 
-- Exercise undo/redo during manual regeneration and asynchronous Live Edit; reconcile stored canonical source and generated phrase ownership after changes.
+- Exercise undo/redo across manual generation and synchronous Live Edit writes; reconcile stored canonical source and generated phrase ownership after changes.
 - Verify deletion/reordering of instruments and phrases does not cause stale IDs or destination indices to overwrite another phrase.
-- Test cancellation, document close/reopen, interrupted rendering, malformed snapshots and a failed post-render `tool_data` save.
+- Test failed direct writes, document close/reopen, malformed snapshots and a failed post-write `tool_data` save.
 - Prefer a transaction-like contract: no “success” status unless the phrase and its canonical source are both committed and consistent. Audit/repair partial-commit paths.
 - Define the current stored schema deliberately and test its roundtrip and strict validation.
 
@@ -793,7 +797,7 @@ Record callback latency without an acceptance threshold.
 | Targeted transformations | Exact flag/command changes, unaffected source unchanged | Action scope, undo and regenerated result |
 | Non-destructive scale mask | Raw PITCH unchanged, deterministic mapping, bounds, bypass and roundtrip | Resolved preview/output agreement; slide connection after pitch mapping |
 | Trigger, stop/start and seek | Explicit cold/repeat context, no stale voice | Sustained versus fresh trigger, release, transport, selective/keymapped coverage |
-| Live Edit under pressure | Immediate dispatch, single-flight, automatic pending edits | Rapid UI edits while playing |
+| Live Edit under pressure | Guarded synchronous writes to captured targets | Sequential UI edits between settled callbacks while playing |
 | Undo/redo and failures | Injected write/cancel failures | Undo, save/reopen, manual edits, song switch |
 | Packaging | Static archive layout validation | Install, start and playback in Renoise |
 
