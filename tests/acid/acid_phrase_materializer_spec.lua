@@ -212,6 +212,88 @@ assert(same_geometry_after.properties.number_of_lines==4 and
 assert(same_geometry_after.lines[1].notes[1].note_value==60 and
   same_geometry_after.lines[4].notes[4].note_value==121,
   "same-geometry key edit did not update the key and clear the stale tail")
+
+local geometry_limits={max_lines=300,max_note_columns=4,max_effect_columns=2}
+local function large_expected(lines,loop_start,loop_end,looping)
+  local expected,required_visibility=output()
+  expected.properties.number_of_lines=lines
+  expected.properties.loop_start=loop_start
+  expected.properties.loop_end=loop_end
+  expected.properties.looping=looping
+  for index=5,geometry_limits.max_lines do
+    local notes,effects={},{}
+    for column=1,geometry_limits.max_note_columns do
+      notes[column]=expected.empty_note
+    end
+    for column=1,geometry_limits.max_effect_columns do
+      effects[column]=expected.empty_effect
+    end
+    expected.lines[index]={note_columns=notes,effect_columns=effects}
+  end
+  return expected,required_visibility
+end
+local function strict_geometry_phrase(lines,loop_start,loop_end,looping)
+  local phrase=fixture({max_lines=geometry_limits.max_lines,
+    max_note_columns=geometry_limits.max_note_columns,
+    max_effect_columns=geometry_limits.max_effect_columns,number_of_lines=lines})
+  phrase.loop_start,phrase.loop_end,phrase.looping=loop_start,loop_end,looping
+  for _,line in ipairs(phrase.lines) do
+    for column,cell in ipairs(line.note_columns) do
+      line.note_columns[column]=readonly_empty(cell,true)
+    end
+    for column,cell in ipairs(line.effect_columns) do
+      line.effect_columns[column]=readonly_empty(cell,false)
+    end
+  end
+  local values,writes={},{number_of_lines=0,loop_start=0,loop_end=0,looping=0}
+  for key in pairs(writes) do values[key]=phrase[key];phrase[key]=nil end
+  setmetatable(phrase,{__index=function(_,key)
+      if writes[key] then return values[key] end
+      return rawget(phrase,key)
+    end,
+    __newindex=function(_,key,value)
+      if not writes[key] then rawset(phrase,key,value);return end
+      writes[key]=writes[key]+1
+      values[key]=value
+      if key=="number_of_lines" then
+        assert(value>=1 and value<=geometry_limits.max_lines,"line count setter out of range")
+      end
+      assert(values.loop_start>=1 and values.loop_start<=values.number_of_lines and
+        values.loop_end>values.loop_start and values.loop_end<=values.number_of_lines,
+        "geometry setter exposed an invalid loop range")
+    end})
+  return phrase,writes
+end
+local geometry_cases={
+  {128,257,20,100,40,210},
+  {257,128,40,210,20,100},
+  {128,128,30,100,80,120},
+  {128,128,80,120,30,100}}
+for _,case in ipairs(geometry_cases) do
+  local old_lines,new_lines,old_start,old_end,new_start,new_end=unpack(case)
+  for _,old_looping in ipairs({false,true}) do
+    for _,target_looping in ipairs({false,true}) do
+      local strict_phrase,geometry_writes=strict_geometry_phrase(old_lines,
+        old_start,old_end,old_looping)
+      local geometry_before=assert(ownership.snapshot(strict_phrase,geometry_limits))
+      local geometry_expected,geometry_visibility=large_expected(new_lines,new_start,
+        new_end,target_looping)
+      local geometry_applied,geometry_error=materializer.apply(strict_phrase,
+        geometry_expected,geometry_visibility,geometry_before,geometry_limits)
+      assert(geometry_applied,geometry_error)
+      assert(strict_phrase.number_of_lines==new_lines and
+        strict_phrase.loop_start==new_start and strict_phrase.loop_end==new_end and
+        strict_phrase.looping==target_looping,"strict geometry target was not applied")
+      assert(geometry_writes.loop_start==(old_start~=new_start and 1 or 0) and
+        geometry_writes.loop_end==(old_end~=new_end and 1 or 0),
+        "geometry writer redundantly toggled a loop endpoint")
+      local expected_looping_writes=(old_looping and 1 or 0)+
+        (target_looping and 1 or 0)
+      assert(geometry_writes.looping==expected_looping_writes,
+        "geometry writer redundantly toggled looping")
+    end
+  end
+end
 local authorized_name=assert(materializer.name_for_verified_output(token,1))
 local rejected_receipt,receipt_error=materializer.consume_verified_output(token,2,
   authorized_name,limits,nil,nil)
@@ -289,6 +371,24 @@ assert(malformed_destination.cell_accesses.notes==0 and malformed_destination.ce
   ownership.compare(malformed_before,assert(ownership.snapshot(malformed_destination,limits))),
   "malformed shared expected cell was rejected after native inspection or writes")
 
+local function shared_expected_row()
+  local expected=assert(ownership.copy_snapshot(required))
+  expected.lines[4]=expected.lines[3]
+  return expected
+end
+local malformed_shared_row=shared_expected_row()
+malformed_shared_row.lines[4].note_columns[1].note_value=nil
+local malformed_row_destination=destination()
+local malformed_row_before=assert(ownership.snapshot(malformed_row_destination,limits))
+malformed_row_destination.cell_accesses.notes,malformed_row_destination.cell_accesses.effects=0,0
+local malformed_row_ok,malformed_row_error=materializer.apply(malformed_row_destination,
+  malformed_shared_row,visibility,nil,limits)
+assert(not malformed_row_ok and malformed_row_error:find("Invalid expected note field: 3/1",1,true),
+  "malformed cell in a shared expected row escaped validation")
+assert(malformed_row_destination.cell_accesses.notes==0 and malformed_row_destination.cell_accesses.effects==0 and
+  ownership.compare(malformed_row_before,assert(ownership.snapshot(malformed_row_destination,limits))),
+  "malformed shared expected row was rejected after native inspection or writes")
+
 local malformed_distinct=assert(ownership.copy_snapshot(required))
 malformed_distinct.lines[4].note_columns[4].note_value=nil
 local distinct_ok,distinct_error=materializer.apply(destination(),malformed_distinct,visibility,nil,limits)
@@ -311,8 +411,21 @@ assert(not defaults_mismatch and defaults_error:find("Generated note cell differ
 local original_verification_snapshot=ownership.snapshot_for_verification
 ownership.snapshot_for_verification=function(phrase,capacities)
   local actual=assert(original_verification_snapshot(phrase,capacities))
-  actual.lines[4].notes[1]={note_value=72,instrument_value=255,volume_value=255,
-    panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0,is_empty=false}
+  local original_line=actual.lines[4]
+  local corrupted_line={notes={},effects={}}
+  for column,cell in ipairs(original_line.notes) do
+    local copy={}
+    for key,value in pairs(cell) do copy[key]=value end
+    corrupted_line.notes[column]=copy
+  end
+  for column,cell in ipairs(original_line.effects) do
+    local copy={}
+    for key,value in pairs(cell) do copy[key]=value end
+    corrupted_line.effects[column]=copy
+  end
+  corrupted_line.notes[1].note_value=72
+  corrupted_line.notes[1].is_empty=false
+  actual.lines[4]=corrupted_line
   return actual
 end
 local corrupt_call_ok,corrupt_actual_ok,corrupt_actual_error=pcall(function()
@@ -335,6 +448,21 @@ assert(not repeated_ok and repeated_error:find("Invalid expected note emptiness"
   "a shared cell mutation between calls escaped fresh validation")
 assert(ownership.compare(repeated_before,assert(ownership.snapshot(repeated_destination,limits))),
   "a shared cell mutated between calls changed native phrase content")
+
+local repeated_shared_row=shared_expected_row()
+local repeated_row_destination=destination()
+assert(materializer.apply(repeated_row_destination,repeated_shared_row,visibility,nil,limits),
+  "valid shared expected rows were rejected")
+local repeated_row_before=assert(ownership.snapshot(repeated_row_destination,limits))
+repeated_shared_row.lines[4].note_columns[1].volume_value=100
+repeated_row_destination.cell_accesses.notes,repeated_row_destination.cell_accesses.effects=0,0
+local repeated_row_ok,repeated_row_error=materializer.apply(repeated_row_destination,
+  repeated_shared_row,visibility,nil,limits)
+assert(not repeated_row_ok and repeated_row_error:find("Invalid expected note emptiness",1,true),
+  "a shared expected row mutation between calls escaped fresh validation")
+assert(repeated_row_destination.cell_accesses.notes==0 and repeated_row_destination.cell_accesses.effects==0 and
+  ownership.compare(repeated_row_before,assert(ownership.snapshot(repeated_row_destination,limits))),
+  "a shared expected row mutation changed native phrase content")
 
 local public_verify_phrase=destination()
 assert(materializer.apply(public_verify_phrase,required,visibility,nil,limits))

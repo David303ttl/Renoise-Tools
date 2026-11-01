@@ -25,6 +25,11 @@ assert(store.save(song,2,source,"play_once",0))
 assert(own.membership(song,first,a)==1)
 local id,index,position=own.validate_live(song,first,a)
 assert(id==1 and index==1 and position==1)
+local equal_phrase=phrase(1)
+first.phrases[1]=equal_phrase
+assert(not own.validate_identity(song,first,a),
+  "a content-equal phrase object cannot stand in for the selected live phrase")
+first.phrases[1]=a
 assert(store.load(song,first,a).length==4)
 assert(not store.load(song,a),"source loading requires an explicit instrument and phrase")
 local copied,policy,pb=store.read_entry(song,1)
@@ -54,6 +59,7 @@ assert(song.tool_data==ambiguous_raw,"ambiguous persisted draft group must be pr
 song.tool_data=single_draft
 local replacement=phrase(1)
 first.phrases[1]=replacement
+assert(not own.validate_identity(song,first,a),"a missing target remained identity-valid")
 rejected(first,a)
 first.phrases[1]=a
 song.instruments[1]=setmetatable({name="First",phrases={a}},host)
@@ -64,6 +70,8 @@ local collision=phrase(1)
 second.phrases[2]=collision
 local groups=assert(own.inventory(song))
 assert(#groups[1]==2)
+assert(not own.validate_identity(song,first,a),
+  "a duplicate ID in another instrument remained identity-valid")
 rejected(first,a)
 assert(store.read_entry(song,1).length==4,"narrow collision read is source-only")
 local validator=require('writers.phrase_validator')
@@ -95,6 +103,22 @@ for index=1,9 do
 end
 assert(#assert(own.inventory(song))[1]==2,'all holders remain in ownership inventory')
 second.phrases[2]=nil
+
+local original_name=a.name
+local drift_name=phrase(2).name
+local name_reads=0
+rawset(a,"name",nil)
+setmetatable(a,{__index=function(_,key)
+  if key=="name" then
+    name_reads=name_reads+1
+    return name_reads<=2 and original_name or drift_name
+  end
+end,__eq=host.__eq})
+local drift_id,drift_error=own.validate_identity(song,first,a)
+assert(not drift_id and drift_error:find("identity changed",1,true),
+  "identity validation accepted a target ID that drifted during the inventory scan")
+rawset(a,"name",original_name)
+setmetatable(a,host)
 
 local raw=song.tool_data
 assert(store.write_draft(song,first,nil,source,"repeat",0))

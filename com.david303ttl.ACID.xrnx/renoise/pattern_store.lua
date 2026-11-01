@@ -172,7 +172,7 @@ local function copy_map(source)
   return result
 end
 
-local function encode(entries,drafts)
+local function encode_sources(entries)
   local lines={MAGIC}
   local ids={}
   for id in pairs(entries) do
@@ -190,6 +190,11 @@ local function encode(entries,drafts)
     lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),
       encode_source(pattern)},"|")
   end
+  return table.concat(lines,"\n").."\n"
+end
+
+local function encode_drafts(drafts)
+  local lines={}
   local draft_keys={}
   for key in pairs(drafts or {}) do draft_keys[#draft_keys+1]=key end
   table.sort(draft_keys)
@@ -207,7 +212,19 @@ local function encode(entries,drafts)
     lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),
       item.output_policy,tostring(item.pb_range),encode_source(pattern)},"|")
   end
-  return table.concat(lines,"\n").."\n"
+  return #lines>0 and table.concat(lines,"\n").."\n" or ""
+end
+
+local function append_drafts(encoded_sources,drafts)
+  local encoded,error_message=encode_drafts(drafts)
+  if not encoded then return nil,error_message end
+  return encoded_sources..encoded
+end
+
+local function encode(entries,drafts)
+  local encoded_sources,error_message=encode_sources(entries)
+  if not encoded_sources then return nil,error_message end
+  return append_drafts(encoded_sources,drafts)
 end
 
 function M.read(song)
@@ -421,8 +438,9 @@ local function prepare(song,id,pattern,output_policy,pb_range,guard,removal,revi
   if not copied then return nil,copy_error end
   local previous,err=raw_data(song)
   if previous==nil and err then return nil,err end
-  local entries,drafts=decode(previous or "")
-  if not entries then return nil,drafts end
+  local decoded_entries,decoded_drafts=read_decoded(previous or "")
+  if not decoded_entries then return nil,decoded_drafts end
+  local entries,drafts=copy_map(decoded_entries),copy_map(decoded_drafts)
   if revision and entries[id]~=nil then
     return nil,"ACID revision ID is already committed"
   end
@@ -436,9 +454,9 @@ local function prepare(song,id,pattern,output_policy,pb_range,guard,removal,revi
   local captured_sources,source_error=encode(entries,{})
   if not captured_sources then return nil,source_error end
   entries[id]={pattern=copied,output_policy=output_policy,pb_range=pb_range}
-  local proposed_sources,proposed_error=encode(entries,{})
+  local proposed_sources,proposed_error=encode_sources(entries)
   if not proposed_sources then return nil,proposed_error end
-  local proposed,encode_error=encode(entries,drafts)
+  local proposed,encode_error=append_drafts(proposed_sources,drafts)
   if not proposed then return nil,encode_error end
   local candidate={previous_raw=previous,raw=proposed,id=id}
   candidates[candidate]={song=song,previous_raw=previous,captured_sources=captured_sources,
@@ -521,16 +539,19 @@ function M.commit(song,candidate)
   if not current_song then return nil,current_song_error end
   local current,current_error=raw_data(song)
   if current==nil and current_error then return nil,current_error end
-  local entries,drafts=decode(current or "")
-  if not entries then return nil,drafts end
-  local sources,source_error=encode(entries,{})
-  if not sources then return nil,source_error end
-  if sources~=state.captured_sources then return nil,"ACID song data changed during generation" end
-  local proposed,decode_error=decode(state.proposed_sources)
-  if not proposed then return nil,decode_error end
+  local decoded_entries,decoded_drafts=read_decoded(current or "")
+  if not decoded_entries then return nil,decoded_drafts end
+  local entries,drafts=copy_map(decoded_entries),copy_map(decoded_drafts)
+  if current~=state.previous_raw then
+    local sources,source_error=encode(entries,{})
+    if not sources then return nil,source_error end
+    if sources~=state.captured_sources then
+      return nil,"ACID song data changed during generation"
+    end
+  end
   local removed,remove_error=remove_captured_draft(song,entries,drafts,removal)
   if not removed then return nil,remove_error end
-  local next_raw,encode_error=encode(proposed,drafts)
+  local next_raw,encode_error=append_drafts(state.proposed_sources,drafts)
   if not next_raw then return nil,encode_error end
   local latest,latest_error=raw_data(song)
   if latest==nil and latest_error then return nil,latest_error end
@@ -597,7 +618,7 @@ function M.allocate(song)
   if not current then return nil,current_error end
   local raw,err=raw_data(song)
   if err then return nil,err end
-  local entries,drafts=decode(raw or "")
+  local entries,drafts=read_decoded(raw or "")
   if not entries then return nil,drafts end
   local highest=0
   for id in pairs(entries) do if id>highest then highest=id end end

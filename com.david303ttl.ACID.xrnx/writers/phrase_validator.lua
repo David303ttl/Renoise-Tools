@@ -463,10 +463,8 @@ local function classify(song,instrument,phrase,capabilities,capacities,options,v
     expected_postimage and expected_postimage.planning_inputs)
   if not candidate then return nil,err,"unavailable" end
   if not verified_snapshot then
-    local sealed,copy_error=ownership.copy_snapshot(candidate.baseline)
+    local sealed,index,copy_error=ownership.copy_snapshot_for_retention(candidate.baseline,capacities)
     if not sealed then return nil,copy_error,"unavailable" end
-    local index,index_error=ownership.snapshot_index(sealed,capacities)
-    if not index then return nil,index_error,"unavailable" end
     local identity={}
     local retained={snapshot=sealed,index=index,identity=identity}
     verified_baselines[candidate.baseline]=retained

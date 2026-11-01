@@ -193,6 +193,14 @@ Implement one parameterized test-only journey, reusing the real production ACID 
 
 Do not create 128 full phrase snapshots per edit: keep small action/peer traces and periodic complete 512×12+8 verification outside timed callbacks. Keep script-specific real GUI driver extensions test-only, package-allowlisted and excluded from the release. No second writer/scheduler/test framework and no production API for tests. The existing `multi-instrument-workflow`, `editor-responsiveness` and `direct-output-feasibility` are narrow runnable prerequisites, not production-scale passes. Both new case commands and the needed cold-process runner extension are defined in the linked contract, and become runnable only after allowlisting and regression coverage.
 
+The existing responsiveness cases default to the `Warm` profile, which measures the real GUI callback without diagnostic wrappers. `Detailed` keeps the function-level profiler for diagnosis and explicitly does not claim the 30 ms latency gate. Both modes retain the same functional assertions.
+
+~~~powershell
+./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness
+./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -AcceptanceProfile Detailed
+./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase multi-instrument-workflow -AcceptanceProfile Warm
+~~~
+
 
 ### Native scenario catalog
 
@@ -301,6 +309,7 @@ Run offline harness checks without Renoise:
 ./tests/renoise/runner_spec.ps1
 ./tests/renoise/test_package_dev.ps1
 lua tests/renoise/remote_driver_spec.lua
+lua tests/renoise/acceptance_cases_spec.lua
 ```
 
 ## Coverage handoff

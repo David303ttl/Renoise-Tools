@@ -52,6 +52,36 @@ cache_song.tool_data=replacement_song.tool_data
 assert(store.read_draft(cache_song,cache_instrument,nil).length==9,
   "a raw store replacement must invalidate the decoded cache")
 
+local function find_upvalue(fn,wanted)
+  for index=1,100 do
+    local name,value=debug.getupvalue(fn,index)
+    if name==nil then break end
+    if name==wanted then return index,value end
+  end
+end
+local allocation_instrument={name="Allocation cache",phrases={}}
+local allocation_song={tool_data=raw,instruments={allocation_instrument}}
+renoise={song=function()return allocation_song end}
+assert(store.read(allocation_song))
+local _,read_decoded=find_upvalue(store.allocate,"read_decoded")
+assert(read_decoded)
+local decode_index,original_decode=find_upvalue(read_decoded,"decode")
+assert(decode_index and original_decode)
+local decode_calls=0
+debug.setupvalue(read_decoded,decode_index,function(value)
+  decode_calls=decode_calls+1
+  return original_decode(value)
+end)
+local allocated_id,allocation_error=store.allocate(allocation_song)
+assert(allocated_id==3 and decode_calls==0,
+  "allocation repeated decoding for an unchanged raw cache key: id="..tostring(allocated_id).." error="..tostring(allocation_error).." calls="..decode_calls)
+local changed_snapshot=snapshot:gsub("^2|","10|",1)
+allocation_song.tool_data=header.."\n"..changed_snapshot.."\n"..draft.."\n"
+assert(store.allocate(allocation_song)==11 and decode_calls==1,
+  "allocation did not decode a changed raw cache key and observe its source ID")
+debug.setupvalue(read_decoded,decode_index,original_decode)
+renoise=nil
+
 local failed_instrument={name="Failed cache",phrases={}}
 local failed_song=setmetatable({instruments={failed_instrument}},{
   __index=function(_,key) if key=="tool_data" then return nil end end,

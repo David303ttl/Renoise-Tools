@@ -940,9 +940,9 @@ local function test_instrument_navigation_setup_inserts_only_when_needed()
 end
 
 local function test_fixed_native_acceptance_command()
-  local completion, acceptance_json_codec
+  local completion, acceptance_json_codec, acceptance_profile
   local host, driver = start_driver({
-    acceptance_runner = function(case_name, done, json_codec)
+    acceptance_runner = function(case_name, done, json_codec, profile)
       assert(type(json_codec) == "table" and type(json_codec.array) == "function",
         "acceptance runner did not receive the shared response codec")
       assert(case_name == "make-independent" or case_name == "reopen-independent" or
@@ -958,6 +958,7 @@ local function test_fixed_native_acceptance_command()
         "fixed native acceptance case was not allowlisted")
       completion = done
       acceptance_json_codec = json_codec
+      acceptance_profile = profile
       return true
     end
   })
@@ -965,10 +966,16 @@ local function test_fixed_native_acceptance_command()
   accept(host, client)
   send_request(host, client, "acceptance-invalid-case", "acid.acceptance.run", {case = "execute"})
   send_request(host, client, "acceptance-invalid-args", "acid.acceptance.run", {case = "make-independent", command = "arbitrary"})
+  send_request(host, client, "acceptance-profile-invalid-case", "acid.acceptance.run",
+    {case = "make-independent", profile = "Detailed"})
+  send_request(host, client, "acceptance-profile-invalid-value", "acid.acceptance.run",
+    {case = "editor-responsiveness", profile = "Verbose"})
   fire_idle(host)
   local invalid = take_responses(client)
   assert_equal(find_response(invalid, "acceptance-invalid-case").error.code, "invalid_arguments")
   assert_equal(find_response(invalid, "acceptance-invalid-args").error.code, "invalid_arguments")
+  assert_equal(find_response(invalid, "acceptance-profile-invalid-case").error.code, "invalid_arguments")
+  assert_equal(find_response(invalid, "acceptance-profile-invalid-value").error.code, "invalid_arguments")
   assert_equal(completion, nil, "invalid acceptance command reached its runner")
 
   send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "make-independent"})
@@ -976,6 +983,7 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(take_responses(client), "acceptance-run"), nil,
     "asynchronous acceptance returned before its native operation settled")
   assert(completion, "fixed acceptance runner was not called")
+  assert_equal(acceptance_profile,nil,"unprofiled acceptance command unexpectedly gained a profile setting")
   assert(completion({status = "PASS", case = "make-independent", new_id = 12,
     codec_array = acceptance_json_codec.array({"shared-codec-array"})}))
   fire_idle(host)
@@ -995,11 +1003,13 @@ local function test_fixed_native_acceptance_command()
   local reopened = find_response(take_responses(client), "acceptance-reopen")
   assert(reopened and reopened.ok)
   assert_equal(reopened.result.status, "PASS")
-  send_request(host, client, "acceptance-multi-instrument", "acid.acceptance.run", {case = "multi-instrument-workflow"})
+  send_request(host, client, "acceptance-multi-instrument", "acid.acceptance.run",
+    {case = "multi-instrument-workflow", profile = "Detailed"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-multi-instrument"), nil,
     "multi-instrument acceptance returned before its native operations settled")
   assert(completion, "multi-instrument acceptance runner was not called")
+  assert_equal(acceptance_profile,"Detailed","profile option was not propagated to the multi-instrument workflow")
   assert(completion({status = "PASS", case = "multi-instrument-workflow", instrument_count = 3, phrase_count = 12}))
   fire_idle(host)
   local multi_instrument = find_response(take_responses(client), "acceptance-multi-instrument")
@@ -1029,11 +1039,13 @@ local function test_fixed_native_acceptance_command()
   local recovery = find_response(take_responses(client), "acceptance-writer-recovery")
   assert(recovery and recovery.ok)
   assert_equal(recovery.result.status, "PASS")
-  send_request(host, client, "acceptance-editor-responsiveness", "acid.acceptance.run", {case = "editor-responsiveness"})
+  send_request(host, client, "acceptance-editor-responsiveness", "acid.acceptance.run",
+    {case = "editor-responsiveness", profile = "Warm"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-editor-responsiveness"), nil,
     "editor responsiveness acceptance returned before native rendering settled")
   assert(completion, "editor responsiveness acceptance runner was not called")
+  assert_equal(acceptance_profile,"Warm","profile option was not propagated to editor responsiveness")
   assert(completion({status = "PASS", case = "editor-responsiveness", unchanged_snapshot_scans = 0}))
   fire_idle(host)
   local responsiveness = find_response(take_responses(client), "acceptance-editor-responsiveness")

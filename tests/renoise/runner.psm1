@@ -1,6 +1,24 @@
 #Requires -Version 7.0
 Set-StrictMode -Version Latest
 
+function Resolve-AcidAcceptanceProfile {
+    param(
+        [string]$AcceptanceCase,
+        [ValidateSet('Warm','Detailed')][string]$Profile = 'Warm',
+        [switch]$Explicit
+    )
+    $applies = $AcceptanceCase -cin @('editor-responsiveness','multi-instrument-workflow')
+    if ($Explicit -and -not $applies) {
+        throw '-AcceptanceProfile is only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow.'
+    }
+    $resolvedProfile = $null
+    if ($applies) { $resolvedProfile = $Profile }
+    return [pscustomobject]@{
+        Applies = $applies
+        Profile = $resolvedProfile
+    }
+}
+
 function Get-RenoiseExecutable {
     param([string]$ConfiguredPath)
     if ($ConfiguredPath) {
@@ -1089,7 +1107,7 @@ function Invoke-AcidNativeScenario {
     }
 }
 
-Export-ModuleMember -Function Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverBootstrap, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidKeyboardConfiguration, Find-AutoHotkeyV2Executable, Invoke-AcidKeyboardHelper, Wait-AcidObservedState, Invoke-AcidKeyboardJourney, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
+Export-ModuleMember -Function Resolve-AcidAcceptanceProfile, Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverBootstrap, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidKeyboardConfiguration, Find-AutoHotkeyV2Executable, Invoke-AcidKeyboardHelper, Wait-AcidObservedState, Invoke-AcidKeyboardJourney, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
 
 function Get-DirectoryHash {
     param([Parameter(Mandatory)][string]$Path)

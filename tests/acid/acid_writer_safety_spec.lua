@@ -175,6 +175,28 @@ assert(rawequal(instrument.phrases[1],target) and #instrument.phrases==1
 assert(writer.is_temporary(song,instrument,target)==false,
   "failed regeneration classified the existing destination as temporary")
 
+-- Reentrant phrase drift after source preparation must be caught at the exact
+-- materializer boundary, without restoring over the intervening edit.
+do
+  local before=snapshot(target)
+  local before_raw=song.tool_data
+  local prepare_revision=store.prepare_revision
+  store.prepare_revision=function(...)
+    local candidate,prepare_error=prepare_revision(...)
+    if candidate then target.cells[1].note_value=0 end
+    return candidate,prepare_error
+  end
+  local boundary_request=request(source(58),1)
+  local boundary_ok,_,boundary_calls,boundary_result=run(boundary_request)
+  store.prepare_revision=prepare_revision
+  assert(boundary_ok and boundary_calls==1 and boundary_result.kind=="failure" and
+    boundary_result.status~="integrity_blocked",
+    "mutation-boundary preimage check did not reject reentrant phrase drift")
+  assert(song.tool_data==before_raw and target.cells[1].note_value==0,
+    "mutation-boundary rejection changed source bytes or overwrote phrase drift")
+  target.cells[1].note_value=before.lines[1].notes[1].note_value
+end
+
 -- A throwing authorization wrapper has no separate cleanup authority while
 -- the captured request remains current, so the committed write is blocked.
 local throw_request=request(source(57),1)
@@ -222,6 +244,59 @@ assert(restore(target,good_snapshot,{max_lines=CAP_LINES,
   max_note_columns=CAP_NOTES,max_effect_columns=CAP_EFFECTS}))
 writer.clear_integrity_blocker(song)
 assert(song.tool_data==good_raw and ownership.compare(good_snapshot,snapshot(target)))
+
+-- A source rollback setter can reenter and edit the phrase after the initial
+-- rollback guard. The later phrase restore must not overwrite that edit.
+do
+  local rollback_snapshot=snapshot(target)
+  local rollback_raw=song.tool_data
+  local original_song_meta=getmetatable(song)
+  local stored_data=rollback_raw
+  local inject_on_restore=false
+  rawset(song,"tool_data",nil)
+  setmetatable(song,{__index=function(object,key)
+      if key=="tool_data" then return stored_data end
+      return original_song_meta and original_song_meta.__index and
+        original_song_meta.__index(object,key) or nil
+    end,
+    __newindex=function(object,key,value)
+      if key=="tool_data" then
+        stored_data=value
+        if inject_on_restore and value==rollback_raw then
+          inject_on_restore=false
+          target.cells[1].note_value=0
+        end
+      elseif original_song_meta and original_song_meta.__newindex then
+        original_song_meta.__newindex(object,key,value)
+      else
+        rawset(object,key,value)
+      end
+    end})
+  local commit=store.commit
+  store.commit=function(...)
+    local committed,commit_error=commit(...)
+    if committed then
+      inject_on_restore=true
+      return nil,"injected failure after source commit"
+    end
+    return committed,commit_error
+  end
+  local reentrant_request=request(source(58),1)
+  local reentrant_ok,_,reentrant_calls,reentrant_result=run(reentrant_request)
+  store.commit=commit
+  setmetatable(song,original_song_meta)
+  rawset(song,"tool_data",stored_data)
+  assert(reentrant_ok and reentrant_calls==1 and reentrant_result.status=="integrity_blocked",
+    "reentrant tool_data setter during rollback was not blocked")
+  assert(target.cells[1].note_value==0,
+    "phrase restore overwrote the native edit made during source rollback")
+  assert(song.tool_data==rollback_raw and reentrant_request.blocker,
+    "reentrant rollback did not restore source bytes or retain blocker evidence")
+  writer.clear_integrity_blocker(song)
+  assert(restore(target,rollback_snapshot,{max_lines=CAP_LINES,
+    max_note_columns=CAP_NOTES,max_effect_columns=CAP_EFFECTS}))
+  assert(song.tool_data==rollback_raw)
+end
 
 -- A malformed result or throw leaves apply ownership unknown, so rollback must
 -- preserve the native phrase and source rather than restore a stale preimage.

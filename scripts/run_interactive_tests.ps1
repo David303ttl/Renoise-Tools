@@ -5,6 +5,7 @@ param(
     [ValidateSet('Native','Keyboard','All')][string]$Suite = 'Native',
     [string]$Scenario,
     [string]$AcceptanceCase,
+    [ValidateSet('Warm','Detailed')][string]$AcceptanceProfile = 'Warm',
     [string]$RenoiseExe,
     [int]$RenoiseProcessId = 0,
     [string]$TestEnvironment,
@@ -25,6 +26,7 @@ class RenoiseRunnerAssertionException : System.Exception {
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
+Import-Module (Join-Path $repoRoot 'tests/renoise/runner.psm1') -Force
 $runnerProcessGracefulShutdownMilliseconds = 10000
 $runnerProcessForcedShutdownMilliseconds = 5000
 $runnerProcessIdentityWaitMilliseconds = 5000
@@ -91,6 +93,7 @@ $report = [ordered]@{
     source_commit = $null
     host = $null
     tool_version = $null
+    acceptance_profile = $null
     document_epoch = $null
     elapsed_ms = 0
     operation_trace = @()
@@ -314,6 +317,10 @@ try {
     if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
+    $profileResolution = Resolve-AcidAcceptanceProfile -AcceptanceCase $AcceptanceCase `
+        -Profile $AcceptanceProfile -Explicit:($PSBoundParameters.ContainsKey('AcceptanceProfile'))
+    $profileApplies = $profileResolution.Applies
+    if ($profileApplies) { $report.acceptance_profile = $profileResolution.Profile }
     if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }
     if ($ColdProcessRoundTrip -and ($Suite -ne 'Native' -or $AcceptanceCase -cne 'make-independent')) {
         throw '-ColdProcessRoundTrip requires -Suite Native -AcceptanceCase make-independent.'
@@ -336,7 +343,6 @@ try {
     $lastExpected = 'Developer approves replacing the open document with a disposable new song'
     if (-not $ApproveDisposableSong) { throw 'Pass -ApproveDisposableSong only after confirming the open Renoise document can be replaced by a new empty document for this run.' }
 
-    Import-Module (Join-Path $repoRoot 'tests/renoise/runner.psm1') -Force
     Import-Module (Join-Path $repoRoot 'tests/renoise/host_preflight.psm1') -Force
     $scenarioDirectory = Join-Path $repoRoot 'tests/renoise/acid/scenarios'
     $selectedCatalogScenarios = if ($Suite -in @('Native','All')) {
@@ -857,10 +863,15 @@ try {
                 }
                 Add-Trace -Operation "acceptance.$AcceptanceCase.enter" -Status 'PASS' -Details @{ pid = $processIdentity.Id; keys = '{Enter}'; output = $enterResult.StdOut }
             }
-            $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments @{ case = $AcceptanceCase } -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
+            $acceptanceArguments = @{ case = $AcceptanceCase }
+            if ($profileApplies) { $acceptanceArguments.profile = $profileResolution.Profile }
+            $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments $acceptanceArguments -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
             $acceptanceStatus = [string]$acceptance.status
             if ($acceptanceStatus -cnotin @('PASS','FAIL','ERROR') -or $acceptance.case -cne $AcceptanceCase) {
                 throw 'Native acceptance response did not match the selected case.'
+            }
+            if ($profileApplies -and $acceptance.instrumentation_profile -cne $profileResolution.Profile) {
+                throw 'Native acceptance response did not use the selected instrumentation profile.'
             }
             $acceptanceActual = ConvertTo-AcidCanonicalJson $acceptance
             $lastActual = $acceptance

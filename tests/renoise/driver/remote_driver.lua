@@ -40,6 +40,13 @@ local allowed_conditions = {
   observed_operation_settled = true
 }
 
+local profiled_acceptance_cases = {
+  ["editor-responsiveness"] = true,
+  ["multi-instrument-workflow"] = true,
+}
+
+local acceptance_profiles = { Warm = true, Detailed = true }
+
 local state = nil
 local cleanup
 local started = false
@@ -384,8 +391,7 @@ local function valid_args_for_operation(current, request)
     if (args.root ~= "fixtures" and args.root ~= "temp") or not valid_fixture_name(args.name) then return false end
     return validate_timeout(args, LIMITS.default_timeout_ms) ~= nil
   elseif operation == "acid.acceptance.run" then
-    return object_has_only_keys(args, {case = true}, {"case"}) and
-      (args.case == "make-independent" or args.case == "draft-recovery" or
+    local case_allowed = args.case == "make-independent" or args.case == "draft-recovery" or
         args.case == "reopen-independent" or args.case == "api-probe" or
         args.case == "integrity-observers" or args.case == "writer-recovery" or
         args.case == "editor-responsiveness" or args.case == "import-donor" or args.case == "ownership-negatives" or
@@ -395,7 +401,13 @@ local function valid_args_for_operation(current, request)
         args.case == "cold-reopen-regenerate" or
         args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow" or
         args.case == "selection-feasibility" or args.case == "direct-output-feasibility" or
-        args.case == "source-undo-feasibility")
+        args.case == "source-undo-feasibility"
+    if not case_allowed then return false end
+    if args.profile ~= nil and
+        (not profiled_acceptance_cases[args.case] or not acceptance_profiles[args.profile]) then
+      return false
+    end
+    return object_has_only_keys(args, {case = true, profile = true}, {"case"})
   elseif operation == "wait.condition" then
     return validate_wait_args(args) ~= nil
   end
@@ -988,7 +1000,8 @@ local function process_record(current, record)
       return true
     end
     record.acceptance_started = true
-    local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete, current.json)
+    local call_ok, accepted, detail = pcall(current.acceptance_runner, record.args.case, complete,
+      current.json, record.args.profile)
     if not call_ok then
       finish_error(current, record, "acceptance_error",
         "native acceptance case raised an error: " .. tostring(accepted))

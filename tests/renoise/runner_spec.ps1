@@ -16,6 +16,13 @@ function Reject([scriptblock]$Action, [string]$Pattern) {
     try { & $Action } catch { if ($_.Exception.Message -notmatch $Pattern) { throw }; return }
     throw "Expected rejection: $Pattern"
 }
+$warmProfile = Resolve-AcidAcceptanceProfile -AcceptanceCase 'editor-responsiveness'
+$detailedProfile = Resolve-AcidAcceptanceProfile -AcceptanceCase 'multi-instrument-workflow' -Profile Detailed -Explicit
+Assert ($warmProfile.Applies -and $warmProfile.Profile -ceq 'Warm') 'editor responsiveness did not default to Warm instrumentation'
+Assert ($detailedProfile.Applies -and $detailedProfile.Profile -ceq 'Detailed') 'Detailed profile did not resolve for multi-instrument workflow'
+Assert (-not (Resolve-AcidAcceptanceProfile -AcceptanceCase 'make-independent').Applies) 'profile selection applied to an unrelated acceptance case'
+Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'make-independent' -Profile Detailed -Explicit } 'only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow'
+Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'editor-responsiveness' -Profile Verbose -Explicit } 'Warm|Detailed'
 $metadataReads = [pscustomobject]@{ Count = 0 }
 $metadataStart = [datetime]::UtcNow
 $metadataPath = (Get-Process -Id $PID).Path
@@ -638,6 +645,16 @@ $coldPidReportLine = @($coldPidInvocation | ForEach-Object { [string]$_ } | Wher
 Assert ($coldPidReportLine.Count -eq 1) 'cold-process PID rejection did not emit a report'
 $coldPidReport = Get-Content -LiteralPath $coldPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($coldPidReport.error -match 'requires the runner to launch and own') 'cold-process PID rejection was not explicit'
+$profileRejectedInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase make-independent -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'runner accepted a profile option for an unrelated native case'
+$profileRejectedReportLine = @($profileRejectedInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($profileRejectedReportLine.Count -eq 1) 'profile rejection did not emit a run report'
+$profileRejectedReport = Get-Content -LiteralPath $profileRejectedReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($profileRejectedReport.status -eq 'ERROR' -and
+    $profileRejectedReport.error -match 'only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow' -and
+    @($profileRejectedReport.operation_trace | Where-Object { $_.operation -eq 'process.start' }).Count -eq 0) `
+    'irrelevant profile selection was not rejected before starting Renoise'
 # Execute reporting branches from the real runner without launching Renoise or deploying files.
 $runnerTokens = $null
 $runnerErrors = $null

@@ -22,8 +22,137 @@ local WORKFLOW_INSTRUMENT_COUNT = 3
 local WORKFLOW_PHRASES_PER_INSTRUMENT = 4
 local WORKFLOW_OWNED_PER_INSTRUMENT = 2
 local WORKFLOW_FOREIGN_PER_INSTRUMENT = 2
+local EDITOR_FIXTURE_OPERATION = "editor-responsiveness fixture lifecycle"
+local REQUIRED_SELECTION_SCOPE = "required"
+local FIXTURE_SELECTION_SCOPE = "harness-fixture"
+local GUI_CALLBACK_BUDGET_MS = 30
+local ACCEPTANCE_PROFILES = { Warm = true, Detailed = true }
+local PROFILED_ACCEPTANCE_CASES = {
+  ["editor-responsiveness"] = true,
+  ["multi-instrument-workflow"] = true,
+}
 local prepared_independence_undo = nil
 local prepared_revision_undo = nil
+
+local function inject_after_successful_mutation(request, after_commit)
+  local mutate = request.mutate
+  function request:mutate(token, action)
+    local result = mutate(self, token, action)
+    if type(result) == "table" and result.success == true then
+      after_commit()
+      error("Injected exception after native source commit", 0)
+    end
+    return result
+  end
+end
+
+local function recovery_check_results(checks)
+  return {
+    promoted_identity_preserved = checks.promoted_identity_preserved,
+    committed_source_preserved = checks.committed_source_preserved,
+    contradictory_success_blocked = checks.contradictory_success_blocked,
+    captured_draft_preserved = checks.captured_draft_preserved,
+    captured_draft_current = checks.captured_draft_current,
+    captured_draft_recoverable = checks.captured_draft_recoverable,
+    captured_draft_retention = checks.captured_draft_retention,
+    revalidation_attempted = checks.revalidation_attempted,
+    revalidation_verified = checks.revalidation_verified,
+    revalidation_proof_available = checks.revalidation_proof_available,
+    revalidation_reason = checks.revalidation_reason,
+    retry_clear_attempted = checks.retry_clear_attempted,
+    retry_clear_verified = checks.retry_clear_verified,
+    retry_clear_reason = checks.retry_clear_reason,
+    unverified_clear_attempted = checks.unverified_clear_attempted,
+    preimage_recovery_attempted = checks.preimage_recovery_attempted,
+    preimage_blocker_verified = checks.preimage_blocker_verified,
+    preimage_proof_available = checks.preimage_proof_available,
+    preimage_reason = checks.preimage_reason,
+    committed_source_matches_capture = checks.committed_source_matches_capture,
+    failed_clear_retryable = checks.failed_clear_retryable,
+    exceptional_getters_rejected = checks.exceptional_getters_rejected,
+  }
+end
+
+local function selection_trace_passes(trace)
+  if type(trace) ~= "table" or #trace == 0 then return false end
+  for _, event in ipairs(trace) do
+    if event.selection_scope == REQUIRED_SELECTION_SCOPE then
+      if event.selection_stable ~= true then return false end
+    elseif event.selection_scope == FIXTURE_SELECTION_SCOPE then
+      if event.operation ~= EDITOR_FIXTURE_OPERATION or
+          (event.event ~= "phrase-list-change" and event.event ~= "selected-phrase-change") or
+          event.selection_stable ~= nil then
+        return false
+      end
+    else
+      return false
+    end
+  end
+  return true
+end
+
+local function native_selection(song)
+  return {
+    instrument = song.selected_instrument,
+    phrase = song.selected_phrase,
+    instrument_index = song.selected_instrument_index,
+    phrase_index = song.selected_phrase_index,
+  }
+end
+
+local function same_native_selection(left, right)
+  return left ~= nil and right ~= nil and
+    rawequal(left.instrument, right.instrument) and rawequal(left.phrase, right.phrase) and
+    left.instrument_index == right.instrument_index and left.phrase_index == right.phrase_index
+end
+
+local function editor_fixture_passes(prerequisites, result)
+  return prerequisites == true and type(result) == "table" and
+    result.editor_fixture_inventory_restored == true and
+    result.editor_fixture_native_selection_restored == true
+end
+
+local function draft_values_preserved(current_source,current_policy,current_pb,recoveries,
+    expected_source,expected_policy,expected_pb,same_source)
+  local function matches(source,policy,pb)
+    return source~=nil and same_source(source,expected_source) and
+      policy==expected_policy and pb==expected_pb
+  end
+  if matches(current_source,current_policy,current_pb) then return true,"current" end
+  for _,entry in ipairs(recoveries or {}) do
+    if matches(entry.pattern,entry.output_policy,entry.pb_range) then return true,"recovery" end
+  end
+  return false
+end
+
+local function install_profile_wrapper(profile_mode,target,key,wrap)
+  if profile_mode~="Detailed" or type(target)~="table" or type(target[key])~="function" then
+    return nil,false
+  end
+  local original=target[key]
+  target[key]=wrap(original)
+  return original,true
+end
+
+local function callback_latency_acceptance(profile_mode,action_timings)
+  if profile_mode=="Detailed" then return "NOT_CLAIMED" end
+  for _,elapsed in pairs(action_timings) do
+    if elapsed>GUI_CALLBACK_BUDGET_MS then return "FAIL" end
+  end
+  return "PASS"
+end
+
+local function resolve_acceptance_profile(case_name,profile_mode)
+  if profile_mode~=nil and not PROFILED_ACCEPTANCE_CASES[case_name] then
+    return nil,"instrumentation profile is only valid for editor-responsiveness and multi-instrument-workflow"
+  end
+  if not PROFILED_ACCEPTANCE_CASES[case_name] then return nil end
+  profile_mode=profile_mode or "Warm"
+  if not ACCEPTANCE_PROFILES[profile_mode] then
+    return nil,"instrumentation profile must be Warm or Detailed"
+  end
+  return profile_mode
+end
 
 local function has_eligibility(value)
   return value ~= nil and value ~= false
@@ -2427,12 +2556,14 @@ local function run_integrity_observers(done)
     done({status="FAIL",case="integrity-observers",reason=tostring(request_error or "initial request rejected")})
     return true
   end
-  local function fail(reason)
+  local function fail(reason,details)
     if production_dialog then pcall(function() production_dialog:close() end) end
     if production_context then pcall(function() production_context:release_document() end) end
     if lifecycle_fixture_path then pcall(os.remove,lifecycle_fixture_path);lifecycle_fixture_path=nil end
     pcall(function() context:release_document() end)
-    done({status="FAIL",case="integrity-observers",reason=tostring(reason)})
+    local result={status="FAIL",case="integrity-observers",reason=tostring(reason)}
+    for key,value in pairs(details or {}) do result[key]=value end
+    done(result)
   end
   local function first_commit()
     local result=delivered_result
@@ -2456,15 +2587,44 @@ local function run_integrity_observers(done)
     end
 
     context:release_document()
+    local ownership=require("renoise.phrase_ownership")
+    local store=require("renoise.pattern_store")
+    local phrase=observed.phrase
+    local phrase_id=ownership.id(phrase)
+    if not phrase_id then fail("committed observer fixture has no ownership ID");return end
+    local fixture_source,fixture_policy,fixture_pb=store.read_entry(song,phrase_id)
+    if not fixture_source then fail("committed observer fixture lost its source record");return end
+    local fixture_store=song.tool_data
+    observed.fixture_original_visible_note_columns=phrase.visible_note_columns
+    if phrase.visible_note_columns~=1 then phrase.visible_note_columns=1 end
+    local fixture_name,name_error=ownership.make_name(phrase,phrase_id)
+    if not fixture_name then fail("could not seal the one-visible-column observer fixture: "..tostring(name_error));return end
+    phrase.name=fixture_name
+    local resealed_source,resealed_policy,resealed_pb=store.read_entry(song,phrase_id)
+    if phrase.visible_note_columns~=1 or ownership.id(phrase)~=phrase_id or
+        ownership.status(phrase)~="owned" or song.tool_data~=fixture_store or
+        not resealed_source or not sequence.same_source(resealed_source,fixture_source) or
+        resealed_policy~=fixture_policy or resealed_pb~=fixture_pb then
+      fail("one-visible-column observer fixture did not retain its source identity");return
+    end
+    observed.fixture_visible_note_columns=phrase.visible_note_columns
     local context_module=require("runtime.context")
     local original_context_new=context_module.new
     local original_view_builder=renoise.ViewBuilder
     local original_app=renoise.app
     local gui_context,gui_dialog
     local cancel_calls,last_cancel_token=0,nil
-    local gui_reconcile_calls,generate_calls=0,0
+    local gui_reconcile_calls,generate_calls,gui_sink_dispatches=0,0,0
+    local active_observer_case,active_before_mutation_action,active_before_mutation_checkpoint
+    local active_mutation_action,active_mutation_checkpoint
+    local change_column,reentrant_checkpoint
     local callbacks={}
     context_module.new=function(options)
+      local original_sink=options.sink
+      options.sink=function(request,completion,...)
+        gui_sink_dispatches=gui_sink_dispatches+1
+        return original_sink(request,completion,...)
+      end
       local original_cancel=options.cancel
       options.cancel=function(token,reason,...)
         cancel_calls=cancel_calls+1
@@ -2473,6 +2633,41 @@ local function run_integrity_observers(done)
         return false
       end
       gui_context=original_context_new(options)
+      local mutate=gui_context.mutate
+      gui_context.mutate=function(self,token,action,...)
+        if active_before_mutation_action then
+          local operation=active_before_mutation_action
+          active_before_mutation_action=nil
+          local writer_status,writer_token=writer.state()
+          local cancel_count_before=cancel_calls
+          local call_ok,call_result=pcall(operation)
+          active_before_mutation_checkpoint={writer_status=writer_status,writer_token=writer_token,
+            cancel_calls=cancel_calls-cancel_count_before,
+            cancel_token_matches=rawequal(last_cancel_token,writer_token),
+            operation_ok=call_ok,operation_result=call_result}
+        end
+        if active_observer_case then
+            local writer_status,writer_token=writer.state()
+            local cancel_count_before=cancel_calls
+            local retained=change_column(active_observer_case,true)
+            reentrant_checkpoint={writer_status=writer_status,writer_token=writer_token,
+              retained_value=retained,cancel_calls=cancel_calls-cancel_count_before,
+              cancel_token_matches=rawequal(last_cancel_token,writer_token)}
+        end
+        local function pack(...) return {n=select("#",...),...} end
+        local result=pack(mutate(self,token,action,...))
+        if active_mutation_action then
+          local operation=active_mutation_action
+          active_mutation_action=nil
+          local writer_status,writer_token=writer.state()
+          local cancel_count_before=cancel_calls
+          operation()
+          active_mutation_checkpoint={writer_status=writer_status,writer_token=writer_token,
+            cancel_calls=cancel_calls-cancel_count_before,
+            cancel_token_matches=rawequal(last_cancel_token,writer_token)}
+        end
+        return (unpack or table.unpack)(result,1,result.n)
+      end
       local reconcile=gui_context.reconcile
       gui_context.reconcile=function(self,...)
         gui_reconcile_calls=gui_reconcile_calls+1
@@ -2527,7 +2722,6 @@ local function run_integrity_observers(done)
       fail("production GUI capture missed its context, dialog, target or Generate callback");return
     end
     production_context,production_dialog=gui_context,gui_dialog
-    local phrase=observed.phrase
     local choices,choices_error=gui_context:phrase_choices(instrument)
     if not choices then fail(choices_error or "production GUI phrase inventory failed");return end
     local phrase_choice_index=0
@@ -2575,7 +2769,7 @@ local function run_integrity_observers(done)
     }
     local matrix_index=0
     local idle_reconciled_cases,busy_reconciled_cases,busy_cases,canceled_cases,preserved_cases=0,0,0,0,0
-    local function change_column(case,changed)
+    change_column=function(case,changed)
       if case.kind=="name" then
         local value=changed and (original_names[case.column].." ACID edit") or original_names[case.column]
         phrase:set_column_name(case.column,value)
@@ -2671,71 +2865,71 @@ local function run_integrity_observers(done)
       revalidate_then(function()
         local store_before=renoise.song().tool_data
         local count_before=#instrument.phrases
-        local cancellations_before=cancel_calls
         local busy_reconcile_before=gui_reconcile_calls
+        active_observer_case=case
+        reentrant_checkpoint=nil
         generate()
+        active_observer_case=nil
         local writer_status,writer_token=writer.state()
-        if writer_status~="busy" or writer_token==nil then
-          finish_matrix(false,"production GUI did not start the requested writer operation");return
+        local generation=gui_context:generation_state()
+        local terminal=generation.last_result
+        local checkpoint=reentrant_checkpoint
+        if writer_status~="idle" or not checkpoint or checkpoint.writer_status~="busy" or
+            checkpoint.writer_token==nil or checkpoint.cancel_calls<1 or
+            not checkpoint.cancel_token_matches then
+          finish_matrix(false,"native column edit did not cancel the active writer reentrantly",{
+            production_gui_generate_callbacks=generate_calls,
+            production_gui_sink_dispatches=gui_sink_dispatches,
+            writer_state_after_generate=writer_status,
+            writer_state_at_native_edit=checkpoint and checkpoint.writer_status or nil,
+            cancel_calls_at_native_edit=checkpoint and checkpoint.cancel_calls or 0,
+            cancel_token_matches=checkpoint and checkpoint.cancel_token_matches or false,
+            generation_status=generation.status,
+            generation_result=terminal and terminal.kind or nil,
+            generation_result_code=terminal and terminal.code or nil,
+            generation_result_reason=terminal and terminal.reason or nil,
+            active_writer_cancellation_exercised=false})
+          return
         end
-        local retained_value=change_column(case,true)
-        if cancel_calls<=cancellations_before or not rawequal(last_cancel_token,writer_token) then
-          finish_matrix(false,"native column edit did not synchronously cancel the active writer token");return
+        local retained_value=checkpoint.retained_value
+        if terminal and terminal.kind=="failure" and terminal.status~="cancelled" then
+          finish_matrix(false,"reentrant cancellation did not produce a canceled terminal result",{
+            generation_status=generation.status,generation_result=terminal.kind,
+            generation_result_code=terminal.code,generation_result_reason=terminal.reason,
+            active_writer_cancellation_exercised=true})
+          return
         end
         busy_cases=busy_cases+1
         canceled_cases=canceled_cases+1
-        if writer.state()~="busy" then finish_matrix(false,"writer occupancy ended before terminal delivery");return end
-        local expected=ownership.snapshot(phrase)
-        local waits=0
-        local idle=renoise.tool().app_idle_observable
-        local terminal
-        terminal=function()
-          if writer.state()=="busy" then
-            waits=waits+1
-            if waits>IDLE_TIMEOUT then
-              pcall(function() idle:remove_notifier(terminal) end)
-              finish_matrix(false,"canceled writer terminal was not delivered")
-            end
-            return
-          end
-          pcall(function() idle:remove_notifier(terminal) end)
-          local actual=ownership.snapshot(phrase)
-          local matches,reason=ownership.compare(expected,actual)
-          local retained=case.kind=="name" and phrase:column_name(case.column)==retained_value or
-            case.kind=="mute" and phrase:column_is_muted(case.column)==retained_value
-          if not matches or not retained or renoise.song().tool_data~=store_before or
-              #instrument.phrases~=count_before or #instrument.phrases~=phrase_count then
-            finish_matrix(false,reason or "canceled writer changed destination, source store or inventory")
-            return
-          end
-          preserved_cases=preserved_cases+1
-          change_column(case,false)
-          revalidate_then(run_next_matrix_case,busy_reconcile_before,"busy")
-        end
-        idle:add_notifier(terminal)
-      end,reconcile_before,"idle")
-    end
-    finish_matrix=function(ok,reason)
-      if not ok then pcall(function() gui_dialog:close() end);fail(reason);return end
-      generate()
-      if writer.state()~="busy" then pcall(function() gui_dialog:close() end);fail("explicit Generate did not start after matrix");return end
-      local waits=0
-      local idle=renoise.tool().app_idle_observable
-      local fresh_terminal
-      fresh_terminal=function()
-        if writer.state()=="busy" then
-          waits=waits+1
-          if waits>IDLE_TIMEOUT then
-            pcall(function() idle:remove_notifier(fresh_terminal) end)
-            pcall(function() gui_dialog:close() end);fail("fresh explicit Generate did not settle")
-          end
+        local actual=ownership.snapshot(phrase)
+        local retained=case.kind=="name" and phrase:column_name(case.column)==retained_value or
+          case.kind=="mute" and phrase:column_is_muted(case.column)==retained_value
+        if not actual or not retained or renoise.song().tool_data~=store_before or
+            #instrument.phrases~=count_before or #instrument.phrases~=phrase_count then
+          finish_matrix(false,"reentrant cancellation changed destination, source store or inventory",
+            {active_writer_cancellation_exercised=true,generation_result_reason=terminal and terminal.reason})
           return
         end
-        pcall(function() idle:remove_notifier(fresh_terminal) end)
-        local generation=gui_context:generation_state()
-        local passed=generation.status=="COMMITTED" and not gui_context:integrity_state().blocked and
-          #instrument.phrases==phrase_count
-        if not passed then fail("fresh explicit Generate failed after revalidation");return end
+        preserved_cases=preserved_cases+1
+        change_column(case,false)
+        revalidate_then(run_next_matrix_case,busy_reconcile_before,"busy")
+      end,reconcile_before,"idle")
+    end
+    finish_matrix=function(ok,reason,details)
+      if not ok then pcall(function() gui_dialog:close() end);fail(reason,details);return end
+      generate()
+      local generation=gui_context:generation_state()
+      local writer_status=writer.state()
+      local passed=writer_status=="idle" and generation.status=="COMMITTED" and
+        not gui_context:integrity_state().blocked and #instrument.phrases==phrase_count
+      if not passed then
+        pcall(function() gui_dialog:close() end)
+        fail("fresh explicit Generate did not commit synchronously",{
+          writer_state_after_generate=writer_status,generation_status=generation.status,
+          generation_result=generation.last_result and generation.last_result.kind or nil,
+          generation_result_reason=generation.last_result and generation.last_result.reason or nil})
+        return
+      end
         local original_mark_dirty=gui_context.mark_dirty
         local dirty_calls=0
         gui_context.mark_dirty=function(self,...)
@@ -2743,7 +2937,8 @@ local function run_integrity_observers(done)
           return original_mark_dirty(self,...)
         end
         local original_session=gui_context:lifetime_state().session
-        pcall(function() gui_dialog:close() end)
+        local idle=renoise.tool().app_idle_observable
+        gui_dialog:close()
         production_dialog=gui_dialog
         local close_waits=0
         local closed
@@ -2820,13 +3015,7 @@ local function run_integrity_observers(done)
               fail(save_error or "disposable lifecycle song could not be saved");return
             end
             local app=renoise.app()
-            local changed,new_error=pcall(function() app:new_song_no_template() end)
-            if not changed then
-              pcall(function() tool.app_release_document_observable:remove_notifier(release_notifier) end)
-              pcall(function() tool.app_new_document_observable:remove_notifier(new_document_notifier) end)
-              gui_context.mark_dirty=original_mark_dirty
-              fail("native new-song request failed: "..tostring(new_error));return
-            end
+            app:new_song_no_template()
             local lifecycle_waits=0
             local lifecycle
             lifecycle=function()
@@ -2914,6 +3103,10 @@ local function run_integrity_observers(done)
                   post_commit_blocked=true,revalidation_required=true,restored_destination_revalidated=true,
                   visible_hidden_name_mute_idle_busy=matrix_passed,
                   active_writer_canceled=canceled_cases==#matrix,
+                  reentrant_cancellation_cases=canceled_cases,
+                  reentrant_dialog_close=false,
+                  reentrant_document_release=false,
+                  synchronous_terminal_cases=generate_calls==#matrix+1 and canceled_cases==#matrix,
                   canceled_destination_and_store_preserved=preserved_cases==#matrix,
                   gui_idle_reconciled=idle_reconciled_cases==#matrix and busy_reconciled_cases==#matrix,
                   idle_reconciled_cases=idle_reconciled_cases,busy_reconciled_cases=busy_reconciled_cases,
@@ -2922,8 +3115,11 @@ local function run_integrity_observers(done)
                   old_song_released=release_seen,new_song_gui_attached=new_song_gui_attached,
                   listeners_detached=release_seen and released_state.native_listener_count==0 and
                     not released_state.idle_listener_attached,
-                  generation_calls=generate_calls,fresh_commit=generation.status,
-                  reason=failure_reason})
+                   generation_calls=generate_calls,fresh_commit=generation.status,
+                   fixture_original_visible_note_columns=observed.fixture_original_visible_note_columns,
+                   fixture_visible_note_columns=observed.fixture_visible_note_columns,
+                   fixture_visibility_seed_preserved_source=true,
+                   reason=failure_reason})
               end
               idle:add_notifier(reloaded)
             end
@@ -2932,8 +3128,6 @@ local function run_integrity_observers(done)
           idle:add_notifier(detached_check)
         end
         idle:add_notifier(closed)
-      end
-      idle:add_notifier(fresh_terminal)
     end
     run_next_matrix_case()
   end
@@ -2975,21 +3169,41 @@ local function run_writer_recovery(done)
   local context,original_clear
   local finished=false
   local pending_idle
+  local checks={}
   local function finish(ok,reason)
     if finished then return end
     finished=true
     if pending_idle then pcall(function() renoise.tool().app_idle_observable:remove_notifier(pending_idle) end) end
     if original_clear then writer.clear_integrity_blocker=original_clear end
     if context then context:release_document() end
-    done({status=ok and "PASS" or "FAIL",case="writer-recovery",reason=reason,
-      promoted_identity_preserved=ok,committed_source_preserved=ok,
-      contradictory_success_blocked=ok,captured_draft_preserved=ok,
-      failed_clear_retryable=ok,exceptional_getters_rejected=ok})
+    local details={status=ok and "PASS" or "FAIL",case="writer-recovery",reason=reason}
+    for key,value in pairs(recovery_check_results(checks)) do details[key]=value end
+    done(details)
   end
   local function check(action)
     local ok,reason=pcall(action)
     if not ok then finish(false,tostring(reason)) end
   end
+  local function retry_clear_with_proof(proof)
+    original_clear=writer.clear_integrity_blocker
+    checks.retry_clear_attempted=true
+    checks.failed_clear_retryable=false
+    for _,mode in ipairs({"false","throw"}) do
+      writer.clear_integrity_blocker=function()
+        if mode=="throw" then error("Injected writer clearance failure",0) end
+        return false
+      end
+      assert(not context:revalidate(proof))
+      assert(context:integrity_state().blocked and context:revalidation_status().verified)
+      assert(not context:request_generation("manual"))
+    end
+    checks.failed_clear_retryable=true
+    writer.clear_integrity_blocker=original_clear
+    assert(context:revalidate(proof))
+    assert(not context:integrity_state().blocked)
+    checks.retry_clear_verified=true
+  end
+  checks.exceptional_getters_rejected=false
   for _,operation in ipairs({writer.create,writer.regenerate}) do
     for _,field in ipairs({"kind","token","epoch"}) do
       local request=setmetatable({}, {__index=function(_,key)
@@ -3001,6 +3215,7 @@ local function run_writer_recovery(done)
       end
     end
   end
+  checks.exceptional_getters_rejected=true
   song.transport.lpb=16
   song.transport.groove_enabled=false
   local source=sequence.new_pattern(4)
@@ -3008,24 +3223,21 @@ local function run_writer_recovery(done)
   source.time_events[1]="N"
   local request,reason=factory.build(song,instrument_index,source,#instrument.phrases+1)
   if not request then finish(false,describe_failure(reason));return true end
-  local mutate=request.mutate
   local destination,name,stored
-  function request:mutate(token,action)
-    local result=mutate(self,token,action)
-    if type(result)=="table" and result.committed then
-      destination=instrument.phrases[#instrument.phrases]
-      name,stored=destination.name,song.tool_data
-      error("Injected exception after native source commit",0)
-    end
-    return result
-  end
   local accepted,rejection=writer.create(request,function(result)
     on_next_idle(function() check(function()
-      assert(result.kind=="failure" and result.status=="integrity_blocked" and result.committed)
-      assert(result.phrase==nil and request.blocker and request.blocker.committed)
+      checks.promoted_identity_preserved=false
+      assert(result.kind=="success" and result.committed==true and result.phrase,
+        "initial committed destination was not returned by the writer")
+      destination=result.phrase
+      name,stored=destination.name,song.tool_data
       assert(rawequal(instrument.phrases[#instrument.phrases],destination) and destination.name==name)
-      assert(song.tool_data==stored and ownership.id(destination))
+      checks.promoted_identity_preserved=true
+      checks.committed_source_preserved=false
+      assert(song.tool_data==stored and ownership.id(destination),
+        "committed destination or source record was not preserved")
       assert(sequence.same_source(assert(store.read_entry(song,ownership.id(destination))),source))
+      checks.committed_source_preserved=true
       local captured,terminal
       context=require("runtime.context").new({writer=writer,drafts=drafts,cancel=writer.cancel,
         capture=function() return nil,"Attached editor owns capture" end,
@@ -3042,40 +3254,121 @@ local function run_writer_recovery(done)
       source.pitch_events[1]=sequence.new_pitch(5,0,true,false)
       assert(context:transition("edit",{source=source,output_policy="play_once",pb_range=0}))
       assert(context:request_generation("manual"))
-      local waits=0
       local function inspect()
         if finished then return end
         if not terminal then
-          waits=waits+1
-          if waits>6000 then finish(false,"Native regenerate did not complete; writer="..tostring(writer.state()));return end
+          local generation=context:generation_state()
+          local writer_status,writer_token=writer.state()
+          finish(false,"Synchronous regenerate returned without terminal delivery; writer="..
+            tostring(writer_status).." token="..tostring(writer_token~=nil).." generation="..
+            tostring(generation.status).." result="..
+            tostring(generation.last_result and generation.last_result.kind).." reason="..
+            tostring(generation.last_result and (generation.last_result.reason or generation.last_result.message)))
           return
         end
-        renoise.tool().app_idle_observable:remove_notifier(inspect)
-        pending_idle=nil
         check(function()
+          checks.contradictory_success_blocked=false
           assert(terminal.kind=="failure" and terminal.status=="integrity_blocked")
           assert(context:integrity_state().blocked and not context:request_generation("manual"))
-          assert(captured.draft_capture and drafts.is_current(song,captured.draft_capture))
+          checks.contradictory_success_blocked=true
+          checks.captured_draft_preserved=false
+          local descriptor=captured and captured.draft_capture
+          assert(descriptor,"writer request did not retain its draft capture")
+          checks.captured_draft_current=drafts.is_current(song,descriptor)==true
+          local committed_id=ownership.id(destination)
+          local committed_source,committed_policy,committed_pb=store.read_entry(song,committed_id)
+          checks.committed_source_matches_capture=committed_source~=nil and
+            sequence.same_source(committed_source,captured.source) and
+            committed_policy==captured.output_policy and committed_pb==captured.pb_range
+          assert(checks.committed_source_matches_capture,
+            "committed source revision differs from the source captured by the writer")
+          local draft_source,draft_policy,draft_pb=drafts.get(song,instrument,destination)
+          local preserved,retention=draft_values_preserved(draft_source,draft_policy,draft_pb,
+            drafts.list(song),captured.source,captured.output_policy,captured.pb_range,sequence.same_source)
+          checks.captured_draft_retention=retention
+          checks.captured_draft_recoverable=retention=="recovery"
+          checks.captured_draft_preserved=preserved==true
+          assert(checks.captured_draft_preserved,
+            "captured draft values were neither current nor present in recovery")
           local status,proof=context:revalidation_status()
-          assert(status.verified and proof,status.reason)
-          original_clear=writer.clear_integrity_blocker
-          for _,mode in ipairs({"false","throw"}) do
-            writer.clear_integrity_blocker=function()
-              if mode=="throw" then error("Injected writer clearance failure",0) end
-              return false
+          checks.revalidation_attempted=true
+          checks.revalidation_verified=status.verified==true
+          checks.revalidation_proof_available=proof~=nil
+          checks.revalidation_reason=status.reason
+          if not status.verified or not proof then
+            checks.unverified_clear_attempted=false
+            checks.retry_clear_attempted=false
+            checks.retry_clear_verified=false
+            checks.retry_clear_reason=status.reason or
+              "Recovery evidence did not produce a current revalidation proof"
+            assert(not proof and checks.captured_draft_preserved and
+                checks.committed_source_matches_capture and context:integrity_state().blocked,
+              "unverified recovery did not retain the committed source and detached draft")
+            context:release_document()
+            context=nil
+            checks.preimage_recovery_attempted=true
+            local preimage_terminal,preimage_writer_terminal
+            local preimage_context=require("runtime.context").new({writer=writer,drafts=drafts,
+              cancel=writer.cancel,capture=function() return nil,"Attached editor owns capture" end,
+              sink=function(value,completion)
+                return writer.regenerate(value,function(result)
+                  preimage_writer_terminal=result
+                  completion(result)
+                end)
+              end})
+            local mutate=preimage_context.mutate
+            preimage_context.mutate=function(self,token,action)
+              return mutate(self,token,function()
+                error("Injected failure before native writer mutation",0)
+              end)
             end
-            assert(not context:revalidate(proof))
-            assert(context:integrity_state().blocked and context:revalidation_status().verified)
-            assert(not context:request_generation("manual"))
+            context=preimage_context
+            context:attach_document(song)
+            context:open_dialog(function(value) preimage_terminal=value end)
+            assert(context:bind_phrase(instrument,destination).kind=="owned")
+            local retry_source=sequence.new_pattern(4)
+            retry_source.pitch_events[1]=sequence.new_pitch(6,0,true,false)
+            retry_source.time_events[1]="N"
+            assert(context:transition("edit",{source=retry_source,
+              output_policy="play_once",pb_range=0}))
+            assert(context:request_generation("manual"))
+            local function inspect_preimage()
+              if finished then return end
+              if not preimage_writer_terminal then
+                local generation=context:generation_state()
+                local writer_status,writer_token=writer.state()
+                finish(false,"Synchronous preimage writer returned without terminal result; writer="..
+                  tostring(writer_status).." token="..tostring(writer_token~=nil).." generation="..
+                  tostring(generation.status).." result="..
+                  tostring(generation.last_result and generation.last_result.kind).." reason="..
+                  tostring(generation.last_result and (generation.last_result.reason or generation.last_result.message)))
+                return
+              end
+              check(function()
+                checks.preimage_blocker_verified=false
+                assert(preimage_writer_terminal.kind=="failure" and
+                    preimage_writer_terminal.committed~=true,
+                  "preimage writer did not report an uncommitted failure")
+                assert(preimage_terminal==nil and context:integrity_state().blocked,
+                  "revoked mutation failure was delivered to the stale GUI or did not block integrity")
+                local status,preimage_proof=context:revalidation_status()
+                checks.preimage_proof_available=preimage_proof~=nil
+                checks.preimage_reason=status.reason
+                assert(status.verified and preimage_proof,
+                  status.reason or "captured unchanged preimage did not verify")
+                checks.preimage_blocker_verified=true
+                retry_clear_with_proof(preimage_proof)
+                finish(true)
+              end)
+            end
+            inspect_preimage()
+            return
           end
-          writer.clear_integrity_blocker=original_clear
-          assert(context:revalidate(proof))
-          assert(not context:integrity_state().blocked)
+          retry_clear_with_proof(proof)
           finish(true)
         end)
       end
-      pending_idle=inspect
-      renoise.tool().app_idle_observable:add_notifier(inspect)
+      inspect()
     end) end)
   end)
   if not accepted then finish(false,describe_failure(rejection)) end
@@ -3084,7 +3377,7 @@ end
 
 local run_editor_responsiveness
 
-local function run_multi_instrument_workflow(done, json)
+local function run_multi_instrument_workflow(done, json, profile_mode)
   local song = renoise.song()
   local sequence = require("model.sequencer")
   local writer = require("writers.phrase_writer")
@@ -3184,7 +3477,8 @@ local function run_multi_instrument_workflow(done, json)
         selected_phrase_identity = event.selected_phrase_identity,
         selected_instrument_label = event.selected_instrument_label,
         selected_phrase_label = event.selected_phrase_label,
-        selection_stable = event.selection_stable == true,
+        selection_scope = event.selection_scope,
+        selection_stable = event.selection_stable,
       }
     end
     local summary = {
@@ -3230,6 +3524,8 @@ local function run_multi_instrument_workflow(done, json)
       selected_phrase_identity = native_identity(selected.phrase),
       selected_instrument_label = selected.instrument_identity,
       selected_phrase_label = selected.phrase_identity,
+      selection_scope = active_operation == EDITOR_FIXTURE_OPERATION and
+        FIXTURE_SELECTION_SCOPE or REQUIRED_SELECTION_SCOPE,
       selection_state = selected,
     }
     if instrument then
@@ -3563,10 +3859,7 @@ local function run_multi_instrument_workflow(done, json)
               if not rawequal(instrument.phrases[phrase_index], old.phrase) then ordered = false end
             end
           end
-          local report_selection_stable = true
-          for _, event in ipairs(trace) do
-            if event.selection_stable ~= true then report_selection_stable = false end
-          end
+          local report_selection_stable = selection_trace_passes(trace)
           local track_programs_valid = playback_tracks_intact()
           local passed = final_inventory and ordered and report_selection_stable and selection_checks and #trace > 0 and
             (#targets == 6) and (#foreign == 6) and transaction_count == 12 and
@@ -3579,6 +3872,7 @@ local function run_multi_instrument_workflow(done, json)
             finish("FAIL", "Production GUI workflow probe is unavailable")
             return
           end
+          active_operation = EDITOR_FIXTURE_OPERATION
           run_editor_responsiveness(function(gui_result)
             local actions = type(gui_result) == "table" and gui_result.gui_action_names or ""
             local navigation_asserted = type(actions) == "string" and
@@ -3597,17 +3891,38 @@ local function run_multi_instrument_workflow(done, json)
                 break
               end
             end
-            local gui_passed = type(gui_result) == "table" and gui_result.status == "PASS" and
-              navigation_asserted and live_edit_asserted and source_rows_verified
+            local final_selection_trace_stable = selection_trace_passes(trace)
+            local gui_selection_stable = type(gui_result) == "table" and
+              gui_result.gui_native_selection_stable == true and
+              gui_result.gui_live_native_selection_stable == true
+            local gui_prerequisites = type(gui_result) == "table" and gui_result.status == "PASS" and
+              navigation_asserted and live_edit_asserted and source_rows_verified and
+              final_selection_trace_stable and gui_selection_stable
+            local gui_passed = editor_fixture_passes(gui_prerequisites,gui_result)
             local gui_details = { user_navigation_injected = navigation_asserted,
               live_edit_asserted = live_edit_asserted,
               persistence_asserted = source_rows_verified,
               source_rows_verified = source_rows_verified,
+              selection_stable = selection_checks and final_selection_trace_stable and gui_selection_stable,
+              selection_trace_stable = final_selection_trace_stable,
+              gui_native_selection_stable = gui_selection_stable,
+              editor_fixture_native_selection_restored = type(gui_result) == "table" and
+                gui_result.editor_fixture_native_selection_restored == true,
+              editor_fixture_inventory_restored = type(gui_result) == "table" and
+                gui_result.editor_fixture_inventory_restored == true,
+              editor_fixture_native_selection_changed = type(gui_result) == "table" and
+                gui_result.editor_fixture_native_selection_changed == true,
               gui_live_reason = type(gui_result) == "table" and gui_result.reason or nil,
               gui_live_first_edit_elapsed_ms = type(gui_result) == "table" and
                 gui_result.gui_live_first_edit_elapsed_ms or nil,
               gui_live_request_count = type(gui_result) == "table" and
                 gui_result.gui_live_request_count or nil,
+              instrumentation_profile = type(gui_result) == "table" and
+                gui_result.instrumentation_profile or profile_mode,
+              performance_acceptance = type(gui_result) == "table" and
+                gui_result.performance_acceptance or "NOT_MEASURED",
+              acceptance_claim = profile_mode == "Detailed" and "FUNCTIONAL_ONLY" or
+                "FUNCTIONAL_AND_LATENCY",
               gui_live_committed_source_match = type(gui_result) == "table" and
                 gui_result.gui_live_committed_source_match or false,
               gui_workflow_status = type(gui_result) == "table" and gui_result.status or "missing",
@@ -3622,7 +3937,7 @@ local function run_multi_instrument_workflow(done, json)
             finish(gui_passed and "PASS" or "FAIL",
               not gui_passed and (type(gui_result) == "table" and gui_result.reason or "Production GUI Live Edit/navigation/persisted-source checks failed") or nil,
               gui_details)
-          end)
+          end, profile_mode)
           return
         end
 
@@ -3752,13 +4067,33 @@ local function run_multi_instrument_workflow(done, json)
   return true
 end
 
-run_editor_responsiveness = function(done)
+run_editor_responsiveness = function(done,profile_mode)
+  profile_mode=profile_mode or "Warm"
+  local detailed_profile=profile_mode=="Detailed"
   local song=renoise.song()
   local store=require("renoise.pattern_store")
   local unpack_values=unpack or table.unpack
   local function pack_values(...) return {n=select("#",...),...} end
-  local instrument_index=song.selected_instrument_index
-  local instrument=song.instruments[instrument_index]
+  local selected_instrument_index=song.selected_instrument_index
+  local selected_instrument=song.instruments[selected_instrument_index]
+  local fixture_instrument,fixture_instrument_index
+  for index,candidate in ipairs(song.instruments) do
+    if not rawequal(candidate,selected_instrument) and #candidate.phrases<renoise.Instrument.MAX_NUMBER_OF_PHRASES then
+      fixture_instrument,fixture_instrument_index=candidate,index
+      break
+    end
+  end
+  if not fixture_instrument then
+    done({status="FAIL",case="editor-responsiveness",instrumentation_profile=profile_mode,
+      performance_acceptance="NOT_MEASURED",
+      reason="A non-selected instrument with phrase capacity is required for the hidden-cell fixture"})
+    return true
+  end
+  local instrument_index=fixture_instrument_index
+  local instrument=fixture_instrument
+  local original_phrases={}
+  for index,item in ipairs(instrument.phrases) do original_phrases[index]=item end
+  local native_selection_at_start=native_selection(song)
   local sequence=require("model.sequencer")
   local editor=require("model.editor_state")
   local writer=require("writers.phrase_writer")
@@ -3776,12 +4111,23 @@ run_editor_responsiveness = function(done)
   local captured_baseline_is_opaque
   local capture_calls,sink_calls=0,0
   local metrics={}
+  metrics.instrumentation_profile=profile_mode
+  metrics.performance_acceptance="NOT_MEASURED"
+  metrics.acceptance_claim=detailed_profile and "FUNCTIONAL_ONLY" or "FUNCTIONAL_AND_LATENCY"
+  metrics.callback_budget_ms=GUI_CALLBACK_BUDGET_MS
   local scans=0
   local scans_snapshot_wrapper
   local profile={}
   local phrase_profile={}
   local phrase_profile_enabled=false
   local phrase_profile_restore={}
+  local local_profile_instrumentation={available=false,wrapped=0,reason="disabled"}
+  local profiled_local_functions={}
+  local matches_snapshot_call_sites={}
+  local matches_snapshot_call_site_count=0
+  local hotpath_call_sites={}
+  local capture_local_call_sites={}
+  local capture_local_call_site_count=0
   local gui_open=false
   local gui_draft_seeded=false
   local original_view_builder
@@ -3789,6 +4135,8 @@ run_editor_responsiveness = function(done)
   local captured_test_dialog
   local gui_context_module,original_gui_context_new,gui_context,gui_transition_context
   local gui_live_trace_enabled=false
+  local gui_live_sink_counting=false
+  local gui_live_sink_dispatches=0
   local gui_live_trace={}
   local gui_inventory_match_trace={}
   local gui_context_created_count=0
@@ -3831,6 +4179,7 @@ run_editor_responsiveness = function(done)
     return dialog_closed
   end
   local function cleanup()
+    gui_live_sink_counting=false
     close_test_gui()
     if gui_context_module and original_gui_context_new then
       pcall(function() gui_context_module.new=original_gui_context_new end)
@@ -3839,7 +4188,11 @@ run_editor_responsiveness = function(done)
     end
     for index=#phrase_profile_restore,1,-1 do
       local wrapped=phrase_profile_restore[index]
-      pcall(function() wrapped.target[wrapped.key]=wrapped.original end)
+      if wrapped.restore then
+        pcall(wrapped.restore)
+      else
+        pcall(function() wrapped.target[wrapped.key]=wrapped.original end)
+      end
       phrase_profile_restore[index]=nil
     end
     if observer then pcall(function() observer:detach() end) end
@@ -3863,40 +4216,255 @@ run_editor_responsiveness = function(done)
         end
       end
     end
+    local inventory_restored=#instrument.phrases==#original_phrases
+    if inventory_restored then
+      for index,item in ipairs(original_phrases) do
+        if not rawequal(instrument.phrases[index],item) then inventory_restored=false;break end
+      end
+    end
+    metrics.editor_fixture_inventory_restored=inventory_restored
+    metrics.editor_fixture_native_selection_restored=
+      same_native_selection(native_selection_at_start,native_selection(song))
     pcall(function() song.tool_data=original_store end)
   end
   local function fail(reason)
+    cleanup()
     local result={status="FAIL",case="editor-responsiveness",reason=tostring(reason)}
     for key,value in pairs(metrics) do result[key]=value end
-    cleanup()
     done(result)
   end
   local function measure_gui_callbacks()
     local callbacks,controls,callback_counts,action_memory_kb={},{},{},{}
+    local native_selection_before=native_selection(song)
+    metrics.editor_fixture_native_selection_changed=
+      not same_native_selection(native_selection_at_start,native_selection_before)
     local suppress_captured_notifiers=false
     local anonymous_checkbox_index,anonymous_pitch_page,anonymous_time_page=0,0,0
     local key_items={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B","C+"}
     local octave_items={"DOWN (-1)","NORMAL (0)","UP (+1)"}
     local function profile_function(target,key,name)
-      if type(target)~="table" or type(target[key])~="function" then return end
-      local original=target[key]
-      phrase_profile_restore[#phrase_profile_restore+1]={target=target,key=key,original=original}
-      target[key]=function(...)
-        local started=os.clock()
-        local values=pack_values(original(...))
-        if phrase_profile_enabled then
-          local item=phrase_profile[name] or {calls=0,elapsed_ms=0}
-          item.calls=item.calls+1
-          item.elapsed_ms=item.elapsed_ms+(os.clock()-started)*1000
-          phrase_profile[name]=item
+      if not detailed_profile then return end
+      local original,installed=install_profile_wrapper(profile_mode,target,key,function(inner)
+        return function(...)
+          local started=os.clock()
+          local values=pack_values(inner(...))
+          if phrase_profile_enabled then
+            local item=phrase_profile[name] or {calls=0,elapsed_ms=0}
+            item.calls=item.calls+1
+            item.elapsed_ms=item.elapsed_ms+(os.clock()-started)*1000
+            phrase_profile[name]=item
+            if name=="matches_snapshot" then
+              local debug_api=rawget(_G,"debug")
+              local info=debug_api and type(debug_api.getinfo)=="function" and debug_api.getinfo(2,"nSl")
+              local site=info and ((info.name or "anonymous")..":"..tostring(info.currentline)) or "unavailable"
+              if matches_snapshot_call_sites[site]~=nil or matches_snapshot_call_site_count<8 then
+                if matches_snapshot_call_sites[site]==nil then
+                  matches_snapshot_call_site_count=matches_snapshot_call_site_count+1
+                end
+                matches_snapshot_call_sites[site]=(matches_snapshot_call_sites[site] or 0)+1
+              end
+            elseif name=="ownership_inventory" or name=="ownership_validate_identity" or
+                name=="ownership_membership" or name=="ownership_is_current" or
+                name=="capabilities_inspect" or name=="store_read_entry" then
+              local debug_api=rawget(_G,"debug")
+              local site="unavailable"
+              if debug_api and type(debug_api.getinfo)=="function" then
+                local stack={}
+                for level=2,5 do
+                  local info=debug_api.getinfo(level,"nSl")
+                  if not info then break end
+                  stack[#stack+1]=(info.name or "anonymous")..":"..tostring(info.currentline)
+                end
+                if #stack>0 then site=table.concat(stack,"<-") end
+              end
+              local sites=hotpath_call_sites[name]
+              if not sites then sites={entries={},count=0,other=0};hotpath_call_sites[name]=sites end
+              if sites.entries[site]~=nil then
+                sites.entries[site]=sites.entries[site]+1
+              else
+                if sites.count<8 then
+                  sites.entries[site]=1
+                  sites.count=sites.count+1
+                else
+                  sites.other=sites.other+1
+                end
+              end
+            end
+          end
+          return unpack_values(values,1,values.n)
         end
-        return unpack_values(values,1,values.n)
+      end)
+      if installed then phrase_profile_restore[#phrase_profile_restore+1]={target=target,key=key,original=original} end
+    end
+    local function profile_local_functions(target,key,names,prefix)
+      if not detailed_profile then return end
+      local debug_api=rawget(_G,"debug")
+      if type(debug_api)~="table" or type(debug_api.getupvalue)~="function" or
+          type(debug_api.setupvalue)~="function" then
+        local_profile_instrumentation.reason="debug upvalue access unavailable"
+        return
+      end
+      local fn=type(target)=="table" and target[key]
+      if type(fn)~="function" then
+        local_profile_instrumentation.reason="profile target unavailable: "..prefix
+        return
+      end
+      local wanted={}
+      for _,name in ipairs(names) do wanted[name]=true end
+      local wrapped_count=0
+      for index=1,64 do
+        local upvalue_name,value=debug_api.getupvalue(fn,index)
+        if upvalue_name==nil then break end
+        if wanted[upvalue_name] and type(value)=="function" and not profiled_local_functions[value] then
+          local original=value
+          if prefix=="materializer_apply" and upvalue_name=="verify_snapshot" then
+            for nested_index=1,64 do
+              local nested_name,nested_value=debug_api.getupvalue(original,nested_index)
+              if nested_name==nil then break end
+              if nested_name=="expected_matches" and type(nested_value)=="function" and
+                  not profiled_local_functions[nested_value] then
+                local nested_original=nested_value
+                local nested_wrapped=function(...)
+                  local started=os.clock()
+                  local values=pack_values(nested_original(...))
+                  if phrase_profile_enabled then
+                    local metric="materializer_apply_expected_matches"
+                    local item=phrase_profile[metric] or {calls=0,elapsed_ms=0}
+                    item.calls=item.calls+1
+                    item.elapsed_ms=item.elapsed_ms+(os.clock()-started)*1000
+                    phrase_profile[metric]=item
+                  end
+                  return unpack_values(values,1,values.n)
+                end
+                if debug_api.setupvalue(original,nested_index,nested_wrapped)==nested_name then
+                  profiled_local_functions[nested_wrapped]=true
+                  local_profile_instrumentation.wrapped=local_profile_instrumentation.wrapped+1
+                  local_profile_instrumentation.available=true
+                  local_profile_instrumentation.reason=nil
+                  phrase_profile_restore[#phrase_profile_restore+1]={restore=function()
+                    debug_api.setupvalue(original,nested_index,nested_original)
+                  end}
+                end
+              end
+            end
+          end
+          if prefix=="materializer_apply" and upvalue_name=="write_output" then
+            local function profile_nested(parent_fn,nested_index,nested_name,nested_original)
+              if type(nested_original)~="function" or profiled_local_functions[nested_original] then return end
+              local wrapped
+              if nested_name=="set_if_different" then
+                wrapped=function(...)
+                  nested_original(...)
+                  if phrase_profile_enabled then
+                    local metric="materializer_apply_set_if_different"
+                    local item=phrase_profile[metric] or {calls=0,elapsed_ms=0}
+                    item.calls=item.calls+1
+                    phrase_profile[metric]=item
+                  end
+                end
+              else
+                wrapped=function(...)
+                  local started=os.clock()
+                  local values=pack_values(nested_original(...))
+                  if phrase_profile_enabled then
+                    local metric="materializer_apply_"..nested_name
+                    local item=phrase_profile[metric] or {calls=0,elapsed_ms=0}
+                    item.calls=item.calls+1
+                    item.elapsed_ms=item.elapsed_ms+(os.clock()-started)*1000
+                    phrase_profile[metric]=item
+                  end
+                  return unpack_values(values,1,values.n)
+                end
+              end
+              if debug_api.setupvalue(parent_fn,nested_index,wrapped)==nested_name then
+                profiled_local_functions[wrapped]=true
+                local_profile_instrumentation.wrapped=local_profile_instrumentation.wrapped+1
+                local_profile_instrumentation.available=true
+                local_profile_instrumentation.reason=nil
+                phrase_profile_restore[#phrase_profile_restore+1]={restore=function()
+                  debug_api.setupvalue(parent_fn,nested_index,nested_original)
+                end}
+              end
+            end
+            for nested_index=1,64 do
+              local nested_name,nested_value=debug_api.getupvalue(original,nested_index)
+              if nested_name==nil then break end
+              if nested_name=="set_cell" and type(nested_value)=="function" and
+                  not profiled_local_functions[nested_value] then
+                local set_cell=nested_value
+                for cell_index=1,64 do
+                  local cell_name,cell_value=debug_api.getupvalue(set_cell,cell_index)
+                  if cell_name==nil then break end
+                  if cell_name=="set_if_different" then
+                    profile_nested(set_cell,cell_index,cell_name,cell_value)
+                  end
+                end
+                profile_nested(original,nested_index,nested_name,set_cell)
+              end
+            end
+          end
+          local wrapped=function(...)
+            local started=os.clock()
+            local values=pack_values(original(...))
+            if phrase_profile_enabled then
+              local metric=prefix.."_"..upvalue_name
+              local item=phrase_profile[metric] or {calls=0,elapsed_ms=0}
+              item.calls=item.calls+1
+              item.elapsed_ms=item.elapsed_ms+(os.clock()-started)*1000
+              phrase_profile[metric]=item
+              if prefix=="capture" then
+                local debug_api=rawget(_G,"debug")
+                local site="unavailable"
+                if debug_api and type(debug_api.getinfo)=="function" then
+                  for level=2,5 do
+                    local info=debug_api.getinfo(level,"nS")
+                    if not info then break end
+                    if info.what=="Lua" and info.name and info.name~="capture" then
+                      site=info.name
+                      break
+                    end
+                  end
+                end
+                if capture_local_call_sites[site]~=nil or capture_local_call_site_count<8 then
+                  if capture_local_call_sites[site]==nil then
+                    capture_local_call_site_count=capture_local_call_site_count+1
+                  end
+                  local item= capture_local_call_sites[site] or {calls=0,elapsed_ms=0}
+                  item.calls=item.calls+1
+                  item.elapsed_ms=item.elapsed_ms+(os.clock()-started)*1000
+                  capture_local_call_sites[site]=item
+                end
+              end
+            end
+            return unpack_values(values,1,values.n)
+          end
+          local set_name=debug_api.setupvalue(fn,index,wrapped)
+          if set_name==upvalue_name then
+            profiled_local_functions[wrapped]=true
+            wrapped_count=wrapped_count+1
+            local_profile_instrumentation.wrapped=local_profile_instrumentation.wrapped+1
+            local_profile_instrumentation.available=true
+            local_profile_instrumentation.reason=nil
+            phrase_profile_restore[#phrase_profile_restore+1]={restore=function()
+              debug_api.setupvalue(fn,index,original)
+            end}
+          end
+        end
+      end
+      if wrapped_count==0 and not local_profile_instrumentation.available then
+        local_profile_instrumentation.reason="no requested local upvalues found: "..prefix
       end
     end
     local function reset_phrase_profile()
       phrase_profile={}
+      matches_snapshot_call_sites={}
+      matches_snapshot_call_site_count=0
+      capture_local_call_sites={}
+      capture_local_call_site_count=0
+      hotpath_call_sites={}
     end
     local function publish_phrase_profile(prefix)
+      if not detailed_profile then return end
       for _,name in ipairs({"snapshot","copy_snapshot","compare","classify","classify_against",
           "classify_verified_postimage","classify_against_reference",
           "matches_snapshot","snapshot_index","ownership_status","make_name",
@@ -3905,32 +4473,71 @@ run_editor_responsiveness = function(done)
           "materializer_apply","materializer_verify","materializer_restore",
           "context_adopt","runtime_request_guard","runtime_inventory_guard",
           "plan","restore_editor_target","transition","render_project","render_step_text",
-          "request_new","request_capture","request_checkpoint","writer_create","writer_regenerate"}) do
+          "request_new","request_capture","request_checkpoint","writer_create","writer_regenerate",
+          "ownership_inventory","ownership_validate_identity","ownership_membership",
+          "ownership_is_current","capabilities_inspect","store_read_entry"}) do
         local item=phrase_profile[name] or {calls=0,elapsed_ms=0}
         metrics[prefix.."_"..name.."_calls"]=item.calls
         metrics[prefix.."_"..name.."_elapsed_ms"]=item.elapsed_ms
       end
+      for _,name in ipairs({"capture_capture","ownership_match_matches_snapshot",
+          "materializer_apply_valid_expected","materializer_apply_write_output",
+          "materializer_apply_set_cell","materializer_apply_set_if_different",
+          "materializer_apply_verify_snapshot","materializer_apply_expected_matches",
+          "materializer_verify_valid_expected","materializer_verify_verify_snapshot"}) do
+        local item=phrase_profile[name] or {calls=0,elapsed_ms=0}
+        metrics[prefix.."_"..name.."_calls"]=item.calls
+        metrics[prefix.."_"..name.."_elapsed_ms"]=item.elapsed_ms
+      end
+      local sites={}
+      for site,count in pairs(matches_snapshot_call_sites) do sites[#sites+1]=site.."="..count end
+      table.sort(sites)
+      metrics[prefix.."_matches_snapshot_call_sites"]=table.concat(sites,";")
+      local capture_sites={}
+      for site,item in pairs(capture_local_call_sites) do
+        capture_sites[#capture_sites+1]=site.."="..item.calls.."/"..string.format("%.3f",item.elapsed_ms)
+      end
+      table.sort(capture_sites)
+      metrics[prefix.."_capture_local_call_sites"]=table.concat(capture_sites,";")
+      for name,sites in pairs(hotpath_call_sites) do
+        local entries={}
+        for site,count in pairs(sites.entries) do entries[#entries+1]=site.."="..count end
+        if sites.other>0 then entries[#entries+1]="other="..sites.other end
+        table.sort(entries)
+        metrics[prefix.."_"..name.."_call_sites"]=table.concat(entries,";")
+      end
+      metrics[prefix.."_local_profile_instrumentation_available"]=local_profile_instrumentation.available
+      metrics[prefix.."_local_profile_instrumentation_wrapped"]=local_profile_instrumentation.wrapped
+      metrics[prefix.."_local_profile_instrumentation_reason"]=local_profile_instrumentation.reason or ""
     end
     local planner=require("model.output_planner")
     local request_module=require("runtime.requests")
     local inventory_module=require("runtime.inventory")
     local materializer=require("writers.phrase_materializer")
     local store=require("renoise.pattern_store")
+    local capabilities=require("renoise.target_capabilities")
     local original_requests_new=request_module.new
     local original_inventory_new=inventory_module.new
-    request_module.new=function(access)
-      local owner=original_requests_new(access)
-      profile_function(owner,"capture","request_capture")
-      profile_function(owner,"validate_checkpoint","request_checkpoint")
-      return owner
+    if detailed_profile then
+      request_module.new=function(access)
+        local owner=original_requests_new(access)
+        profile_function(owner,"capture","request_capture")
+        profile_function(owner,"validate_checkpoint","request_checkpoint")
+        return owner
+      end
+      phrase_profile_restore[#phrase_profile_restore+1]={target=request_module,key="new",original=original_requests_new}
+      inventory_module.new=function(...)
+        local owner=original_inventory_new(...)
+        profile_function(owner,"adopt","context_adopt")
+        return owner
+      end
+      phrase_profile_restore[#phrase_profile_restore+1]={target=inventory_module,key="new",original=original_inventory_new}
     end
-    phrase_profile_restore[#phrase_profile_restore+1]={target=request_module,key="new",original=original_requests_new}
-    inventory_module.new=function(...)
-      local owner=original_inventory_new(...)
-      profile_function(owner,"adopt","context_adopt")
-      return owner
-    end
-    phrase_profile_restore[#phrase_profile_restore+1]={target=inventory_module,key="new",original=original_inventory_new}
+    profile_local_functions(ownership,"capture_recovery",{"capture"},"capture")
+    profile_local_functions(ownership,"matches_snapshot",{"matches_snapshot"},"ownership_match")
+    profile_local_functions(materializer,"apply",{"valid_expected","write_output","verify_snapshot",
+      "expected_matches"},"materializer_apply")
+    profile_local_functions(materializer,"verify",{"valid_expected","verify_snapshot"},"materializer_verify")
     profile_function(writer,"create","writer_create")
     profile_function(writer,"regenerate","writer_regenerate")
     profile_function(request_module,"new","request_new")
@@ -3940,6 +4547,10 @@ run_editor_responsiveness = function(done)
     profile_function(ownership,"matches_snapshot","matches_snapshot")
     profile_function(ownership,"snapshot_index","snapshot_index")
     profile_function(ownership,"status","ownership_status")
+    profile_function(ownership,"inventory","ownership_inventory")
+    profile_function(ownership,"validate_identity","ownership_validate_identity")
+    profile_function(ownership,"membership","ownership_membership")
+    profile_function(ownership,"is_current","ownership_is_current")
     profile_function(ownership,"make_name","make_name")
     profile_function(ownership,"capture_recovery","capture_recovery")
     profile_function(ownership,"make_name_from_verified_snapshot","make_name_from_verified_snapshot")
@@ -3949,8 +4560,10 @@ run_editor_responsiveness = function(done)
     profile_function(validator,"classify_against_reference","classify_against_reference")
     profile_function(validator,"preflight_destination","preflight_destination")
     profile_function(store,"allocate","store_allocate")
+    profile_function(store,"read_entry","store_read_entry")
     profile_function(store,"prepare_revision","store_prepare_revision")
     profile_function(store,"commit","store_commit")
+    profile_function(capabilities,"inspect","capabilities_inspect")
     profile_function(materializer,"apply","materializer_apply")
     profile_function(materializer,"verify","materializer_verify")
     profile_function(materializer,"restore","materializer_restore")
@@ -4005,7 +4618,7 @@ run_editor_responsiveness = function(done)
     end
     local function tracked_callback(id,notifier)
       local callback=function(...)
-        callback_counts[id]=(callback_counts[id] or 0)+1
+        if detailed_profile then callback_counts[id]=(callback_counts[id] or 0)+1 end
         if suppress_captured_notifiers then return end
         return notifier(...)
       end
@@ -4032,11 +4645,23 @@ run_editor_responsiveness = function(done)
     original_gui_context_new=gui_context_module.new
     gui_context_module.new=function(options)
       gui_context_created_count=gui_context_created_count+1
-      gui_context=original_gui_context_new(options)
-      profile_function(gui_context,"matches_mutation_inventory","runtime_inventory_guard")
-      profile_function(gui_context,"request_generation","runtime_request_guard")
+      local original_sink=options.sink
+      local wrapped_context
+      options.sink=function(request,completion)
+        if gui_live_sink_counting and rawequal(wrapped_context,gui_context) then
+          gui_live_sink_dispatches=gui_live_sink_dispatches+1
+        end
+        return original_sink(request,completion)
+      end
+      wrapped_context=original_gui_context_new(options)
+      gui_context=wrapped_context
+      gui_transition_context=gui_context
+      if detailed_profile then
+        profile_function(gui_context,"matches_mutation_inventory","runtime_inventory_guard")
+        profile_function(gui_context,"request_generation","runtime_request_guard")
+      end
       local original_inventory_match=gui_context.matches_mutation_inventory
-      if type(original_inventory_match)=="function" then
+      if detailed_profile and type(original_inventory_match)=="function" then
         gui_context.matches_mutation_inventory=function(self,subject,inventory_kind)
           local called,matches,match_reason=pcall(original_inventory_match,self,subject,inventory_kind)
           if gui_live_trace_enabled and #gui_inventory_match_trace<80 then
@@ -4053,32 +4678,34 @@ run_editor_responsiveness = function(done)
           return matches,match_reason
         end
       end
-      profile_function(gui_context,"restore_editor_target","restore_editor_target")
+      if detailed_profile then profile_function(gui_context,"restore_editor_target","restore_editor_target") end
       local original_request_generation=gui_context.request_generation
-      gui_context.request_generation=function(self,trigger,...)
-        local tracked=gui_live_trace_enabled and trigger=="live"
-        local attempt
-        if tracked then
-          attempt=#gui_live_request_trace+1
-          reset_phrase_profile()
-          phrase_profile_enabled=true
+      if detailed_profile then
+        gui_context.request_generation=function(self,trigger,...)
+          local tracked=gui_live_trace_enabled and trigger=="live"
+          local attempt
+          if tracked then
+            attempt=#gui_live_request_trace+1
+            reset_phrase_profile()
+            phrase_profile_enabled=true
+          end
+          local called,accepted,reason=pcall(original_request_generation,self,trigger,...)
+          if tracked then
+            phrase_profile_enabled=false
+            publish_phrase_profile("gui_live_request_"..tostring(attempt).."_profile")
+            local state=self:generation_state()
+            gui_live_request_trace[#gui_live_request_trace+1]=table.concat({
+              "attempt="..tostring(attempt),"accepted="..tostring(accepted),
+              "reason="..tostring(reason or ""),"status="..tostring(state.status),
+              "pending="..tostring(state.pending),"writer="..tostring(writer.state())
+            },",")
+            metrics.gui_live_request_trace=table.concat(gui_live_request_trace,";")
+          end
+          if not called then error(accepted,0) end
+          return accepted,reason
         end
-        local called,accepted,reason=pcall(original_request_generation,self,trigger,...)
-        if tracked then
-          phrase_profile_enabled=false
-          publish_phrase_profile("gui_live_request_"..tostring(attempt).."_profile")
-          local state=self:generation_state()
-          gui_live_request_trace[#gui_live_request_trace+1]=table.concat({
-            "attempt="..tostring(attempt),"accepted="..tostring(accepted),
-            "reason="..tostring(reason or ""),"status="..tostring(state.status),
-            "pending="..tostring(state.pending),"writer="..tostring(writer.state())
-          },",")
-          metrics.gui_live_request_trace=table.concat(gui_live_request_trace,";")
-        end
-        if not called then error(accepted,0) end
-        return accepted,reason
       end
-      for _,method_name in ipairs({"flush_pending","close_dialog","release_document","attach_document",
+      if detailed_profile then for _,method_name in ipairs({"flush_pending","close_dialog","release_document","attach_document",
           "open_dialog","reconcile","refresh_inventory","mark_dirty"}) do
         local original_method=gui_context[method_name]
         if type(original_method)=="function" then
@@ -4117,9 +4744,9 @@ run_editor_responsiveness = function(done)
             return unpack_values(values,2,values.n)
           end
         end
-      end
+      end end
       local original_transition=gui_context.transition
-      gui_context.transition=function(self,...)
+      if detailed_profile then gui_context.transition=function(self,...)
         local kind=select(1,...)
         gui_transition_context=self
         local before
@@ -4189,7 +4816,7 @@ run_editor_responsiveness = function(done)
         gui_transition_result=nil
         gui_transition_error=values[2]
         error(values[2])
-      end
+      end end
       return gui_context
     end
     original_view_builder=renoise.ViewBuilder
@@ -4319,8 +4946,7 @@ run_editor_responsiveness = function(done)
       return nil,"GUI phrase selector did not expose the generated phrase callback"
     end
     local phrase_select_started=os.clock()
-    reset_phrase_profile()
-    phrase_profile_enabled=true
+    if detailed_profile then reset_phrase_profile();phrase_profile_enabled=true end
     local phrase_control=actual_phrase_control
     local phrase_dispatch_before=callback_counts.acid_phrase_choice or 0
     if phrase_control then phrase_control.value=phrase_index end
@@ -4382,21 +5008,25 @@ run_editor_responsiveness = function(done)
     local current_octave=stored.pitch_events[note_pitch_index].octave
     local current_command=stored.time_events[2]
     local function invoke(kind,callback_id,notifier,value,check)
-      local memory_before=collectgarbage("count")
+      local memory_before=detailed_profile and collectgarbage("count") or nil
       local started=os.clock()
       local control=controls[callback_id]
       suppress_captured_notifiers=true
       if control then control.value=value end
       suppress_captured_notifiers=false
-      local dispatch_elapsed=(os.clock()-started)*1000
+      local dispatch_elapsed=detailed_profile and ((os.clock()-started)*1000) or nil
       if control then
-        local callback_started=os.clock()
+        local callback_started=detailed_profile and os.clock() or nil
         notifier(value)
-        dispatch_elapsed=dispatch_elapsed+(os.clock()-callback_started)*1000
+        if detailed_profile then
+          dispatch_elapsed=dispatch_elapsed+(os.clock()-callback_started)*1000
+        end
       end
-      metrics["gui_last_"..kind.."_callback_elapsed_ms"]=dispatch_elapsed
       local elapsed=(os.clock()-started)*1000
-      metrics["gui_last_"..kind.."_callback_memory_delta_kb"]=collectgarbage("count")-memory_before
+      if detailed_profile then metrics["gui_last_"..kind.."_callback_elapsed_ms"]=dispatch_elapsed end
+      if detailed_profile then
+        metrics["gui_last_"..kind.."_callback_memory_delta_kb"]=collectgarbage("count")-memory_before
+      end
       samples[kind][#samples[kind]+1]=elapsed
       local updated,draft_policy,draft_pb=persisted.read_draft(song,instrument,phrase)
       if not updated or sequence.same_source(last_saved_source,updated) then
@@ -4443,7 +5073,7 @@ run_editor_responsiveness = function(done)
     local function value_action(name,alias,value,target_phrase,check,save_required)
       local control=controls[alias]
       if not control then return nil,"GUI control was not captured: "..alias end
-      local memory_before=collectgarbage("count")
+      local memory_before=detailed_profile and collectgarbage("count") or nil
       local started=os.clock()
       suppress_captured_notifiers=true
       control.value=value
@@ -4452,7 +5082,7 @@ run_editor_responsiveness = function(done)
         callbacks[alias](value)
       end
       local elapsed=(os.clock()-started)*1000
-      local memory_delta_kb=collectgarbage("count")-memory_before
+      local memory_delta_kb=detailed_profile and (collectgarbage("count")-memory_before) or nil
       record_action(name,elapsed,memory_delta_kb)
       local updated,policy,pb=persisted.read_draft(song,instrument,target_phrase)
       if save_required and not updated then
@@ -4474,11 +5104,11 @@ run_editor_responsiveness = function(done)
     local function button_action(name,alias,check)
       local callback=callbacks[alias]
       if type(callback)~="function" then return nil,"GUI button callback was not captured: "..alias end
-      local memory_before=collectgarbage("count")
+      local memory_before=detailed_profile and collectgarbage("count") or nil
       local started=os.clock()
       callback()
       local elapsed=(os.clock()-started)*1000
-      local memory_delta_kb=collectgarbage("count")-memory_before
+      local memory_delta_kb=detailed_profile and (collectgarbage("count")-memory_before) or nil
       record_action(name,elapsed,memory_delta_kb)
       if check then
         local valid,reason=check()
@@ -4592,7 +5222,7 @@ run_editor_responsiveness = function(done)
       {"grid-time-command","acid_grid_time_02",2,function(updated)return updated.time_events[2]=="T","Grid TIME cell did not update source command" end}
     }
     for _,action in ipairs(grid_actions) do
-      local profile_grid_key=action[1]=="grid-key"
+      local profile_grid_key=detailed_profile and action[1]=="grid-key"
       if profile_grid_key then reset_phrase_profile();phrase_profile_enabled=true end
       local ok,reason=run_value(action[1],action[2],action[3],phrase,action[4],true)
       if profile_grid_key then
@@ -4629,9 +5259,15 @@ run_editor_responsiveness = function(done)
       return reset_source~=nil,"Reset Source did not save a new draft revision"
     end)
     if not reset_ok then return nil,reset_error end
+    local new_phrase_choice_index
+    for index,item in ipairs(controls.acid_phrase_choice.items or {}) do
+      if item=="NEW PHRASE (append)" then new_phrase_choice_index=index;break end
+    end
+    if not new_phrase_choice_index then return nil,"GUI instrument target has no New Phrase choice" end
+    controls.acid_new_phrase_choice_index=new_phrase_choice_index
     local phrase_choice_ok,phrase_choice_error=run_value("new-phrase-target","acid_phrase_choice",
-      controls.acid_new_phrase_choice_index,nil,function()
-        return controls.acid_phrase_choice.value==controls.acid_new_phrase_choice_index,
+      new_phrase_choice_index,nil,function()
+        return controls.acid_phrase_choice.value==new_phrase_choice_index,
           "New Phrase target was not selected"
       end,false)
     if not phrase_choice_ok then return nil,phrase_choice_error end
@@ -4648,14 +5284,13 @@ run_editor_responsiveness = function(done)
     local warm_phrase_samples={}
     for sample=1,2 do
       local new_target_ok,new_target_error=run_value("new-phrase-reselection-"..sample,
-        "acid_phrase_choice",controls.acid_new_phrase_choice_index,nil,function()
-          return controls.acid_phrase_choice.value==controls.acid_new_phrase_choice_index,
+        "acid_phrase_choice",new_phrase_choice_index,nil,function()
+          return controls.acid_phrase_choice.value==new_phrase_choice_index,
             "New Phrase target was not selected during warm reselection"
         end,false)
       if not new_target_ok then return nil,new_target_error end
-      reset_phrase_profile()
-      phrase_profile_enabled=true
-      local warm_started=os.clock()
+      if detailed_profile then reset_phrase_profile();phrase_profile_enabled=true end
+      local warm_started=detailed_profile and os.clock() or nil
       local warm_target_ok,warm_target_error=run_value("owned-phrase-reselection-"..sample,
         "acid_phrase_choice",phrase_index,phrase,function()
           return controls.acid_phrase_choice.value==phrase_index,
@@ -4663,11 +5298,15 @@ run_editor_responsiveness = function(done)
         end,false)
       phrase_profile_enabled=false
       if not warm_target_ok then return nil,warm_target_error end
-      warm_phrase_samples[sample]=(os.clock()-warm_started)*1000
-      publish_phrase_profile("gui_phrase_warm_"..sample.."_profile")
+      if detailed_profile then
+        warm_phrase_samples[sample]=(os.clock()-warm_started)*1000
+        publish_phrase_profile("gui_phrase_warm_"..sample.."_profile")
+      end
     end
-    metrics.gui_phrase_warm_reselection_samples_ms=string.format("%.2f,%.2f",
-      warm_phrase_samples[1],warm_phrase_samples[2])
+    if detailed_profile then
+      metrics.gui_phrase_warm_reselection_samples_ms=string.format("%.2f,%.2f",
+        warm_phrase_samples[1],warm_phrase_samples[2])
+    end
     metrics.gui_action_count=#actions
     metrics.gui_action_names=table.concat(actions,",")
     for _,kind in ipairs({"note","octave","command"}) do
@@ -4694,19 +5333,26 @@ run_editor_responsiveness = function(done)
       close_test_gui()
       return nil,"GUI edit callback changed committed phrase without live generation"
     end
+    metrics.gui_native_selection_stable=same_native_selection(native_selection_before,native_selection(song))
+    if not metrics.gui_native_selection_stable then
+      close_test_gui()
+      return nil,"GUI editor callbacks changed native instrument or phrase selection"
+    end
     if writer.state()=="busy" then
       close_test_gui()
       return nil,"GUI edit callback unexpectedly started generation"
     end
     metrics.gui_callback_paths_verified=true
     metrics.gui_callbacks_per_control=3
-    metrics.gui_callback_budget_ms=30
+    metrics.gui_callback_budget_ms=GUI_CALLBACK_BUDGET_MS
     metrics.gui_draft_save_verified=true
     metrics.gui_view_refresh_verified=true
     metrics.gui_unarmed_phrase_unchanged=true
     local slow_actions={}
     for name,elapsed in pairs(action_timings) do
-      if elapsed>30 then slow_actions[#slow_actions+1]=name.."="..string.format("%.2f",elapsed) end
+      if elapsed>GUI_CALLBACK_BUDGET_MS then
+        slow_actions[#slow_actions+1]=name.."="..string.format("%.2f",elapsed)
+      end
     end
     table.sort(slow_actions)
     metrics.gui_over_budget_actions=table.concat(slow_actions,",")
@@ -4723,11 +5369,14 @@ run_editor_responsiveness = function(done)
       return nil,"GUI Live Edit note callback was not captured"
     end
     local function live_probe(finished)
+      local native_selection_before=native_selection(song)
+      local live_checkbox_dispatches,live_note_dispatches=0,0
       local function set_live_armed(value)
         suppress_captured_notifiers=true
         live_control.value=value
         suppress_captured_notifiers=false
         live_notifier(value)
+        live_checkbox_dispatches=live_checkbox_dispatches+1
       end
       local pitch_position=controls.acid_program_pitch_position
       local pitch_position_notifier=callbacks.acid_program_pitch_position
@@ -4753,10 +5402,11 @@ run_editor_responsiveness = function(done)
       end
       local arm_count=callback_counts.acid_live_edit or 0
       local request_trace_before=#gui_live_request_trace
+      local sink_dispatches_before=gui_live_sink_dispatches
       metrics.gui_live_checkbox_found=live_control~=nil
       metrics.gui_live_checkbox_callback_found=live_notifier~=nil
       metrics.gui_live_checkbox_value_before=live_control.value==true
-      gui_live_trace_enabled=true
+      gui_live_trace_enabled=detailed_profile
       set_live_armed(true)
       local live_context=gui_transition_context or gui_context
       metrics.gui_context_created_count=gui_context_created_count
@@ -4767,7 +5417,8 @@ run_editor_responsiveness = function(done)
       metrics.gui_live_pending_after_toggle=armed and armed.pending==true or false
       metrics.gui_live_status_after_toggle=armed and tostring(armed.status) or "missing"
       metrics.gui_live_checkbox_value_after=live_control.value==true
-      metrics.gui_live_checkbox_callback_dispatches=(callback_counts.acid_live_edit or 0)-arm_count
+      metrics.gui_live_checkbox_callback_dispatches=detailed_profile and
+        ((callback_counts.acid_live_edit or 0)-arm_count) or live_checkbox_dispatches
       if not armed or not armed.armed or armed.busy then
         finished(false,"Live Edit did not arm before the source edit")
         return
@@ -4780,11 +5431,14 @@ run_editor_responsiveness = function(done)
         live_key_control.value=value
         suppress_captured_notifiers=false
         live_key_notifier(value)
-        return (os.clock()-started)*1000
+        local elapsed=(os.clock()-started)*1000
+        live_note_dispatches=live_note_dispatches+1
+        return elapsed
       end
-      reset_phrase_profile()
-      phrase_profile_enabled=true
+      if detailed_profile then reset_phrase_profile();phrase_profile_enabled=true end
+      gui_live_sink_counting=true
       metrics.gui_live_first_edit_elapsed_ms=edit_live_note(first_value)
+      gui_live_sink_counting=false
       phrase_profile_enabled=false
       publish_phrase_profile("gui_live_first_profile")
       live_context=gui_transition_context or live_context
@@ -4817,7 +5471,9 @@ run_editor_responsiveness = function(done)
       local writer_state=writer.state()
       local live_result=first_state.last_result
       local draft=persisted.read_draft(song,instrument,phrase)
-      local request_count=#gui_live_request_trace-request_trace_before
+      local request_count=gui_live_sink_dispatches-sink_dispatches_before
+      metrics.gui_live_request_generation_calls=detailed_profile and
+        (#gui_live_request_trace-request_trace_before) or nil
       metrics.gui_live_transition_trace=table.concat(gui_live_trace,";")
       metrics.gui_live_request_count=request_count
       metrics.gui_live_revision_id_advanced=current_revision_id~=nil and current_revision_id~=before_revision_id
@@ -4837,9 +5493,12 @@ run_editor_responsiveness = function(done)
       metrics.gui_live_terminal_before_return=live_result~=nil and writer_state=="idle" and
         live_result.kind=="success" and writer_state=="idle" and
         not first_state.busy and not first_state.pending and not draft
+      metrics.gui_live_native_selection_stable=
+        same_native_selection(native_selection_before,native_selection(song))
       if not first_state.armed or not metrics.gui_live_terminal_before_return or
           not output_matches or request_count~=1 or
-          not metrics.gui_live_revision_id_advanced or not metrics.gui_live_prior_source_retained then
+          not metrics.gui_live_revision_id_advanced or not metrics.gui_live_prior_source_retained or
+          not metrics.gui_live_native_selection_stable then
         set_live_armed(false)
         finished(false,"Live Edit did not synchronously commit one coherent source revision: writer="..
           tostring(writer_state).." status="..tostring(first_state.status).." result="..
@@ -4850,6 +5509,7 @@ run_editor_responsiveness = function(done)
         return
       end
       local disarm_count=callback_counts.acid_live_edit or 0
+      local live_dispatches_before_disarm=live_checkbox_dispatches
       set_live_armed(false)
       local disarmed=live_context:generation_state()
       metrics.gui_live_disarmed=not disarmed.armed
@@ -4859,19 +5519,28 @@ run_editor_responsiveness = function(done)
         finished(false,"Live Edit did not disarm or close its dialog cleanly")
         return
       end
-      metrics.gui_live_checkbox_dispatches=(callback_counts.acid_live_edit or 0)-arm_count
-      metrics.gui_live_disarm_dispatches=(callback_counts.acid_live_edit or 0)-disarm_count
+      metrics.gui_live_checkbox_dispatches=detailed_profile and
+        ((callback_counts.acid_live_edit or 0)-arm_count) or live_checkbox_dispatches
+      metrics.gui_live_disarm_dispatches=detailed_profile and
+        ((callback_counts.acid_live_edit or 0)-disarm_count) or
+        (live_checkbox_dispatches-live_dispatches_before_disarm)
+      metrics.gui_live_note_callback_dispatches=live_note_dispatches
       action_timings["live-note"]=metrics.gui_live_first_edit_elapsed_ms
       local over_budget={}
       for name,elapsed in pairs(action_timings) do
-        if elapsed>30 then over_budget[#over_budget+1]=name.."="..string.format("%.2f",elapsed) end
+        if elapsed>GUI_CALLBACK_BUDGET_MS then
+          over_budget[#over_budget+1]=name.."="..string.format("%.2f",elapsed)
+        end
       end
       table.sort(over_budget)
       metrics.gui_over_budget_actions=table.concat(over_budget,",")
       metrics.gui_over_budget_action_count=#over_budget
       metrics.gui_live_synchronous_verified=true
-      if #over_budget>0 then
-        finished(false,"GUI actions exceeded 30 ms: "..metrics.gui_over_budget_actions)
+      metrics.detailed_timing_over_budget=#over_budget>0
+      metrics.performance_acceptance=callback_latency_acceptance(profile_mode,action_timings)
+      if metrics.performance_acceptance=="FAIL" then
+        finished(false,"GUI actions exceeded "..tostring(GUI_CALLBACK_BUDGET_MS)..
+          " ms: "..metrics.gui_over_budget_actions)
       else
         finished(true)
       end
@@ -4879,10 +5548,12 @@ run_editor_responsiveness = function(done)
     return true,nil,live_probe
   end
   local function verify_hidden_snapshot_cells()
-    local probe_index=#instrument.phrases+1
+    local original_fixture_phrases={}
+    for index,item in ipairs(fixture_instrument.phrases) do original_fixture_phrases[index]=item end
+    local probe_index=#fixture_instrument.phrases+1
     local probe
     local ok,reason=pcall(function()
-      probe=instrument:insert_phrase_at(probe_index)
+      probe=fixture_instrument:insert_phrase_at(probe_index)
       assert(probe,"native phrase insertion returned no phrase")
       probe.number_of_lines=512
       probe.visible_note_columns=1
@@ -4918,6 +5589,75 @@ run_editor_responsiveness = function(done)
         assert(copied_empty_effect[key]==empty_effect[key],"snapshot empty effect default differs at "..key)
       end
       assert(copied_empty_effect.is_empty==true,"snapshot changed an empty effect cell")
+      if detailed_profile then
+        local line_read_ms,range_read_ms=0,0
+        local equal=true
+        local line_count=0
+        local range_count=0
+        for repetition=1,3 do
+          local started=os.clock()
+          local individual={}
+          for index=1,renoise.InstrumentPhrase.MAX_NUMBER_OF_LINES do
+            individual[index]=probe:line(index).is_empty
+          end
+          line_read_ms=line_read_ms+(os.clock()-started)*1000
+          line_count=#individual
+          started=os.clock()
+          local ranged=probe:lines_in_range(1,renoise.InstrumentPhrase.MAX_NUMBER_OF_LINES)
+          if type(ranged)~="table" or #ranged~=renoise.InstrumentPhrase.MAX_NUMBER_OF_LINES then
+            error("native phrase range read returned an unexpected line count")
+          end
+          local flags={}
+          for index=1,#ranged do flags[index]=ranged[index].is_empty end
+          range_read_ms=range_read_ms+(os.clock()-started)*1000
+          range_count=#flags
+          for index=1,line_count do
+            if individual[index]~=flags[index] then equal=false;break end
+          end
+          assert(equal,"native phrase range read differed from individual line reads")
+        end
+        metrics.line_access_probe_repetitions=3
+        metrics.line_access_probe_line_count=line_count
+        metrics.line_access_probe_range_count=range_count
+        metrics.line_access_probe_individual_elapsed_ms=line_read_ms
+        metrics.line_access_probe_range_elapsed_ms=range_read_ms
+        metrics.line_access_probe_flags_equal=equal
+        local column_method_ms,column_array_ms=0,0
+        for repetition=1,3 do
+          local started=os.clock()
+          local individual={}
+          for index=385,512 do
+            local line=probe:line(index)
+            local flags={}
+            for column=1,12 do flags[column]=line:note_column(column).is_empty end
+            for column=1,8 do flags[12+column]=line:effect_column(column).is_empty end
+            individual[index]=flags
+          end
+          column_method_ms=column_method_ms+(os.clock()-started)*1000
+          started=os.clock()
+          local batched={}
+          for index=385,512 do
+            local line=probe:line(index)
+            local notes,effects=line.note_columns,line.effect_columns
+            assert(#notes==12 and #effects==8,"native column arrays omit hidden columns")
+            local flags={}
+            for column=1,12 do flags[column]=notes[column].is_empty end
+            for column=1,8 do flags[12+column]=effects[column].is_empty end
+            batched[index]=flags
+          end
+          column_array_ms=column_array_ms+(os.clock()-started)*1000
+          for index=385,512 do
+            for column=1,20 do
+              assert(individual[index][column]==batched[index][column],"native column array differs")
+            end
+          end
+        end
+        metrics.column_access_probe_method_elapsed_ms=column_method_ms
+        metrics.column_access_probe_array_elapsed_ms=column_array_ms
+        metrics.column_access_probe_lines=128
+        metrics.column_access_probe_repetitions=3
+        metrics.column_access_probe_flags_equal=true
+      end
       metrics.hidden_snapshot_line=512
       metrics.hidden_snapshot_note_column=12
       metrics.hidden_snapshot_effect_column=8
@@ -4925,14 +5665,20 @@ run_editor_responsiveness = function(done)
       metrics.empty_snapshot_defaults_match_native=true
     end)
     if probe then
-      for index,item in ipairs(instrument.phrases) do
+      for index,item in ipairs(fixture_instrument.phrases) do
         if rawequal(item,probe) then
-          pcall(function() instrument:delete_phrase_at(index) end)
+          pcall(function() fixture_instrument:delete_phrase_at(index) end)
           break
         end
       end
     end
-    return ok,reason
+    local restored=#fixture_instrument.phrases==#original_fixture_phrases
+    if restored then
+      for index,item in ipairs(original_fixture_phrases) do
+        if not rawequal(fixture_instrument.phrases[index],item) then restored=false;break end
+      end
+    end
+    return ok and restored,reason or (not restored and "hidden-cell fixture inventory was not restored" or nil)
   end
   local source=sequence.new_pattern(32)
   for step=1,32 do
@@ -4948,33 +5694,16 @@ run_editor_responsiveness = function(done)
       capture=function() return nil,"The editor request-capture path is required" end,
       sink=function(request,completion)
         sink_calls=sink_calls+1
+        capture_calls=capture_calls+1
+        captured_baseline_is_opaque=type(request.baseline)=="table" and
+          request.baseline.id==request.id and rawget(request.baseline,"snapshot")==nil
         if request.kind=="regenerate" then return writer.regenerate(request,completion) end
         if request.kind=="create" then return writer.create(request,completion) end
         return false,"Unexpected request kind"
       end,
       cancel=writer.cancel
     })
-    local request_module=require("runtime.requests")
-    local original_requests_new=request_module.new
-    request_module.new=function(access)
-      local owner=original_requests_new(access)
-      local original_capture=owner.capture
-      owner.capture=function(self,...)
-        capture_calls=capture_calls+1
-        local values=pack_values(original_capture(self,...))
-        local request=values[1]
-        if request then
-          pcall(function()
-            captured_baseline_is_opaque=type(request.baseline)=="table" and
-              request.baseline.id==request.id and rawget(request.baseline,"snapshot")==nil
-          end)
-        end
-        return unpack_values(values,1,values.n)
-      end
-      return owner
-    end
     local attached,attach_error=pcall(function() context:attach_document(song) end)
-    request_module.new=original_requests_new
     if not attached then return nil,tostring(attach_error) end
     context:open_dialog()
     local bound=context:bind_phrase(instrument,phrase)
@@ -5021,6 +5750,7 @@ run_editor_responsiveness = function(done)
     if not initialized then fail(initialize_error);return end
 
     local function profile_function(target,key,name)
+      if not detailed_profile then return end
       local original=target[key]
       target[key]=function(...)
         local started=os.clock()
@@ -5040,6 +5770,12 @@ run_editor_responsiveness = function(done)
         return snapshot(...)
       end
       ownership.snapshot=scans_snapshot_wrapper
+    end
+    local function stop_snapshot_counter()
+      if scans_snapshot_wrapper and rawequal(ownership.snapshot,scans_snapshot_wrapper) then
+        ownership.snapshot=original_snapshot
+      end
+      scans_snapshot_wrapper=nil
     end
     count_snapshots()
     local initial=context:target_projection()
@@ -5093,6 +5829,7 @@ run_editor_responsiveness = function(done)
     profile_function(validator,"classify","classify")
     local allocation_profile={}
     local function profile_allocation(target,key,name)
+      if not detailed_profile then return function() end end
       local original=target[key]
       local record={calls=0,elapsed_ms=0,memory_delta_kb=0}
       allocation_profile[name]=record
@@ -5115,8 +5852,8 @@ run_editor_responsiveness = function(done)
       profile_allocation(store,"write_draft","store_write_draft"),
       profile_allocation(sequence,"copy_source","copy_source"),
     }
-    local profile_started=os.clock()
-    local profile_transition_started=os.clock()
+    local profile_started=detailed_profile and os.clock() or nil
+    local profile_transition_started=detailed_profile and os.clock() or nil
     source.pitch_events[1]=sequence.new_pitch(12,0,true,false)
     local profile_called,profiled_edit,profiled_error=pcall(context.transition,context,"edit",{
       source=source,output_policy="play_once",pb_range=0
@@ -5124,23 +5861,27 @@ run_editor_responsiveness = function(done)
     for _,restore in ipairs(restore_allocation_profile) do restore() end
     if not profile_called then fail(profiled_edit);return end
     if not profiled_edit then fail(profiled_error or "profiled source edit transition failed");return end
-    metrics.profiled_edit_transition_elapsed_ms=(os.clock()-profile_transition_started)*1000
-    local profile_render_started=os.clock()
+    if detailed_profile then
+      metrics.profiled_edit_transition_elapsed_ms=(os.clock()-profile_transition_started)*1000
+    end
+    local profile_render_started=detailed_profile and os.clock() or nil
     local profiled_projection=editor.project(source)
     for step=1,32 do
       editor.step_text(profiled_projection,step,1)
       editor.step_text(profiled_projection,step,2)
     end
-    metrics.profiled_edit_render_elapsed_ms=(os.clock()-profile_render_started)*1000
-    metrics.profiled_edit_sample_elapsed_ms=(os.clock()-profile_started)*1000
-    for _,name in ipairs(profile_names) do
-      metrics["profiled_edit_"..name.."_calls"]=profile[name].calls
-      metrics["profiled_edit_"..name.."_elapsed_ms"]=profile[name].elapsed_ms
-    end
-    for name,record in pairs(allocation_profile) do
-      metrics["profiled_edit_"..name.."_calls"]=record.calls
-      metrics["profiled_edit_"..name.."_elapsed_ms"]=record.elapsed_ms
-      metrics["profiled_edit_"..name.."_memory_delta_kb"]=record.memory_delta_kb
+    if detailed_profile then
+      metrics.profiled_edit_render_elapsed_ms=(os.clock()-profile_render_started)*1000
+      metrics.profiled_edit_sample_elapsed_ms=(os.clock()-profile_started)*1000
+      for _,name in ipairs(profile_names) do
+        metrics["profiled_edit_"..name.."_calls"]=profile[name].calls
+        metrics["profiled_edit_"..name.."_elapsed_ms"]=profile[name].elapsed_ms
+      end
+      for name,record in pairs(allocation_profile) do
+        metrics["profiled_edit_"..name.."_calls"]=record.calls
+        metrics["profiled_edit_"..name.."_elapsed_ms"]=record.elapsed_ms
+        metrics["profiled_edit_"..name.."_memory_delta_kb"]=record.memory_delta_kb
+      end
     end
     ownership.copy_snapshot=original_copy_snapshot
     ownership.compare=original_compare
@@ -5156,14 +5897,16 @@ run_editor_responsiveness = function(done)
     local original_ownership_status=ownership.status
     local ownership_status_calls=0
     local function profile_status_edit(edit_source)
-      ownership.status=function(...)
-        ownership_status_calls=ownership_status_calls+1
-        return original_ownership_status(...)
+      if detailed_profile then
+        ownership.status=function(...)
+          ownership_status_calls=ownership_status_calls+1
+          return original_ownership_status(...)
+        end
       end
       local called,edited,edit_error=pcall(context.transition,context,"edit",{
         source=edit_source,output_policy="play_once",pb_range=0
       })
-      ownership.status=original_ownership_status
+      if detailed_profile then ownership.status=original_ownership_status end
       if not called then return nil,edited end
       return edited,edit_error
     end
@@ -5191,8 +5934,8 @@ run_editor_responsiveness = function(done)
     end
     local edit_elapsed_ms=(os.clock()-edit_started)*1000
     local edit_scans=scans
-    metrics.unarmed_edit_samples=5
     metrics.unarmed_edit_snapshot_scans=edit_scans
+    metrics.unarmed_edit_samples=5
     metrics.unarmed_edit_transition_render_elapsed_ms=edit_elapsed_ms
     metrics.unarmed_edit_transition_elapsed_ms=edit_transition_elapsed_ms
     metrics.unarmed_edit_render_elapsed_ms=edit_render_elapsed_ms
@@ -5203,35 +5946,38 @@ run_editor_responsiveness = function(done)
     end
     metrics.unarmed_edit_max_sample_elapsed_ms=max_edit_sample_ms
     metrics.unarmed_edit_sample_timings_ms=table.concat(edit_sample_text,",")
-    metrics.unarmed_edit_copy_snapshot_calls=profile.copy_snapshot.calls
-    metrics.unarmed_edit_copy_snapshot_elapsed_ms=profile.copy_snapshot.elapsed_ms
-    metrics.unarmed_edit_compare_calls=profile.compare.calls
-    metrics.unarmed_edit_compare_elapsed_ms=profile.compare.elapsed_ms
-    metrics.unarmed_edit_classify_calls=profile.classify.calls
-    metrics.unarmed_edit_classify_elapsed_ms=profile.classify.elapsed_ms
-    metrics.unarmed_edit_classify_against_calls=profile.classify_against.calls
-    metrics.unarmed_edit_classify_against_elapsed_ms=profile.classify_against.elapsed_ms
-    metrics.unarmed_edit_matches_snapshot_calls=profile.matches_snapshot.calls
-    metrics.unarmed_edit_matches_snapshot_elapsed_ms=profile.matches_snapshot.elapsed_ms
-    metrics.unarmed_edit_ownership_status_calls=ownership_status_calls
+    if detailed_profile then
+      metrics.unarmed_edit_copy_snapshot_calls=profile.copy_snapshot.calls
+      metrics.unarmed_edit_copy_snapshot_elapsed_ms=profile.copy_snapshot.elapsed_ms
+      metrics.unarmed_edit_compare_calls=profile.compare.calls
+      metrics.unarmed_edit_compare_elapsed_ms=profile.compare.elapsed_ms
+      metrics.unarmed_edit_classify_calls=profile.classify.calls
+      metrics.unarmed_edit_classify_elapsed_ms=profile.classify.elapsed_ms
+      metrics.unarmed_edit_classify_against_calls=profile.classify_against.calls
+      metrics.unarmed_edit_classify_against_elapsed_ms=profile.classify_against.elapsed_ms
+      metrics.unarmed_edit_matches_snapshot_calls=profile.matches_snapshot.calls
+      metrics.unarmed_edit_matches_snapshot_elapsed_ms=profile.matches_snapshot.elapsed_ms
+      metrics.unarmed_edit_ownership_status_calls=ownership_status_calls
+    end
     ownership.copy_snapshot=original_copy_snapshot
     ownership.compare=original_compare
     ownership.matches_snapshot=original_matches_snapshot
     validator.classify=original_classify
     validator.classify_against=original_classify_against
-    if profile.classify_against.calls~=0 then
+    if detailed_profile and profile.classify_against.calls~=0 then
       fail("clean unarmed source edits invoked full classify_against validation");return
     end
-    if profile.matches_snapshot.calls~=0 then
+    if detailed_profile and profile.matches_snapshot.calls~=0 then
       fail("clean unarmed source edits performed full native cell matching");return
     end
-    if ownership_status_calls~=0 then
+    if detailed_profile and ownership_status_calls~=0 then
       fail("clean unarmed source edits hashed native phrase cells for draft persistence");return
     end
     if max_edit_sample_ms>100 then
       fail("source edit transition and render exceeded 100 ms: "..tostring(max_edit_sample_ms));return
     end
     if sink_calls~=0 then fail("unarmed source edits unexpectedly started generation");return end
+    if not detailed_profile then stop_snapshot_counter() end
     local gui_callbacks_ok,gui_callbacks_error,live_probe=measure_gui_callbacks()
     if not gui_callbacks_ok then fail(gui_callbacks_error);return end
 
@@ -5300,7 +6046,8 @@ run_editor_responsiveness = function(done)
       local elapsed=elapsed_ms
       local scan_count=idle_scans
       cleanup()
-      local passed=committed and preserved and capture_calls==1 and sink_calls==1
+      local passed=editor_fixture_passes(
+        committed and preserved and capture_calls==1 and sink_calls==1,metrics)
       metrics.phrase_lines=generated_lines
       metrics.unchanged_snapshot_scans=scan_count
       metrics.stale_metadata_request_rejected=true
@@ -5310,7 +6057,11 @@ run_editor_responsiveness = function(done)
       local result={status=passed and "PASS" or "FAIL",case="editor-responsiveness",
         stale_metadata_request_rejected=true,restored_metadata_request_committed=committed,
         metadata_request_used_fresh_baseline=preserved,generation_calls=sink_calls,
-        reason=not passed and "metadata-driven fresh request failed" or nil}
+        reason=not passed and (metrics.editor_fixture_inventory_restored~=true and
+          "editor responsiveness fixture inventory was not restored" or
+          metrics.editor_fixture_native_selection_restored~=true and
+            "editor responsiveness fixture did not restore initial native selection" or
+          "metadata-driven fresh request failed") or nil}
       for key,value in pairs(metrics) do result[key]=value end
       done(result)
     end
@@ -6845,8 +7596,14 @@ local function run_source_undo_feasibility(done, json)
   return true
 end
 
-function M.run(case_name, done, json)
+function M.run(case_name, done, json, profile_mode)
   if type(done) ~= "function" then return false, "completion callback is required" end
+  local resolved_profile,profile_error=resolve_acceptance_profile(case_name,profile_mode)
+  if profile_error then
+    done({status="ERROR",case=case_name,reason=profile_error})
+    return true
+  end
+  profile_mode=resolved_profile
   if case_name == "make-independent" then return run_make_independent(done) end
   if case_name == "ownership-negatives" then return run_ownership_negatives(done) end
   if case_name == "import-donor" then return run_ownership_negatives(done, true) end
@@ -6863,9 +7620,9 @@ function M.run(case_name, done, json)
   if case_name == "cold-reopen-verify" then return run_cold_reopen_verify(done) end
   if case_name == "draft-recovery" then return run_draft_recovery(done) end
   if case_name == "writer-recovery" then return run_writer_recovery(done) end
-  if case_name == "multi-instrument-workflow" then return run_multi_instrument_workflow(done, json) end
+  if case_name == "multi-instrument-workflow" then return run_multi_instrument_workflow(done, json,profile_mode) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
-  if case_name == "editor-responsiveness" then return run_editor_responsiveness(done) end
+  if case_name == "editor-responsiveness" then return run_editor_responsiveness(done,profile_mode) end
   if case_name == "selection-feasibility" then return run_selection_feasibility(done, json) end
   if case_name == "direct-output-feasibility" then return run_direct_output_feasibility(done, json) end
   if case_name == "source-undo-feasibility" then

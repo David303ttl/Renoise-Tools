@@ -24,8 +24,9 @@ local function fresh()
 end
 local default_pitches=string.rep("36:0:0:00,",31).."36:0:0:00"
 local default_time=string.rep("N",32)
-local function source_row(id)
-  return table.concat({tostring(id),"repeat","0","straight","16","4",
+local function source_row(id,policy,pb_range,length)
+  return table.concat({tostring(id),policy or "repeat",tostring(pb_range or 0),"straight","16",
+    tostring(length or 4),
     default_pitches,default_time},"|")
 end
 local function removal(ins,p,token,revision)
@@ -35,6 +36,16 @@ end
 local function prepare(song,id,guard,capture)
   return assert(store.prepare(song,id,seq.new_pattern(5),"play_once",12,guard or yes,capture))
 end
+local byte_song,byte_ins=fresh()
+assert(store.write_draft(byte_song,byte_ins,nil,seq.new_pattern(6),"repeat",0))
+local byte_candidate=prepare(byte_song,3)
+local expected_candidate_draft=table.concat({"DRAFT","1","0","4669727374","repeat","0",
+  "straight","16","6",default_pitches,default_time},"|")
+local expected_candidate_raw=table.concat({"ACID-PITCH-TIME-1",source_row(1),source_row(2),
+  source_row(3,"play_once",12,5),expected_candidate_draft},"\n").."\n"
+assert(byte_candidate.raw==expected_candidate_raw,
+  "prepared source/draft composition changed the exact persisted bytes")
+store.release_candidate(byte_candidate)
 local song,ins,a,b,other=fresh()
 assert(store.write_draft(song,ins,nil,seq.new_pattern(6),"repeat",0))
 other.name=ins.name
@@ -55,6 +66,32 @@ local detached=removal({name=ins.name,phrases={}},nil)
 detached.instrument_name_unique=false
 assert(not store.prepare(song,4,seq.new_pattern(5),"repeat",0,yes,detached),
   "session-only capture still requires a live instrument")
+song,ins,a,b,other=fresh()
+-- Candidate work must not mutate the decoded cache for its previous raw bytes.
+local cached_history=assert(store.read(song))
+local cached_candidate=prepare(song,3)
+assert(store.commit(song,cached_candidate) and store.restore(song,cached_candidate))
+local restored_history=assert(store.read(song))
+assert(restored_history[1] and restored_history[2] and not restored_history[3] and
+  cached_history[1] and cached_history[2] and not cached_history[3],
+  "candidate preparation or rollback mutated the cached decoded source history")
+song,ins,a,b,other=fresh()
+local raw_candidate=prepare(song,3)
+local encode_index,original_encode
+for index=1,100 do
+  local name,value=debug.getupvalue(store.commit,index)
+  if name==nil then break end
+  if name=="encode" then encode_index,original_encode=index,value;break end
+end
+assert(encode_index and original_encode,"commit lost its private source encoder")
+local source_encodes=0
+debug.setupvalue(store.commit,encode_index,function(...)
+  source_encodes=source_encodes+1
+  return original_encode(...)
+end)
+assert(store.commit(song,raw_candidate))
+debug.setupvalue(store.commit,encode_index,original_encode)
+assert(source_encodes==0,"unchanged captured raw data repeated source serialization")
 song,ins,a,b,other=fresh()
 local source=seq.new_pattern(7)
 assert(store.write_draft(song,ins,a,source,"repeat",24))

@@ -69,6 +69,63 @@ assert(snapshot.lines[2].notes[1]~=snapshot.lines[2].notes[3] and
   snapshot.lines[2].effects[1]~=snapshot.lines[2].effects[2],
   "public snapshot shared mutable empty cells")
 
+local extended_limits={max_lines=3,max_note_columns=3,max_effect_columns=2}
+local private_rows=assert(ownership.snapshot_for_verification(phrase,extended_limits))
+local public_rows=assert(ownership.snapshot(phrase,extended_limits))
+assert(rawequal(private_rows.lines[2],private_rows.lines[3]) and
+  not rawequal(public_rows.lines[2],public_rows.lines[3]),
+  "only private read-only snapshots may share empty rows")
+local retained,retained_index=ownership.copy_snapshot_for_retention(public_rows,extended_limits)
+assert(retained and retained_index and ownership.compare(public_rows,retained),
+  "retained copy changed snapshot values")
+assert(rawequal(retained.lines[2],retained.lines[3]) and
+  rawequal(retained.lines[2].notes[1],retained.lines[2].notes[3]) and
+  rawequal(retained.lines[2].effects[1],retained.lines[2].effects[2]),
+  "retained copy did not compact canonical empty rows and cells")
+assert(not rawequal(public_rows.lines[2],public_rows.lines[3]) and
+  not rawequal(public_rows.lines[2].notes[1],public_rows.lines[2].notes[3]),
+  "retained compaction changed public snapshot ownership")
+assert(ownership.matches_snapshot(phrase,retained,extended_limits,retained_index),
+  "retained snapshot index does not describe the compacted copy")
+local retained_cell_value=retained.lines[2].notes[1].note_value
+public_rows.lines[2].notes[1].note_value=retained_cell_value+1
+assert(retained.lines[2].notes[1].note_value==retained_cell_value,
+  "retained copy aliases mutable source snapshot cells")
+local detached_retained=assert(ownership.copy_snapshot(retained))
+detached_retained.lines[2].notes[1].note_value=retained_cell_value+2
+assert(retained.lines[2].notes[1].note_value==retained_cell_value,
+  "public snapshot copy aliases compacted retained cells")
+
+local extra_cell=assert(ownership.copy_snapshot(public_rows))
+extra_cell.lines[1].notes[1].retained_extra="preserve"
+local extra_cell_retained=assert(ownership.copy_snapshot_for_retention(extra_cell,extended_limits))
+assert(extra_cell_retained.lines[1].notes[1].retained_extra=="preserve" and
+  not rawequal(extra_cell_retained.lines[1].notes[1],extra_cell_retained.lines[2].notes[1]),
+  "retention compaction discarded or shared an extended cell")
+local extra_row=assert(ownership.copy_snapshot(public_rows))
+extra_row.lines[2].retained_extra="preserve"
+local extra_row_retained=assert(ownership.copy_snapshot_for_retention(extra_row,extended_limits))
+assert(extra_row_retained.lines[2].retained_extra=="preserve" and
+  not rawequal(extra_row_retained.lines[2],extra_row_retained.lines[3]),
+  "retention compaction discarded or shared an extended row")
+local extra_empty_cell=assert(ownership.snapshot(phrase,extended_limits))
+extra_empty_cell.lines[3].notes[1].retained_extra="preserve"
+local extra_empty_cell_retained=assert(ownership.copy_snapshot_for_retention(extra_empty_cell,extended_limits))
+assert(ownership.compare(extra_empty_cell,extra_empty_cell_retained) and
+  extra_empty_cell_retained.lines[3].notes[1].retained_extra=="preserve" and
+  not rawequal(extra_empty_cell_retained.lines[2],extra_empty_cell_retained.lines[3]),
+  "row compaction discarded an extended default cell")
+local another_private=assert(ownership.snapshot_for_verification(phrase,extended_limits))
+assert(not rawequal(private_rows.lines[2],another_private.lines[2]),
+  "private row storage escaped its capture")
+local private_index=assert(ownership.snapshot_index(private_rows,extended_limits))
+assert(ownership.matches_snapshot(phrase,private_rows,extended_limits,private_index))
+local original_line=phrase.line
+function phrase:line(index) return index==3 and line_one or original_line(self,index) end
+assert(not ownership.matches_snapshot(phrase,private_rows,extended_limits,private_index),
+  "shared empty snapshot rows skipped a later native line change")
+phrase.line=original_line
+
 local hostile=assert(ownership.copy_snapshot(snapshot))
 local protected_cell=hostile.lines[1].notes[1]
 local protected_value=protected_cell.note_value

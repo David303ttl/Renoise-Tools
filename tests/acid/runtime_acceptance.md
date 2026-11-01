@@ -6,6 +6,41 @@ regeneration slots are historical evidence for the former writer. They do not
 establish acceptance of the current direct writer; its native workflow checks
 remain under Gate 8 until explicitly recorded as passing.
 
+## T8.0 native baseline (2026-11-01)
+
+**Status: baseline and scope recorded; all-green condition NOT met; Gate 8 OPEN.** Original baseline: `e2ca527a65efe21d03c34438e0b6813d04676630`, Windows / PowerShell 7.5.4, Renoise 3.5.4 / API 6.2, ACID 0.1. Current checkout: `7d59b7f` plus uncommitted runtime and harness changes. Reports identify the particular packaged working tree; they do not validate every subsequent change.
+
+| Check | Latest recorded evidence | Result / limit |
+| --- | --- | --- |
+| `editor-responsiveness`, Warm | `tmp/interactive-d0198b8beaa24f86bd1c0a0b8e0d7f2f/report.json` | **FAIL: 51.88 ms** synchronous Live Edit callback against 30 ms. All 30 GUI actions exercised; committed source, exact target and fixture selection/inventory checks pass. Diagnostic uses 32 steps / 128 lines. |
+| `multi-instrument-workflow`, Warm | `tmp/interactive-4b193b70dca34f0bb1fe676b3afe0c15/report.json` | **FAIL: 79.49 ms** against 30 ms. Three instruments / 12 phrases, 12 transactions, source/persistence and selection checks pass; the overall Live Edit acceptance assertion remains false because of timing. Not 8x8 evidence. |
+| `integrity-observers` | `tmp/interactive-9e9e8aa7d28e442eb7c1457b52baf0e1/report.json` | **PASS.** Visible/hidden names and mutes exercised idle and reentrantly during mutation; four actual cancellations preserve destination/store and reconcile on idle. Close/reopen and document release/new-song attachment pass between settled operations. Reentrant dialog close/document release are explicitly not claimed. |
+| `writer-recovery` | `tmp/interactive-45f0f635688b470cac7329e3f159a769/report.json` | **PASS.** Contradictory success preserves committed source and recoverable draft, and remains blocked without complete proof. A separate guarded pre-write failure supplies verified unchanged-preimage proof and exercises clear false/throw/success retry. It does not prove recovery of the contradictory-success case via native Undo. |
+| `direct-output-feasibility` | `tmp/interactive-0f272343c891440fbb7aeb9cbc679188/report.json` | **PASS, earlier overlay:** nine materializations match the independent oracle; representative rollback/source checks pass. Not a final-tree rerun or audible playback proof. |
+| `revision-undo`, `revision-live-undo` | `tmp/interactive-27b4910a7a5e48deba8d74d44a5e2ba3/report.json`; `tmp/interactive-f966253daa4a4019aac681b7b77a1ab1/report.json` | **PASS, earlier overlay:** guarded native manual and Live Edit Undo/Redo with configured AutoHotkey v2 and `Alt+Control+B`. |
+| `make-independent -ColdProcessRoundTrip` | `tmp/interactive-14c34b14af0c492b8700e3fc9d1706a3/report.json` | **PASS, earlier overlay:** two fresh-process reopen transitions. Narrow Make Independent path, not production-session cold GUI acceptance. |
+| Combined Lua suites | `tmp/t80-combined-acid.log`; `tmp/t80-combined-all.log` | **PASS: ACID 70/70; repository 73/73**, including the latest identity, store and snapshot-reader changes. |
+| Offline / packages | Earlier complete run: 18/18 groups. Latest combined rerun: `tmp/t80-combined-offline.log` | Earlier package/offline pass is retained; do not attribute it to the final tree until the combined rerun finishes. |
+
+**Historical failures remain unchanged:** 107.72/118.00 ms direct-writer reports below; original baseline 99.07/192.24 ms; intermediate corrected Warm 64.29/131.27 ms. Latest recorded Warm values are 51.88/79.49 ms, still failures. Subsequent single-scan identity validation, exact-raw store commit fast path and shared snapshot property reader have not received a combined native rerun. No final-tree speed claim is made. `os.clock()` semantics were not independently established; nested Detailed timings overlap and are not additive CPU/wall-time proof. Detailed profile passes claim functional coverage only, not latency acceptance.
+
+**Changes covered by local tests:** private planner output drops unused intermediate trees; immutable empty rows/cells are shared only inside private snapshots, with public detachment and extra-field preservation retained; materializer comparisons reuse exact table identities within a call; loop geometry avoids redundant setters while respecting endpoint constraints; store preparation reuses serialized source bytes and retains fresh raw-store/concurrent-draft guards; identity validation derives membership and selected holders in one fresh full inventory scan. Complete native pre/post images, hidden/tail checks, fail-closed rollback and synchronous revision commitment remain required. No new scheduler, persistence format, manifest version or runtime module was added. Source marker, v3 ownership seal and `ACID-PITCH-TIME-1` remain unchanged.
+
+The observer harness now injects edits through the production mutation wrapper rather than expecting an asynchronous busy state after Generate returns. Recovery assertions distinguish incomplete contradictory-success evidence from a verified unchanged preimage and observe writer completion independently of revoked GUI delivery. The mocked source-setter rollback reentry regression is covered by the writer's post-restoration guard; native reachability of that specific mock interleaving remains unverified.
+
+**Phase budgets and remaining owners:**
+
+| Phase / finding | Required evidence | Owner / current limit |
+| --- | --- | --- |
+| P0 seed and routing | 64 owned + 8 foreign phrases, eight assigned active tracks, real receiver preflight | T8.1 fixture/receiver work; not run at scale. |
+| P1 8x8 / latency | At least 128 GUI regenerations; every edit callback ≤30 ms | T8.3 runtime/writer/materializer/planner/store owners; smaller Warm cases remain over budget. Retain authorization and full image verification. |
+| P2 16x8 | At least 512 regenerations, 128 cross-instrument switches; every edit callback ≤30 ms | T8.4 production-session driver; not implemented/run. |
+| P3 undo/recovery | Coherent native Undo/Redo, exact source/phrase/editor state, negative/recovery paths | Existing driver/runtime owners: scoped cases above pass; final combined native verification and broader production lifecycle coverage remain. |
+| P4 cold reopen | Two true fresh-process reopen stages with source, phrase, identity and foreign-state checks | T8.4 driver; only narrow Make Independent path passed. |
+| P5 receiver playback | Independent sample/VST observation and captured MIDI events | T8.5 receiver acceptance; not run. Structural parity is insufficient. |
+
+The four latest observer/recovery/Warm reports above all record `process.shutdown: PASS` and `install.restore: PASS`; shutdown force-stopped only the runner-owned process and restored the original installation. T8.0 records scope, reproduction, phase budgets and owners; it does not close later acceptance. Gate 8 remains open until T8.1–T8.5 pass, including both project scales and the unchanged 30 ms maximum.
+
 ## Gate 8 expanded production-session acceptance (specified 2026-11-01)
 
 **NOT IMPLEMENTED / NOT RUN / Gate 8 OPEN.** The real-user acceptance target now includes a single ACID production GUI controlling **8 instruments × 8 owned phrases (64) + 8 foreign sentinels** and **16 instruments × 8 owned phrases (128) + 16 foreign sentinels**, with actual sample/VST/MIDI receivers, 8/16 playing tracks, heterogeneous LAST STEP/PITCH spans, NOTE/TIE/REST, accents/slides, Straight/Triplet, Repeat/Play Once, PB, drafts, real native Undo/Redo and two cold reopen stages. The existing 3-instrument diagnostic is retained as narrower historical evidence, not an expanded-case PASS.

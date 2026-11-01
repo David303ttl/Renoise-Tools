@@ -1985,6 +1985,8 @@ M4 completion.
 
 **Normative executable implementation and evidence specification:** [production-session acceptance contract](../tests/acid/production_session_acceptance.md). Read it before coding. Its exact 8x8 and 16x8 fixture profiles, GUI actions, native oracles, performance requirements, device preconditions, error/recovery requirements, runner commands and cold-process phases supersede any contradictory *future-facing* text in this historical playbook. Existing dated reports remain historical evidence, not current Gate 8 passes.
 
+**T8.0 baseline recorded (2026-11-01):** native and local results, unchanged source/manifest invariants, phase budgets and named defect owners are in the [baseline acceptance record](../tests/acid/runtime_acceptance.md#t80-native-baseline-2026-11-01). Combined local suites pass (ACID 70/70; repository 73/73). Native observer and recovery cases now pass; the latest Warm callbacks still fail the 30 ms gate at 51.88/79.49 ms. Subsequent optimizations have not had a combined native rerun. T8.1–T8.5 and Gate 8 remain open.
+
 **Strict order; a failed stage cannot be bypassed:**
 
 | Substep | Required work and exit |

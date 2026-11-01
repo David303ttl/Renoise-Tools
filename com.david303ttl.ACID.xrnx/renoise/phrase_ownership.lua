@@ -198,41 +198,63 @@ function M.membership(song,instrument,phrase)
   return instrument_index,phrase_index
 end
 
-function M.inventory(song,...)
-  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
-  local current,current_error=M.is_current(song)
-  if not current then return nil,current_error end
-  local ok,result=pcall(function()
+local function scan_inventory(song,target_id,target_instrument,target_phrase,targeted)
+  local result_instrument_index,result_phrase_index
+  local ok,groups=pcall(function()
     local groups={}
-    for instrument_index,instrument in ipairs(song.instruments) do
-      for phrase_index,phrase in ipairs(instrument.phrases) do
+    for current_instrument_index,instrument in ipairs(song.instruments) do
+      for current_phrase_index,phrase in ipairs(instrument.phrases) do
+        if targeted and rawequal(instrument,target_instrument) and
+            rawequal(phrase,target_phrase) then
+          result_instrument_index,result_phrase_index=
+            current_instrument_index,current_phrase_index
+        end
         local id=M.id(phrase)
-        if id then
+        if id and (not targeted or id==target_id) then
           local group=groups[id] or {}
           groups[id]=group
           group[#group+1]={instrument=instrument,phrase=phrase,
-            instrument_index=instrument_index,phrase_index=phrase_index}
+            instrument_index=current_instrument_index,phrase_index=current_phrase_index}
         end
       end
     end
     return groups
   end)
   if not ok then return nil,"Cannot inspect ACID phrase identities" end
-  return result
+  return groups,result_instrument_index,result_phrase_index
+end
+
+function M.inventory(song,...)
+  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
+  local current,current_error=M.is_current(song)
+  if not current then return nil,current_error end
+  local groups=scan_inventory(song,nil,nil,nil,false)
+  if not groups then return nil,"Cannot inspect ACID phrase identities" end
+  return groups
 end
 
 function M.validate_identity(song,instrument,phrase,...)
   if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   if phrase==nil then return nil,"An existing ACID phrase is required" end
-  local instrument_index,phrase_index=M.membership(song,instrument,phrase)
-  if not instrument_index then return nil,phrase_index end
-  local groups,err=M.inventory(song)
-  if not groups then return nil,err end
+  local current,current_error=M.is_current(song)
+  if not current then return nil,current_error end
   local inspected,id=pcall(M.id,phrase)
   if not inspected then return nil,"Cannot inspect ACID phrase identity" end
+  local groups,instrument_index,phrase_index=
+    scan_inventory(song,id,instrument,phrase,true)
+  if not groups then return nil,"Cannot inspect ACID phrase identities" end
+  if not instrument_index then
+    return nil,"ACID target is no longer in this song and instrument"
+  end
   local holders=id and groups[id]
-  if not holders or #holders~=1 or not rawequal(holders[1].phrase,phrase) then
+  if not holders or #holders~=1 or
+      not rawequal(holders[1].instrument,instrument) or
+      not rawequal(holders[1].phrase,phrase) then
     return nil,"Duplicate or missing ACID phrase ID; cannot choose safely"
+  end
+  local rechecked,rechecked_id=pcall(M.id,phrase)
+  if not rechecked or rechecked_id~=id then
+    return nil,"ACID target identity changed during inspection"
   end
   return id,instrument_index,phrase_index
 end
@@ -352,10 +374,14 @@ local function snapshot_capacities(limits)
   return {max_lines=max_lines,note_columns=note_columns,effect_columns=effect_columns}
 end
 
+local function cell_empty(cell)
+  return cell.is_empty
+end
+
 local function capture(phrase,capacities,share_empty_cells)
   local result={name=value(phrase,"name","string"),properties={},columns={},lines={}}
   local empty_defaults=empty_column_defaults()
-  local shared_empty_note,shared_empty_effect
+  local shared_empty_note,shared_empty_effect,shared_empty_line
   if share_empty_cells and empty_defaults then
     shared_empty_note={note_value=empty_defaults.note.note_value,
       instrument_value=empty_defaults.note.instrument_value,volume_value=empty_defaults.note.volume_value,
@@ -364,6 +390,9 @@ local function capture(phrase,capacities,share_empty_cells)
       effect_amount_value=empty_defaults.note.effect_amount_value,is_empty=true}
     shared_empty_effect={number_value=empty_defaults.effect.number_value,
       amount_value=empty_defaults.effect.amount_value,is_empty=true}
+    shared_empty_line={notes={},effects={}}
+    for column=1,capacities.note_columns do shared_empty_line.notes[column]=shared_empty_note end
+    for column=1,capacities.effect_columns do shared_empty_line.effects[column]=shared_empty_effect end
   end
   for _,key in ipairs(numeric_properties) do result.properties[key]=value(phrase,key,"number") end
   for _,key in ipairs(boolean_properties) do result.properties[key]=value(phrase,key,"boolean") end
@@ -397,10 +426,13 @@ local function capture(phrase,capacities,share_empty_cells)
   end
   for line_index=1,capacities.max_lines do
     local line=phrase:line(line_index)
-    local captured={notes={},effects={}}
-    local empty_ok,is_empty=pcall(function()return line.is_empty end)
+    local captured
+    local empty_ok,is_empty=pcall(cell_empty,line)
     local defaults=empty_defaults
-    if empty_ok and is_empty==true and defaults then
+    if empty_ok and is_empty==true and shared_empty_line then
+      captured=shared_empty_line
+    elseif empty_ok and is_empty==true and defaults then
+      captured={notes={},effects={}}
       for column=1,capacities.note_columns do
         captured.notes[column]=shared_empty_note or {note_value=defaults.note.note_value,
           instrument_value=defaults.note.instrument_value,volume_value=defaults.note.volume_value,
@@ -413,10 +445,11 @@ local function capture(phrase,capacities,share_empty_cells)
           amount_value=defaults.effect.amount_value,is_empty=true}
       end
     else
+      captured={notes={},effects={}}
       for column=1,capacities.note_columns do
         local cell=line:note_column(column)
-        local empty_ok,cell_empty=pcall(function()return cell.is_empty end)
-        if empty_ok and cell_empty==true and defaults then
+        local empty_ok,is_empty=pcall(cell_empty,cell)
+        if empty_ok and is_empty==true and defaults then
           captured.notes[column]=shared_empty_note or {note_value=defaults.note.note_value,
             instrument_value=defaults.note.instrument_value,volume_value=defaults.note.volume_value,
             panning_value=defaults.note.panning_value,delay_value=defaults.note.delay_value,
@@ -429,8 +462,8 @@ local function capture(phrase,capacities,share_empty_cells)
       end
       for column=1,capacities.effect_columns do
         local cell=line:effect_column(column)
-        local empty_ok,cell_empty=pcall(function()return cell.is_empty end)
-        if empty_ok and cell_empty==true and defaults then
+        local empty_ok,is_empty=pcall(cell_empty,cell)
+        if empty_ok and is_empty==true and defaults then
           captured.effects[column]=shared_empty_effect or {number_value=defaults.effect.number_value,
             amount_value=defaults.effect.amount_value,is_empty=true}
         else
@@ -460,7 +493,7 @@ function M.snapshot(phrase,limits)
 end
 
 -- Used only for a materializer's private postimage receipt. Shared canonical
--- empty cells reduce allocation while all line and column slots stay present.
+-- empty rows and cells reduce allocation; every line and column slot is present.
 function M.snapshot_for_verification(phrase,limits)
   return snapshot_with_mode(phrase,limits,true)
 end
@@ -529,7 +562,7 @@ function M.snapshot_index(snapshot,limits)
   local masks={max_lines=capacities.max_lines,note_columns=capacities.note_columns,
     effect_columns=capacities.effect_columns,empty_lines={},expected_empty_lines={},
     empty_notes={},empty_effects={}}
-  local note_cache,effect_cache={},{}
+  local note_cache,effect_cache,line_cache={},{},{}
   local function is_default(cell,expected,fields,cache)
     if defaults==nil or type(cell)~="table" then return false end
     local cached=cache[cell]
@@ -543,32 +576,42 @@ function M.snapshot_index(snapshot,limits)
     if type(line)~="table" or getmetatable(line)~=nil then
       return nil,"Invalid phrase snapshot line for native matching"
     end
-    local notes,effects=rawget(line,"notes"),rawget(line,"effects")
-    if type(notes)~="table" or getmetatable(notes)~=nil or
-        type(effects)~="table" or getmetatable(effects)~=nil or
-        #notes~=capacities.note_columns or #effects~=capacities.effect_columns then
-      return nil,"Invalid phrase snapshot line for native matching"
+    local cached=line_cache[line]
+    if cached then
+      masks.empty_notes[line_index]=cached.notes
+      masks.empty_effects[line_index]=cached.effects
+      masks.empty_lines[line_index]=cached.empty
+      masks.expected_empty_lines[line_index]=cached.expected_empty
+    else
+      local notes,effects=rawget(line,"notes"),rawget(line,"effects")
+      if type(notes)~="table" or getmetatable(notes)~=nil or
+          type(effects)~="table" or getmetatable(effects)~=nil or
+          #notes~=capacities.note_columns or #effects~=capacities.effect_columns then
+        return nil,"Invalid phrase snapshot line for native matching"
+      end
+      local empty=defaults~=nil
+      local expected_empty=true
+      masks.empty_notes[line_index]={}
+      masks.empty_effects[line_index]={}
+      for column=1,capacities.note_columns do
+        local cell=notes[column]
+        local is_empty=is_default(cell,defaults and defaults.note,note_fields,note_cache)
+        masks.empty_notes[line_index][column]=is_empty
+        empty=empty and is_empty
+        expected_empty=expected_empty and type(cell)=="table" and rawget(cell,"is_empty")==true
+      end
+      for column=1,capacities.effect_columns do
+        local cell=effects[column]
+        local is_empty=is_default(cell,defaults and defaults.effect,effect_fields,effect_cache)
+        masks.empty_effects[line_index][column]=is_empty
+        empty=empty and is_empty
+        expected_empty=expected_empty and type(cell)=="table" and rawget(cell,"is_empty")==true
+      end
+      masks.empty_lines[line_index]=empty
+      masks.expected_empty_lines[line_index]=expected_empty
+      line_cache[line]={notes=masks.empty_notes[line_index],effects=masks.empty_effects[line_index],
+        empty=empty,expected_empty=expected_empty}
     end
-    local empty=defaults~=nil
-    local expected_empty=true
-    masks.empty_notes[line_index]={}
-    masks.empty_effects[line_index]={}
-    for column=1,capacities.note_columns do
-      local cell=notes[column]
-      local is_empty=is_default(cell,defaults and defaults.note,note_fields,note_cache)
-      masks.empty_notes[line_index][column]=is_empty
-      empty=empty and is_empty
-      expected_empty=expected_empty and type(cell)=="table" and rawget(cell,"is_empty")==true
-    end
-    for column=1,capacities.effect_columns do
-      local cell=effects[column]
-      local is_empty=is_default(cell,defaults and defaults.effect,effect_fields,effect_cache)
-      masks.empty_effects[line_index][column]=is_empty
-      empty=empty and is_empty
-      expected_empty=expected_empty and type(cell)=="table" and rawget(cell,"is_empty")==true
-    end
-    masks.empty_lines[line_index]=empty
-    masks.expected_empty_lines[line_index]=expected_empty
   end
   indexed_snapshots[index]={snapshot=snapshot,masks=masks}
   return index
@@ -735,6 +778,30 @@ function M.copy_snapshot(snapshot)
   return result
 end
 
+local function exact_snapshot_keys(value,expected,expected_count)
+  if type(value)~="table" or getmetatable(value)~=nil then return false end
+  local count=0
+  for key in pairs(value) do
+    count=count+1
+    if not expected[key] then return false end
+  end
+  if count~=expected_count then return false end
+  for key in pairs(expected) do
+    if rawget(value,key)==nil then return false end
+  end
+  return true
+end
+
+local function exact_snapshot_array(value,length)
+  if type(value)~="table" or getmetatable(value)~=nil or #value~=length then return false end
+  local count=0
+  for key in pairs(value) do
+    count=count+1
+    if type(key)~="number" or key%1~=0 or key<1 or key>length then return false end
+  end
+  return count==length
+end
+
 local function ordered_keys(value)
   local result={}
   for key in pairs(value) do result[#result+1]=key end
@@ -789,6 +856,70 @@ local function cell_snapshot_kind(value,fields)
     end
   end
   return true
+end
+
+-- Retained baselines are private immutable comparison images. Compact only
+-- exact default cells and rows after indexing the detached copy; public copies
+-- continue to own every table independently.
+function M.copy_snapshot_for_retention(snapshot,limits)
+  local copied,copy_error=M.copy_snapshot(snapshot)
+  if not copied then return nil,nil,copy_error end
+  local index,index_error=M.snapshot_index(copied,limits)
+  if not index then return nil,nil,index_error end
+  local masks=indexed_snapshots[index].masks
+  local lines=rawget(copied,"lines")
+  local note_cells,effect_cells={},{}
+  local note_row_keys={notes=true,effects=true}
+
+  for line_index=1,masks.max_lines do
+    local line=rawget(lines,line_index)
+    local notes,effects=rawget(line,"notes"),rawget(line,"effects")
+    if exact_snapshot_array(notes,masks.note_columns) then
+      for column=1,masks.note_columns do
+        local cell=rawget(notes,column)
+        if masks.empty_notes[line_index][column] and
+            cell_snapshot_kind(cell,note_snapshot_fields)==true then
+          if note_cells[1] then rawset(notes,column,note_cells[1])
+          else note_cells[1]=cell end
+        end
+      end
+    end
+    if exact_snapshot_array(effects,masks.effect_columns) then
+      for column=1,masks.effect_columns do
+        local cell=rawget(effects,column)
+        if masks.empty_effects[line_index][column] and
+            cell_snapshot_kind(cell,effect_snapshot_fields)==true then
+          if effect_cells[1] then rawset(effects,column,effect_cells[1])
+          else effect_cells[1]=cell end
+        end
+      end
+    end
+  end
+
+  local canonical_row
+  for line_index=1,masks.max_lines do
+    local line=rawget(lines,line_index)
+    local notes,effects=rawget(line,"notes"),rawget(line,"effects")
+    local canonical_cells=exact_snapshot_array(notes,masks.note_columns) and
+      exact_snapshot_array(effects,masks.effect_columns)
+    if canonical_cells then
+      for column=1,masks.note_columns do
+        if rawget(notes,column)~=note_cells[1] then canonical_cells=false;break end
+      end
+    end
+    if canonical_cells then
+      for column=1,masks.effect_columns do
+        if rawget(effects,column)~=effect_cells[1] then canonical_cells=false;break end
+      end
+    end
+    if masks.empty_lines[line_index] and masks.expected_empty_lines[line_index] and
+        exact_snapshot_keys(line,note_row_keys,2) and
+        canonical_cells then
+      if canonical_row then rawset(lines,line_index,canonical_row)
+      else canonical_row=line end
+    end
+  end
+  return copied,index
 end
 
 local function same_cell_snapshot(left,right,fields)

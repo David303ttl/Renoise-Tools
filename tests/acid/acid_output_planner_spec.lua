@@ -31,7 +31,11 @@ end
 local function assert_materialization_parity(pattern,policy,profile,pb,limits,options)
   local public=assert(run(pattern,policy,profile,pb,limits,options))
   local private=assert(run_materialization(pattern,policy,profile,pb,limits,options))
-  assert(same_tree(public,private),"private materialization plan differs from the public plan")
+  for _,key in ipairs({"source","settings","approximations","expected","required_visibility"}) do
+    assert(same_tree(public[key],private[key]),"private materialization differs at "..key)
+  end
+  assert(public.volumes and not private.volumes and not private.timeline and not private.plan,
+    "private materialization retained unused planning intermediates")
   return public,private
 end
 local function source()
@@ -59,6 +63,10 @@ for _,mode in ipairs({"straight","triplet"}) do
       private.expected.lines[512].note_columns[11]),"private blank note cells are not shared")
     assert(rawequal(private.expected.lines[512].effect_columns[8],
       private.expected.lines[512].effect_columns[7]),"private blank effect cells are not shared")
+    assert(rawequal(private.expected.lines[511],private.expected.lines[512]),
+      "private untouched expected lines are not shared")
+    assert(not rawequal(private.expected.lines[1],private.expected.lines[2]),
+      "private touched line aliases an untouched expected line")
     assert(not rawequal(private.expected.lines[1].note_columns[1],private.expected.empty_note),
       "private written note cell was not copied from its canonical default")
     local another_private=assert(run_materialization(pattern,policy,{}))

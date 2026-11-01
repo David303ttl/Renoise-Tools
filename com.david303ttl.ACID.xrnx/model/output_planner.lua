@@ -279,18 +279,47 @@ local function expected_output(plan,layout,native,operations,capacities,volumes,
   local canonical_note=private_materialization and expected.empty_note or nil
   local canonical_effect=private_materialization and expected.empty_effect or nil
   local touched={}
-  for index=1,capacities.max_lines do
-    local line={note_columns={},effect_columns={}}
-    expected.lines[index]=line
+  local shared_blank_line=private_materialization and
+    {note_columns={},effect_columns={}} or nil
+  if shared_blank_line then
     for column=1,capacities.max_note_columns do
-      line.note_columns[column]=canonical_note or empty_note()
+      shared_blank_line.note_columns[column]=canonical_note
     end
     for column=1,capacities.max_effect_columns do
-      line.effect_columns[column]=canonical_effect or empty_effect()
+      shared_blank_line.effect_columns[column]=canonical_effect
     end
   end
+  for index=1,capacities.max_lines do
+    if shared_blank_line then
+      expected.lines[index]=shared_blank_line
+    else
+      local line={note_columns={},effect_columns={}}
+      expected.lines[index]=line
+      for column=1,capacities.max_note_columns do
+        line.note_columns[column]=empty_note()
+      end
+      for column=1,capacities.max_effect_columns do
+        line.effect_columns[column]=empty_effect()
+      end
+    end
+  end
+  local function mutable_line(line)
+    local expected_line=expected.lines[line]
+    if shared_blank_line and rawequal(expected_line,shared_blank_line) then
+      local copy={note_columns={},effect_columns={}}
+      for column=1,capacities.max_note_columns do
+        copy.note_columns[column]=expected_line.note_columns[column]
+      end
+      for column=1,capacities.max_effect_columns do
+        copy.effect_columns[column]=expected_line.effect_columns[column]
+      end
+      expected.lines[line]=copy
+      return copy
+    end
+    return expected_line
+  end
   local function mutable_note(line,column)
-    local cell=expected.lines[line].note_columns[column]
+    local cell=mutable_line(line).note_columns[column]
     if canonical_note and rawequal(cell,canonical_note) then
       local copy={}
       for key,value in pairs(cell) do copy[key]=value end
@@ -301,7 +330,7 @@ local function expected_output(plan,layout,native,operations,capacities,volumes,
     return cell
   end
   local function mutable_effect(line,column)
-    local cell=expected.lines[line].effect_columns[column]
+    local cell=mutable_line(line).effect_columns[column]
     if canonical_effect and rawequal(cell,canonical_effect) then
       local copy={}
       for key,value in pairs(cell) do copy[key]=value end
@@ -479,11 +508,18 @@ local function plan_internal(source,output_policy,pb_range,capacities,capabiliti
     end
   end
   if not operations then return nil,operation_error end
-  local volumes,volume_error=M.expected_volumes(plan,layout.lines_per_step,
-    layout.number_of_lines,capacities.max_note_columns)
-  if not volumes then return nil,volume_error end
+  local volumes,volume_error
+  if not private_materialization or not native_notes then
+    volumes,volume_error=M.expected_volumes(plan,layout.lines_per_step,
+      layout.number_of_lines,private_materialization and 1 or capacities.max_note_columns)
+    if not volumes then return nil,volume_error end
+  end
   local expected,visibility=expected_output(plan,layout,native_notes,operations,capacities,volumes,
     private_materialization)
+  if private_materialization then
+    return {source=fixture,settings={output_policy=output_policy,pb_range=pb_range},
+      approximations=approximations,expected=expected,required_visibility=visibility}
+  end
   return {source=fixture,settings={output_policy=output_policy,pb_range=pb_range},plan=plan,
     layout=layout,timeline=timeline,operations=operations,native_notes=native_notes,
     approximations=approximations,volumes=volumes,expected=expected,required_visibility=visibility}

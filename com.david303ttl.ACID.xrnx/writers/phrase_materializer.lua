@@ -208,51 +208,56 @@ local function valid_expected(expected,limits)
   if type(expected.empty_note)~="table" or type(expected.empty_effect)~="table" then
     return nil,"Expected phrase output has no empty cell templates"
   end
-  local checked_notes,checked_effects={},{}
+  local checked_notes,checked_effects,checked_lines={},{},{}
   for index=1,limits.max_lines do
     local line=expected.lines[index]
-    if type(line)~="table" or getmetatable(line)~=nil or
-        type(line.note_columns)~="table" or getmetatable(line.note_columns)~=nil or
-        #line.note_columns~=limits.max_note_columns or
-        type(line.effect_columns)~="table" or getmetatable(line.effect_columns)~=nil or
-        #line.effect_columns~=limits.max_effect_columns then
+    if type(line)~="table" or getmetatable(line)~=nil then
       return nil,"Invalid expected phrase line: "..index
     end
-    for column=1,limits.max_note_columns do
-      local cell=line.note_columns[column]
-      if type(cell)~="table" then return nil,"Invalid expected note cell: "..index.."/"..column end
-      if not checked_notes[cell] then
-        if getmetatable(cell)~=nil or type(cell.is_empty)~="boolean" then
-          return nil,"Invalid expected note cell: "..index.."/"..column
-        end
-        for _,field in ipairs(note_fields) do
-          if not integer(rawget(cell,field),0) then
-            return nil,"Invalid expected note field: "..index.."/"..column.."/"..field
-          end
-        end
-        if cell.is_empty~=note_is_empty(cell) then
-          return nil,"Invalid expected note emptiness: "..index.."/"..column
-        end
-        checked_notes[cell]=true
+    if not checked_lines[line] then
+      if type(line.note_columns)~="table" or getmetatable(line.note_columns)~=nil or
+          #line.note_columns~=limits.max_note_columns or
+          type(line.effect_columns)~="table" or getmetatable(line.effect_columns)~=nil or
+          #line.effect_columns~=limits.max_effect_columns then
+        return nil,"Invalid expected phrase line: "..index
       end
-    end
-    for column=1,limits.max_effect_columns do
-      local cell=line.effect_columns[column]
-      if type(cell)~="table" then return nil,"Invalid expected effect cell: "..index.."/"..column end
-      if not checked_effects[cell] then
-        if getmetatable(cell)~=nil or type(cell.is_empty)~="boolean" then
-          return nil,"Invalid expected effect cell: "..index.."/"..column
-        end
-        for _,field in ipairs(effect_fields) do
-          if not integer(rawget(cell,field),0) then
-            return nil,"Invalid expected effect field: "..index.."/"..column.."/"..field
+      for column=1,limits.max_note_columns do
+        local cell=line.note_columns[column]
+        if type(cell)~="table" then return nil,"Invalid expected note cell: "..index.."/"..column end
+        if not checked_notes[cell] then
+          if getmetatable(cell)~=nil or type(cell.is_empty)~="boolean" then
+            return nil,"Invalid expected note cell: "..index.."/"..column
           end
+          for _,field in ipairs(note_fields) do
+            if not integer(rawget(cell,field),0) then
+              return nil,"Invalid expected note field: "..index.."/"..column.."/"..field
+            end
+          end
+          if cell.is_empty~=note_is_empty(cell) then
+            return nil,"Invalid expected note emptiness: "..index.."/"..column
+          end
+          checked_notes[cell]=true
         end
-        if cell.is_empty~=effect_is_empty(cell) then
-          return nil,"Invalid expected effect emptiness: "..index.."/"..column
-        end
-        checked_effects[cell]=true
       end
+      for column=1,limits.max_effect_columns do
+        local cell=line.effect_columns[column]
+        if type(cell)~="table" then return nil,"Invalid expected effect cell: "..index.."/"..column end
+        if not checked_effects[cell] then
+          if getmetatable(cell)~=nil or type(cell.is_empty)~="boolean" then
+            return nil,"Invalid expected effect cell: "..index.."/"..column
+          end
+          for _,field in ipairs(effect_fields) do
+            if not integer(rawget(cell,field),0) then
+              return nil,"Invalid expected effect field: "..index.."/"..column.."/"..field
+            end
+          end
+          if cell.is_empty~=effect_is_empty(cell) then
+            return nil,"Invalid expected effect emptiness: "..index.."/"..column
+          end
+          checked_effects[cell]=true
+        end
+      end
+      checked_lines[line]=true
     end
   end
   return true
@@ -303,9 +308,11 @@ local function preserved(before,after,required_visibility)
   return true
 end
 
-local function expected_matches(actual,expected,required_visibility,before,memo_private_empty_pairs)
+local function expected_matches(actual,expected,required_visibility,before,private_postimage)
   local props=actual.properties
-  local matched_empty_notes,matched_empty_effects={},{}
+  local matched_private_rows=private_postimage and {} or nil
+  local matched_empty_notes,matched_empty_effects
+  if private_postimage then matched_empty_notes,matched_empty_effects={},{} end
   for _,key in ipairs(generated_properties) do
     if props[key]~=expected.properties[key] then
       return nil,"Generated phrase property differs: "..key
@@ -313,42 +320,50 @@ local function expected_matches(actual,expected,required_visibility,before,memo_
   end
   for index=1,#expected.lines do
     local wanted,got=expected.lines[index],actual.lines[index]
-    for column=1,#wanted.note_columns do
-      local expected_cell,actual_cell=wanted.note_columns[column],got.notes[column]
-      local memoized=memo_private_empty_pairs and rawequal(expected_cell,expected.empty_note) and
-        matched_empty_notes[actual_cell]==expected_cell
-      if not memoized then
-        for _,field in ipairs(note_fields) do
-          if actual_cell[field]~=expected_cell[field] then
-            return nil,"Generated note cell differs: "..index.."/"..column.."/"..field
+    local row_pairs=matched_private_rows and matched_private_rows[wanted]
+    if not (row_pairs and row_pairs[got]) then
+      for column=1,#wanted.note_columns do
+        local expected_cell,actual_cell=wanted.note_columns[column],got.notes[column]
+        local memoized=private_postimage and rawequal(expected_cell,expected.empty_note) and
+          matched_empty_notes[actual_cell]==expected_cell
+        if not memoized then
+          for _,field in ipairs(note_fields) do
+            if actual_cell[field]~=expected_cell[field] then
+              return nil,"Generated note cell differs: "..index.."/"..column.."/"..field
+            end
           end
-        end
-        if actual_cell.is_empty~=expected_cell.is_empty then
-          return nil,"Generated note emptiness differs: "..index.."/"..column
-        end
-        if memo_private_empty_pairs and rawequal(expected_cell,expected.empty_note) and
-            type(actual_cell)=="table" then
-          matched_empty_notes[actual_cell]=expected_cell
+          if actual_cell.is_empty~=expected_cell.is_empty then
+            return nil,"Generated note emptiness differs: "..index.."/"..column
+          end
+          if private_postimage and rawequal(expected_cell,expected.empty_note) and
+              type(actual_cell)=="table" then
+            matched_empty_notes[actual_cell]=expected_cell
+          end
         end
       end
-    end
-    for column=1,#wanted.effect_columns do
-      local expected_cell,actual_cell=wanted.effect_columns[column],got.effects[column]
-      local memoized=memo_private_empty_pairs and rawequal(expected_cell,expected.empty_effect) and
-        matched_empty_effects[actual_cell]==expected_cell
-      if not memoized then
-        for _,field in ipairs(effect_fields) do
-          if actual_cell[field]~=expected_cell[field] then
-            return nil,"Generated effect cell differs: "..index.."/"..column.."/"..field
+      for column=1,#wanted.effect_columns do
+        local expected_cell,actual_cell=wanted.effect_columns[column],got.effects[column]
+        local memoized=private_postimage and rawequal(expected_cell,expected.empty_effect) and
+          matched_empty_effects[actual_cell]==expected_cell
+        if not memoized then
+          for _,field in ipairs(effect_fields) do
+            if actual_cell[field]~=expected_cell[field] then
+              return nil,"Generated effect cell differs: "..index.."/"..column.."/"..field
+            end
+          end
+          if actual_cell.is_empty~=expected_cell.is_empty then
+            return nil,"Generated effect emptiness differs: "..index.."/"..column
+          end
+          if private_postimage and rawequal(expected_cell,expected.empty_effect) and
+              type(actual_cell)=="table" then
+            matched_empty_effects[actual_cell]=expected_cell
           end
         end
-        if actual_cell.is_empty~=expected_cell.is_empty then
-          return nil,"Generated effect emptiness differs: "..index.."/"..column
-        end
-        if memo_private_empty_pairs and rawequal(expected_cell,expected.empty_effect) and
-            type(actual_cell)=="table" then
-          matched_empty_effects[actual_cell]=expected_cell
-        end
+      end
+      if matched_private_rows then
+        row_pairs=row_pairs or {}
+        row_pairs[got]=true
+        matched_private_rows[wanted]=row_pairs
       end
     end
   end
@@ -419,14 +434,25 @@ local function write_output(phrase,expected,visibility,before,limits)
   local geometry_changed=previous.number_of_lines~=p.number_of_lines or
     previous.loop_start~=p.loop_start or previous.loop_end~=p.loop_end
   if geometry_changed then
-    phrase.looping=false
-    if phrase.number_of_lines<2 then phrase.number_of_lines=2 end
-    phrase.loop_start=1
-    phrase.loop_end=2
-    phrase.number_of_lines=p.number_of_lines
-    phrase.loop_end=p.loop_end
-    phrase.loop_start=p.loop_start
-    phrase.looping=p.looping
+    if phrase.looping then phrase.looping=false end
+    local lines=phrase.number_of_lines
+    if lines<2 then
+      lines=2
+      phrase.number_of_lines=lines
+    end
+    if p.number_of_lines>lines then
+      lines=p.number_of_lines
+      phrase.number_of_lines=lines
+    end
+    local loop_start=phrase.loop_start
+    if p.loop_start<loop_start then
+      loop_start=p.loop_start
+      phrase.loop_start=loop_start
+    end
+    if phrase.loop_end~=p.loop_end then phrase.loop_end=p.loop_end end
+    if loop_start~=p.loop_start then phrase.loop_start=p.loop_start end
+    if p.number_of_lines<lines then phrase.number_of_lines=p.number_of_lines end
+    if phrase.looping~=p.looping then phrase.looping=p.looping end
   elseif previous.looping~=p.looping then
     phrase.looping=p.looping
   end
@@ -445,28 +471,50 @@ local function write_output(phrase,expected,visibility,before,limits)
     if current~=wanted then phrase[key]=wanted end
   end
 
+  local compared_rows,unchanged={},{}
   for index=1,limits.max_lines do
     local previous=before and before.lines[index]
-    local changed_notes,changed_effects
-    for column=1,limits.max_note_columns do
-      if not same_cell(expected.lines[index].note_columns[column],previous.notes[column],note_fields) then
-        changed_notes=changed_notes or {}
-        changed_notes[#changed_notes+1]=column
+    local wanted=expected.lines[index]
+    local row_cache=compared_rows[wanted]
+    local changes
+    if row_cache then
+      if row_cache.previous==previous then
+        changes=row_cache.changes
+      elseif row_cache.pairs then
+        changes=row_cache.pairs[previous]
       end
     end
-    for column=1,limits.max_effect_columns do
-      if not same_cell(expected.lines[index].effect_columns[column],previous.effects[column],effect_fields) then
-        changed_effects=changed_effects or {}
-        changed_effects[#changed_effects+1]=column
+    if not changes then
+      local changed_notes,changed_effects
+      for column=1,limits.max_note_columns do
+        if not same_cell(wanted.note_columns[column],previous.notes[column],note_fields) then
+          changed_notes=changed_notes or {}
+          changed_notes[#changed_notes+1]=column
+        end
+      end
+      for column=1,limits.max_effect_columns do
+        if not same_cell(wanted.effect_columns[column],previous.effects[column],effect_fields) then
+          changed_effects=changed_effects or {}
+          changed_effects[#changed_effects+1]=column
+        end
+      end
+      changes=(changed_notes or changed_effects) and
+        {notes=changed_notes,effects=changed_effects} or unchanged
+      if not row_cache then
+        compared_rows[wanted]={previous=previous,changes=changes}
+      elseif not row_cache.pairs then
+        row_cache.pairs={[row_cache.previous]=row_cache.changes,[previous]=changes}
+      else
+        row_cache.pairs[previous]=changes
       end
     end
-    if changed_notes or changed_effects then
+    if changes~=unchanged then
       local line=phrase:line(index)
-      for _,column in ipairs(changed_notes or {}) do
-        set_cell(line,column,expected.lines[index].note_columns[column],previous,true)
+      for _,column in ipairs(changes.notes or {}) do
+        set_cell(line,column,wanted.note_columns[column],previous,true)
       end
-      for _,column in ipairs(changed_effects or {}) do
-        set_cell(line,column,expected.lines[index].effect_columns[column],previous,false)
+      for _,column in ipairs(changes.effects or {}) do
+        set_cell(line,column,wanted.effect_columns[column],previous,false)
       end
     end
   end

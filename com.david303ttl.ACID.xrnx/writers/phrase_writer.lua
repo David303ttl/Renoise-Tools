@@ -429,8 +429,23 @@ local function rollback(job, phrase, preimage, reason,restore_phrase)
     job.committed = false
     job.final_baseline = nil
     if phrase and preimage and restore_phrase then
-      local restored, restore_error = materializer.restore(phrase, preimage, limits_for_writer(job.limits))
-      if not restored then errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error) end
+      local still_authorized=true
+      local authorization_error
+      if job.rollback_guard_required then
+        local guard_ok,guard_matches,guard_error=false,nil,"Verified output rollback guard is unavailable"
+        if type(job.rollback_guard)=="function" then
+          guard_ok,guard_matches,guard_error=pcall(job.rollback_guard,phrase,
+            limits_for_writer(job.limits))
+        end
+        still_authorized=guard_ok and guard_matches==true
+        authorization_error=guard_error
+      end
+      if still_authorized then
+        local restored, restore_error = materializer.restore(phrase, preimage, limits_for_writer(job.limits))
+        if not restored then errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error) end
+      else
+        errors[#errors + 1]="destination changed before phrase rollback: "..tostring(authorization_error)
+      end
     end
   end
   if source_restored and not job.replace and phrase then
