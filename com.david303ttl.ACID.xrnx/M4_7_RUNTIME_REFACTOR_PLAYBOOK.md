@@ -1985,6 +1985,8 @@ M4 completion.
 
 **Normative executable implementation and evidence specification:** [production-session acceptance contract](../tests/acid/production_session_acceptance.md). Read it before coding. Its exact 8x8 and 16x8 fixture profiles, GUI actions, native oracles, performance requirements, device preconditions, error/recovery requirements, runner commands and cold-process phases supersede any contradictory *future-facing* text in this historical playbook. Existing dated reports remain historical evidence, not current Gate 8 passes.
 
+The contract distinguishes strict release acceptance from functional diagnostic execution. Only the latter may continue after recorded latency FAIL, including progression to 16x8 after a complete 8x8 functional PASS. Safety failures stop both modes. Current investigation evidence and remaining implementation gaps are recorded only in [runtime acceptance](../tests/acid/runtime_acceptance.md).
+
 
 **Strict order; a failed stage cannot be bypassed:**
 

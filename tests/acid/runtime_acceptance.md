@@ -6,6 +6,224 @@ regeneration slots are historical evidence for the former writer. They do not
 establish acceptance of the current direct writer; its native workflow checks
 remain under Gate 8 until explicitly recorded as passing.
 
+## Bounded production-scale investigation (2026-11-01)
+
+**Gate 8: FAIL; OPEN. Implementation/acceptance remains INCOMPLETE.** The current
+30 ms gate fails in measured Warm callbacks. This iteration implements diagnostic
+execution and controlled profiling only; it does **not** implement or execute
+`production-session-8x8` or `production-stress-16x8`. No integrated production
+creation/regeneration, playback, cold-process or recovery acceptance is claimed.
+The phase-1 evidence below does not declare all requested phase-1 measurements
+complete: separate admission and adoption/reconciliation costs remain unresolved.
+Later implementation phases have not been completed.
+
+**Identity:** base commit `47d478e1e749d789bef9be425e98d81cf9adfdd3`, with the
+uncommitted diagnostic/documentation changes described here. No production Lua,
+manifest, source format or schema changed; no commit, push or merge was made.
+Native reports include their packaged development-file hashes and source SHA;
+those package identities, rather than HEAD alone, identify the measured harness.
+Final implementation/documentation patch (excluding this self-referential evidence
+file): `tmp/acceptance-investigation-working-tree.patch`, SHA-256
+`7fc799c91d5b99f6200442043ad60aea80ee861193f50ccff944a48d010131d0`.
+Later report-field/timer fixes do not retrospectively apply to older artifacts.
+
+### Implemented changes and review
+
+- `tests/renoise/driver/acceptance_cases.lua`: one existing parameterized latency
+  fixture now measures empty phrase inventory, populated early history and the
+  same populated inventory after two revisions per owned phrase. Each stage has
+  three Warm samples and a separate Detailed sample. Store size/source rows are
+  counted outside callbacks; current code also records GC memory and exact
+  callback-entry row/byte counts. The helper retains the reused GUI runtime and
+  restores its profiling wrappers, instead of assuming each dialog creates a
+  fresh runtime. No direct writer setup/history action counts as GUI acceptance.
+- `tests/renoise/acceptance_cases_spec.lua`: Warm-only aggregation retains an
+  earlier performance FAIL and excludes Detailed overhead from release judgement.
+  Each Detailed callback's observed ceiling status remains separate.
+- `tests/acid/production_session_acceptance.md`: distinguishes strict release
+  execution from `FUNCTIONAL_DIAGNOSTIC`, with unchanged safety stop conditions
+  and 30 ms ceiling; removes contradictory prohibitions on diagnostic 16x8 after
+  a complete 8x8 functional journey. The smaller latency case is not that journey.
+- `tests/renoise/README.md`: documents the diagnostic matrix/report semantics.
+  Playbook and roadmap contain short references to this canonical evidence.
+
+Independent reviewer checked the actual diff and native reports. Its concrete
+finding that Detailed overhead could determine the release verdict was fixed;
+Warm violations now determine it. Timer failures now deactivate the callback,
+verify exact removal and retry cleanup through the failure path. Review found no
+normal-completion wrapper restoration defect. It explicitly rejected any full
+production-acceptance interpretation and distinguished editor fixture restoration
+from runner-owned disposable-process teardown.
+
+### Controlled evidence and optimization decision
+
+All numbers below are milliseconds from the existing host `os.clock()` delta
+multiplied by 1000. Three Warm samples per stage are too few for p95/p99 or a
+representative production latency distribution. These are sample-target GUI
+callbacks; receivers remain loaded, but actual playback is not tested.
+
+| Diagnostic / native report under `tmp/` | Inventory / retained rows before helper | Warm callbacks, ms | Detailed recovery capture |
+| --- | --- | --- | --- |
+| 8x8 `interactive-a6fc9437fd6a4675b6c78690b239953e/report.json` | 0 phrases / 0 rows | 46.89, 59.32, 68.93 | 1 capture |
+| Same 8x8, early | 72 phrases / 64 rows | 528.24, 483.92, 475.00 | 73 captures / 349.80 ms |
+| Same 8x8, late | 72 phrases / 192 rows | 648.52, 510.23, 590.27 | 73 captures / 434.20 ms |
+| 16x8 `interactive-a40bfcede80b46b78e5daa48236c1229/report.json` | 0 phrases / 0 rows | 62.49, 83.45, 63.13 | 1 capture |
+| Same 16x8, early | 144 phrases / 128 rows | 1280.78, 1133.48, 961.43 | 145 captures / 953.50 ms |
+| Same 16x8, late | 144 phrases / 384 rows | 1188.06, 2046.69, 1004.31 | 145 captures / 1051.23 ms |
+
+8x8 retains ten native instruments (two empty defaults); 16x8 has sixteen.
+Every helper adds one temporary phrase and restores its original inventory,
+selection and store before returning. Thus timed inventories are 1/73/145 phrases,
+and the callback has additional helper revisions beyond the pre-helper row count.
+Older reports do not expose exact callback-entry row counts; current code does.
+Fixture seeding/history uses development writer requests outside the timer.
+The 8x8/16x8 reports verify 64/128 seeded owned phrases plus 8/16 foreign sentinels
+and 128/256 history regenerations, **zero counted integrated GUI creations and
+zero counted production-session regenerations**. All nine Warm samples per run
+fail the unchanged ceiling; functional diagnostic status is PASS. Process shutdown
+and installation restoration are PASS in both reports.
+
+**Demonstrated principal cost:** `runtime.integrity:capture_mutation()` snapshots
+every native phrase before the synchronous mutation scope. Its whole-song recovery
+capture accounts for most populated callback cost, with 73/145 captures rather
+than a constant single target. The empty-inventory controls retain the same loaded
+instrument mix; early/late controls hold native phrase inventory fixed while
+tripling retained immutable rows. History contributes cost and noise, but is not
+the dominant measured scaling factor. The measured recovery count matches native
+inventory, not revision count. Existing detailed timings are nested, not additive.
+
+| Detailed stage | 8x8 early / late, ms | 16x8 early / late, ms |
+| --- | --- | --- |
+| Recovery/preimage capture | 349.80 / 434.20 | 953.50 / 1051.23 |
+| Persistent preparation | 4.93 / 17.91 | 10.63 / 32.83 |
+| Persistent commit | 1.24 / 37.27 | 26.91 / 4.11 |
+
+Planning, materialization and native verification timings are in each Detailed
+sample's `profile` fields. Request-guard time includes the writer; reused runtime
+owners mean admission/adoption were not independently timed by these wrappers.
+Do not subtract overlapping totals to invent separate stage measurements.
+
+**Optimization decision: no production correction.** Removing or narrowing the
+whole-song recovery preimage would change existing recovery proofs, including
+peer-state checks after failures. No safe localized replacement was demonstrated.
+Do not trade that protection for a faster benchmark or introduce speculative
+history caching. No optimization pass or architectural workaround was added.
+
+**Clock limits:** pinned API 6.2 `definitions/library/standard.lua` and offline
+`docs/API/modules/os.html` say Renoise replaces `os.clock()` with a high precision
+timer; standard Lua CPU-clock semantics cannot be assumed. The older matrix
+reports used an idle-dispatch probe, which does not prove CPU versus wall time.
+Integer `os.time()` around callbacks independently observes only 0/1/2-second
+elapsed buckets, with one-second resolution. These coarse observations support
+second-scale 16x8 stalls but cannot verify a 30 ms wall-time gate. Current code
+uses one verified-removed 2000 ms host timer outside the timed callback to probe
+elapsed-clock behavior. The repeat 8x8 report
+`tmp/interactive-c0159b9a96a0413a9562476f3e186607/report.json` records requested
+2000 ms / `os.time()` 2 seconds / `os.clock()` 1.996443359 seconds, with
+functional PASS, all nine Warm samples over budget, and verified process shutdown
+and installation restoration. Its early Warm callbacks were 906.60/728.14/764.54 ms;
+late callbacks were 786.02/699.51/705.39 ms. Repeat variability is substantial;
+some matrix runs overlapped offline tests, so background load was not controlled.
+Do not label these values independently verified CPU time or precise wall time.
+
+**Current-harness 16x8 repeat:**
+`tmp/interactive-11f97e3575424c0f84111e6f0cc4053b/report.json` records functional
+PASS, performance FAIL, 128 owned + 16 foreign phrases and 256 setup/history
+regenerations. Empty/early/late Warm callbacks were respectively
+82.30/67.19/90.51, 1239.85/990.54/952.63 and 1209.45/1058.47/1045.12 ms.
+The three-sample early/late medians are 990.54/1058.47 ms; maxima are
+1239.85/1209.45 ms. No p95/p99 claim is justified. The host timer probe records
+2000 ms requested, 2 seconds `os.time`, 1.995154297 seconds `os.clock`.
+Exact callback-entry row counts were 1/129/385, with 1266/50892/150354 store bytes.
+Detailed early/late recovery capture was 937.52/730.58 ms; planning 9.96/9.47 ms;
+materialization 87.98/52.55 ms (including native verification 24.54/10.05 ms);
+source preparation 9.25/25.92 ms; commit 3.00/4.23 ms. These are nested timings.
+GC memory is reported per sample and varies nonmonotonically; neither absence
+nor presence of a production memory leak is established. All twelve helper
+functional/cleanup assertions and runner shutdown/restoration pass.
+
+**Harness failures retained:** initial reports
+`tmp/interactive-6cfac8cc968d468cb59de021ca4f89c0/report.json` (nil empty store)
+and `tmp/interactive-753b3f6d40a74c27ad57ba60df12d425/report.json`,
+`tmp/interactive-36194dc7aef94efbaff903bac3bcdd9b/report.json` (lost reference to
+reused GUI runtime) failed before fixture seeding and stopped. These were harness
+defects, fixed before the successful matrix runs; they are not production journey
+failures or passes. Each failure's process shutdown and installation restore
+passed. They are not omitted from the run history.
+
+### Acceptance and release limitations
+
+| Mandatory requirement | 8x8 | 16x8 |
+| --- | --- | --- |
+| Real parameterized production-session driver | NOT IMPLEMENTED | NOT IMPLEMENTED |
+| 64/128 creations and 128/512 regenerations in one production GUI window | NOT RUN; diagnostic writer setup excluded | NOT RUN; diagnostic writer setup excluded |
+| Eight/sixteen active mixed tracks, phrase triggering and receiver events | NOT RUN | NOT RUN |
+| Musical slot matrix, independent full oracle and peer/foreign isolation journey | NOT RUN | NOT RUN |
+| 128 cross-instrument switches, dirty A→B→C→A, no-op navigation at scale | NOT RUN | NOT RUN |
+| Interleaved musical Undo/Redo, negative actions and recovery at scale | NOT RUN | NOT RUN |
+| Two true cold-process production-song reopen stages | NOT RUN | NOT RUN |
+| Sample audio path / loaded VST audio / ACID-delivered MIDI NOTE/OFF/PB | UNVERIFIED / UNVERIFIED / UNVERIFIED | UNVERIFIED / UNVERIFIED / UNVERIFIED |
+| Every measured callback ≤30 ms | FAIL | FAIL |
+| Full history, observer/reference/temp-object growth acceptance | INCOMPLETE | INCOMPLETE |
+
+The earlier physical MIDI loopback probe remains historical precondition evidence,
+not current ACID phrase delivery. Loaded Surge XT instances and configured MIDI
+routes in these diagnostics do not prove audible output or event delivery. No
+receiver was replaced by a mock. No operator listening observations were obtained.
+The fresh `editor-responsiveness` Detailed report
+`tmp/interactive-2a9708f3628549748ce507ffc0fa3c1a/report.json` passes its narrower
+functional assertions and restoration, with a 53.96 ms Live Edit callback; it is
+not a production journey or a performance PASS.
+
+**Performance recommendation:** keep 30 ms executable and Gate 8 open. Present
+synchronous full-song recovery capture exceeds that budget materially at both
+scales. This evidence does not justify a replacement ceiling or establish typical
+manual Generate, navigation, cold initialization or playback responsiveness.
+Any further engineering should first define how to preserve existing recovery
+proofs; do not continue isolated millisecond tuning based on this diagnostic.
+
+### Fresh scoped native prerequisites
+
+These are current narrow checks, not scaled production-session acceptance.
+All launched runs below verify process shutdown and installation restoration.
+
+| Case | Report under `tmp/` | Result / limitation |
+| --- | --- | --- |
+| Strict Warm editor | `interactive-3737e63d471143e3809d9a836cea8685/report.json` | FAIL: Live Edit 44.37 ms; unchanged 30 ms gate stops the case. |
+| Strict Warm three-instrument workflow | `interactive-bedeb49e4ce74a52980620501b007a80/report.json` | FAIL: Live Edit 127.82 ms; not 8x8 evidence. |
+| Direct output feasibility | `interactive-6fae80717d2a4492b91c19186681b794/report.json` | PASS: existing native materializer/oracle assertions; no acoustic claim. |
+| Integrity/observers | `interactive-2866b09d2db9437a99fcd5111bee8900/report.json` | PASS: existing scoped native assertions. |
+| Writer recovery | `interactive-0b9375ef2f8c4c3a88b8c1773101f1e1/report.json` | PASS: existing scoped native failure/recovery assertions. |
+| Manual revision Undo/Redo | `interactive-9aa8e23b2b824362adf786fffd0eec00/report.json` | PASS: actual guarded native actions; not scaled/interleaved production acceptance. |
+| Live Edit revision Undo/Redo | `interactive-6a63583e264c47508676ec19c02c0243/report.json` | PASS: actual guarded native actions; same scale limit. |
+| Make Independent twice-cold round trip | `interactive-0d65ef00ace04af29475daf51461c0c8/report.json` | PASS: two fresh-process reopen transitions and scoped identity/source/foreign-state assertions; not the production song. |
+
+The first Undo invocation, `interactive-acc071509c4f49b49591d2890e3a4815/report.json`,
+was ERROR in preflight because that configuration omitted the locally available
+AutoHotkey path. It did not launch Renoise or deploy an installation. The rerun
+used the existing configured executable; no installation/download was required.
+The full ordered invocation list is `tmp/acceptance-investigation-prerequisites.json`.
+
+### Verification of this working tree
+
+- ACID Lua: **70/70 PASS**, `tmp/acceptance-investigation-final-acid.log`.
+- Full repository Lua: **73/73 PASS**, `tmp/acceptance-investigation-final-lua.log`.
+- Offline: **18/18 groups PASS**, `tmp/acceptance-investigation-offline.log`;
+  printed negative-fixture FAILs are expected controls, not suite failures.
+- Runner argument/lifecycle checks: **PASS**,
+  `tmp/acceptance-investigation-final-runner.log`.
+- Explicit release/development packaging: **PASS**,
+  `tmp/acceptance-investigation-package.log` and
+  `tmp/acceptance-investigation-package-dev.log`. Release archive
+  `tmp/acceptance-investigation-release/com.david303ttl.ACID_0.1.xrnx` has 31
+  entries, root manifest/main, preserved module paths and no SDK/tests/dev code.
+- Independent review: concrete Detailed-aggregation and timer-cleanup defects
+  fixed; missing full acceptance evidence explicitly retained above.
+- `git diff --check`: **PASS**. No push or merge.
+
+These checks do not complete the requested final phase because full production
+journeys, mixed playback and scaled persistence/recovery are still absent.
+
 ## T8.0 native baseline (2026-11-01)
 
 **Status: baseline and scope recorded; all-green condition NOT met; Gate 8 OPEN.** Original baseline: `e2ca527a65efe21d03c34438e0b6813d04676630`, Windows / PowerShell 7.5.4, Renoise 3.5.4 / API 6.2, ACID 0.1. Verified runtime checkout: `b93becf8a739cdbc77e42aec5ac89ffb5d750c50` (clean before the reruns below). Earlier reports identify their particular packaged working tree; the fresh Warm and Detailed reports below cover this commit.

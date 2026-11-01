@@ -15,6 +15,7 @@ local helpers = assert(loadstring(prefix .. [[
     resolve_acceptance_profile = resolve_acceptance_profile,
     production_latency_fixture = production_latency_fixture,
     production_latency_functional_status = production_latency_functional_status,
+    diagnostic_performance = diagnostic_performance,
   }
 ]]))()
 
@@ -169,6 +170,16 @@ assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
   helpers.resolve_acceptance_profile("multi-instrument-workflow")=="Warm",
   "profiled native acceptance cases must default to Warm")
 local latency_8=helpers.production_latency_fixture("production-latency-8x8")
+assert(helpers.diagnostic_performance({})=="NOT_MEASURED")
+assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=30,
+  performance_acceptance="PASS"}})=="PASS")
+assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=31,
+  performance_acceptance="NOT_CLAIMED"},{instrumentation_profile="Warm",elapsed_ms=1,
+  performance_acceptance="PASS"}})=="FAIL",
+  "later successful diagnostics must not erase an earlier release-ceiling violation")
+assert(helpers.diagnostic_performance({{instrumentation_profile="Detailed",elapsed_ms=31,
+  performance_acceptance="NOT_CLAIMED"}})=="NOT_MEASURED",
+  "Detailed instrumentation must not determine the Warm release judgement")
 local latency_16=helpers.production_latency_fixture("production-latency-16x8")
 assert(latency_8.instruments==8 and latency_8.owned_per_instrument==8 and
     latency_8.receiver_counts.sample==3 and latency_8.receiver_counts.vst==3 and

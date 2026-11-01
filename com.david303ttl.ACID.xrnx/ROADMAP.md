@@ -690,6 +690,8 @@ status is tracked above and in playbook 2.9.
 - [ ] **8x8:** 3 sample + 3 loaded VST + 2 routed MIDI; 64 owned plus 8 foreign phrases, eight playing tracks, ≥128 real GUI regenerations, independent LAST STEP/PITCH spans, NOTE/TIE/REST, accent/slide, timing, Repeat/Play Once and PB combinations. Prove source/draft/selection isolation.
 - [ ] **16x8:** 6 sample + 6 loaded VST + 4 routed MIDI; 128 owned plus 16 foreign, 16 playing tracks, ≥512 regenerations and ≥128 cross-instrument switches. Reuse the same parameterized test implementation; verify history growth, observers, heap and late-session latency.
 - [ ] **Both:** independent native musical/receiver-event evidence, first/middle/last target, rejection/recovery, one-step native Undo/Redo and two true fresh-process XRNS reopen stages. **Every** GUI edit callback must be ≤30 ms; missing mandatory MIDI route/capture is BLOCKED, transport progress alone is insufficient.
+Functional diagnostics may continue after latency FAIL only under the [execution-mode contract](../tests/acid/production_session_acceptance.md). Controlled investigation evidence and incomplete production journeys remain in the [canonical acceptance record](../tests/acid/runtime_acceptance.md).
+
 - [ ] No new production writer/scheduler, adapter, persisted format/version, test-specific production API or unchecked fast path. Optimize demonstrated duplicate planning/snapshot/history/GUI work without relaxing pre/postimage and rollback safeguards. Gate 8 and M4 remain open until actual native results and independent review pass.
 
 

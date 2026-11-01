@@ -180,6 +180,20 @@ local function production_latency_functional_status(gui_result)
     type(gui_result.gui_live_first_edit_elapsed_ms)=="number"
 end
 
+local function diagnostic_performance(measurements)
+  local measured=false
+  for _,measurement in ipairs(measurements or {}) do
+    if measurement.instrumentation_profile=="Warm" then
+      measured=true
+      if measurement.performance_acceptance=="FAIL" or
+          (type(measurement.elapsed_ms)=="number" and measurement.elapsed_ms>GUI_CALLBACK_BUDGET_MS) then
+        return "FAIL"
+      end
+    end
+  end
+  return measured and "PASS" or "NOT_MEASURED"
+end
+
 local function create_acceptance_sample(instrument,label)
   if #instrument.samples==0 then instrument:insert_sample_at(1) end
   local sample=instrument.samples[1]
@@ -4094,7 +4108,7 @@ local function run_multi_instrument_workflow(done, json, profile_mode)
   return true
 end
 
-run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrument_index,latency_only)
+run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrument_index,latency_only,existing_gui_context)
   profile_mode=profile_mode or "Warm"
   local detailed_profile=profile_mode=="Detailed"
   local song=renoise.song()
@@ -4681,17 +4695,12 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     if not generated_phrase_index then return nil,"generated phrase is not in the selected instrument" end
     gui_context_module=require("runtime.context")
     original_gui_context_new=gui_context_module.new
-    gui_context_module.new=function(options)
-      gui_context_created_count=gui_context_created_count+1
-      local original_sink=options.sink
-      local wrapped_context
-      options.sink=function(request,completion)
-        if gui_live_sink_counting and rawequal(wrapped_context,gui_context) then
-          gui_live_sink_dispatches=gui_live_sink_dispatches+1
-        end
-        return original_sink(request,completion)
-      end
-      wrapped_context=original_gui_context_new(options)
+    local function capture_gui_context(wrapped_context)
+      local originals={}
+      for key,value in pairs(wrapped_context) do originals[key]=value end
+      phrase_profile_restore[#phrase_profile_restore+1]={restore=function()
+        for key,value in pairs(originals) do wrapped_context[key]=value end
+      end}
       gui_context=wrapped_context
       gui_transition_context=gui_context
       if detailed_profile then
@@ -4857,6 +4866,17 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end end
       return gui_context
     end
+    gui_context_module.new=function(options)
+      gui_context_created_count=gui_context_created_count+1
+      return capture_gui_context(original_gui_context_new(options))
+    end
+    if existing_gui_context then capture_gui_context(existing_gui_context) end
+    local original_regenerate=writer.regenerate
+    writer.regenerate=function(...)
+      if gui_live_sink_counting then gui_live_sink_dispatches=gui_live_sink_dispatches+1 end
+      return original_regenerate(...)
+    end
+    phrase_profile_restore[#phrase_profile_restore+1]={target=writer,key="regenerate",original=original_regenerate}
     original_view_builder=renoise.ViewBuilder
     local builder_factory=original_view_builder
     local wrapped,wrap_error=pcall(function() renoise.ViewBuilder=function(...)
@@ -5464,12 +5484,19 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local first_value=(before_live.pitch_events[live_index].key+1)%12+1
       local second_value=first_value%12+1
       local function edit_live_note(value)
+        local raw_store=song.tool_data or ""
+        local source_rows=0
+        for _ in raw_store:gmatch("\n%d+|") do source_rows=source_rows+1 end
+        metrics.gui_live_source_rows_before_callback=source_rows
+        metrics.gui_live_tool_data_bytes_before_callback=#raw_store
+        local wall_started=os.time()
         local started=os.clock()
         suppress_captured_notifiers=true
         live_key_control.value=value
         suppress_captured_notifiers=false
         live_key_notifier(value)
         local elapsed=(os.clock()-started)*1000
+        metrics.gui_live_edit_wall_seconds=os.difftime(os.time(),wall_started)
         live_note_dispatches=live_note_dispatches+1
         return elapsed
       end
@@ -5575,9 +5602,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       metrics.gui_over_budget_action_count=#over_budget
       metrics.gui_live_synchronous_verified=true
       metrics.detailed_timing_over_budget=#over_budget>0
-      metrics.performance_acceptance=latency_only and "NOT_CLAIMED" or
-        callback_latency_acceptance(profile_mode,action_timings)
-      if metrics.performance_acceptance=="FAIL" then
+      metrics.performance_acceptance=callback_latency_acceptance(profile_mode,action_timings)
+      if metrics.performance_acceptance=="FAIL" and not latency_only then
         finished(false,"GUI actions exceeded "..tostring(GUI_CALLBACK_BUDGET_MS)..
           " ms: "..metrics.gui_over_budget_actions)
       else
@@ -6102,7 +6128,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             "editor responsiveness fixture did not restore initial native selection" or
           "metadata-driven fresh request failed") or nil}
       for key,value in pairs(metrics) do result[key]=value end
-      done(result)
+      done(result,gui_context)
     end
     completion_idle:add_notifier(wait_completion)
     end
@@ -7649,14 +7675,32 @@ local function run_production_latency(done,case_name,options,json)
   local initial_phrase_count=0
   for _,instrument in ipairs(song.instruments) do initial_phrase_count=initial_phrase_count+#instrument.phrases end
   local midi_device=options[PRODUCTION_LATENCY_DEVICE_OPTION]
+  local clock_probe
+  local probe_clock,probe_active
+  local function stop_clock_probe()
+    probe_active=false
+    if not probe_clock then return true end
+    local tool=renoise.tool()
+    local checked,present=pcall(function() return tool:has_timer(probe_clock) end)
+    if checked and present==false then return true end
+    pcall(function() tool:remove_timer(probe_clock) end)
+    checked,present=pcall(function() return tool:has_timer(probe_clock) end)
+    return checked and present==false
+  end
   local function fail(reason,extra)
+    local clock_cleaned=stop_clock_probe()
     local selection_set=pcall(function() song.selected_instrument_index=initial_instrument_index end)
     local selection_restored=selection_set and song.selected_instrument_index==initial_instrument_index
     local result={status="FAIL",case=case_name,reason=reason,
+      execution_mode="FUNCTIONAL_DIAGNOSTIC",functional_status="FAIL",
+      clock_probe_cleanup_verified=clock_cleaned,
+      fixture_cleanup_scope="runner-owned disposable process; per-measurement editor fixture restored separately",
       acceptance_claim="FUNCTIONAL_ONLY",performance_acceptance="NOT_CLAIMED",
       latency_diagnostic=true,instrumentation_profile="Warm",
       final_native_selection_restored=selection_restored}
     for key,value in pairs(extra or {}) do result[key]=value end
+    result.performance_acceptance=diagnostic_performance(result.measurements)
+    result.clock_probe=clock_probe
     done(result)
   end
   if not config then fail("unknown production latency fixture");return true end
@@ -7744,8 +7788,11 @@ local function run_production_latency(done,case_name,options,json)
       fail("native selection was not restored after diagnostic",{phrase_count_before_measurement=phrase_count})
       return
     end
+    local performance=diagnostic_performance(measurements)
     local result={status="PASS",case=case_name,
-      acceptance_claim="FUNCTIONAL_ONLY",performance_acceptance="NOT_CLAIMED",
+      execution_mode="FUNCTIONAL_DIAGNOSTIC",functional_status="PASS",
+      fixture_cleanup_scope="runner-owned disposable process; per-measurement editor fixture restored separately",
+      acceptance_claim="FUNCTIONAL_ONLY",performance_acceptance=performance,
       latency_diagnostic=true,instrumentation_profile="Warm",
       instrument_count=config.instruments,song_instrument_count=#song.instruments,owned_phrase_count=#targets,
       foreign_phrase_count=config.instruments,phrase_count_before_measurement=phrase_count,
@@ -7755,42 +7802,70 @@ local function run_production_latency(done,case_name,options,json)
       midi_output_device=midi_device,vst_plugin=plugin_info.name,
       vst_preset_mode="startup-default",final_native_selection_restored=selection_restored,
       measurements=measurements}
+    result.clock_probe=clock_probe
     done(result)
   end
   local function fail_measurement(reason,measurements,gui_failure)
     local phrase_count=native_phrase_count()
-    fail(reason,{instrument_count=config.instruments,song_instrument_count=#song.instruments,owned_phrase_count=#targets,
-      foreign_phrase_count=config.instruments,phrase_count_before_measurement=phrase_count,
+    local owned_count,foreign_count=0,0
+    for _,instrument in ipairs(instruments) do
+      for _,phrase in ipairs(instrument.phrases) do
+        if ownership.id(phrase) then owned_count=owned_count+1 else foreign_count=foreign_count+1 end
+      end
+    end
+    fail(reason,{instrument_count=config.instruments,song_instrument_count=#song.instruments,owned_phrase_count=owned_count,
+      foreign_phrase_count=foreign_count,phrase_count_before_measurement=phrase_count,
       phrase_count_during_measurement=phrase_count+1,temporary_phrase_count=1,
       source_steps=32,history_regenerations=successful_history_regenerations,
       measurements=measurements,failed_measurement=gui_failure})
   end
-  local measurement_targets={1}
+  local measurement_targets={1,1,1,1}
   local measurements=json.array()
+  local measured_gui_context
   local function measure_phase(phase,next_step)
     local cursor=1
     local function measure_next()
       local target_index=measurement_targets[cursor]
       if not target_index then next_step();return end
       local instrument= song.instruments[target_index]
+      local measurement_profile=cursor==4 and "Detailed" or "Warm"
+      local source_rows=0
+      local raw_store=song.tool_data or ""
+      for _ in raw_store:gmatch("\n%d+|") do source_rows=source_rows+1 end
+      local store_bytes=#raw_store
+      local phrase_count=native_phrase_count()
+      collectgarbage("collect")
+      local memory_kb=collectgarbage("count")
       song.selected_instrument_index=target_index==1 and 2 or 1
-      run_editor_responsiveness(function(gui_result)
+      run_editor_responsiveness(function(gui_result,returned_context)
         if not production_latency_functional_status(gui_result) then
           fail_measurement(type(gui_result)=="table" and gui_result.reason or
             "production GUI latency helper returned no functional result",measurements,gui_result)
           return
         end
+        measured_gui_context=returned_context
         measurements[#measurements+1]={phase=phase,instrument_index=target_index,
+          repetition=cursor,instrumentation_profile=measurement_profile,
+          source_rows=source_rows,tool_data_bytes=store_bytes,
+          callback_source_rows=gui_result.gui_live_source_rows_before_callback,
+          callback_tool_data_bytes=gui_result.gui_live_tool_data_bytes_before_callback,
+          lua_memory_after_gc_kb=memory_kb,
+          song_phrase_count=phrase_count,song_instrument_count=#song.instruments,
           receiver_kind=receivers[target_index].kind,
-          owned_phrases_on_instrument=config.owned_per_instrument,
+          owned_phrases_on_instrument=phase=="empty-phrase-inventory" and 0 or config.owned_per_instrument,
           native_phrase_count_during_measurement=#instrument.phrases+1,
           elapsed_ms=gui_result.gui_live_first_edit_elapsed_ms,
+          observed_callback_budget_status=gui_result.gui_live_first_edit_elapsed_ms>GUI_CALLBACK_BUDGET_MS and "FAIL" or "WITHIN_BUDGET",
+          wall_seconds=gui_result.gui_live_edit_wall_seconds,
           over_budget_actions=gui_result.gui_over_budget_actions,
           performance_acceptance=gui_result.performance_acceptance,
           functional_status=gui_result.status}
+        if measurement_profile=="Detailed" then
+          measurements[#measurements].profile=gui_result
+        end
         cursor=cursor+1
-        measure_next()
-      end,"Warm",target_index,true)
+        on_next_idle(measure_next)
+      end,measurement_profile,target_index,true,measured_gui_context)
     end
     measure_next()
   end
@@ -7856,8 +7931,10 @@ local function run_production_latency(done,case_name,options,json)
             native_phrase_count()~=(config.instruments*(config.owned_per_instrument+1)) then
           fail_measurement("seeded native owned, foreign, or total phrase counts do not match",measurements);return
         end
-        regenerate_all(1,function()
-          regenerate_all(2,function() measure_phase("late",function() finish_measurements(measurements) end) end)
+        measure_phase("early",function()
+          regenerate_all(1,function()
+            regenerate_all(2,function() measure_phase("late",function() finish_measurements(measurements) end) end)
+          end)
         end)
         return
       end
@@ -7894,7 +7971,19 @@ local function run_production_latency(done,case_name,options,json)
   for _,instrument in ipairs(instruments) do
     if #instrument.phrases~=0 then fail("instrument phrases must be empty before fixture seeding");return true end
   end
-  seed_targets()
+  local wall_started,clock_started=os.time(),os.clock()
+  local tool=renoise.tool()
+  probe_clock=function()
+    if not probe_active then return end
+    if not stop_clock_probe() then fail("clock probe timer cleanup failed");return end
+    local wall_seconds=os.difftime(os.time(),wall_started)
+    clock_probe={requested_timer_ms=2000,os_time_seconds=wall_seconds,
+      os_clock_delta=os.clock()-clock_started,wall_resolution_seconds=1}
+    measure_phase("empty-phrase-inventory",seed_targets)
+  end
+  probe_active=true
+  local probe_added,probe_error=pcall(function() tool:add_timer(probe_clock,2000) end)
+  if not probe_added then fail("clock probe timer registration failed: "..tostring(probe_error)) end
   return true
 end
 
