@@ -3,7 +3,7 @@
 **Project:** ARP/SEQ / ACID.xrnx  
 **Target:** Renoise 3.5+, Lua 5.1-compatible XRNX, scripting API 6.2  
 **Integration target:** `develop`
-**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision; M5.0 Program view is next. Remaining 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision; M5 design accepted and implementation/acceptance pending. Remaining 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
 **Updated:** 2026-11-01
 
@@ -38,10 +38,9 @@ Preserve the musical **SLIDE** flag and **retrigger**
 semantics as independent NOTE behavior, not named audio modes. General-purpose
 pitch, gate, OFF, and glide math may be implemented afresh or factored into
 capability-aware operators **without retaining deprecated mode identities**.
-The current WIP source schema is `ACID-PITCH-TIME-1`; ownership checks, write preflight and rollback must still
-protect unrelated Renoise content.
+Historical baseline at roadmap creation: source schema `ACID-PITCH-TIME-1`. M5 replaces it with strict `ACID-PITCH-TIME-2` under the normative specification; ownership checks, write preflight and rollback continue to protect unrelated Renoise content.
 
-The [design contract](DESIGN.md) defines architecture and unresolved fidelity issues. This file defines **sequence, deliverables, acceptance gates, and verification**. When a detail is uncertain, maintain a research/test item; do not convert an assumption into a guarantee.
+The [design contract](DESIGN.md) defines architecture and unresolved fidelity issues. This file defines **sequence, deliverables, acceptance gates, and verification**. M5's [Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md) is the sole normative M5 contract and takes precedence over older M5 wording retained here as historical context. It specifies the clean cutover to `ACID-PITCH-TIME-2`; schema-1 references below describe the earlier baseline only, not a supported active format or migration path. When a detail is uncertain outside that accepted M5 contract, maintain a research/test item; do not convert an assumption into a guarantee.
 
 The [second-pass reference record](M2_BLUEPRINT.md#24-original-roland-reference-checked-in-the-second-pass)
 identifies the April 1982 Roland manual, checksum, printed pages and R01–R04
@@ -326,14 +325,14 @@ not run in this workspace; functional acceptance remains open.
 | Rendering strategy | Capability-aware renderer | Automatic sample/plugin/MIDI rendering | Source validity or musical meaning |
 | Preview | Pure semantic projection | Read-only Start/Repeating inspection | Source, phrase settings and commit state |
 
-**Entry redesign — baseline delivery in M3.5, full Roland sequential-entry workflow in M5.0**
+**Entry redesign — M3.5 baseline; historical M5.0 scheduling note (normative workflow is in the M5 specification)**
 
 1. Remove entry_mode=original/extended from canonical source storage, semantic validation and compile branching. Independent TIME length and active PITCH span are each 1–32; both initialized arrays have capacity 32.
 2. Replace Entry mode with a nonsemantic **Program/Grid** view selector. Switching views does not reset, re-enter, normalize, reallocate, rewrite or regenerate any musical values. Selection-only actions cannot schedule Live Edit.
 3. Both views can access/edit all 1–32 TIME steps and any valid active PITCH span, using two continuous 16-step pages.
 4. Share source-edit commands for NOTE/TIE/REST, PITCH, octave, ACCENT, SLIDE, LAST STEP and active PITCH span. Only an explicit destructive Roland-style re-entry or Reset command may change stored flags beyond the intended edit.
 5. New patterns are immediately initialized to documented C defaults with a valid TIME sequence. Remove **Create / Reset Pattern** as a prerequisite to user editing/generation; keep Reset as explicit, guarded, undoable destructive action. Changing LAST STEP preserves nonvisible stored PITCH and eligible saved TIME entries.
-6. Editor view preference is GUI/session metadata, not source semantics, and does not belong in phrase ownership hashes. In M5.0 implement full Program pitch/time cursors, back/correction, check and audition over this common source.
+6. Editor view preference is GUI/session metadata, not source semantics, and does not belong in phrase ownership hashes. This baseline anticipated full Program pitch/time cursors, back/correction, check and audition; current requirements are exclusively in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
 
 **Playback redesign — sequence iteration is not the phrase output switch**
 
@@ -352,11 +351,11 @@ not run in this workspace; functional acceptance remains open.
 4. Derive musical behavior only from source: NOTE after REST = attack; unconnected NOTE = retrigger; target of outgoing SLIDE = connected transition; TIE = hold; REST = release; ACCENT = pitch-owned expressive intent. **Keep** the `slide` PITCH field and NOTE retrigger event semantics; they are musical data, not renderer modes.
 5. Where the target cannot implement continuous slide or connected dynamic changes, generate ordered pitches/gates/velocity using the closest safe representation and report a **nonfatal fidelity approximation** with affected steps. Never silently claim slide continuity on a plugin from sample-only 0Gxx commands.
 6. Remove existing mode-specific unit specs, GUI expectations, audio fixture IDs and snapshot expectations; **replace** them with NOTE/REST/TIE/SLIDE/ACCENT, capability, loop and transaction behavior tests. Keep reusable audio measurement utilities and independently defined expected musical cases, but no test that selects or asserts a deprecated audio mode.
-7. Manual Generate and Live Edit take one unambiguous request: (canonical source, target instrument/phrase, phrase output policy). Planner strategy and fidelity diagnostics are derived typed results, never persisted modes or input flags. The current WIP source schema is `ACID-PITCH-TIME-1` and contains no audio-mode field.
+7. Manual Generate and Live Edit take one unambiguous request: (canonical source, target instrument/phrase, phrase output policy). Planner strategy and fidelity diagnostics are derived typed results, never persisted modes or input flags. At the time of this M3.5 baseline, source schema `ACID-PITCH-TIME-1` contained no audio-mode field; M5's schema-2 contract supersedes that store version.
 
 **Persistence contract**
 
-- The current WIP source/seal schema is `ACID-PITCH-TIME-1`: canonical sequence excludes editor view, source playback switch and audio-mode fields; phrase-specific output policy is stored separately.
+- Historical M3.5 baseline: source schema `ACID-PITCH-TIME-1` excluded editor view, source playback switch and audio-mode fields; phrase-specific output policy was stored separately. M5 schema 2 is specified in the [M5 contract](M5_EDITOR_PLAYBOOK.md); phrase seal grammar remains unchanged.
 - Update **gui.lua**, **model/sequencer.lua**, **model/cycle_interpreter.lua**, **model/editor_state.lua**, **model/pattern_store.lua**, **writers/phrase_writer.lua** and tests together. Remove deprecated mode selectors/branches/constants, positional mode parameters, mode-owned source fields, mode-dependent refusal messages and mode-specific test fixtures.
 - Preserve destination ownership, protect unrelated content, retain rollback and source/draft recovery, and keep phrase/source/output settings consistent through the synchronous direct write.
 
@@ -600,7 +599,7 @@ not establish delivery or glide behavior for other receivers or routes.
 
 - Add `timing_mode` to the canonical source and `sequencer.new_pattern` default/validation. Keep both 32-entry memories and their independent active lengths. Mode changes do not alter source entries or pitch consumption.
 - Include timing mode in source equality/history so one dropdown change produces exactly one Undo step; Undo, Redo and Reset restore it. Extend Program/Grid summaries, preview duration/step division and diagnostics to show the selected mode and exact N/4 or N/3 beat cycle. No hidden dependence on selected Renoise pattern LPB. With Live Edit Off show the source as dirty until Generate; with Live Edit On submit real source edits through the existing guarded request pipeline. Each request captures its source/settings and exact target, then writes synchronously after boundary validation; rapid edits between settled callbacks cannot authorize a stale-target write.
-- Persist the field with committed records and drafts in the sole current WIP schema, `ACID-PITCH-TIME-1`. Invalid, missing or unknown timing modes are rejected, not guessed as Straight.
+- Historical M4 implementation instruction: persist timing in schema `ACID-PITCH-TIME-1`. The later M5 schema-2 cutover supersedes that version reference; invalid, missing or unknown timing modes remain rejected, not guessed as Straight.
 - Keep `output_policy` and `pb_range` as phrase-specific render settings separate from canonical `timing_mode`. Selecting an existing owned phrase restores the correct source mode and existing PB/output settings. Switching instruments, selecting another phrase, closing/reopening a song, unsaved session drafts and new/foreign-phrase Live Edit recovery must not cross-wire timing between sources.
 - Update `README.md` and a short Renoise manual verification checklist *during implementation*, not as a substitute for it. Keep `manifest.xml` at experimental 0.1 and API 6.2, package just ACID runtime files. No GitHub workflow or background listener for BPM/LPB changes.
 
@@ -700,47 +699,11 @@ Callback latency is recorded without an acceptance threshold.
 
 ## 7. M5 — Source programming and Renoise workflow
 
-**Next milestone:** M5.0 — Roland-style Program view, using the same canonical source as Grid.
+**Scope:** Program/Grid source editing, pattern workflow, Extended operations, and Renoise editor integration. TAP recording and arrangement/playback engines are excluded.
 
-**Goal:** complete source programming and editing, with native Renoise handling arrangement and performance. Program and Grid edit the same canonical source; optional Extended transformations operate on that source without switching semantic Entry mode.
+**Status:** Design accepted; implementation, regression gates, second-pass review, and Renoise acceptance remain pending. M4 closeout remains unchanged.
 
-### M5.0 — Roland-style Program view (same source as Grid)
-
-- Complete M3.5's Program view with sequential PITCH entry/check, independent TIME cursor, octave controls, back/correction and pitch audition. Grid is an alternate view of the **same source**, not a separate Extended music mode.
-- Implement clear, re-enter PITCH, edit one pitch and re-enter TIME as explicit commands. Apply R02's flag-reset behavior only to an explicitly selected Roland-style re-entry operation; Grid editing and view switching never reset flags. Provide undo and labels for affected memory.
-- Support pitch-owned ACCENT/SLIDE editing during pitch review; page/selection movement never edits the source. Keep M2's leading-TIE normalization in the shared command path for both entry modes.
-- Specify TAP timing entry/check and its clock/quantization before implementation; do not confuse TAP audition with real-time TIME recording. Consult the relevant manual procedure and record it before claiming panel-operation fidelity.
-
-**Acceptance:** build the same pattern via Program and Grid and compare byte-equivalent canonical source, decoded events and playback. Include >16 steps, arbitrary active PITCH span, PITCH versus TIME re-entry, flag preservation/reset, cursor restart, correction, cancellation, view changes and save/reopen.
-
-### M5.1 — Pattern management
-
-- Friendly pattern labels instead of exposing only sealed hash names; keep the stable ownership ID separate from the display label when possible.
-- Duplicate an ACID pattern into a new phrase, copy PITCH-only / TIME-only / both memories, reset safely to the C defaults.
-- Navigation between phrases must restore the correct source, renderer settings and timing mode without silently discarding an unsaved edit.
-- Respect foreign and manually modified phrase ownership, and make conflicts actionable.
-
-### M5.2 — Extended source editing
-
-- **Independent PITCH/TIME randomization:** generate either memory while leaving the other unchanged. Specify pitch range and rhythm densities, use a deterministic seed for reproducible tests, and retain explicit active spans. TIME generation uses N/T/R and applies the shared leading-TIE rule. Do not copy unconstrained firmware byte randomization into the validated source model.
-- **Targeted transformations:** clear ACCENT, clear SLIDE, convert REST to NOTE, or TIE to REST. Each action names its affected memory and scope; unrelated pitch values, flags and timing commands remain unchanged. All transformations produce canonical source and support undo.
-- **Scale mask:** store enabled pitch classes separately from raw PITCH memory; resolve them before phrase rendering. Disabling the mask restores the original pitches. Define rounding, octave limits and empty-mask handling explicitly. Quantization must not alter N/T/R consumption, accent/slide ownership or a same-pitch connected slide. Preview and render must use the same resolved notes.
-- Store source-edit settings with the current source contract where needed. Test deterministic edits, no mutation of the other memory, mask bypass/roundtrip, undo and manual/Live Edit generation through the existing protected writer. Extended editing does not change Roland's articulation rules.
-
-### Renoise integration boundary
-
-- Document native phrase triggering, arrangement, transposition and resizing through Renoise. No ACID pattern queue, chain player, performance transpose, half/double shortcut or playback-cursor recording is required.
-- Test native phrase triggering and document supported boundary continuity. R03's end-to-start slide remains a core single-sequence loop requirement; it does not require an ACID arrangement engine. Do not claim independent phrase switches preserve a voice without playback evidence.
-- Build on M3.5's latched Live Edit and typed result states. Do not change unrelated tracks, instrument routing, sample setup, plugin configuration or phrase contents as an invisible side effect.
-
-### M5.3 — Editor refinement
-
-- Improve page/current-step indicators, keyboard legibility, used versus unused PITCH markers and precise error navigation.
-- Distinguish **stored C entry**, **referenced PITCH entry**, and **user-modified PITCH entry**; avoid conflating edit history with musical validity.
-- Refine M3.5's dirty/committed/approximate/error status and diagnostic text; do not reinvent the Live Edit request path in M5.
-- Maintain responsive Live Edit with many phrases and max-32-step patterns; avoid regenerating on selection-only UI clicks.
-
-**M5 done when:** a user can program through Program or Grid, apply the three scoped Extended transformations, duplicate/select and revisit current-format ACID source in a saved XRNS. Preview and output agree, edits are reversible, and Renoise provides arrangement/performance without an ACID substitute. Native playback limitations remain documented.
+**Dependency:** M4 scoped closeout. The complete normative contract, linear implementation gates, regression matrix, deletion inventory, and native acceptance procedure are in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
 
 ---
 
@@ -777,7 +740,7 @@ Callback latency is recorded without an acceptance threshold.
 | --- | --- | --- |
 | PITCH/TIME NOTE/TIE/REST consumption | Semantic compiler state/fixtures | Decoded preview versus rendered phrase |
 | Program versus Grid view (M3.5-S) | One source, independent TIME/PITCH bounds through 32, byte-equivalent semantics, view-change purity | Switch views on 17/32-step source with span 3; generated phrase unchanged |
-| Current WIP source schema | `ACID-PITCH-TIME-1`; exact encoding, decoding and roundtrip validation | Fresh source save/reopen |
+| M5 editor, schema, source operations and acceptance | [Sole normative M5 implementation specification](M5_EDITOR_PLAYBOOK.md); schema-1 references in earlier sections are historical only | Follow the linked specification's mandatory native acceptance matrix |
 | Default C + 32-position storage | Initial state and validation | Fresh-pattern controls and output |
 | LAST STEP, Reset and two pages | 1/16/17/32 lengths; Reset and Reset Undo restore source and output policy | Edit 16/17/32, reset once, undo, confirm boundary entries intact |
 | Repeated phrase loops | At least three semantic cycles | Audible/visual repeats across several cycles |
@@ -792,10 +755,6 @@ Callback latency is recorded without an acceptance threshold.
 | Live Edit recovery (M3.5) | Typed result, armed/dirty/pending/retry/suspend transitions | Editing during playback, recoverable failure, undo, ownership loss, song change |
 | Straight and triplet timing | Exact grid, 4 lines/step, output lengths and repeat endpoints | Pending max-32 LPB16/12, both policies, loop seam/sentinel and targeted PB alignment checks |
 | Instrument/phrase synchronization (M4.7) | Addition, rename, reorder, deletion, identity and stale callback tests | Live inventory; native selection sync; regenerate exact owned phrase in place; explicit creation only |
-| Roland-style re-entry/check workflow | Separate cursors and explicit command/flag reset rules | PITCH audition, TIME review, back/correction, switch view, undo |
-| Independent PITCH/TIME randomization | Seeded output, valid N/T/R and spans, other memory unchanged | Preview/output agreement, undo and Live Edit |
-| Targeted transformations | Exact flag/command changes, unaffected source unchanged | Action scope, undo and regenerated result |
-| Non-destructive scale mask | Raw PITCH unchanged, deterministic mapping, bounds, bypass and roundtrip | Resolved preview/output agreement; slide connection after pitch mapping |
 | Trigger, stop/start and seek | Explicit cold/repeat context, no stale voice | Sustained versus fresh trigger, release, transport, selective/keymapped coverage |
 | Live Edit under pressure | Guarded synchronous writes to captured targets | Sequential UI edits between settled callbacks while playing |
 | Undo/redo and failures | Injected write/cancel failures | Undo, save/reopen, manual edits, song switch |
