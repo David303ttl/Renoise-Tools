@@ -1,5 +1,354 @@
 # Runtime integration acceptance map
 
+## M5 Gate 0 audit (2026-11-01)
+
+**Scope:** baseline, pinned SDK facts and call-site inventory only. No runtime,
+source schema, manifest, package inputs or M4 acceptance claims changed. Gates
+1+2 and all later implementation/native acceptance remain pending. This record
+implements the audit required by `com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md`
+section 11; it does not claim that new M5 assertions already pass.
+
+### Checkout and executed baseline
+
+- Audited revision: `9d23f3123f73a45dae35e5de80fab9cb908d2df0`, branch
+  `feature/M5`. Initial `git status --short`, `git diff`, and
+  `git diff --cached` were empty, including untracked-file status.
+- Executed `pwsh -File ./scripts/run_tests.ps1 -Tool ACID`: **70 specs passed,
+  0 failed**, 74.74 seconds; Lua 5.1 via the installed Lua command wrapper.
+  Each spec ran in its own process. No unrelated baseline failure was found.
+- Executed `git branch --show-current`, `git rev-parse HEAD` and
+  `git log -10 --oneline`. Recent commit receipt, newest first:
+
+```text
+9d23f31 docs(acid): specify prepared resolution and stage edit contracts
+02d2575 docs(acid): add normative m5 editor implementation spec
+2d5fc43 Merge branch 'feature/M4' into develop
+ef5aca1 Merge branch 'feature/hardening4' into feature/M4
+dbf2417 docs(acid): finalize M4.7 acceptance guidance
+8440f8d docs(acid): close M4 with scoped acceptance
+2258920 feat(acid): complete 8x8 production-session acceptance
+06b20b3 test(renoise): stage latency diagnostics by inventory and history
+47d478e test(renoise): add populated-song latency diagnostics
+b93becf perf(acid): reduce materialization allocations and guard rollback
+```
+
+- `git ls-files sdk build tmp` returned no tracked paths;
+  `git status --short --ignored sdk build tmp` reported ignored `sdk/` and
+  `tmp/`. `git check-ignore sdk tmp` confirmed both exclusions. Baseline test
+  artifacts remain ignored. No runtime-layout/package-input change requires a
+  package build for this audit.
+
+### Pinned SDK facts
+
+The SDK subagent executed `pwsh -File ./scripts/setup_sdk.ps1`; the existing
+installation verified successfully without download/replacement. The script's
+API-6.2 asset pin is at `scripts/setup_sdk.ps1:23-24`, SHA-256
+`575d6447dc1f2b3746fbf123df08f262abc027e04a5139caf892d7ce9189c49f`.
+The installed marker matches; the setup script verifies required files and
+recorded file hashes before accepting the installation. The SDK is ignored by
+`.gitignore:26`, not bundled runtime code.
+
+All definition paths below are relative to `sdk/renoise-api-6.2/definitions/`;
+offline documentation paths are relative to `sdk/renoise-api-6.2/docs/API/`.
+
+| API fact | Verified definitions and offline documentation | Restriction / implementation consequence |
+| --- | --- | --- |
+| `renoise.Song:trigger_instrument_note_on(instrument_index, track_index, note, volume)` | `library/renoise/song.lua:505-519`; `renoise/renoise.Song.html:1028-1035` | Integer instrument/track indices; optional integer or integer-array note 0..119 (default 48), volume 0..1 (default 1). GUI-thread preview only, not a sequencer or real-time clock. Send-track requests play on master instead; audition must reject send/master and require a captured sequencer track. Source legality remains 24..60, independently of host note range. |
+| `renoise.Song:trigger_instrument_note_off(instrument_index, track_index, note)` | `library/renoise/song.lua:521-525`; `renoise/renoise.Song.html:1036-1040` | Optional integer or integer-array note 0..119 (default 48); releases notes started with note-on. Capture exact note and object identities; re-find current indices only for those same surviving objects. No replacement-object release. |
+| `renoise.ScriptingTool:add_timer(timer, interval_in_ms)`, `remove_timer(timer)`, `has_timer(timer)` | `library/renoise/tool.lua:360-392`; `renoise/renoise.ScriptingTool.html:524-537` | Function or method/context callback, interval greater than zero. Idle-driven, workload-dependent, suppressed by modal dialogs. Approximate rounding is not a 120 ms duration guarantee. Remove/check the exact callback identity. |
+| Track identity/type | `library/renoise/song/track.lua:46-50,88-98`; `library/renoise/song.lua:122-125`; `renoise/renoise.Song.html:1028-1040` | `Track.type` is read-only; normal playback track count excludes send/master. The preview method documents send-to-master fallback explicitly. Validate type and membership, not a former numeric index. |
+| Document release/new | `library/renoise/tool.lua:53-63`; `renoise/renoise.ScriptingTool.html:383-395`; `library/renoise.lua:36-43` | Release fires while old song is still accessible, also before exit. New fires after create/load and on auto-reload. Song accessor identity changes: do not cache a song globally across documents. |
+| Tool load/unload and idle | `library/renoise/tool.lua:24-34,45-51`; `renoise/renoise.ScriptingTool.html:350-361,374-381` | Finished loading may precede a song; will-unload is cleanup boundary. Idle is workload-dependent (roughly ten callbacks/sec), not an exact timing source. |
+
+No unresolved declaration/signature fact was found for the planned preview API.
+Object disappearance, best-effort release, actual sound and timer duration still
+require Gate 5 deterministic tests and section 13.6 native checks. No Renoise
+host check was executed for this audit, and earlier host receipts do not validate
+the future editor.
+
+### Source, carrier and render call-site inventory
+
+Paths in this inventory are relative to `com.david303ttl.ACID.xrnx/` unless
+prefixed with `tests/` or `scripts/`. Line references identify the audited base
+revision, not a promise that subsequent edits preserve line numbers.
+
+| Responsibility | Current owner / call sites | Required atomic cutover coverage (not implemented) |
+| --- | --- | --- |
+| Source construction, validation, copying, equality | `model/sequencer.lua`: `SOURCE_FIELDS:9`, `new_pattern:25-39`, pitch guards `87-89,123-125`, `validate:99-152`, `copy_source:155-167`, `same_source:169-179` | Current five-field source becomes strict seven-field source; factory owns mask defaults, note domain becomes 24..60, copy/equality include mask even disabled. |
+| Alternate fixtures / local copies | `tests/acid/pitch_fixture.lua:3-10`; `tests/acid/acid_repeat_integration_spec.lua:186-208` local source copier/equality; malformed literals in `acid_sequencer_spec.lua:30-33,48-50` and `acid_phrase_persistence_spec.lua:184-185` | Update valid factories and local copy/equality; preserve intentional malformed-source rejection assertions. Do not repair bad values via decoder defaults. |
+| Store codec and source/draft candidates | `renoise/pattern_store.lua`: magic `8`, `decode_source:79-101`, `encode_source:104-110`, entry/draft codecs `112-138`, `copy_entry:152-156`, draft read/write/copy `279-390`, candidate preparation `428+`, committed read `648-652` | Strict schema 2, raw source/mask and label/custom carriers, exact raw-store compare, rollback/candidate ownership; never serialize prepared provenance. Current decoder constructs from `new_pattern`, so new required wire fields must be explicitly checked rather than inherited silently. |
+| History | `model/editor_state.lua`: `snapshot:112-115`, `new_history:117-145` | Detached complete source/settings/label snapshots; one history with proposed-cursor metadata transitions. |
+| Draft cache | `runtime/draft_cache.lua:73-75,129-147,190-194,234-266,313-316,342-345,395-398,410-415` | Mask/label/custom copies and comparisons; exact revision identity; last-good preservation. Provenance is ephemeral, not a draft format. |
+| Request capture/checkpoints/release | `runtime/requests.lua`: `VALUE_FIELDS:12-14`, value comparisons `37-64`, target baseline validation `129-152`, source capture `207-208`, baseline/value copies `229-250`, release `415-422` | Freeze complete source, records and relevant metadata; preserve private prepared provenance as identity, authenticate at checkpoints, release with request. |
+| Baselines and associations | `runtime/inventory.lua:56-57,87-111,169-172,292-309`; `runtime/context.lua:1468-1480`; `writers/phrase_validator.lua:333-338,373-409`; writer checks `writers/phrase_writer.lua:201-206,591-596` | Raw source plus output/PB association includes mask. A separately rebuilt committed snapshot prepares once; it must not reuse a different source's bundle. |
+| Decoded projection | `model/editor_state.lua:31-88`, `project` calls `compile_cycles(pattern,2)` | Consume runtime-owned prepared snapshot; Start/Repeating use its same resolved records. |
+| Semantic cycle and loop | `model/cycle_interpreter.lua`: raw pitch/event/voice read `59-99`, `compile_cycle` / `compile_cycles:106-123`, `plan_loop:134-154` calls three cycles | Pass bundle to every cycle; resolved note/key/octave agree, raw flags/index and NOTE/TIE/REST consumption remain unchanged. |
+| Output policy entry | `model/output_planner.lua`: `plan_output:13-55`, Play Once compile `28-32`, Repeat `plan_loop:34-35` | Both policies receive same prepared bundle, not a second quantizer. |
+| Public and writer-private planning | `model/output_planner.lua`: `plan_internal` source copy `415-419`, policy plan `431`, control compile `433-435`; `plan` / `plan_for_materialization:529-539` | Propagate through existing shared implementation rather than introduce another planner API. |
+| Physical control fallback and supplied-plan validation | `model/control_signals.lua`: `compile:81-100`, cold/successor fallback `92-98`, mandatory expected-successor recompile `111-117`, association capture `153-156`, `validate_association:57-72` | Same bundle in fallback and supplied-plan paths. Preserve successor recompilation and association rejection; no raw-only escape path. |
+| Writer/materializer | `writers/phrase_writer.lua`: planner call `299-300`, source revision `318-320`, materialization `537-539`, postimage/source verification `580-596` | Request's prepared plan reaches sole materializer/transaction; committed source remains raw. |
+| Ownership compatibility replan | `writers/phrase_validator.lua:373-409`, especially `planner.plan:389-409` | Standalone committed-source call prepares once; nested same-snapshot verification passes existing bundle. Trusted output still requires exact raw-source/settings association. |
+
+### Resolution ownership decision
+
+**Selected owner: `runtime.context`, per accepted editor source/edit revision.**
+`model.sequencer.prepare_resolution` will issue/authenticate the detached bundle
+and privately retain originals; it is not a global source cache. Runtime context
+will supply the same issued snapshot to GUI projection and request capture.
+Source/mask transitions replace it; read-only navigation does not resolve again.
+Requests detach source/records as values while retaining the private issued
+provenance identity through sequencer-owned validation/detachment, not through a
+GUI-supplied token or generic deep copy. Exposed-source, exposed-record and paired
+mutation, forged/replaced provenance and stale reuse must reject without a second
+resolution. Release provenance with the projection/request/session lifetime.
+
+The concrete transfer boundary is `runtime.requests` capture (`207-250`): obtain
+the context-owned issued bundle, have the sequencer validate it against the exact
+captured source, then use a sequencer-owned detached view retaining the original
+private authority. Store that authority in the request owner's private record,
+outside generic `VALUE_FIELDS` copying. At request checkpoints (`37-64,91-159`)
+validate frozen source AND records against that retained authority and current
+revision/source association. At writer preparation (`phrase_writer.lua:299-300`)
+pass the authenticated detached bundle alongside `request.source` into the
+existing planner. A copied table cannot confer authority; an independently
+constructed or replaced token rejects. Musical source changes revoke requests
+and replace the snapshot; release clears the retained authority. These are
+Gates 1+2 implementation requirements, not claims about the current request code.
+
+All vector consumers are enumerated above: projection, cycle(s), `plan_loop`,
+`plan_output`, public/private planner, control fallback and successor validation,
+writer preparation/materialization and source-associated compatibility rebuilds.
+Independent top-level pure entry points may prepare once for their own immutable
+snapshot; nested consumers must propagate it. Raw source remains the identity
+for history, persistence and ownership. No vector/provenance is persisted.
+
+The GUI cache at `gui.lua:268-281` currently keys `editor.project(pattern)` by
+edit revision and instrument/phrase identity; invalidations occur at
+`876-878,1051-1053,1227-1229`. It remains a presentation cache, not the shared
+resolution owner. `runtime/transitions.lua:17-84` owns revision/request
+invalidation. The eligibility/inventory caches at `runtime/context.lua:230-234`
+and `runtime/inventory.lua:19-27,206-224` are not resolution caches. Audit every
+source/mask transition against these invalidations in Gates 1+2; metadata-only
+transitions must not invalidate musical projection or increment edit revision.
+
+### Inventory search receipts
+
+The source/render auditor searched production and test trees for
+`new_pattern|copy_source|same_source|SOURCE_FIELDS|pitch_events\s*=|time_events\s*=`,
+`source\s*=\s*\{`, local source-copy/equality definitions,
+`compile_cycle|compile_cycles|plan_loop|plan_output|plan_for_materialization`,
+`project|cache|invalidate|association`, `request.source`, `baseline.source` and
+`planning_inputs`. Findings distinguish valid source construction from host
+tables, output plans and intentional invalid fixtures. The complete-tree
+second pass also checks generated scripts and native harness fixtures below.
+
+The source auditor's initial SDK glob reported no files; that search result is
+not an SDK absence finding. The dedicated SDK audit and independent SDK review
+verified the installed, ignored SDK using its real paths and setup validator.
+
+### GUI controls and admission inventory
+
+| Current IDs / controls | Constructors, notifiers and behavior | Required replacement / disposition |
+| --- | --- | --- |
+| `acid_live_edit_state`, `acid_source_state`, `acid_source_diagnostic`, `acid_source_summary`, `acid_preview_summary` | `gui.lua:209-218` status/projection text | Retain persistent result/source status outside tabs; bounded decoded detail in workspace. |
+| `acid_editor_view` | `gui.lua:224-231`, view-only notifier | Preserve read-only switching and stage lifetime. |
+| `acid_timing`, `acid_pb_range` and un-ID'd output policy / PITCH span controls | `gui.lua:221-259,550-583` | Ordinary guarded source/output edits; no candidate bypass. |
+| `acid_program_pitch_position`, `acid_program_time_position` | `gui.lua:589-596` position popups | Retire; independent numbered navigation/readouts. |
+| `acid_program_time_command` | `gui.lua:597-604`, `sequencer.set_time` | Replace popup with explicit NOTE/TIE/REST assignment controls. |
+| `acid_program_key_popup`, `acid_program_octave_popup`, `acid_program_accent`, `acid_program_slide` | `gui.lua:605-630` immediate pitch edits | Retire dropdowns, install twelve classes plus three octave controls and separate C+ endpoint. Flags preserve unrelated values. Current thirteen-entry key list at `151-152` is not the new keyboard contract. |
+| `acid_program_pitch_summary`, `acid_program_time_summary` | `gui.lua:631-632` readouts | Exact raw note/key/octave, including alternate encodings; selected coordinates remain independent. |
+| `acid_grid_pitch_XX` | `gui.lua:654-655`, current page PITCH selection buttons | Retain prefix only for unchanged selection role; two rows of eight per page. |
+| `acid_grid_time_XX` | `gui.lua:661-671`, per-cell TIME assignment popups | Delete every old ID/notifier; new `acid_grid_select_time_XX` selection-only role, separate assignment buttons. No aliases. |
+| `acid_live_edit` | `gui.lua:1002-1013`, arm/disarm only, no render on arm | Preserve existing render admission; add centralized stage guard before toggle. |
+| Recovery IDs: `acid_recovery_detail`, `acid_independence_detail`, `acid_recovery_choice`, `acid_recovery_copy`, `acid_recovery_discard`, `acid_make_independent`, `acid_revalidate` | `gui.lua:1042-1107` | Retain recovery/ownership semantics, bounded/paged detail in Recovery tab; not a session clipboard implementation. |
+| `acid_program_panel`, `acid_grid_panel` | `gui.lua:1138,1157` | Shared shell hierarchy, independent pages; Grid displays canonical source while staged. |
+| Un-ID'd LAST STEP, page, Undo/Redo, reset, diagnostic, destination, Generate/Retry and sampler-audit controls | `gui.lua:530-583,638-701,797-939,1015-1037,1149-1222` | Update actual notifiers, not just named widgets; retain protected writer/runtime admission. |
+
+`choose_pitch:488-504` currently changes TIME selection/page via consuming NOTE;
+`choose_time:505-515` currently changes PITCH selection/page via projection.
+Remove that coupling; keep the coordinate-specific diagnostic exception in
+`navigate_diagnostic:517-529`. LAST STEP currently clamps TIME selection/page at
+`685-695`; replace with retained read-only inactive selection. `preview_cycle`
+notifier at `247-252` is already read-only. `preview_grid:635,672-684,1157-1166`
+is permanently stacked content to remove in favor of bounded Decoded tab.
+
+Reset at `1177-1182` currently replaces source with
+`sequencer.new_pattern(last_step_box.value)`, resets cursors/pages and calls
+`changed(false)`; factory wrapper `188-192` also resets output/PB. Replace with
+the exact confirmed, single-history Reset contract preserving LAST STEP and
+label/custom. There is no current Clear Memory, scoped transform, randomize,
+Rename, clipboard or sequential-stage UI to preserve as a compatibility path.
+Existing recovery copy/clear mechanics are not those operations.
+
+Destination phrase loading is `749-801`, instrument switching `803-824`, native
+host selection reconciliation `apply_pending_selected_phrase_selection:869-929`
+and observer refresh `1225-1229`. ACID selectors need pre-action guards; native
+changes are post-notification invalidation/discard, not reversible guarded
+commands. Current custom dialog is at `1231`; explicit warnings are at
+`90-105,172-206`. New focused dialogs/confirmations must release audition first.
+
+`changed:530-549` records history, saves draft and flushes armed Live Edit.
+Generate at `1203-1219` reconciles native selection, validates projection and
+calls `runtime:request_generation("manual")`; retry is `1195-1201`.
+`runtime/context.lua:585-741` enforces lifetime, editor validity, target match,
+eligibility, writer occupancy, revision and authorization. Centralized stage
+admission must wrap canonical mutations and render actions without bypassing
+these checks. Stage-only edits, read-only Check/navigation and audition do not
+enter `changed()`.
+
+### Create routes and explicit duplicate feasibility
+
+Production GUI dispatch is solely `gui.lua:708-724`: authorized `create` calls
+`phrase_writer.create`, `regenerate` calls `phrase_writer.regenerate`, other
+kinds reject. `runtime/requests.lua:232-235` currently derives kind from active
+New/owned target; target verification is `91-109,133-147`.
+`writers/phrase_writer.lua:243-290` requires New/no phrase for create and an
+owned destination proof for regenerate. Its native insert is `504-508`; ID
+allocation/preparation `306-339` and transaction/materialization/store commit/
+postimage/rollback `487-601` remain the only production creation path.
+
+Duplicate is feasible through this existing create transaction, but is **not
+currently authorized**: extend request intent to retain exact verified committed
+origin/source/settings/metadata while authorizing a distinct logical New
+destination. Validate both identities at checkpoints; merely changing target or
+setting `kind="create"` is insufficient. Derive custom duplicate label before
+capture, preserve the dirty origin draft, and let the same writer allocate a new
+ID. No GUI phrase API, second writer or new source store is needed.
+
+Direct phrase insertion outside production is fixture/probe setup, not an
+alternative release writer: `tests/renoise/driver/acceptance_cases.lua`
+(`401-403,571-572,1186-1189,3777-3778`),
+`tests/renoise/acid/probe/main.lua:222,308`, and
+`tests/acid/renoise_loop_probe.lua`, `renoise_mixed_repeat_probe.lua`,
+`renoise_articulation_probe.lua`. Preserve deliberate foreign/copy fixture
+construction; actual tool output still uses the authorized production writer.
+
+### Lifecycle and identity inventory
+
+- `main.lua:5-22` registers menu/keybinding entry points only.
+  `gui.lua:131-149` registers document release/new and tool unload callbacks.
+  `release_context:87-106` warns on volatile drafts, detaches native/idle
+  observers, releases/closes runtime, closes dialog and releases writer state.
+- `gui.lua:1231-1265` uses a captured dialog/session idle watcher to detect
+  invisible/closed dialog, detach watchers, disarm and close runtime; registration
+  failure cleanup is `1266-1285`. `M.show:158-171` replaces stale watchers.
+  Add stage discard and audition release to those existing cleanup boundaries.
+- `runtime/context.lua:1896-2004` invalidates requests, detaches observers,
+  releases draft/inventory/request references and lifetime state. New-document
+  attachment releases old state first (`1988-2004`).
+- `runtime/observers.lua:208-254` captures song/runtime/attachment serial and
+  exact owner instrument/phrase objects; handlers reject stale captures.
+  `detach:368-475` advances attachment serial and removes nested/root observers;
+  `attach` rebuilds registrations. Extend these owners rather than create a
+  parallel document lifecycle.
+- Current production ACID has no note-on/off preview or timer. Stage must capture
+  song/epoch/session/target revision/operation serial and exact origin objects;
+  audition additionally captures exact sequencer-track object and note. Track
+  membership/removal observers and exact timer cleanup are new Gate 5 work.
+  Never treat a surviving numeric index as a surviving object. Modal, close,
+  unload, release, external selection/ownership loss and retrigger release paths
+  need deterministic tests and native uncertainty reporting.
+
+The GUI/lifecycle auditor searched all ACID Lua for widget IDs/notifiers,
+create/regenerate/phrase insertion, reset/clear/copy, dialog and preview paths,
+document/observer/timer/note-trigger registration and cleanup, then searched test
+owners. No second production phrase writer or audition cleanup path was found.
+
+### Development producers and independent oracles
+
+The independent second pass identified additional non-runtime inputs that must
+not be missed by a production-only source search:
+
+| Producer / oracle | Disposition for Gates 1+2 |
+| --- | --- |
+| `tests/acid/writer_request.lua:66-75,97-103`, `M.build` | Test-only detached request producer independently validates/plans today; update required source/prepared fields and authorization tests. It is not the production snapshot owner. |
+| `tests/renoise/acceptance_cases_spec.lua:47-50` | Harness source construction; distinguish fake dependency-oracle values from real canonical sources, updating complete-source expectations when applicable. |
+| `tests/renoise/driver/acceptance_cases.lua` | Native acceptance fixture producer uses `sequence.new_pattern`, `copy_source` and `same_source` as well as direct foreign/copy phrase setup. Update its real source/mask/label/schema payloads and persisted baseline expectations with Gates 1+2; do not classify the driver itself as only a reduced mock oracle. Native scripts generated from those fixtures must use complete sources. |
+| `tests/renoise/persisted_baseline_spec.lua:11` | Intentionally reduced mock source for baseline drift oracle, not a production factory; ensure mask/metadata drift assertions cover new persisted values without silently legitimizing incomplete production sources. |
+| `tests/renoise/acid/build_fixture.ps1:236-245` | Generated legacy tool-data row payload; update schema/source fixture expectations atomically, retaining old-format bytes only as explicit rejection fixtures. |
+| `tests/acid/reference/pattrns_writer.lua:16-18`, `M.emit`; `tests/acid/reference/script_runner.lua` | Development-only export of an already compiled event plan, not source/provenance authorization or a second release writer. Exercise exports using resolved plans where appropriate; do not invent raw re-resolution in exporter. `acid_pattrns_spec`, `acid_editor_spec`, `acid_policies_spec` consume this reference path. |
+| `tests/renoise/test_package_dev.ps1:216-218,355-357`; `tests/acid/acid_dependency_graph_spec.lua:169-170` | Reference writers are explicitly included only in development bundles and excluded from release runtime dependency graph. Preserve that boundary. |
+
+### Spec-to-contract map and gaps
+
+Names below are under `tests/acid/` unless explicitly prefixed. These are
+existing coverage owners, not claims that M5 assertions already pass.
+
+| Playbook requirement | Existing spec owners to update | Missing required assertions / behavior |
+| --- | --- | --- |
+| 10.1, 10.3 source/factories | `acid_source_values_spec`, `acid_sequencer_spec`, shared `pitch_fixture.lua`, local copier in `acid_repeat_integration_spec` | Seven-field exactness, detached masks/equality including disabled masks, dense boolean/all-false rules, 24..60 endpoint and alternate raw encodings. |
+| 10.1, 10.3 semantic resolution | `acid_cycle_interpreter_spec`, `acid_compiler_spec`, `acid_control_signals_spec`, `acid_planner_association_spec`, `acid_output_planner_spec`, `acid_output_compatibility_spec`, `acid_phrase_validator_spec` | Nearest/lower-tie vectors, canonical resolved controls, unchanged raw flags/source and NOTE/TIE/REST semantics. Both policies/planner routes, `plan_loop`, fallback and mandatory supplied-plan successor verification consume same issued bundle. Reject forged/stale/source-only/vector-only/paired tampering and post-capture mutation; spy on resolver count. |
+| 10.1, 10.4 codec/candidates | `acid_pattern_store_codec_spec`, `acid_phrase_persistence_spec`, `acid_store_candidate_spec`, `acid_writer_transaction_identity_spec`, writer integration/safety specs | Schema-2 exact fields/order/ASCII/hex/label custom bit; reject nonempty old magic unchanged; concurrent raw-store conflict, mutate-then-throw rollback ownership, newer-draft ABA token preservation. |
+| 10.1, 10.4 history/drafts/requests | `acid_editor_spec`, `acid_draft_cache_spec`, `acid_draft_recovery_spec`, `acid_runtime_request_spec`, `acid_runtime_context_spec`, `acid_runtime_transitions_spec`, `acid_runtime_inventory_spec`, `acid_source_revision_spec` | Mask/label/custom end-to-end; proposed-cursor label-only failure/retry; metadata revision versus musical revision; mixed accepted-local-state failure; immutable prepared provenance carried privately and never serialized. |
+| 10.1, 10.5 GUI/admission | `acid_gui_views_spec`, `acid_gui_independence_spec`, `acid_gui_admission_spec`, `acid_gui_recovery_spec`, `acid_gui_timing_race_spec`, `acid_runtime_editor_spec` | Independent selectors/pages and inactive TIME inspection, retired ID absence, bounded tabs, raw control readouts/C+, revision-safe shared projection, no selection render/history/draft writes. Existing `acid_gui_views_spec:406,414` references old TIME/key popup IDs and must be replaced, not aliased. |
+| 10.5 staging | Existing GUI/admission/history owners plus proposed cohesive `acid_program_staging_spec` | Detached candidate initialization, target/origin identity, entered conjunction, no-change marker behavior, one-edit/equal-source Finish, incomplete guards and abandonment of guarded action, external change discard, Grid canonical display. No current stage implementation or direct suite exists. |
+| 10.5 audition/lifetime | `acid_runtime_lifetime_spec`, `acid_runtime_observers_spec`, GUI lifecycle coverage plus proposed `acid_audition_lifecycle_spec` | Preview only selected resolved pitch; exact instrument/track/note identities, timer registration/removal failures, disappearing objects, retrigger/modal/stale callback/teardown release; mocks never prove sound or duration. |
+| 10.6 clipboard/labels/duplicate | `acid_id_allocation_spec`, `acid_phrase_materializer_spec`, `acid_phrase_spec`, persistence/writer transaction and runtime request owners; proposed `acid_clipboard_spec`, `acid_duplicate_label_spec` | Session payload exclusions/bounds/deep copies, strict label bytes and metadata-only history, committed-origin duplicate authorization/label derivation/new ID, dirty-draft preservation and failure rollback. None has a direct current behavior suite. |
+| 10.6 reset/transforms/RNG | Existing source/editor owners plus proposed `acid_source_operations_spec` | Exact reset preservation, Selected/Active/All-32 scopes, shared TIME normalization, mask non-destructiveness, deterministic Park-Miller vectors and random draws including MIDI 60. `acid_gate_operations_spec` tests native gate writing, not these source operations. |
+| 10.2 new unowned behavior | Proposed `acid_scale_mask_spec`, staging/audition/clipboard/source-operations/duplicate-label specs named above | None exists at audit baseline. Add only for cohesive previously unowned responsibilities; update existing owners rather than duplicate their coverage. |
+
+Runner discovery is `scripts/run_tests.ps1:46-60`: top-level
+`tests/acid/*_spec.lua` (not recursive) and recursive `tests/renoise/**/*_spec.lua`
+for `-Tool ACID`; sorted and launched separately at `68-89`. New behavior specs
+must use those discoverable names/locations. Shared helpers/fixtures are not
+standalone specs. The 70 baseline specs include offline Renoise harness tests;
+they do not assert new M5 behavior. No native acceptance was rerun.
+
+The following exhaustive baseline roster assigns every discovered spec either
+to a section 10 owner or an explicit ancillary regression responsibility. Names
+in the first ten rows omit the common `tests/acid/` prefix and `_spec.lua` suffix;
+the final row uses paths relative to `tests/renoise/` with the same suffix omitted.
+All remain part of the full regression, including ancillary specs that do not
+own a new M5 feature. A factory call inside an ancillary suite still receives
+the new source defaults through the canonical factory; hard-coded source/wire
+assertions must be updated, not made permissive.
+
+| Baseline specs | Section 10 / ancillary disposition |
+| --- | --- |
+| `acid_sequencer`, `acid_source_values`, `acid_editor`, `acid_source_revision` | 10.1/10.3/10.4 canonical values, revision immutability, projection/history and source operations. |
+| `acid_compiler`, `acid_cycle_interpreter`, `acid_control_signals`, `acid_planner_association`, `acid_output_planner`, `acid_policies` | 10.3 semantic event/loop/policy routes and shared prepared association. |
+| `acid_articulation`, `acid_articulation_semantics`, `acid_articulation_resolution`, `acid_glide_overlap`, `acid_legato`, `acid_legato_writer`, `acid_pitch_bend`, `acid_gate_operations`, `acid_gate_transaction`, `acid_timing` | 10.3 ancillary rendered-event regression: articulation collisions, resolved gates/slide, legato/PB, native emission/rollback and exact timing. Preserve semantics while source compilation changes. Gate operations are not editor transforms. |
+| `acid_pattern_store_codec`, `acid_store_candidate`, `acid_phrase_persistence`, `acid_draft_cache`, `acid_draft_recovery`, `acid_live_identity`, `acid_id_allocation` | 10.4/10.6 codec, durable draft identity, exact candidate/ID ownership; update source/metadata carriers and failure checks. |
+| `acid_phrase_snapshot`, `acid_phrase_snapshot_seal`, `acid_phrase_snapshot_empty`, `acid_regeneration`, `acid_output_compatibility`, `acid_phrase_validator`, `acid_target_capabilities` | 10.3/10.4 ancillary postimage/seal/ownership/target compatibility boundaries. Preserve seal grammar and empty-cell handling; mask affects source association, not seals' grammar or target capabilities. |
+| `acid_phrase`, `acid_phrase_materializer`, `acid_writer_capture`, `acid_writer_inspection`, `acid_writer_safety`, `acid_writer_transaction_identity`, `acid_repeat_integration` | 10.3/10.4/10.6 sole writer, authorized request/inspection, materialization, source rollback and Repeat integration. Capture harness checks delegation/readback, not actual sound. |
+| `acid_gui_admission`, `acid_gui_independence`, `acid_gui_recovery`, `acid_gui_timing_race`, `acid_gui_views` | 10.5 shell/admission/projection/recovery owners; replace old-widget assertions, preserve typed failure and timing invalidation behavior. |
+| `acid_runtime_context`, `acid_runtime_editor`, `acid_runtime_independence`, `acid_runtime_integrity`, `acid_runtime_inventory`, `acid_runtime_lifetime`, `acid_runtime_mutation`, `acid_runtime_observers`, `acid_runtime_request`, `acid_runtime_transitions`, `acid_runtime_writer_integration` | 10.4/10.5/10.6 runtime authorization, Make Independent, integrity, mutation/reconciliation, inventory, revisions, lifecycle/observers and writer integration. Extend existing failure/identity assertions rather than weaken them for duplicate or metadata. |
+| `acid_capture_trigger`, `acid_mono_probe`, `renoise_long_repeat_trigger`, `renoise_render_capture` | Ancillary native-harness duration/boundary/render/probe setup regressions; not M5 audition or native playback evidence. Fixture sources must still meet the new contract where canonical. |
+| `acid_pattrns`, `acid_script_runner`, `acid_dependency_graph`, `acid_identity` | 10.3 ancillary reference export/script runner plus runtime/package identity/dependency boundaries. Exports consume resolved event plans; no second resolver, runtime reference writer or manifest bump. |
+| `acceptance_cases`, `acid/probe`, `persisted_baseline`, `remote_driver`, `spike_tool` | Ancillary offline Renoise harness fixture/probe, persistence-drift oracle, development transport and passive/idle lifecycle safety. Update real source/schema payloads; preserve intentionally reduced oracle mocks and observation-only lifecycle behavior. No host execution implied. |
+
+### Independent review and exit evidence
+
+Dedicated source/render, GUI/lifecycle and SDK subagents performed the initial
+audit. A separate SDK reviewer found no fact/signature/reference error. An
+independent whole-tree second pass identified the test-only request builder,
+reference exporters, generated fixture payload and direct native probe routes;
+these are now recorded above. The consolidated-evidence reviewer then required
+explicit dispositions for the remaining baseline specs, the native acceptance
+driver producer and the request capture/checkpoint provenance transfer boundary.
+Those corrections were independently re-reviewed: **PASS**, all 70 discovered
+specs reconciled (65 top-level ACID plus five recursive Renoise specs), no missing
+disposition and no remaining actionable finding. The reviewer verified the
+producer and provenance-boundary corrections without rerunning the suite.
+
+No normative design contradiction was found. Current raw-only compilation,
+schema 1, coupled navigation and target-derived create authorization are pending
+implementation gaps explicitly covered by the accepted design, not reasons to
+weaken it. Initial checkout cleanliness is the baseline receipt; current audit
+changes are documentation only. `pwsh -Command "git diff --check"` passed;
+`git status --short` and `git diff --stat` show only this record and
+`com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md` changed. Git's existing LF/CRLF
+conversion warnings are not whitespace errors. No staged changes, runtime edits,
+manifest changes or tracked SDK/build artifacts were introduced.
+
+**Gate 0 exit: PASS.** Baseline observed, SDK facts verified, complete call-site
+inventory and spec dispositions recorded, shared snapshot owner selected, and
+independent second-pass findings resolved. Gates 1+2 must still execute atomically;
+no later implementation gate was started. M5 overall remains incomplete, and all
+new native editor/audition/playback acceptance is unverified.
+
+## M4 scoped closeout
+
 **M4 / Gate 8 closeout (2026-11-01): PASS — CLOSED by scoped project decision.** The accepted scope includes the 8×8 production workflow, native Undo/Redo, two cold reopens and captured MIDI note/OFF/pitch-bend events. The 16×8 acceptance disposition is also PASS under the scope decision; its retained run stopped at the recorded native-selection interruption after 112 regenerations, and remaining stress execution is waived. Latency has no active acceptance threshold and recovery snapshots remain unchanged.
 
 The 16×8 acceptance is **PASS by scope decision**, with the remaining stress execution waived. Its retained run created 128 owned phrases plus one explicit Create and completed 112 regenerations before a native-selection change stopped the run. The cause is unknown; the native runner report status is FAIL because it records a partial execution, not a completed 16×8 stress run. Sample/VST audio capture is **WAIVED** and audio is **UNVERIFIED**. No further Gate 8 or performance investigation is required.

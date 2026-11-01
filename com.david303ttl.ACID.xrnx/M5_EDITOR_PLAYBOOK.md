@@ -4,8 +4,11 @@
 contract. `ROADMAP.md` records milestone scope/status and links here. M4.7
 closeout evidence and limits remain historical and unchanged.
 
-**Status:** Design decisions are accepted. Implementation, deterministic tests
-for the new behavior, second-pass review, and Renoise acceptance are pending.
+**Status:** Design decisions are accepted. Gate 0 audit and independent second-pass
+verification passed; evidence is recorded in
+[`tests/acid/runtime_acceptance.md`](../tests/acid/runtime_acceptance.md#m5-gate-0-audit-2026-11-01).
+Implementation, deterministic tests for the new behavior, final M5 second-pass
+review, and Renoise acceptance are pending.
 Nothing in this manual asserts that M5 has been implemented or that the listed
 behavior is guaranteed by Renoise. Tests and evidence must report actual results.
 
@@ -2255,7 +2258,8 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 
 | Gate/check | Owner/test or native procedure | Command/host/fixture | Result observed | Failure evidence / uncertainty | Status |
 | --- | --- | --- | --- | --- | --- |
-| Gate 0 baseline | Full ACID suite |  |  |  | Unexecuted |
+| Gate 0 baseline | Full ACID suite at `9d23f31` | `pwsh -File ./scripts/run_tests.ps1 -Tool ACID` | 70 specs passed, 0 failed; Lua 5.1 | No native behavior inferred; [audit evidence](../tests/acid/runtime_acceptance.md#m5-gate-0-audit-2026-11-01) | PASS |
+| Gate 0 SDK/inventory/review | Existing source/runtime/GUI/test owners and pinned SDK at `9d23f31` | See linked audit record | SDK verified, inventory/snapshot owner recorded, all 70 spec dispositions reconciled; independent findings resolved | No runtime changes; all new native acceptance unverified; later gates pending | PASS |
 | Gate 1 source/schema/history | Source/codec/draft specs |  |  |  | Unexecuted |
 | Gate 2 resolution/compiler | Mask/interpreter/planner specs |  |  |  | Unexecuted |
 | Gate 3 shell/Grid | GUI view/admission specs |  |  |  | Unexecuted |
