@@ -124,9 +124,9 @@ rewrite. Re-read each owner before implementation because the code may change.
    `note`, `key`, and `octave` consistent under the source equation, alongside
    the original raw source. A small source-local helper may canonicalize a MIDI
    value to controls. The resolution result is ephemeral and is not persisted.
-4. `cycle_interpreter.compile_cycle(pattern, state, resolved_pitches)` and
-   `compile_cycles(pattern, count, state, resolved_pitches)` may add an optional
-   explicit resolved-vector argument for internal call sites. Their contract is
+4. `cycle_interpreter.compile_cycle(pattern, state, prepared)` and
+   `compile_cycles(pattern, count, state, prepared)` take the prepared bundle
+   defined in section 4.4 at internal call sites. Their contract is
    to validate raw source, validate exactly 32 dense resolved records against
    bounds and canonical controls (covering every active PITCH index), and read
    the vector only for NOTE pitch values. TIME command consumption,
@@ -147,11 +147,11 @@ rewrite. Re-read each owner before implementation because the code may change.
 Suggested internal contract, not a requirement to expose a new public module:
 
 ```lua
-local resolved, err = sequencer.resolve_pitches(source)
--- resolved[i] = {note = midi, key = canonical_key, octave = canonical_octave}
-local plan, err = interpreter.compile_cycle(source, state, resolved)
+local prepared, err = sequencer.prepare_resolution(source)
+-- prepared binds a frozen source to its resolved records and private provenance.
+local plan, err = interpreter.compile_cycle(source, state, prepared)
 local output, err = output_planner.plan(source, policy, pb_range, limits,
-  capabilities, options, resolved)
+  capabilities, options, prepared)
 ```
 
 Inspect actual planner entry points before wiring. The signature above is a
@@ -327,6 +327,29 @@ Canonical source has exactly these top-level fields:
 
 ### 4.4 Compiler and render thread
 
+**Prepared resolution contract:** `sequencer.prepare_resolution(source)` owns
+validation, source detachment and one call to the pure resolver. It returns a
+bundle containing the frozen source and all 32 canonical resolved records,
+plus factory-issued provenance retaining private copies of both. Consumers
+receive the bundle, not an independently supplied vector. Before use, compare
+both exposed values exactly to their private originals and compare any separately
+supplied source by `same_source`; reject mismatch without quantizing again.
+A caller-constructed bundle or replaced provenance rejects. Keep provenance
+within the existing sequencer helper's private closure and bundle lifetime;
+this is no global source cache, second model or persistent format.
+
+Thread this bundle through projection, interpreter/loop calls, both planners,
+control-signal successor verification and writer preparation. Retain the same
+private provenance when request values are detached: plain source/records are
+frozen value fields, provenance is a private identity field whose association
+is checked at checkpoints. Never serialize it or accept provenance supplied by
+the GUI. Release it with its request/projection lifetime. Public pure entry
+points may prepare once when no bundle is supplied; nested consumers must pass
+the prepared bundle onward. The vector wording below refers to its records.
+The plain resolver remains a pure implementation helper, not a way to authorize
+an arbitrary caller vector. Test source-only, vector-only, paired tampering,
+forged provenance and stale bundle reuse after source or mask changes.
+
 1. Keep `cycle_interpreter` as the only semantic NOTE/TIE/REST consumer. Its
    explicit resolved input must contain exactly 32 dense canonical records,
    covering every active PITCH index, and remain immutable for that compile.
@@ -350,9 +373,9 @@ Canonical source has exactly these top-level fields:
    association even when a plan is supplied; that validation must use the same
    resolved values. Its fallback cold/successor compiles follow the same rule.
    Never remove successor validation to make masked output pass.
-9. A top-level pure call without a prepared vector may resolve once and pass
+9. A top-level pure call without a prepared bundle may prepare once and pass
    it through every nested call. A prepared call must not resolve again. The
-   source snapshot owner shares that result with projection and render request
+   source snapshot owner shares the prepared bundle with projection and render request
    preparation; frozen request copies preserve exact values, not Lua table
    identity across detachment. Define this owner during Gate 0 and implement
    it in Gates 1+2. No global cache or permissive raw-output fallback is allowed.
@@ -363,6 +386,25 @@ Canonical source has exactly these top-level fields:
     mutation after capture. Do not add a second quantizer for validation.
 
 ### 4.5 One linear history and difference classes
+
+**Transactional history:** `new_history` must support inspecting a proposed
+Undo/Redo state without moving its cursor. Capture the current cursor/history
+revision and detached destination state, classify the difference, then admit
+the action. For label-only transitions, persist and verify metadata first;
+commit the proposed cursor only if its captured history revision still matches.
+Failure leaves both accepted state and cursor unchanged. Retry an Undo/Redo
+proposal as that same cursor transition after fresh validation, never as a new
+rename history entry. Discard removes the proposal only. Musical/mixed actions
+retain the ordinary accepted-local-edit behavior on draft persistence failure.
+Do not implement temporary cursor movement followed by compensating undo.
+
+`runtime.context` owns an explicit metadata-only transition: validate current
+binding, publish the metadata candidate, then update editor metadata/history
+and a separate metadata revision. It does not advance musical edit revision,
+invalidate a musical projection, schedule Live Edit or call `changed()`.
+Requests which publish/clear metadata capture that metadata revision as well
+as existing musical/target/session revisions. A stale metadata revision rejects
+their publication; it never authorizes clearing a newer draft.
 
 1. Extend `model.editor_state.new_history` snapshots with canonical source,
    output policy, PB range, `label`, and `label_custom`. Keep a single history
@@ -530,6 +572,30 @@ Keep this order in both Program and Grid:
 
 ### 5.4 Program
 
+**Edit One means direct editing, not a second buffer or commit button.** It is
+the ordinary Program mode outside sequential entry; show it as a mode/readout.
+Selecting it during a stage invokes the stage guard. The candidate exists only
+for explicit Re-enter. Selecting a PITCH/TIME position establishes that memory's
+independent coordinate; pitch controls always address PITCH and N/T/R always
+address TIME, regardless of the last control focused.
+
+| Action | Ordinary Edit One | PITCH stage | TIME stage |
+| --- | --- | --- | --- |
+| Position/page selection | Navigation only | Navigate candidate targets; no marker change | Navigate candidate targets; no marker change |
+| Key/octave/flags/C+ | One immediate canonical edit if changed | Change current PITCH candidate; clear its marker if changed | Disabled |
+| N/T/R | One immediate canonical TIME edit if active | Disabled | Change current TIME candidate; clear its marker if changed |
+| Enter and Advance | Disabled | Mark/advance only | Mark/advance only |
+| Finish | Unavailable | One changed edit or equal-source no-op | One changed edit or equal-source no-op |
+
+Always display exact raw `note`, `key`, and `octave`, including alternate
+encodings such as `(48,12,0)` and `(36,12,-1)`. A twelve-key highlight represents
+the resolved pitch class only and is labeled as such; it must not imply that
+raw key 12 is key 0 at the displayed raw octave. Navigation preserves all raw
+controls. A key edit combines the chosen class with the displayed raw octave;
+an octave edit combines the selected note's pitch class with the chosen octave.
+Encode the resulting edited note canonically, preserving flags. C+ explicitly
+selects 60. Test alternate encodings before navigation and after genuine edits.
+
 1. Provide independent numbered PITCH and TIME selectors/readouts, two pages,
    Edit One, Re-enter PITCH, Re-enter TIME, Check, Audition, Back and
    Enter and Advance. Use these exact action names; there is no Next alias.
@@ -581,6 +647,12 @@ stage = {
   captured_editor_revision = current revision token
 }
 ```
+
+Also capture `song`, document epoch, session, target revision, operation serial,
+exact instrument/phrase objects, target kind and owned ID (or explicit New
+binding). These are stage-origin identities, not cached numeric indices. Every
+candidate action and Finish revalidates that origin and edit revision before
+using it; a stale stage has no commit authority.
 
 1. Re-enter first releases audition. Then show confirmation with memory name,
    exact positions, initialization values, flags and out-of-scope preservation.
@@ -683,6 +755,21 @@ misrouted into the candidate to bypass a guard.
    commits or cancels.
 
 ### 6.4 R02 flag rule and TIME normalization
+
+**External host changes are not interceptable GUI commands.** ACID selectors
+use the pre-action guard. Native selection notifications, deletion/ownership
+loss and document events are observed after the host has changed; never offer
+Finish against their new target or try to reverse native selection implicitly.
+On an external target/binding change, invalidate and discard the transient stage,
+release audition, preserve the origin's canonical draft through the existing
+draft lifecycle, then reconcile the host target. Report that uncommitted entry
+was discarded. If origin draft persistence fails, retain it in the existing
+session recovery state and report the failure; do not claim the native switch
+was prevented. Target invalidation also disables edits until ordinary runtime
+eligibility succeeds. Document/session teardown discards without a modal and
+uses existing best-effort canonical draft preservation. Reorder/rename which
+preserves origin identity follows runtime revision validity; never infer
+identity from an index. Test complete and incomplete stages for all these paths.
 
 1. PITCH re-entry clears ACCENT and SLIDE only in its explicit target span.
 2. TIME re-entry never changes PITCH values or flags.
@@ -795,7 +882,8 @@ misrouted into the candidate to bypass a guard.
    blocked action again. It does not clear a separate store-integrity blocker.
    If persistence outcome is unknown, Retry and writes remain blocked until the
    existing integrity/revalidation path proves safe storage state. Successful
-   Retry accepts one label-only history state and does not auto-run a blocked
+   Retry of a rename accepts one label-only history state; Retry of Undo/Redo
+   commits its proposed cursor as specified in section 4.5. Neither auto-runs a blocked
    action. Undo always applies to the previous accepted history state, never to
    the failed attempted text.
 10. On a mixed musical+label persistence failure, retain the real musical edit
@@ -1003,11 +1091,13 @@ no-op means no history, draft write, or Live Edit request.
    references or mutable source tables.
 2. A render request includes raw canonical source (including mask), output
    policy, PB range, identity/baseline, target kind, capabilities/planning
-   inputs, timing context and explicit resolved pitch records or enough frozen
-   data for one shared resolver executed during immutable preparation.
-3. Prefer resolve once during request preparation and freeze both raw source
-   and resolved records. Revalidate raw source and mask equality at checkpoints.
-   Never resolve from a later mutated GUI source.
+   inputs, timing context and the prepared bundle's frozen source/records with
+   private provenance from section 4.4.
+3. Reuse the source snapshot's prepared bundle when capturing a request; prepare
+   once if that snapshot has none. Revalidate bundle provenance, exact values
+   and source/mask association at checkpoints without quantizing again.
+   Never resolve from a later mutated GUI source or accept detached records
+   without their checked source association.
 4. Draft candidate capture includes label, `label_custom`, token/revision and
    exact pending metadata. Compare token/revision as well as bytes/values before
    clear. A newer label edit cannot be removed by an older render completion.
@@ -1047,6 +1137,43 @@ no-op means no history, draft write, or Live Edit request.
    through to New Phrase and cannot authorize writer or clear a draft.
 
 ### 9.3 Duplicate request admission
+
+**Two identities, one transaction.** Extend the existing request capture with
+explicit `operation="duplicate"`, `kind="create"`, and logical destination
+`target_kind="new"`, destination instrument equal to the origin instrument,
+destination phrase nil and destination ID unallocated. Separately capture an
+`origin` owned-target authorization: song/epoch/session, instrument/phrase
+objects, ID/seal, retained baseline proof, committed source/settings/metadata,
+raw store and target/edit/operation/metadata revisions. Keep live object
+identities in the private raw-identity record and detached values in the frozen
+value record. Never rebind GUI/runtime selection to New to obtain admission.
+
+For ordinary create/regenerate, existing selected-target rules remain unchanged.
+For Duplicate, request `verify` compares current runtime binding/revisions to
+the captured owned **origin**, while writer create preflight checks the logical
+**destination** and its explicit duplicate authority. An owned request with
+`kind="create"` alone must still reject. The writer uses its existing create
+job, allocation, materializer, store candidate and rollback; origin proof is an
+additional precondition, not a second transaction implementation. Original ID
+is never reused as the destination ID, and original draft capture never becomes
+a cleanup descriptor.
+
+At capture and immediately before insertion, validate both origin authority
+and destination instrument membership/capacity. Before store commit, validate
+origin again, the exact newly allocated phrase/ID/seal, and unchanged captured
+store bytes. At final verification require the exact candidate store, unchanged
+origin records/draft and verified new output. Every existing request/writer
+checkpoint must dispatch by operation without dropping lifetime, occupancy,
+transport, capabilities, baseline or revision checks. A changed binding before
+commit revokes authorization and rolls back this transaction. A change after
+verified commit but before UI completion suppresses selection only; it cannot
+retroactively authorize a failed commit. Completion selects the new phrase only
+while the captured origin binding remains current.
+
+Required tests capture from an owned target with a dirty draft while never
+installing a New target; inspect both authorization records at each checkpoint,
+reject forged create/duplicate intents, and change each origin/destination
+identity independently. Assert ordinary create/regenerate admission unchanged.
 
 1. Before request creation, if the originating owned target has a dirty draft,
    save it through `runtime.draft_cache` / `renoise.pattern_store`, then read back
@@ -1183,6 +1310,16 @@ behavior. Names are approved; do not label them by phase/roadmap step.
 
 ### 10.4 Codec, history, and candidate assertions
 
+Foundational Gates 1+2 assertions include ordinary create/regenerate with
+default/custom labels, DRAFT restore, writer failure/rollback, and cold reload.
+Assert SOURCE/LABEL pairs are complete before any rename UI exists. For
+metadata-only Undo/Redo, inject persistence failure before/after setter and at
+readback: accepted editor values, cursor and musical revision stay unchanged.
+Retry commits only the proposed cursor, adds no history entry and emits no Live
+Edit request. Test stale history and metadata revisions without cursor movement
+or clearing a newer draft. A successful rename/undo/redo advances metadata
+revision only; a mixed edit retains its specified local failure semantics.
+
 1. Canonical roundtrip bytes exactly equal expected schema-2 bytes and encode
    deterministically after decode/encode. Assert SOURCE/LABEL numeric ID order,
    DRAFT key order, class ordering, final LF and every required field.
@@ -1233,6 +1370,16 @@ behavior. Names are approved; do not label them by phase/roadmap step.
     old committed source still describes the restored last-good phrase.
 
 ### 10.5 Program, Grid, stage, and audition assertions
+
+Test every row of the section 5.4 action matrix in ordinary, PITCH-stage and
+TIME-stage contexts. Include raw `(48,12,0)`, `(36,12,-1)` and `(60,12,1)`:
+navigation/readout never rewrites them; genuine key/octave edits follow the
+specified mapping and preserve flags. Test stored/referenced/modified indicators
+against procedure 13.8's baseline semantics, including reload and undo/redo.
+For complete and incomplete stages, inject native selection, deletion, ownership
+loss, session close/reopen, song change and origin revision drift. Assert no
+candidate is committed under a replacement binding, no host selection is
+silently reversed, and failed origin draft save retains recovery evidence.
 
 1. Exercise PITCH then TIME navigation in both orders. Assert other cursor/page
    does not move. Only diagnostic with both coordinates may move both.
@@ -1287,6 +1434,15 @@ behavior. Names are approved; do not label them by phase/roadmap step.
     staging, and never publishes candidate source or marks a position entered.
 
 ### 10.6 Clipboard, labels, duplicate, transforms, RNG assertions
+
+Duplicate integration must start from a still-selected owned origin, including
+a dirty editor draft. Spy on request capture and every writer checkpoint:
+origin authorization remains owned, logical destination remains New until
+allocation, and GUI is never rebound to New for admission. Mutate raw identities
+and frozen values independently; forged intent or lost origin proof rejects.
+Assert ordinary create/regenerate behavior unchanged, original draft never
+enters cleanup, pre-commit binding drift rolls back, and post-verified-commit
+binding drift suppresses only UI selection.
 
 1. For each clipboard scope assert exact key set and values for all 32 positions
    plus the correct bound(s). Assert deep copy by mutating source and payload.
@@ -1348,9 +1504,15 @@ behavior. Names are approved; do not label them by phase/roadmap step.
 
 ### 10.7 Test execution and reporting
 
-1. Run focused spec(s) at the gate where code is introduced, then the full ACID
-   suite before leaving the gate.
-2. Run `./scripts/run_tests.ps1 -Tool ACID` from PowerShell 7 after Lua changes.
+1. During development run focused affected specs once per meaningful change.
+   Exhaustively test guard/transaction matrices deterministically. Required full
+   regression checkpoints are Gate 0 baseline, combined Gates 1+2 and Gate 9
+   final build. Between them use affected-owner suites and broaden when failure,
+   shared-contract changes or uncertainty justify it. Do not rerun an unchanged
+   full suite solely to populate another ledger row.
+2. Use `./scripts/run_tests.ps1 -Tool ACID` from PowerShell 7 for full regression
+   after Lua changes at those checkpoints. Run focused specs from repository
+   root in separate Lua processes; preserve mock/module isolation.
    Do not cite only a focused test result as full-suite pass.
 3. Record command, exit code, actual pass/fail count, and any host/environment
    limitation in the gate evidence. A changed spec count is normal; do not use
@@ -1391,9 +1553,11 @@ gate remains failed and no consumer gate may begin.
    that change, then full regression and second-pass review. A source/schema/
    resolution change reopens the entire Gates 1+2 unit. Repeat affected native
    checks against the final build; observations from older builds are historical.
-4. Gates 0–9 have deterministic exits. Gates 10–11 own native environment and
-   host evidence. Native unavailability does not prevent deterministic work,
-   but leaves native gates pending and prevents full completion. API uncertainty
+4. Gates 0–9 have deterministic exits, with an early native layout feasibility
+   dependency after Gate 3 before GUI-heavy Gates 4–7. Gates 10–11 own final
+   integrated host evidence. Native unavailability permits foundational and
+   deterministic shell work, but pauses later GUI-heavy work at that dependency
+   and prevents full completion. API uncertainty
    affecting an implementation blocks that implementation until resolved; it
    cannot be waived merely because host execution is deferred.
 5. Clean cutover requires deletion of superseded runtime paths in the same
@@ -1411,7 +1575,7 @@ gate remains failed and no consumer gate may begin.
 | --- | --- | --- |
 | Strict source/schema and metadata carriers | 1+2 | Sections 10.3–10.4; unsupported bytes/inventory unchanged |
 | One resolved snapshot through successor validation and writer | 1+2 | Section 10.3.7/10; both policies and planner entry points |
-| Independent navigation and retired controls | 3 | Section 10.5; native fit deferred to 13.1.6 |
+| Independent navigation and retired controls | 3 | Section 10.5; early native fit via 13.1.6, repeated on final build |
 | Stage admission, completion and no-op Finish | 4 | Section 10.5.4–8/13–14; native procedure 13.2 |
 | Audition object identity and teardown | 5 | Section 10.5.11–12/15; native procedure 13.6 |
 | Labels, clipboard and authorized duplicate | 6 | Sections 10.4/10.6; native procedure 13.4 |
@@ -1461,6 +1625,17 @@ between owner behavior and this contract; update the design before code rather
 than guessing.
 
 ### Gate 1 — Atomic source/schema/history cutover
+
+**Metadata is operational here, not deferred to Gate 6.** Before the combined
+exit, ordinary New/create, regenerate, draft save/restore, rollback, reopen and
+history carry label/custom end to end. `pattern_store` source candidates and
+writer jobs explicitly carry pending label/custom; allocation derives
+`Pattern <ID>` only for noncustom New labels. Regenerate preserves current
+accepted metadata. Capture metadata revision and reject stale metadata commits
+or draft cleanup. Implement section 4.5's proposed-cursor history and metadata
+transition now, testing them without rename widgets. Gate 6 adds UI/admission
+for Rename and Duplicate on this already functioning contract; it must not
+repair missing schema-2 carriers or introduce a different history path.
 
 **Part of the indivisible Gate 1+2 cutover described above.** Source factories,
 validation/copy/equality, history, schema codec, draft and request/source value
@@ -1551,14 +1726,18 @@ after this combined exit may Gate 3 begin.
    hidden alias or fallback control remains.
 8. Add assertions for view equivalence, no-op navigation, independent selection,
    P17/time17 pages, time17 retained while inactive, and normal-resolution
-   control hierarchy. Run GUI suites and full ACID suite.
+   control hierarchy. Run affected GUI suites under section 10.7.
 
 **Deterministic exit:** both views edit one source with independent cursors;
 all navigation is source/history/request neutral; removed UI inventory is clean;
-mock widget structure satisfies bounded layout and paging. Actual native fit
-and readability remain pending until Gate 11 procedure 13.1.6. Do not infer a
-native fit pass from widths or mocks. A later native fit failure returns to
-this gate, followed by dependent regressions and native recheck.
+mock widget structure satisfies bounded layout and paging. Immediately perform
+a small native feasibility check using procedure 13.1.6: open both views and
+pages and the lower workspace at the intended display scale; record clipping,
+legibility and controls reachable. Fix fit failures before GUI-heavy Gates 4–7.
+If Renoise is unavailable, record this dependency pending and pause GUI-heavy
+implementation; do not substitute widths/mocks for fit evidence. Gate 11 still
+checks the final integrated layout; an earlier feasibility pass is not final
+native acceptance.
 
 ### Gate 4 — Program Edit One, staging, and stage guards
 
@@ -1589,7 +1768,7 @@ this gate, followed by dependent regressions and native recheck.
    Discard, dialog
    cancellation, external teardown, stale revision and no pre-Finish
    source/draft/request calls.
-9. Run stage/GUI/editor/draft/request suites and full ACID suite.
+9. Run affected stage/GUI/editor/draft/request suites under section 10.7.
 
 **Exit:** stage never leaks into canonical source before Finish; changed Finish
 is one edit and equal-source Finish is a no-op; guards and navigation follow
@@ -1614,12 +1793,17 @@ the exact matrix; no partial request or save.
 6. Test mock success, onset exception, timer, all release paths, track/instrument
    same-index replacement, removed object, modal suppression as modelled, and
    tool teardown. Mark native sound/timing unverified until section 13.
-7. Run audition/gui tests and full ACID suite.
+7. Run affected audition/GUI tests under section 10.7.
 
 **Exit:** deterministic lifecycle mocks pass, API evidence is recorded, and no
 mock result is described as native playback acceptance.
 
 ### Gate 6 — Clipboard, labels, and duplicate
+
+The foundational metadata persistence/history transition already passes Gates
+1+2. This gate wires rename UI to it and extends existing request authorization
+with section 9.3's owned origin plus logical New destination. It does not change
+ordinary create/regenerate eligibility to accept arbitrary owned creates.
 
 **Depends on:** Gates 1–5. Duplicate and label metadata share store/request
 contracts, but implement this gate in suborder 6.1 then 6.2 then 6.3.
@@ -1647,8 +1831,8 @@ contracts, but implement this gate in suborder 6.1 then 6.2 then 6.3.
    blocker on uncertainty. No blind overwrite.
 5. Search all create callers and confirm duplicate is the only new operation
    intent; ordinary New/create remains unchanged and protected.
-6. Run clipboard, label, writer, request, store candidate, draft and full ACID
-   suites.
+6. Run affected clipboard, label, writer, request, store candidate and draft
+   suites under section 10.7.
 
 **Exit:** copy alone never writes/creates; paste is one normal edit; label-only
 failure leaves prior accepted history/state unchanged with an unresolved field
@@ -1676,7 +1860,7 @@ and duplicate never proceeds if original dirty draft cannot be durably saved.
 6. Add fixtures only when shared data is consumed by tests. Include fixed random
    vectors and C-only scale cases as section 4.3/8.5 requires.
 7. Run exact scope matrix, seed vectors, output policy invariance, undo/redo,
-   bounded UI and full ACID suite.
+   bounded UI suites under section 10.7.
 
 **Exit:** deterministic source operations pass all scopes and preserve unrelated
 fields; preview and output share resolution; bounded view has no 32-row stack.
@@ -1694,7 +1878,7 @@ fields; preview and output share resolution; bounded view has no 32-row stack.
    fields from section 13. Do not create redundant new manual files.
 4. Link only the canonical playbook from ROADMAP. Do not duplicate its full
    design in roadmap tables or paragraphs.
-5. Run full ACID tests, `git diff --check`, and package check if runtime module
+5. Run `git diff --check` and package check if runtime module
    layout/package inputs changed. Do not package merely because docs changed.
 6. Report native checks not available as unverified. No implementation or native
    pass claim is inferred from procedure readiness.
@@ -1757,8 +1941,10 @@ observed result. Any unsafe or uncertain rollback stops destructive testing.
    RNG use.
 3. Walk every test case and failure injection; map each assertion to actual
    test output. Review every `pcall`/setter uncertainty and rollback outcome.
-4. Re-run full ACID suite and `git diff --check`. Re-run package check if Gate 9
-   requires it.
+4. Verify Gate 9 full-suite evidence applies to the reviewed runtime/test tree.
+   Rerun affected checks after fixes and final full regression if code changed;
+   do not repeat unchanged results. Run `git diff --check` and package check
+   when inputs changed.
 5. Any finding returns to the earliest affected gate. Fix and rerun that full
    gate and the entire second pass. No partial completion claim.
 6. Close M5 only when deterministic gates, second pass and applicable native
@@ -1867,12 +2053,14 @@ rollback result is uncertain; do not overwrite evidence to continue.
    NOTE with visible normalization feedback.
 7. Start a stage, switch to Grid. Verify banner, canonical values, disabled
    source edits. Return to Program and verify staged values/markers remain.
-8. For each guard (Undo, Reset, Copy/Paste, Duplicate, Extended edit, output
-   change, Generate, Live Edit toggle and target change), test complete-stage
-   Finish/Discard/Stay and incomplete-stage Discard/Stay only. Verify neither
-   Finish nor Discard auto-runs the guarded command; explicitly invoke the
-   command again to proceed. Stay has no side effect. Cursor/page/view navigation
-   needs no guard and preserves stage.
+8. Native representative guards: use Undo for a local action, Generate for a
+   writer action and ACID target selection for a controlled binding change.
+   Across these cases exercise Finish, Discard and Stay, plus incomplete-stage
+   Finish exclusion. Verify no guarded command auto-runs and navigation preserves
+   stage. The complete action/decision cross-product belongs to deterministic
+   tests. Separately change native Renoise selection and delete/invalidate a
+   target during complete and incomplete stages: no Finish under the new target,
+   no implicit reversal of host selection, and canonical draft recovery retained.
 9. Close dialog or switch document while stage is pending. Confirm no modal
    commit; canonical draft persists best effort and transient candidate is gone.
 10. Start another stage, select its final position immediately, and Enter.
@@ -1950,9 +2138,10 @@ rollback result is uncertain; do not overwrite evidence to continue.
    trigger exact duplicate rollback or integrity block. Never silently refresh
    captured authorization. Change target during duplicate; stale UI binding must
    not select the new phrase, though verified inventory remains.
-10. For each failure injection available in the test harness, record original
-    `tool_data` bytes and complete phrase preimage/inventory before action. Inject
-    allocation/create/materialization/verify/store setter/readback failure.
+10. Use one safely available native failure case to verify host rollback/readback
+    behavior; exhaustive allocation/materialization/store fault injection belongs
+    to deterministic tests. Record original `tool_data` bytes and complete phrase
+    preimage/inventory before action and identify the exact injected failure.
     Compare exact bytes and phrase preimage after rollback. If uncertain, stop;
     preserve recovery evidence and do not retry over the same document.
 
@@ -2024,6 +2213,41 @@ rollback result is uncertain; do not overwrite evidence to continue.
 7. Confirm no unrelated instrument, phrase, track, routing, plugin setting,
    sample, or song setting changed.
 
+### 13.8 Retained Renoise workflow acceptance
+
+These requirements remain in M5 after roadmap consolidation. Update existing
+user documentation in Gate 8 and record final-build observations in Gate 11:
+
+1. Document native phrase triggering and song arrangement, transposition and
+   resizing using Renoise controls. Distinguish source LAST STEP/PITCH span
+   edits from manual destination phrase changes, which may invalidate ownership.
+   Do not add an ACID arrangement player or imply regenerated content preserves
+   arbitrary manual phrase edits.
+2. In a disposable song, generate a representative phrase, trigger it using
+   the supported native workflow, stop/retrigger and inspect the single-sequence
+   end-to-start slide boundary. Record sound/release and continuity limitations.
+   Demonstrate native arrangement/transposition/resizing and verify ACID reports
+   destination incompatibility where applicable. Independent phrase switches
+   do not inherit a continuity guarantee from a single-sequence loop test.
+3. Distinguish stored, referenced and user-modified PITCH indicators. Stored
+   means a valid retained slot (all 32); referenced means actually consumed by
+   the current canonical TIME traversal, not merely inside PITCH span. Modified
+   means a record differs from its accepted editor baseline in this session,
+   not merely that its value differs from C. Establish the baseline on load or
+   verified commit; undo/redo recomputes comparison. Editing back to baseline
+   clears modified. No new persisted source bit or schema field is introduced.
+   Stage markers are separate, and Grid continues to show canonical values.
+   Implement indicators at Gate 3; test default-but-referenced, nondefault-but-
+   unreferenced, edited-back-to-baseline, undo/redo and reload. Verify legibility
+   natively with a 32-slot fixture.
+4. Check responsiveness with populated multi-instrument songs and max-32
+   sources: selection/page/view changes must not persist or generate, and a
+   source preparation must not repeat resolution. Record observable UI stalls
+   and representative fixture size; do not invent a fixed millisecond threshold.
+
+TAP remains explicitly deferred. These retained workflow/indicator checks are
+not optional and cannot disappear from closeout by replacing roadmap text.
+
 ## 14. Evidence Ledger Template and Completion Language
 
 Fill this table with actual evidence during execution. Empty cells mean pending,
@@ -2035,6 +2259,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 1 source/schema/history | Source/codec/draft specs |  |  |  | Unexecuted |
 | Gate 2 resolution/compiler | Mask/interpreter/planner specs |  |  |  | Unexecuted |
 | Gate 3 shell/Grid | GUI view/admission specs |  |  |  | Unexecuted |
+| Gate 3 native feasibility | Procedure 13.1.6 before GUI-heavy continuation |  |  |  | Unexecuted |
 | Gate 4 staged Program | Staging/GUI specs |  |  |  | Unexecuted |
 | Gate 5 audition mocks | Audition lifecycle spec |  |  |  | Unexecuted |
 | Gate 6 operations | Clipboard/label/duplicate specs |  |  |  | Unexecuted |
@@ -2047,6 +2272,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 11 operations/failure | Procedures 13.4–13.5 |  |  |  | Unexecuted |
 | Gate 11 audition | Procedure 13.6 |  |  |  | Unexecuted |
 | Gate 11 persistence/Live Edit | Procedure 13.7 |  |  |  | Unexecuted |
+| Gate 11 retained Renoise workflow | Procedure 13.8 workflow, indicators and responsiveness |  |  |  | Unexecuted |
 | Gate 12 independent review | Full diff/checklist |  |  |  | Unexecuted |
 
 Use precise closeout language:
