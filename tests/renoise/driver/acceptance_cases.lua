@@ -1909,7 +1909,7 @@ local function run_revision_undo_prepare(done, action_mode)
           local label = props and props.text
           if id and props.notifier then
             state.callbacks[id] = props.notifier
-            if id == "acid_program_key_popup" then
+            if type(id) == "string" and id:match("^acid_program_key_%d%d$") then
               local notifier = props.notifier
               props.notifier = function(...)
                 if state.suppress_key_notifier then return end
@@ -2001,8 +2001,8 @@ local function run_revision_undo_prepare(done, action_mode)
       reason = tostring(wrap_error or "Production GUI capture failed") })
     return true
   end
-  local key_view = state.controls.acid_program_key_popup
-  local key_callback = state.callbacks.acid_program_key_popup
+  local key_view = state.controls.acid_program_key_01
+  local key_callback = state.callbacks.acid_program_key_01
   local generate_callback = state.callbacks["Generate / Regenerate ACID Phrase"]
   local live_control = state.controls.acid_live_edit
   local live_callback = state.callbacks.acid_live_edit
@@ -2065,7 +2065,7 @@ local function run_revision_undo_prepare(done, action_mode)
   local function generate_from_user_action()
     if state.action_started then return nil end
     state.action_started = true
-    local changed_value = (old_source.pitch_events[FIRST_NOTE_LINE].key + 1) % 12 + 1
+    local changed_value = (old_source.pitch_events[FIRST_NOTE_LINE].key + 1) % 12
     if action_mode == "live-edit" then
       state.suppress_live_notifier = true
       live_control.value = true
@@ -2074,10 +2074,12 @@ local function run_revision_undo_prepare(done, action_mode)
       state.live_edit_arm_error = not live_called and tostring(live_error) or nil
       state.live_edit_armed = live_called
     end
+    local key_button_id=string.format("acid_program_key_%02d",changed_value+1)
+    local selected_key_callback=state.callbacks[key_button_id]
+    if type(selected_key_callback)~="function" then error("Production GUI did not expose the selected key button") end
     state.suppress_key_notifier = true
-    key_view.value = changed_value
+    selected_key_callback()
     state.suppress_key_notifier = false
-    key_callback(changed_value)
     state.edited_source = state.context:editor_state().source
     state.edited_key = state.edited_source and state.edited_source.pitch_events[FIRST_NOTE_LINE].key
     if action_mode == "live-edit" then
@@ -2248,8 +2250,8 @@ local function run_revision_undo(done, requested_mode)
     details.gui_editor_source_note = editor_pitch and safe_text(editor_pitch.note)
     details.gui_editor_source_matches_old = editor_matches_old
     details.gui_expected_old_source_key = expected_pitch and safe_text(expected_pitch.key)
-    details.gui_key_control_value = state.controls.acid_program_key_popup and
-      safe_text(state.controls.acid_program_key_popup.value)
+    local key_button=editor_pitch and state.controls[string.format("acid_program_key_%02d",editor_pitch.key+1)]
+    details.gui_key_button_color = key_button and safe_text(key_button.color)
     details.selected_instrument_index = selected_instrument_index
     details.selected_phrase_index = selected_phrase_index
     details.source_state_text = details.source_state_text or
@@ -4320,9 +4322,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     metrics.editor_fixture_native_selection_changed=
       not same_native_selection(native_selection_at_start,native_selection_before)
     local suppress_captured_notifiers=false
-    local anonymous_checkbox_index,anonymous_pitch_page,anonymous_time_page=0,0,0
+    local anonymous_checkbox_index,anonymous_pitch_selector,anonymous_time_selector=0,0,0
     local key_items={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B","C+"}
-    local octave_items={"DOWN (-1)","NORMAL (0)","UP (+1)"}
     local function profile_function(target,key,name)
       if not detailed_profile then return end
       local original,installed=install_profile_wrapper(profile_mode,target,key,function(inner)
@@ -4670,8 +4671,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           if #items==32 and items[1]=="1" then return "acid_pitch_length" end
           if same_items(items,{"Play Once","Repeat"}) then return "acid_playback" end
           if same_items(items,{"Start","Repeating"}) then return "acid_preview" end
-          if same_items(items,key_items) then return "acid_grid_key" end
-          if same_items(items,octave_items) then return "acid_grid_octave" end
         end
       elseif name=="checkbox" then
         anonymous_checkbox_index=anonymous_checkbox_index+1
@@ -4686,13 +4685,19 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         if properties.text=="Next TIME" then return "acid_next_time" end
         if properties.text=="Retry Live Edit" then return "acid_retry_live" end
         if properties.text=="Generate / Regenerate ACID Phrase" then return "acid_generate" end
+        for index,key_name in ipairs(key_items) do
+          if properties.text==key_name then return "acid_grid_key_button_"..index end
+        end
+        if properties.text=="NOTE" then return "acid_time_command_note" end
+        if properties.text=="TIE" then return "acid_time_command_tie" end
+        if properties.text=="REST" then return "acid_time_command_rest" end
         if properties.text=="P" then
-          anonymous_pitch_page=anonymous_pitch_page+1
-          return "acid_pitch_page_"..tostring(anonymous_pitch_page)
+          anonymous_pitch_selector=anonymous_pitch_selector+1
+          return string.format("acid_program_select_pitch_%02d",anonymous_pitch_selector)
         end
         if properties.text=="T" then
-          anonymous_time_page=anonymous_time_page+1
-          return "acid_time_page_"..tostring(anonymous_time_page)
+          anonymous_time_selector=anonymous_time_selector+1
+          return string.format("acid_program_select_time_%02d",anonymous_time_selector)
         end
       end
       return nil
@@ -5043,36 +5048,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     phrase_profile_enabled=false
     metrics.gui_phrase_selection_elapsed_ms=(os.clock()-phrase_select_started)*1000
     publish_phrase_profile("gui_phrase_initial_profile")
-    local time_position_notifier=callbacks.acid_program_time_position
-    if type(time_position_notifier)~="function" then
+    if not controls.acid_program_pitch_summary or not controls.acid_program_time_summary then
       close_test_gui()
-      return nil,"GUI TIME position callback was not captured from the real control"
-    end
-    local time_position_control=controls.acid_program_time_position
-    local time_dispatch_before=callback_counts.acid_program_time_position or 0
-    if time_position_control then time_position_control.value=2 end
-    if (callback_counts.acid_program_time_position or 0)==time_dispatch_before then
-      time_position_notifier(2)
-    end
-    metrics.gui_time_position_selection_verified=true
-    local pitch_position_notifier=callbacks.acid_program_pitch_position
-    if type(pitch_position_notifier)~="function" then
-      close_test_gui()
-      return nil,"GUI PITCH position callback was not captured from the real control"
-    end
-    local pitch_position_control=controls.acid_program_pitch_position
-    local pitch_dispatch_before=callback_counts.acid_program_pitch_position or 0
-    if pitch_position_control then pitch_position_control.value=1 end
-    if (callback_counts.acid_program_pitch_position or 0)==pitch_dispatch_before then
-      pitch_position_notifier(1)
-    end
-    local key_notifier=callbacks.acid_program_key_popup
-    local octave_notifier=callbacks.acid_program_octave_popup
-    local command_notifier=callbacks.acid_program_time_command
-    if type(key_notifier)~="function" or type(octave_notifier)~="function" or
-        type(command_notifier)~="function" then
-      close_test_gui()
-      return nil,"GUI note/octave/command callback was not captured from the real controls"
+      return nil,"GUI Program PITCH/TIME readouts were not captured"
     end
     local drafts=require("runtime.draft_cache")
     local persisted=require("renoise.pattern_store")
@@ -5083,11 +5061,19 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     local original_note=phrase:line(1):note_column(1).note_value
     local samples={note={},octave={},command={}}
-    local note_pitch_index=tonumber(controls.acid_program_pitch_position.value) or 1
-    if note_pitch_index<1 or note_pitch_index>stored.length then
+    local select_first_pitch_page=callbacks.acid_pitch_page_1
+    local select_first_pitch=callbacks.acid_grid_pitch_01
+    if type(select_first_pitch_page)~="function" or type(select_first_pitch)~="function" then
       close_test_gui()
-      return nil,"GUI Program PITCH selection is outside the generated source"
+      return nil,"GUI Program first PITCH selector was not captured"
     end
+    select_first_pitch_page()
+    select_first_pitch()
+    if not tostring(controls.acid_program_pitch_summary.text):find("P01",1,true) then
+      close_test_gui()
+      return nil,"GUI Program first PITCH selection was not verified"
+    end
+    local note_pitch_index=1
     metrics.gui_program_pitch_position_before_note=note_pitch_index
     local last_saved_source=stored
     local last_saved_policy,last_saved_pb=stored_policy,stored_pb
@@ -5099,7 +5085,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local started=os.clock()
       local control=controls[callback_id]
       suppress_captured_notifiers=true
-      if control then control.value=value end
+      if control and control.value~=nil then control.value=value end
       suppress_captured_notifiers=false
       local dispatch_elapsed=detailed_profile and ((os.clock()-started)*1000) or nil
       if control then
@@ -5118,9 +5104,12 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local updated,draft_policy,draft_pb=persisted.read_draft(song,instrument,phrase)
       if not updated or sequence.same_source(last_saved_source,updated) then
         metrics["gui_"..kind.."_draft_key_after"]=updated and updated.pitch_events[note_pitch_index].key or -1
-        metrics["gui_"..kind.."_control_value_after"]=control and control.value or -1
-        metrics["gui_"..kind.."_pitch_selection_after"]=controls.acid_program_pitch_position.value
-        metrics["gui_"..kind.."_time_selection_after"]=controls.acid_program_time_position.value
+        local button_color=control and control.color
+        metrics["gui_"..kind.."_button_color_after"]=type(button_color)=="table" and
+          table.concat(button_color,",") or tostring(button_color or "unavailable")
+        metrics["gui_"..kind.."_button_text_after"]=control and control.text or "unavailable"
+        metrics["gui_"..kind.."_pitch_readout_after"]=controls.acid_program_pitch_summary.text
+        metrics["gui_"..kind.."_time_readout_after"]=controls.acid_program_time_summary.text
         metrics["gui_"..kind.."_phrase_choice_after"]=controls.acid_phrase_choice.value
         metrics["gui_"..kind.."_instrument_choice_after"]=controls.acid_instrument_choice.value
         metrics["gui_"..kind.."_instrument_native_index_after"]=song.selected_instrument_index
@@ -5203,51 +5192,73 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end
       return true
     end
+    local function select_grid_position(kind,page,cell)
+      local page_prefix=kind=="pitch" and "acid_pitch_page_" or "acid_time_page_"
+      local cell_format=kind=="pitch" and "acid_grid_pitch_%02d" or "acid_grid_select_time_%02d"
+      local page_id=page_prefix..page
+      local cell_id=string.format(cell_format,cell)
+      if type(callbacks[page_id])~="function" or type(callbacks[cell_id])~="function" then
+        return nil,"GUI "..kind.." grid selector callbacks were not captured"
+      end
+      callbacks[page_id]()
+      callbacks[cell_id]()
+      local selected=(page-1)*16+cell
+      local readout=kind=="pitch" and controls.acid_program_pitch_summary.text or
+        controls.acid_program_time_summary.text
+      local expected=string.format(kind=="pitch" and "P%02d" or "TIME %02d",selected)
+      if not readout:find(expected,1,true) then
+        return nil,"GUI "..kind.." selector did not update the Program readout"
+      end
+      return true
+    end
     local first_key_value=(stored.pitch_events[1].key+1)%12+1
     local key_values={first_key_value,first_key_value%12+1,(first_key_value+1)%12+1}
     for index,value in ipairs(key_values) do
-      local ok,reason=invoke("note","acid_program_key_popup",key_notifier,value,function(updated)
+      local key_id=string.format("acid_program_key_%02d",value)
+      local ok,reason=invoke("note",key_id,callbacks[key_id],nil,function(updated)
         current_key=value-1
         if updated.pitch_events[note_pitch_index].key~=current_key then
           return false,"GUI note callback did not update the source pitch"
         end
-        if controls.acid_program_key_popup.value~=value then
-          return false,"GUI note callback did not refresh the key control"
+        if not controls.acid_program_pitch_summary.text:find("/"..tostring(current_key),1,true) then
+          return false,"GUI note callback did not refresh the selected PITCH readout"
         end
         return true
       end)
       if not ok then close_test_gui();return nil,reason end
     end
-    local octave_values={current_octave==0 and 3 or 2,1,3}
+    local octave_values={current_octave==0 and "up" or "normal","down","up"}
+    local octave_map={down=-1,normal=0,up=1}
     for _,value in ipairs(octave_values) do
-      local ok,reason=invoke("octave","acid_program_octave_popup",octave_notifier,value,function(updated)
-        current_octave=value-2
+      local octave_id="acid_program_octave_"..value
+      local ok,reason=invoke("octave",octave_id,callbacks[octave_id],nil,function(updated)
+        current_octave=octave_map[value]
         if updated.pitch_events[note_pitch_index].octave~=current_octave then
           return false,"GUI octave callback did not update the source pitch"
         end
-        if controls.acid_program_octave_popup.value~=value then
-          return false,"GUI octave callback did not refresh the octave control"
+        if not controls.acid_program_pitch_summary.text:find(string.format("%+d",current_octave),1,true) then
+          return false,"GUI octave callback did not refresh the selected PITCH readout"
         end
         return true
       end)
       if not ok then close_test_gui();return nil,reason end
     end
-    suppress_captured_notifiers=true
-    controls.acid_program_time_position.value=2
-    suppress_captured_notifiers=false
-    time_position_notifier(2)
+    local time_selected,time_selection_error=select_grid_position("time",1,2)
+    if not time_selected then close_test_gui();return nil,time_selection_error end
+    metrics.gui_time_position_selection_verified=true
     current_command=last_saved_source.time_events[2]
     local first_command_value=({N=1,T=2,R=3})[current_command]%3+1
     local command_values={first_command_value,first_command_value%3+1,(first_command_value+1)%3+1}
     for _,value in ipairs(command_values) do
       local expected=({"N","T","R"})[value]
-      local ok,reason=invoke("command","acid_program_time_command",command_notifier,value,function(updated)
+      local command_id=({"NOTE","TIE","REST"})[value]
+      local ok,reason=invoke("command",command_id,callbacks[command_id],nil,function(updated)
         current_command=expected
         if updated.time_events[2]~=current_command then
           return false,"GUI command callback did not update the source timing"
         end
-        if controls.acid_program_time_command.value~=value then
-          return false,"GUI command callback did not refresh the command control"
+        if not controls.acid_program_time_summary.text:find("= "..current_command,1,true) then
+          return false,"GUI command callback did not refresh the selected TIME readout"
         end
         return true
       end)
@@ -5281,37 +5292,51 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local ok,reason=run_value(action[1],action[2],action[3],phrase,action[4],true)
       if not ok then return nil,reason end
     end
-    local navigation_actions={
-      {"pitch-position","acid_program_pitch_position",2},
-      {"time-position","acid_program_time_position",3},
-      {"preview-mode","acid_preview",2}
-    }
-    for _,action in ipairs(navigation_actions) do
-      local ok,reason=run_value(action[1],action[2],action[3],phrase,function()
-        if controls[action[2]].value~=action[3] then return false,"GUI control did not retain the selected value" end
-        return true
-      end,false)
-      if not ok then return nil,reason end
-    end
+    local selected_pitch_ok,selected_pitch_error=select_grid_position("pitch",1,2)
+    if not selected_pitch_ok then return nil,selected_pitch_error end
+    actions[#actions+1]="pitch-position"
+    local selected_time_ok,selected_time_error=select_grid_position("time",1,3)
+    if not selected_time_ok then return nil,selected_time_error end
+    actions[#actions+1]="time-position"
+    local preview_ok,preview_error=run_value("preview-mode","acid_preview",2,phrase,function()
+      return controls.acid_preview.value==2,"Preview mode did not retain the selected value"
+    end,false)
+    if not preview_ok then return nil,preview_error end
     local grid_ok,grid_error=run_value("grid-view","acid_editor_view",2,phrase,function()
       return controls.acid_grid_panel.visible==true,"Grid view did not update panel visibility"
     end,false)
     if not grid_ok then return nil,grid_error end
     local time_page_one_ok,time_page_one_error=run_button("time-page-1","acid_time_page_1")
     if not time_page_one_ok then return nil,time_page_one_error end
-    local grid_pitch_index=tonumber(controls.acid_program_pitch_position.value) or 1
+    local grid_pitch_index=2
+    note_pitch_index=grid_pitch_index
     local grid_pitch_value=(last_saved_source.pitch_events[grid_pitch_index].key+1)%12+1
+    local grid_time_selected,grid_time_selection_error=select_grid_position("time",1,2)
+    if not grid_time_selected then close_test_gui();return nil,grid_time_selection_error end
+    local grid_command_ok,grid_command_error=invoke("grid-time-command","acid_time_command_tie",
+      callbacks.acid_time_command_tie,nil,function(updated)
+        return updated.time_events[2]=="T","Grid TIME assignment button did not update source command"
+      end)
+    if not grid_command_ok then close_test_gui();return nil,grid_command_error end
+    actions[#actions+1]="grid-time-command"
     local grid_actions={
-      {"grid-key","acid_grid_key",grid_pitch_value,function(updated)return updated.pitch_events[grid_pitch_index].key==grid_pitch_value-1,"Grid key did not update the selected source pitch" end},
-      {"grid-octave","acid_grid_octave",3,function(updated)return updated.pitch_events[grid_pitch_index].octave==1,"Grid octave did not update the selected source pitch" end},
+      {"grid-key",string.format("acid_grid_key_button_%02d",grid_pitch_value),nil,function(updated)return updated.pitch_events[grid_pitch_index].key==grid_pitch_value-1,"Grid key did not update the selected source pitch" end},
+      {"grid-octave","acid_grid_octave_up",nil,function(updated)return updated.pitch_events[grid_pitch_index].octave==1,"Grid octave did not update the selected source pitch" end},
       {"grid-accent","acid_grid_accent",false,function(updated)return updated.pitch_events[grid_pitch_index].accent==false,"Grid accent did not update the selected source pitch" end},
-      {"grid-slide","acid_grid_slide",true,function(updated)return updated.pitch_events[grid_pitch_index].slide==true,"Grid slide did not update the selected source pitch" end},
-      {"grid-time-command","acid_grid_time_02",2,function(updated)return updated.time_events[2]=="T","Grid TIME cell did not update source command" end}
+      {"grid-slide","acid_grid_slide",true,function(updated)return updated.pitch_events[grid_pitch_index].slide==true,"Grid slide did not update the selected source pitch" end}
     }
     for _,action in ipairs(grid_actions) do
       local profile_grid_key=detailed_profile and action[1]=="grid-key"
       if profile_grid_key then reset_phrase_profile();phrase_profile_enabled=true end
-      local ok,reason=run_value(action[1],action[2],action[3],phrase,action[4],true)
+      local ok,reason
+      if action[2]=="acid_grid_accent" or action[2]=="acid_grid_slide" then
+        ok,reason=run_value(action[1],action[2],action[3],phrase,action[4],true)
+      else
+        ok,reason=invoke(action[1],action[2],callbacks[action[2]],nil,function(updated)
+          return action[4](updated)
+        end)
+        if ok then actions[#actions+1]=action[1] end
+      end
       if profile_grid_key then
         phrase_profile_enabled=false
         publish_phrase_profile("gui_grid_key_profile")
@@ -5332,10 +5357,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       return controls.acid_program_panel.visible==true,"Program view did not update panel visibility"
     end,false)
     if not program_view_ok then return nil,program_view_error end
-    local pitch_page_reselect_ok,pitch_page_reselect_error=run_value(
-      "program-pitch-reselection","acid_program_pitch_position",18,phrase,function()
-        return controls.acid_program_pitch_position.value==18,"Grid pitch selection was not reflected in Program view"
-      end,false)
+    local pitch_page_reselect_ok,pitch_page_reselect_error=select_grid_position("pitch",2,2)
+    if pitch_page_reselect_ok then actions[#actions+1]="program-pitch-reselection" end
     if not pitch_page_reselect_ok then return nil,pitch_page_reselect_error end
     local undo_ok,undo_error=run_button("undo","acid_undo")
     if not undo_ok then return nil,undo_error end
@@ -5358,10 +5381,12 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           "New Phrase target was not selected"
       end,false)
     if not phrase_choice_ok then return nil,phrase_choice_error end
-    local new_phrase_ok,new_phrase_error=run_value("new-phrase-note","acid_program_key_popup",2,nil,
-      function(updated)
-        return updated and updated.pitch_events[1].key==1,"New Phrase note callback did not save its draft"
-      end,true)
+    local new_phrase_key_id="acid_program_key_02"
+    local new_phrase_ok,new_phrase_error=run_button("new-phrase-note",new_phrase_key_id,function()
+      local updated=persisted.read_draft(song,instrument,nil)
+      return updated and updated.pitch_events[1].key==1,
+        "New Phrase key button did not save its draft"
+    end)
     if not new_phrase_ok then return nil,new_phrase_error end
     local old_target_ok,old_target_error=run_value("owned-phrase-target","acid_phrase_choice",
       phrase_index,phrase,function()
@@ -5440,8 +5465,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       close_test_gui()
       return nil,"GUI Live Edit checkbox callback was not captured"
     end
-    local live_key_control=controls.acid_program_key_popup
-    local live_key_notifier=callbacks.acid_program_key_popup
+    local live_key_control=controls.acid_program_key_01
+    local live_key_notifier=callbacks.acid_program_key_01
     if not live_key_control or type(live_key_notifier)~="function" then
       close_test_gui()
       return nil,"GUI Live Edit note callback was not captured"
@@ -5456,16 +5481,12 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         live_notifier(value)
         live_checkbox_dispatches=live_checkbox_dispatches+1
       end
-      local pitch_position=controls.acid_program_pitch_position
-      local pitch_position_notifier=callbacks.acid_program_pitch_position
-      if not pitch_position or type(pitch_position_notifier)~="function" then
+      if type(callbacks.acid_grid_pitch_01)~="function" then
         finished(false,"GUI Live Edit test could not select a source pitch")
         return
       end
-      suppress_captured_notifiers=true
-      pitch_position.value=1
-      suppress_captured_notifiers=false
-      pitch_position_notifier(1)
+      callbacks.acid_pitch_page_1()
+      callbacks.acid_grid_pitch_01()
       local live_index=1
       local before_live,live_policy,live_pb=persisted.read_draft(song,instrument,phrase)
       local before_revision_id=ownership.id(phrase)
@@ -5511,10 +5532,10 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         metrics.gui_live_tool_data_bytes_before_callback=#raw_store
         local wall_started=os.time()
         local started=os.clock()
-        suppress_captured_notifiers=true
-        live_key_control.value=value
-        suppress_captured_notifiers=false
-        live_key_notifier(value)
+        local key_id=string.format("acid_program_key_%02d",value)
+        local key_callback=callbacks[key_id]
+        if type(key_callback)~="function" then error("Live Edit key button was not captured: "..key_id) end
+        key_callback()
         local elapsed=(os.clock()-started)*1000
         metrics.gui_live_edit_wall_seconds=os.difftime(os.time(),wall_started)
         live_note_dispatches=live_note_dispatches+1
@@ -8103,7 +8124,7 @@ local function run_production_session(done,case_name,options,json)
     local view,callback=assert(controls[id],"missing control: "..id),assert(callbacks[id],"missing callback: "..id)
     assert(view.active~=false,"inactive control: "..id.."; length="..
       tostring(controls.last_step and controls.last_step.value).."; time="..
-      tostring(controls.acid_program_time_position and controls.acid_program_time_position.value))
+      tostring(controls.acid_program_time_summary and controls.acid_program_time_summary.text))
     local before=native_selection(song)
     expected_native_selection=expected_native_selection or before
     assert(same_native_selection(expected_native_selection,before),
@@ -8138,6 +8159,25 @@ local function run_production_session(done,case_name,options,json)
       if p.items and p.items[1]=="Play Once" then return "policy" end
     end
     if kind=="button" and p.text=="Generate / Regenerate ACID Phrase" then return "generate" end
+    if kind=="button" then
+      for index,key_name in ipairs({"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}) do
+        if p.text==key_name then return "acid_grid_key_button_"..index end
+      end
+      if p.text=="NOTE" then return "acid_time_command_note" end
+      if p.text=="TIE" then return "acid_time_command_tie" end
+      if p.text=="REST" then return "acid_time_command_rest" end
+    end
+  end
+  local function select_position(kind,index)
+    local page=math.floor((index-1)/16)+1
+    local cell=(index-1)%16+1
+    invoke(kind=="pitch" and ("acid_pitch_page_"..page) or ("acid_time_page_"..page))
+    invoke(string.format(kind=="pitch" and "acid_grid_pitch_%02d" or
+      "acid_grid_select_time_%02d",cell))
+    local readout=kind=="pitch" and controls.acid_program_pitch_summary.text or
+      controls.acid_program_time_summary.text
+    local expected=string.format(kind=="pitch" and "P%02d" or "TIME %02d",index)
+    assert(readout:find(expected,1,true),"GUI "..kind.." selection readout mismatch")
   end
   local function capture(id,callback)
     callbacks[id]=callback
@@ -8203,6 +8243,8 @@ local function run_production_session(done,case_name,options,json)
     context_module.new=original_context_new
     assert(ok,err)
     assert(context and dialog and dialog.visible,"production GUI capture failed")
+    invoke("acid_editor_view",2)
+    assert(controls.acid_grid_panel.visible==true,"production GUI did not enter Grid view")
   end
   local function select_target(target)
     local raw=song.tool_data
@@ -8315,13 +8357,14 @@ local function run_production_session(done,case_name,options,json)
       local key=(instrument_index+slot+step)%12
       local octave=slot==3 and step<=2 and 0 or (instrument_index+slot+step)%3-1
       local command=step<=2 and "N" or ({"N","T","R"})[(step+slot)%3+1]
-      invoke("acid_program_pitch_position",step)
-      invoke("acid_program_key_popup",key+1)
-      invoke("acid_program_octave_popup",octave+2)
-      invoke("acid_program_accent",step%3==0)
-      invoke("acid_program_slide",step==1 or step%4==0)
-      invoke("acid_program_time_position",step)
-      invoke("acid_program_time_command",command=="N" and 1 or command=="T" and 2 or 3)
+      select_position("pitch",step)
+      invoke(string.format("acid_grid_key_button_%02d",key+1))
+      invoke("acid_grid_octave_"..(octave==-1 and "down" or octave==0 and "normal" or "up"))
+       invoke("acid_grid_accent",step%3==0)
+       invoke("acid_grid_slide",step==1 or step%4==0)
+      select_position("time",step)
+      invoke(command=="N" and "acid_time_command_note" or
+        command=="T" and "acid_time_command_tie" or "acid_time_command_rest")
       source.pitch_events[step]=sequence.new_pitch(key,octave,step%3==0,step==1 or step%4==0)
       source.time_events[step]=command
       later(configure_next)
@@ -8375,7 +8418,7 @@ local function run_production_session(done,case_name,options,json)
           result.undo_expected_source=canonical_baseline(expected)
           result.undo_actual_source=state and canonical_baseline(state.source) or "pending"
           result.gui_state=require("gui").get_ui_state()
-          result.gui_key=controls.acid_program_key_popup.value
+          result.gui_key=controls.acid_program_pitch_summary.text
           result.selected_instrument_index=song.selected_instrument_index
           result.selected_phrase_index=song.selected_phrase_index
           error("GUI source did not follow native Undo/Redo",0)
@@ -8388,7 +8431,7 @@ local function run_production_session(done,case_name,options,json)
       action_target=targets[action_index==1 and 1 or #targets]
       select_target(action_target)
       invoke("acid_live_edit",false)
-      invoke("acid_program_pitch_position",1)
+      select_position("pitch",1)
       before=assert(ownership.snapshot(action_target.phrase))
       before_source=sequence.copy_source(action_target.source)
       action_started=false
@@ -8404,7 +8447,7 @@ local function run_production_session(done,case_name,options,json)
         local ok,err=pcall(function()
           local key=(action_target.source.pitch_events[1].key+1)%12
           if action_index==2 then invoke("acid_live_edit",true) end
-          invoke("acid_program_key_popup",key+1)
+          invoke(string.format("acid_grid_key_button_%02d",key+1))
           if action_index==1 then invoke("generate") end
           after_source=sequence.copy_source(before_source)
           local pitch=after_source.pitch_events[1]
@@ -8526,20 +8569,21 @@ local function run_production_session(done,case_name,options,json)
       local command=final_round and "N" or (round%2==0 and "R" or "T")
       invoke("acid_live_edit",false)
       invoke("last_step",32)
-      invoke("acid_program_pitch_position",1)
-      invoke("acid_program_octave_popup",octave+2)
-      invoke("acid_program_accent",accent)
-      invoke("acid_program_slide",slide)
-      invoke("acid_program_time_position",2)
-      invoke("acid_program_time_command",command=="N" and 1 or command=="T" and 2 or 3)
+      select_position("pitch",1)
+      invoke("acid_grid_octave_"..(octave==-1 and "down" or octave==0 and "normal" or "up"))
+      invoke("acid_grid_accent",accent)
+      invoke("acid_grid_slide",slide)
+      select_position("time",2)
+      invoke(command=="N" and "acid_time_command_note" or
+        command=="T" and "acid_time_command_tie" or "acid_time_command_rest")
       invoke("last_step",length)
       invoke("pitch_span",span)
       invoke("acid_timing",timing_mode=="straight" and 1 or 2)
       invoke("policy",policy=="repeat" and 2 or 1)
       assert(ownership.id(target.phrase)==before_id,"unarmed settings edit regenerated the phrase")
-      invoke("acid_program_pitch_position",1)
+      select_position("pitch",1)
       invoke("acid_live_edit",live)
-      invoke("acid_program_key_popup",key+1)
+      invoke(string.format("acid_grid_key_button_%02d",key+1))
       if not live then invoke("generate") end
       local timing=trace[#trace]
       result.edits[#result.edits+1]={ordinal=ordinal,instrument_index=target.instrument_index,
@@ -8578,10 +8622,10 @@ local function run_production_session(done,case_name,options,json)
     local target=targets[1]
     select_target(target)
     invoke("acid_live_edit",false)
-    invoke("acid_program_pitch_position",1)
+    select_position("pitch",1)
     local old_id=target.id
     local key=(target.source.pitch_events[1].key+2)%12
-    invoke("acid_program_key_popup",key+1)
+    invoke(string.format("acid_grid_key_button_%02d",key+1))
     local expected=sequence.copy_source(target.source)
     expected.pitch_events[1]=sequence.new_pitch(key,expected.pitch_events[1].octave,
       expected.pitch_events[1].accent,expected.pitch_events[1].slide)
@@ -8592,8 +8636,10 @@ local function run_production_session(done,case_name,options,json)
     assert(sequence.same_source(draft,expected) and policy==target.policy and pb==target.pb,
       "dirty draft lost across instrument switches")
     assert(ownership.id(target.phrase)==old_id,"unarmed draft navigation regenerated a phrase")
-    assert(controls.acid_program_key_popup.value==key+1,"GUI did not restore dirty draft")
-    invoke("acid_program_key_popup",target.source.pitch_events[1].key+1)
+    assert(controls.acid_grid_pitch_01.tooltip:find(
+      "key="..expected.pitch_events[1].key,1,true),
+      "GUI did not restore the dirty draft PITCH readout")
+    invoke(string.format("acid_grid_key_button_%02d",target.source.pitch_events[1].key+1))
     result.phases.drafts="PASS"
   end
   local function seed()
@@ -8696,10 +8742,10 @@ local function run_production_session(done,case_name,options,json)
           if not position then save_session(finish_cold);return end
           local target=targets[position]
           select_target(target)
-          invoke("acid_program_pitch_position",1)
+          select_position("pitch",1)
           local pitch=target.source.pitch_events[1]
           local key=(pitch.key+1)%12
-          invoke("acid_program_key_popup",key+1)
+          invoke(string.format("acid_grid_key_button_%02d",key+1))
           invoke("generate")
           target.source.pitch_events[1]=sequence.new_pitch(key,pitch.octave,pitch.accent,pitch.slide)
           verify(target)

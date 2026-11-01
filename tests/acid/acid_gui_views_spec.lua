@@ -227,11 +227,17 @@ package.loaded["renoise.phrase_ownership"]={
   recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 local persisted_drafts={}
+local draft_writes=0
 package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
   local entry=committed_entries[phrase.id]
   if not entry then
     local source=sequencer.new_pattern(16)
     for i=1,source.length do source.time_events[i]="N" end
+    source.pitch_events[1]=sequencer.new_pitch(0,0,false,false)
+    source.pitch_events[2]={note=36,key=12,octave=-1,accent=true,slide=true}
+    source.pitch_events[3]={note=48,key=12,octave=0,accent=false,slide=false}
+    source.pitch_events[4]={note=60,key=12,octave=1,accent=false,slide=false}
+    for i=2,source.length do source.time_events[i]="R" end
     store_entry(phrase.id,source,"repeat",phrase.id==22 and 24 or 0)
     entry=committed_entries[phrase.id]
   end
@@ -239,6 +245,7 @@ package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
 end,
   read_entry=read_entry,
   write_draft_metadata=function(song,instrument,phrase,pattern,policy,pb_range)
+    draft_writes=draft_writes+1
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
     persisted_drafts[index..":"..phrase_id]={pattern=pattern,policy=policy,
@@ -280,6 +287,7 @@ validator.classify=function(...)
   return classify(...)
 end
 local editor=require("model.editor_state")
+local draft_cache=require("runtime.draft_cache")
 local project=editor.project
 local projection_calls=0
 editor.project=function(...)
@@ -289,12 +297,20 @@ end
 local runtime_context=require("runtime.context")
 local new_context=runtime_context.new
 local recovery_action_reads=0
+local recovery_reason_fixture
 runtime_context.new=function(options)
   local context=new_context(options)
   local recovery_entries=context.recovery_entries
   context.recovery_entries=function(self,...)
     recovery_action_reads=recovery_action_reads+1
-    return recovery_entries(self,...)
+    local entries=recovery_entries(self,...)
+    if recovery_reason_fixture then
+      entries=entries or {}
+      entries[#entries+1]={token={},revision=1,
+        labels={instrument="Recovery fixture",phrase="Long diagnostic"},
+        reason=recovery_reason_fixture}
+    end
+    return entries
   end
   return context
 end
@@ -357,9 +373,41 @@ local function button(text)
   end
   error("missing button: "..text)
 end
+local recovery_item_reads
+local function control(id)
+  assert(builder.views[id],"missing behavioral GUI control: "..id)
+  return builder.views[id]
+end
+local function program_key(index)
+  return control(string.format("acid_program_key_%02d",index))
+end
+local function saved_draft()
+  return assert(persisted_drafts["1:21"],"expected durable editor draft").pattern
+end
+local function text_control(text)
+  for _,node in ipairs(builder.nodes) do
+    if node.text==text then return node end
+  end
+  error("missing text control: "..text)
+end
+local function assert_navigation_neutral(before,label)
+  assert(render_calls==before.writes,label.." must not request generation")
+  assert(projection_calls==before.projections,label.." must not re-resolve source")
+  assert(classification_calls==before.classifications,label.." must not reclassify phrase content")
+  assert(button("Undo").active==before.undo and button("Redo").active==before.redo,
+    label.." must not create a history transition")
+  assert(draft_writes==before.drafts,label.." must not persist a draft")
+  assert(recovery_item_reads==before.recovery_reads,label.." must not rescan recovery entries")
+end
+local function navigation_snapshot()
+  return {writes=render_calls,projections=projection_calls,
+    classifications=classification_calls,undo=button("Undo").active,
+    redo=button("Redo").active,drafts=draft_writes,recovery_reads=recovery_item_reads}
+end
 local recovery_choice=builder.views.acid_recovery_choice
 local recovery_items=recovery_choice.items
-local recovery_item_writes,recovery_item_reads=0,0
+local recovery_item_writes=0
+recovery_item_reads=0
 recovery_choice.items=nil
 setmetatable(recovery_choice,{__index=function(_,key)
   if key=="items" then recovery_item_reads=recovery_item_reads+1;return recovery_items end
@@ -377,57 +425,304 @@ end,__newindex=function(self,key,value)
   if key=="text" then summary_writes=summary_writes+1;summary_text=value
   else rawset(self,key,value) end
 end})
+local navigation=navigation_snapshot()
 view:fire(2)
-assert(not program.visible and grid.visible)
 assert(display_snapshot()==initial)
-assert(render_calls==0)
+assert_navigation_neutral(navigation,"workspace view navigation")
 view:fire(1)
-assert(program.visible and not grid.visible)
 assert(display_snapshot()==initial)
-assert(render_calls==0)
-assert(projection_calls==initial_projections,"view navigation reuses the validated projection")
-assert(classification_calls==initial_classifications,"view navigation must not rescan native phrase content")
+assert_navigation_neutral(navigation,"return workspace navigation")
+for _,tab in ipairs({"Decoded","Pattern / Copy","Extended / Clear","Output","Recovery"}) do
+  text_control(tab):fire()
+end
+assert_navigation_neutral(navigation,"workspace tab navigation")
 assert(summary_writes==0,"unchanged summary text is not assigned again")
-local summary_reads_after_snapshots=summary_reads
 assert(recovery_item_reads<=1,
   "recovery items are read only to seed the rendered-value cache")
 local initial_recovery_item_reads=recovery_item_reads
 for _=1,20 do tool.app_idle_observable:fire() end
 assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
 
-builder.views.acid_program_time_command:fire(3)
-assert(projection_calls==initial_projections+1,"a TIME edit projects once")
-assert(recovery_action_reads==initial_recovery_action_reads,
-  "a successful source edit does not rescan recovery actions")
-assert(summary_reads==summary_reads_after_snapshots and recovery_item_reads==initial_recovery_item_reads,
-  "unchanged read-only text and item controls reuse their cached render values: "..
-    summary_reads.."/"..summary_reads_after_snapshots.."; "..
-    recovery_item_reads.."/"..initial_recovery_item_reads)
-assert(builder.views.acid_grid_time_01.value==1,"hidden Grid controls are left untouched")
-assert(builder.views.acid_preview_summary.text:find("REST",1,true))
-assert(render_calls==0)
-assert(recovery_item_writes==0,"unchanged recovery choices are not reassigned during source edits")
-builder.views.acid_editor_view:fire(2)
-assert(builder.views.acid_grid_time_01.value==3,"Grid controls refresh when the panel becomes visible")
-assert(render_calls==0)
-builder.views.acid_editor_view:fire(1)
-builder.views.acid_program_key_popup:fire(2)
-assert(projection_calls==initial_projections+2,"a PITCH edit projects once")
-assert(not builder.views.acid_grid_pitch_01.text:find("C#",1,true),"hidden Grid pitch text remains untouched")
-assert(render_calls==0)
-builder.views.acid_program_key_popup.value=8
-builder.views.acid_editor_view:fire(1)
-assert(builder.views.acid_program_key_popup.value==2,
-  "rendering compares the native value after a user change")
-builder.views.acid_editor_view:fire(2)
-assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true))
-assert(render_calls==0)
+local nav_before=navigation_snapshot()
+for page=1,2 do
+  assert(control("acid_pitch_page_"..page),"PITCH page control missing")
+  assert(control("acid_time_page_"..page),"TIME page control missing")
+end
+view:fire(2)
+control("acid_pitch_page_2"):fire()
+control("acid_grid_pitch_01"):fire()
+view:fire(1)
+assert(control("acid_program_pitch_summary").text:find("P17",1,true),
+  "PITCH page two selects P17")
+assert(control("acid_program_time_summary").text:find("TIME 01",1,true),
+  "PITCH selection leaves the independent TIME cursor unchanged")
+control("acid_time_page_2"):fire()
+control("acid_grid_select_time_01"):fire()
+assert(control("acid_program_time_summary").text:find("TIME 17",1,true),
+  "TIME page two selects TIME17")
+assert(control("acid_program_pitch_summary").text:find("P17",1,true),
+  "TIME selection leaves the independent PITCH cursor unchanged")
+assert_navigation_neutral(nav_before,"independent cursor and page navigation")
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+assert(control("acid_grid_pitch_02").text:find("36/12%-1"),
+  "PITCH navigation preserves raw (36,12,-1): "..control("acid_grid_pitch_02").text)
+control("acid_pitch_page_1"):fire()
+assert(control("acid_grid_pitch_03").text:find("48/12%+0"),
+  "PITCH navigation preserves raw (48,12,0): "..control("acid_grid_pitch_03").text)
+assert(control("acid_grid_pitch_04").text:find("60/12%+1"),
+  "PITCH navigation preserves loaded raw (60,12,1)")
+control("acid_grid_pitch_03"):fire()
+view:fire(1)
+program_key(2):fire()
+local raw48_edit=saved_draft().pitch_events[3]
+assert(raw48_edit.note==37 and raw48_edit.key==1 and raw48_edit.octave==0,
+  "a genuine edit canonicalizes raw (48,12,0) through keyboard mapping")
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+assert(control("acid_grid_pitch_03").text:find("37/1%+0"),
+  "the canonicalized raw-48 pitch survives subsequent navigation")
+control("acid_grid_pitch_04"):fire()
+view:fire(1)
+program_key(1):fire()
+local raw60_edit=saved_draft().pitch_events[4]
+assert(raw60_edit.note==48 and raw60_edit.key==0 and raw60_edit.octave==1,
+  "a genuine edit canonicalizes loaded raw (60,12,1) through keyboard mapping")
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+assert(control("acid_grid_pitch_04").text:find("48/0%+1"),
+  "the canonicalized loaded endpoint survives subsequent navigation")
+view:fire(1)
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+control("acid_grid_pitch_01"):fire()
+view:fire(1)
+assert(control("acid_program_pitch_summary").text:find("STORED | REFERENCED | UNMODIFIED",1,true),
+  "default C is stored, referenced by canonical TIME, and clean against load baseline")
+view:fire(2)
+control("acid_grid_pitch_02"):fire()
+view:fire(1)
+assert(control("acid_program_pitch_summary").text:find("STORED | NOT REFERENCED | UNMODIFIED",1,true),
+  "a nondefault but unconsumed PITCH slot remains stored and clean")
+local all_page_navigation=navigation_snapshot()
+for page=1,2 do
+  control("acid_pitch_page_"..page):fire()
+  for cell=1,16 do
+    local slot=(page-1)*16+cell
+    assert(control(string.format("acid_grid_pitch_%02d",cell)).active,
+      "all 32 PITCH slots remain editable, including P"..slot)
+  end
+end
+assert_navigation_neutral(all_page_navigation,"PITCH and TIME page selection")
+local pitch_rows=0
+local function inspect_pitch_rows(node)
+  if node.kind=="row" then
+    local cells=0
+    for _,child in ipairs(node.views or {}) do
+      if type(child.id)=="string" and child.id:match("^acid_grid_pitch_%d%d$") then
+        cells=cells+1
+      end
+    end
+    if cells>0 then assert(cells==8,"each PITCH memory row contains exactly eight cells");pitch_rows=pitch_rows+1 end
+  end
+  for _,child in ipairs(node.views or {}) do inspect_pitch_rows(child) end
+end
+inspect_pitch_rows(builder.views.acid_grid_panel)
+assert(pitch_rows==2,"PITCH memory uses exactly two rows of eight cells per page")
+local time_rows=0
+local function inspect_time_rows(node)
+  if node.kind=="row" then
+    local cells=0
+    for _,child in ipairs(node.views or {}) do
+      local candidates=child.views or {child}
+      for _,candidate in ipairs(candidates) do
+        if type(candidate.id)=="string" and candidate.id:match("^acid_grid_select_time_%d%d$") then
+          cells=cells+1
+        end
+      end
+    end
+    if cells>0 then assert(cells==8,"each TIME memory row contains exactly eight cells");time_rows=time_rows+1 end
+  end
+  for _,child in ipairs(node.views or {}) do inspect_time_rows(child) end
+end
+inspect_time_rows(builder.views.acid_grid_panel)
+assert(time_rows==2,"TIME memory uses exactly two rows of eight cells per page")
+control("acid_pitch_page_1"):fire()
+control("acid_grid_pitch_01"):fire()
+local edit_neutral=navigation_snapshot()
+program_key(3):fire()
+assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true),
+  "a genuine PITCH edit differs from the accepted baseline")
 button("Undo"):fire()
-assert(not builder.views.acid_grid_pitch_01.text:find("C#",1,true),
-  "undo restores the visible Grid value")
+assert(control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "undo recomputes the baseline-relative indicator")
 button("Redo"):fire()
-assert(builder.views.acid_grid_pitch_01.text:find("C#",1,true),
-  "redo restores the visible Grid value")
+assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true) and
+  not control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "redo recomputes the baseline-relative indicator")
+program_key(1):fire()
+assert(control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "editing back to the loaded baseline clears modified")
+assert(render_calls==edit_neutral.writes,"PITCH edits with Live Edit disabled make no request")
+local c_plus=control("acid_program_c_plus")
+assert(not c_plus.active,"C+ is unavailable unless the selected PITCH octave is UP")
+local c_plus_before=navigation_snapshot()
+local pitch_before_c_plus=saved_draft().pitch_events[1]
+c_plus:fire()
+local pitch_after_c_plus=saved_draft().pitch_events[1]
+assert(pitch_after_c_plus.note==pitch_before_c_plus.note and
+  pitch_after_c_plus.key==pitch_before_c_plus.key and
+  pitch_after_c_plus.octave==pitch_before_c_plus.octave and
+  draft_writes==c_plus_before.drafts and button("Undo").active==c_plus_before.undo,
+  "programmatically firing disabled C+ at NORMAL is a no-op")
+assert_navigation_neutral(c_plus_before,"disabled C+ control")
+control("acid_program_octave_down"):fire()
+assert(not c_plus.active,"C+ is unavailable at DOWN")
+local down_c_plus_before=navigation_snapshot()
+local pitch_before_down_c_plus=saved_draft().pitch_events[1]
+c_plus:fire()
+local pitch_after_down_c_plus=saved_draft().pitch_events[1]
+assert(pitch_after_down_c_plus.note==pitch_before_down_c_plus.note and
+  pitch_after_down_c_plus.key==pitch_before_down_c_plus.key and
+  pitch_after_down_c_plus.octave==pitch_before_down_c_plus.octave and
+  draft_writes==down_c_plus_before.drafts and button("Undo").active==down_c_plus_before.undo,
+  "programmatically firing disabled C+ at DOWN is a no-op")
+assert_navigation_neutral(down_c_plus_before,"disabled C+ control at DOWN")
+control("acid_program_octave_up"):fire()
+assert(c_plus.active,"C+ becomes available at UP")
+c_plus:fire()
+local endpoint_draft=saved_draft()
+assert(endpoint_draft.pitch_events[1].note==60 and
+  endpoint_draft.pitch_events[1].key==12 and endpoint_draft.pitch_events[1].octave==1,
+  "C+ at the UP octave maps to the inclusive MIDI-60 endpoint: "..
+    tostring(endpoint_draft.pitch_events[1].note).."/"..
+    tostring(endpoint_draft.pitch_events[1].key).."/"..
+    tostring(endpoint_draft.pitch_events[1].octave))
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+assert(control("acid_grid_pitch_01").text:find("60/12%+1"),
+  "navigating away and back retains the MIDI-60 endpoint encoding")
+view:fire(1)
+program_key(1):fire()
+control("acid_program_octave_normal"):fire()
+control("acid_grid_pitch_02"):fire()
+local raw_before=assert(committed_entries[21].source.pitch_events[2])
+assert(raw_before.note==36 and raw_before.key==12 and raw_before.octave==-1,
+  "fixture retains the alternate raw encoding (36,12,-1)")
+program_key(2):fire()
+local alternate_draft=saved_draft()
+assert(alternate_draft.pitch_events[2].note==25 and
+  alternate_draft.pitch_events[2].key==1 and alternate_draft.pitch_events[2].octave==-1 and
+  alternate_draft.pitch_events[2].accent and alternate_draft.pitch_events[2].slide,
+  "editing alternate raw (36,12,-1) uses keyboard mapping and preserves ACCENT/SLIDE")
+local decoded_rows
+local decoded_page_label
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="multiline_text" and node.height==76 then decoded_rows=node end
+  if node.kind=="text" and node.text=="TIME 01-04 / 32" then decoded_page_label=node end
+end
+assert(decoded_rows and decoded_page_label,"decoded paging controls were not built")
+local decoded_line_count=decoded_rows.text=="" and 0 or 1
+for _ in decoded_rows.text:gmatch("\n") do decoded_line_count=decoded_line_count+1 end
+assert(decoded_line_count==4,"decoded workspace is bounded to four visible rows")
+assert(text_control("Previous 4") and text_control("Next 4"),
+  "decoded sequence uses bounded four-row paging controls")
+local decoded_navigation=navigation_snapshot()
+for _=1,7 do text_control("Next 4"):fire() end
+assert(decoded_page_label.text=="TIME 29-32 / 32",
+  "decoded paging reaches exactly the final four of 32 TIME positions")
+text_control("Next 4"):fire()
+assert(decoded_page_label.text=="TIME 29-32 / 32",
+  "decoded paging cannot advance past the source")
+for _=1,7 do text_control("Previous 4"):fire() end
+assert(decoded_page_label.text=="TIME 01-04 / 32",
+  "decoded paging returns to the first four TIME positions")
+assert_navigation_neutral(decoded_navigation,"decoded paging")
+local recovery_items=control("acid_recovery_choice").items
+assert(#recovery_items<=16,"recovery selector is bounded to sixteen entries")
+recovery_reason_fixture=string.rep("Injected recovery evidence remains available across bounded pages. ",32)
+control("acid_recovery_choice"):fire(1)
+assert(#control("acid_recovery_choice").items<=16,
+  "recovery selection remains bounded while displaying long evidence")
+local recovery_page_label=control("acid_recovery_page_label")
+local recovery_detail=control("acid_recovery_detail")
+local function visible_lines(text)
+  local count=text=="" and 0 or 1
+  for _ in text:gmatch("\n") do count=count+1 end
+  return count
+end
+assert(visible_lines(recovery_detail.text)<=4,
+  "long recovery evidence renders no more than four lines at once")
+local recovery_navigation=navigation_snapshot()
+local recovery_first_page=recovery_page_label.text
+local _,recovery_page_count_text=recovery_first_page:match("^(%d+) / (%d+)$")
+local recovery_page_count=tonumber(recovery_page_count_text)
+assert(recovery_page_count and recovery_page_count>1,
+  "long recovery evidence exposes multiple bounded pages")
+for page=1,recovery_page_count do
+  assert(visible_lines(recovery_detail.text)<=4 and recovery_detail.text~="",
+    "recovery page "..page.." contains at most four nonempty lines")
+  if page<recovery_page_count then
+    control("acid_recovery_next"):fire()
+    assert(recovery_page_label.text==string.format("%d / %d",page+1,recovery_page_count),
+      "recovery Next advances exactly one page")
+  end
+end
+local recovery_last_page=recovery_page_label.text
+assert(visible_lines(recovery_detail.text)<=4 and
+  recovery_detail.text:find("OWNERSHIP:",1,true),
+  "the final recovery page retains ownership context within the line bound")
+control("acid_recovery_next"):fire()
+assert(recovery_page_label.text==recovery_last_page,
+  "recovery paging cannot advance past its final page")
+while control("acid_recovery_previous").active do control("acid_recovery_previous"):fire() end
+assert(recovery_page_label.text==recovery_first_page and visible_lines(recovery_detail.text)<=4,
+  "recovery paging returns to its first bounded page")
+assert(recovery_detail.text:find("Injected recovery evidence",1,true),
+  "the first recovery page displays injected long-reason content")
+assert_navigation_neutral(recovery_navigation,"recovery detail paging")
+recovery_reason_fixture=nil
+control("acid_recovery_choice"):fire(1)
+local recovery_writes_before_source_edit=recovery_item_writes
+
+control("acid_time_page_1"):fire()
+control("acid_grid_select_time_01"):fire()
+local recovery_reads_before_time_edit=recovery_action_reads
+button("REST"):fire()
+assert(projection_calls>initial_projections,"a TIME edit refreshes the canonical projection")
+assert(recovery_action_reads==recovery_reads_before_time_edit,
+  "a successful source edit does not rescan recovery actions")
+assert(render_calls==0)
+assert(recovery_item_writes==recovery_writes_before_source_edit,
+  "unchanged recovery choices are not reassigned during source edits")
+local shared_view_snapshot=display_snapshot()
+view:fire(2)
+assert(display_snapshot()==shared_view_snapshot,"Program and Grid project the same canonical source")
+assert(render_calls==0)
+view:fire(1)
+
+local last_step
+for _,node in ipairs(builder.nodes) do if node.kind=="valuebox" then last_step=node end end
+assert(last_step and last_step.min==1 and last_step.max==32)
+last_step:fire("20")
+control("acid_time_page_2"):fire()
+control("acid_grid_select_time_01"):fire()
+assert(control("acid_program_time_summary").text:find("TIME 17",1,true))
+button("TIE"):fire()
+local inactive_time=saved_draft().time_events[17]
+assert(inactive_time=="T","TIME17 accepts an edit while within LAST STEP")
+last_step:fire("8")
+assert(control("acid_program_time_summary").text:find("TIME 17",1,true),
+  "shrinking LAST STEP retains the TIME17 cursor")
+assert(not button("TIE").active and not button("REST").active and not button("NOTE").active,
+  "shared TIME assignment controls disable while the cursor is inactive")
+local inactive_history={undo=button("Undo").active,redo=button("Redo").active,
+  drafts=draft_writes}
+button("REST"):fire()
+assert(saved_draft().time_events[17]==inactive_time and
+  button("Undo").active==inactive_history.undo and button("Redo").active==inactive_history.redo and
+  draft_writes==inactive_history.drafts,
+  "inactive TIME17 cannot be edited or persisted after shrink")
 
 local last_step
 local output_popup
@@ -478,7 +773,8 @@ assert(timing_popup.value==2,"Undo restores the previous timing")
 assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: REST",1,true))
 builder.views.acid_editor_view:fire(1)
-assert(builder.views.acid_program_key_popup.value==2)
+assert(builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+  "undo returns PITCH to its accepted source baseline")
 assert(output_popup.value==1,"Undo restores the previous output policy")
 assert(pb_range_popup.value==3,"Undo restores the prior PB Range")
 assert(button("Redo").active)
@@ -487,7 +783,7 @@ assert(output_popup.value==2 and builder.views.acid_preview_summary.text:find("S
 assert(pb_range_popup.value==1,"Redo restores the reset PB Range Off")
 assert(timing_popup.value==1,"Redo restores straight timing")
 button("Undo"):fire()
-builder.views.acid_program_time_command:fire(1)
+button("NOTE"):fire()
 assert(not button("Redo").active,"new edits discard the redo branch")
 
 phrase_popup:fire(1)
@@ -496,6 +792,8 @@ assert(generation_request.target_index==1,"the first owned phrase can be generat
 generation_callback(terminal_result(generation_request,"committed","Phrase 01 generated."))
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual regeneration accepts structural selection changes without altering playback")
+assert(control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "verified generation establishes the accepted PITCH baseline")
 
 local classifications_before_rebind=classification_calls
 phrase_popup:fire(2)
@@ -529,12 +827,12 @@ assert(not draft_warning,
 phrase_popup:fire(3)
 assert(pb_range_popup.value==1,"a new phrase starts with PB Range Off")
 pb_range_popup:fire(4)
-builder.views.acid_program_key_popup:fire(3)
+program_key(3):fire()
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request.target_index==3,"new phrase generation targets append slot")
 assert(generation_request.options.pb_range==24,"new phrase render captures its selected PB Range")
 pb_range_popup:fire(5)
-builder.views.acid_program_key_popup:fire(4)
+program_key(4):fire()
 local target_popup
 for _,node in ipairs(builder.nodes) do
   if node.kind=="popup" and node.width==290 then target_popup=node end
@@ -544,7 +842,6 @@ target_popup:fire(2)
 local created_phrase={id=23,name="Generated phrase"}
 instrument.phrases[3]=created_phrase
 generation_callback(terminal_result(generation_request,"committed","Phrase generated."))
-local draft_cache=require("runtime.draft_cache")
 local recovered,recovered_policy,recovered_pb_range=draft_cache.get(song,instrument,nil)
 assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat" and
   recovered_pb_range==48,
@@ -556,22 +853,23 @@ assert(not draft_cache.get(song,instrument_two,instrument_two.phrases[1]),
 
 target_popup:fire(1)
 phrase_popup:fire(4)
+local live_render_base=render_calls
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
   if node.kind=="checkbox" and node.value==false then live_checkbox=node end
 end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
-assert(render_calls==3,"arming Live Edit does not request a render")
+assert(render_calls==live_render_base,"arming Live Edit does not request a render")
 local armed_projections=projection_calls
 builder.views.acid_editor_view:fire(2)
-assert(render_calls==3 and projection_calls==armed_projections,
+assert(render_calls==live_render_base and projection_calls==armed_projections,
   "armed view navigation reuses projection without rendering")
 button("Reset Source"):fire()
-assert(render_calls==3,"resetting an armed source does not request a render")
-builder.views.acid_program_key_popup:fire(2)
+assert(render_calls==live_render_base,"resetting an armed source does not request a render")
+program_key(2):fire()
 tool.app_idle_observable:fire()
-assert(render_calls==4 and generation_request.target_index==4,
+assert(render_calls==live_render_base+1 and generation_request.target_index==4,
   "an edit after arming appends the selected new phrase")
 local appended={id=24,name="Live appended phrase"}
 generation_request.options.phrase_mutation(function()
@@ -581,36 +879,36 @@ end)
 generation_callback(terminal_result(generation_request,"committed","Live append committed."))
 assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
 synchronous_writes=true
-builder.views.acid_program_key_popup:fire(5)
-assert(render_calls==5 and active_request==nil,
+program_key(5):fire()
+assert(render_calls==live_render_base+2 and active_request==nil,
   "a synchronous writer completes inside the native source-edit callback")
 tool.app_idle_observable:fire()
-assert(render_calls==5 and generation_request.target_index==4,
+assert(render_calls==live_render_base+2 and generation_request.target_index==4,
   "the idle callback does not duplicate the same in-place Live Edit write")
 assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
 
 instrument.phrase_program=2
 instrument.phrase_program_observable:fire()
 instrument.phrase_program=1
-assert(phrase_popup.value==4 and render_calls==5,
+assert(phrase_popup.value==4 and render_calls==live_render_base+2,
   "playback-program notifications alone do not redirect the ACID edit destination")
 select_native_phrase(2)
-assert(phrase_popup.value==4 and render_calls==5,
+assert(phrase_popup.value==4 and render_calls==live_render_base+2,
   "native phrase selection defers ACID view changes until the idle callback")
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==2 and pb_range_popup.value==4,
   "native Phrase Editor selection rebinds ACID to that phrase on idle")
-assert(render_calls==5 and song.selected_phrase==instrument.phrases[2],
+assert(render_calls==live_render_base+2 and song.selected_phrase==instrument.phrases[2],
   "switching to a saved phrase does not regenerate or disturb its selection")
 phrase_popup:fire(1)
-assert(phrase_popup.value==1 and render_calls==5 and song.selected_phrase==instrument.phrases[2],
+assert(phrase_popup.value==1 and render_calls==live_render_base+2 and song.selected_phrase==instrument.phrases[2],
   "choosing an ACID destination leaves native selection unchanged without regenerating")
 phrase_popup:fire(2)
-assert(phrase_popup.value==2 and render_calls==5 and song.selected_phrase==instrument.phrases[2],
+assert(phrase_popup.value==2 and render_calls==live_render_base+2 and song.selected_phrase==instrument.phrases[2],
   "choosing phrase 02 in Destination stays selected without regenerating")
-builder.views.acid_program_key_popup:fire(5)
+program_key(5):fire()
 tool.app_idle_observable:fire()
-assert(render_calls==6 and generation_request.target_index==2,
+assert(render_calls==live_render_base+3 and generation_request.target_index==2,
   "an edit after a native phrase switch targets the selected phrase")
 assert(generation_request.options.token:is_current(),
   "the request is current before the playback-program change")
@@ -622,16 +920,19 @@ assert(not generation_request.options.token:is_current(),
 generation_callback(terminal_result(generation_request,"suspended","playback program changed"))
 assert(generation_request.request.phrase.id==pending_revision_id and instrument.phrase_program==2,
   "a revoked request leaves the phrase revision untouched and keeps the playback program")
-builder.views.acid_program_key_popup:fire(6)
+program_key(6):fire()
 tool.app_idle_observable:fire()
-assert(render_calls==7 and generation_request.target_index==2,
+assert(render_calls==live_render_base+4 and generation_request.target_index==2,
   "a fresh edit still targets the ACID-selected phrase after playback changes")
 generation_callback(terminal_result(generation_request,"committed","Phrase regenerated with program 02 selected."))
 assert(song.selected_phrase==nil and instrument.phrase_program==2,
   "the fresh synchronous regeneration preserves the changed playback program")
+view:fire(1)
+assert(control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "verified generation establishes the accepted PITCH baseline")
 instrument.phrase_program=1
 instrument.phrase_program_observable:fire()
-assert(instrument.phrase_program==1 and phrase_popup.value==2 and render_calls==7,
+assert(instrument.phrase_program==1 and phrase_popup.value==2 and render_calls==live_render_base+4,
   "a playback-program notification alone preserves the ACID destination without writing")
 assert(#instrument.phrases==4,"native phrase selection must not create another destination")
 
@@ -641,11 +942,18 @@ select_native_phrase(2)
 phrase_popup:fire(1)
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native selection")
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+control("acid_grid_pitch_01"):fire()
+view:fire(1)
 live_checkbox:fire(true)
-assert(render_calls==7,"rearming Live Edit does not request a render")
-builder.views.acid_program_key_popup:fire(3)
+assert(render_calls==live_render_base+4,"rearming Live Edit does not request a render")
+control("acid_program_octave_up"):fire()
+assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true) and
+  not control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "in-flight request source differs from accepted P1 baseline")
 tool.app_idle_observable:fire()
-assert(render_calls==8 and generation_request.target_index==1,
+assert(render_calls==live_render_base+5 and generation_request.target_index==1,
   "an edit after rearming targets the selected phrase 01")
 
 generation_request.options.phrase_mutation(function()
@@ -658,15 +966,24 @@ assert(phrase_popup.value==1 and generation_request.target_index==1,
 assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
   "regenerating ACID phrase 01 leaves native structural selection unchanged")
 
--- Cancelling a live render must not block subsequent native selections.
-builder.views.acid_program_key_popup:fire(7)
+-- Cancelling an active Live Edit render must not block native selection.
+control("acid_program_octave_down"):fire()
 tool.app_idle_observable:fire()
-assert(render_calls==9,"a fresh Live Edit render is running before cancellation")
+assert(render_calls==live_render_base+6 and generation_request.target_index==1,
+  "a fresh PITCH edit starts the render used by the cancellation check")
+local cancelled_request=generation_request
 live_checkbox:fire(false)
+assert(not cancelled_request.options.token:is_current(),
+  "disarming Live Edit revokes the in-flight request")
+select_native_phrase(1)
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==1,"native phrase selection advances while the cancelled render settles")
 select_native_phrase(2)
 tool.app_idle_observable:fire()
-assert(phrase_popup.value==2,"cancelled renders must not suppress native phrase selection")
-local after_cancel=render_calls
+assert(phrase_popup.value==2 and render_calls==live_render_base+6,
+  "cancelled render does not queue a replacement on native selection")
+generation_callback(terminal_result(cancelled_request,"suspended","cancelled render cleaned"))
+local before_native_selection=render_calls
 
 -- Passive selection of a foreign phrase must never start a new render.
 instrument.phrases[3].foreign=true
@@ -675,14 +992,12 @@ package.loaded["renoise.phrase_ownership"].status=function(phrase)
 end
 select_native_phrase(3)
 tool.app_idle_observable:fire()
-assert(render_calls==after_cancel and phrase_popup.value==3,
+assert(render_calls==before_native_selection and phrase_popup.value==3,
   "foreign native selection is reflected without appending or redirecting to New")
 instrument.phrases[3].foreign=nil
 select_native_phrase(1)
 tool.app_idle_observable:fire()
 assert(phrase_popup.value==1,"owned phrase selection still synchronizes after cancellation")
-
-generation_callback(terminal_result(generation_request,"suspended","cancelled render cleaned"))
 
 local before_queued_generate=render_calls
 live_checkbox:fire(true)
@@ -764,6 +1079,28 @@ inventory_idle()
 song.instruments={instrument,instrument_two}
 song.instruments_observable:fire()
 inventory_idle()
+
+phrase_popup:fire(1)
+view:fire(2)
+control("acid_pitch_page_1"):fire()
+control("acid_grid_pitch_01"):fire()
+view:fire(1)
+local committed_key=tonumber(control("acid_program_pitch_summary").text:match("/(%d+)"))
+assert(committed_key,"selected pitch summary does not expose its canonical key")
+program_key(committed_key==0 and 2 or 1):fire()
+assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true) and
+  not control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "precondition: source is modified against the verified commit baseline")
+button("Generate / Regenerate ACID Phrase"):fire()
+local missing_phrase_result=terminal_result(generation_request,"committed",
+  "verified completion without destination identity")
+assert(missing_phrase_result.kind=="success" and missing_phrase_result.verified,
+  "fixture supplies a verified successful completion before removing phrase identity")
+missing_phrase_result.phrase=nil
+generation_callback(missing_phrase_result)
+assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true) and
+  not control("acid_program_pitch_summary").text:find("UNMODIFIED",1,true),
+  "verified completion without the bound phrase does not reset the modified baseline")
 
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")

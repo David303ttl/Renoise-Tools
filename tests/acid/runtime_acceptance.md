@@ -1,5 +1,10 @@
 # Runtime integration acceptance map
 
+M5 sections below are dated checkpoint records. Earlier statements that later
+gates were pending describe those checkpoints, not the current implementation.
+See [Gate 3 verification](#m5-gate-3-shell-and-grid-verification-2026-11-01) for
+the current shell work and its native feasibility limitation.
+
 ## M5 Gate 0 audit (2026-11-01)
 
 **Scope:** baseline, pinned SDK facts and call-site inventory only. No runtime,
@@ -346,6 +351,93 @@ inventory and spec dispositions recorded, shared snapshot owner selected, and
 independent second-pass findings resolved. Gates 1+2 must still execute atomically;
 no later implementation gate was started. M5 overall remains incomplete, and all
 new native editor/audition/playback acceptance is unverified.
+
+## M5 Gate 3 shell and Grid verification (2026-11-01)
+
+**Disposition: PASS for Gate 3 implementation, deterministic verification and
+independent second-pass review. Native feasibility remains UNVERIFIED.**
+Scope is the shared shell, independent navigation, direct Grid controls,
+bounded workspace/paging and session PITCH indicators. Program staging,
+audition and later operation gates are not part of this change.
+
+- Fresh baseline: `pwsh -File ./scripts/run_tests.ps1 -Tool ACID` exited 0;
+  **71 specs passed, 0 failed**, Lua 5.1, isolated processes, 61.55 seconds.
+- An intermediate full-repository run during active implementation exited 1:
+  **74 specs, 5 failed**. The new GUI exceeded Lua 5.1's 60-upvalue limit in
+  its refresh closure, preventing the five GUI specs from loading. This is
+  development failure evidence, not final acceptance.
+- A subsequent ACID integration run exited 1: **71 specs, 5 failed** in
+  60.39 seconds. GUI compilation succeeded; four specs still referenced removed
+  dropdowns and the view spec failed its C+ assertion. These integration failures
+  were development failures, not acceptance results.
+- Following selector cutover, a repository run exited 1: **74 specs, 1 failed**
+  in 71.94 seconds. Admission, independence, recovery and timing-race GUI specs
+  passed; the expanded views spec still failed. Independent review additionally
+  identified C+ admission outside UP and premature indicator baseline acceptance
+  for a success without a verified destination. Both production issues were
+  corrected before the passing repository run below.
+- After those corrections, `pwsh -File ./scripts/run_tests.ps1` exited 0:
+  **74 specs passed, 0 failed**, Lua 5.1, isolated processes, 67.10 seconds.
+  This includes all five GUI specs, the ACID model/runtime/writer regressions,
+  ARP regressions and offline Renoise harness specs. It is deterministic
+  repository evidence, not native layout or playback acceptance.
+- Implementation retains one source and existing request/writer/store owners.
+  Program/Grid have independent PITCH and TIME pages/selections; inactive TIME
+  remains inspectable after LAST STEP shrink and cannot be directly edited.
+  Grid uses two rows of eight cells per memory and selection-only TIME buttons.
+  Twelve chromatic controls, three octave controls and UP-only C+ replace the
+  old dropdowns. Raw pitch encoding remains visible and untouched by navigation.
+- A fixed-height stack hosts Decoded, Pattern / Copy, Extended / Clear, Output
+  and Recovery. Decoded and Recovery details each show at most four rows/lines
+  per page. Later operation tabs explicitly report unavailable operations;
+  staging, audition, clipboard, labels UI and transforms are not implemented by
+  this gate.
+- Stored/referenced/modified PITCH indicators derive from retained source,
+  canonical traversal and a detached load/verified-commit baseline. The reviewed
+  success path rejects stale, noncurrent, absent or mismatched destination
+  identities before advancing that baseline. Disabled C+ callbacks cannot bypass
+  UP-only admission. Native harness probes now use replacement button actions
+  and readouts rather than retired widget IDs.
+- Independent source/API and assertion-level reviews found and corrected the
+  UP-only C+ guard, destination-baseline guard, missing raw-encoding/reopen/paging
+  assertions, and native probe cursor assumption. The probe now explicitly
+  selects and verifies PITCH 1 before evaluating note/octave edits. Added
+  regressions were rerun after fixture/counter setup corrections; the earlier
+  passing run alone did not cover subsequently added assertions.
+- The post-review ACID run exited 1: **71 specs, 2 failed** in 62.98 seconds.
+  Newly expanded views and recovery fixtures failed their setup/status
+  assertions; all other specs passed. This supersedes the earlier all-pass
+  snapshot and was subsequently superseded by the final successful run below.
+- Expanded assertions also exposed a missing displayed-indicator refresh after
+  verified baseline acceptance. The success path now calls the guarded cached
+  GUI refresh immediately after accepting that baseline. Independent re-review
+  found no additional source/history mutation or generation request in this
+  correction. The missing-destination regression, existing cancellation paths,
+  restored-source indicators and raw-encoding/paging assertions now pass.
+- Final command: `pwsh -File ./scripts/run_offline_tests.ps1`, exit 0:
+  **18 offline check groups passed**, including **74 Lua specs, 0 failed** in
+  60.57 seconds. This final run includes the expanded regression assertions and
+  reviewed production/harness fixes. The preceding offline run failed only its
+  Lua group (the two GUI fixture failures above); its other 17 groups passed.
+- Independent production, SDK, assertion-coverage, native harness and evidence
+  reviews were performed by agents other than the implementer. Findings were
+  corrected and rechecked, including the final indicator refresh and explicit
+  PITCH cursor verification. No unresolved deterministic Gate 3 finding remains.
+  This is scoped Gate 3 review evidence, not final M5 Gate 12 acceptance.
+- Release archive construction passed with
+  `pwsh -File ./scripts/package.ps1 -Tool ACID`: 31 runtime files, unchanged
+  manifest version 0.1. `pwsh -File ./tests/renoise/test_package_dev.ps1` exited 0,
+  checking release exclusions, development payload/fixture hashes, generated
+  Lua 5.1 entrypoint syntax, bootstrap and packaging rejection cases.
+  `pwsh -File ./tests/package_license_spec.ps1` verified all three archive
+  licenses; `pwsh -File ./tests/renoise/runner_spec.ps1` passed transport,
+  ownership, keyboard configuration, reporting and installation lifecycle mocks.
+- Native feasibility procedure 13.1.6 is **UNVERIFIED**. Read-only process
+  detection found no running Renoise process. No installation, song replacement,
+  or host UI actions were performed. The existing native API harness has no
+  automated clipping/legibility/reachability assertion for this shell; mocks
+  cannot establish display-scale fit. GUI-heavy Gates 4–7 must wait for actual
+  native feasibility evidence.
 
 ## M5 Gates 1+2 deterministic exit (2026-11-01)
 

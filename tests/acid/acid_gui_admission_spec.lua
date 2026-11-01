@@ -198,6 +198,10 @@ local function button(builder,label)
   end
   error("missing button: "..label)
 end
+local function pitch_key(builder,index)
+  return assert(builder.views[string.format("acid_program_key_%02d",index)],
+    "missing PITCH key button "..index)
+end
 local function popup(builder,width)
   for _,node in ipairs(builder.nodes) do
     if node.kind=="popup" and node.width==width then return node end
@@ -265,7 +269,7 @@ assert(manual.completed,"manual write and completion finish inside the Generate 
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
 assert(#admissions==1 and manual.completed,
   "a no-op edit neither enqueues a duplicate nor changes completed state")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 assert(#tool.writer_calls==2 and #admissions==2 and admissions[2].trigger=="live",
   "armed edit must enter runtime admission inside the user edit callback")
 tool.app_idle_observable:fire()
@@ -290,7 +294,7 @@ assert(builder.views.acid_source_state.text==state_before and popup(builder,360)
   "old-session completion must not update reopened widgets or destination")
 
 fail_next_edit_transition=true
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 local status_view
 for _,node in ipairs(builder.nodes) do
   if node.kind=="multiline_textfield" then status_view=node end
@@ -310,7 +314,7 @@ popup(builder,360):fire(2)
 button(builder,"Generate / Regenerate ACID Phrase"):fire()
 assert(#tool.writer_calls==2,"foreign manual destination must reject without append")
 live_control(builder):fire(true)
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 assert(#tool.writer_calls==2,"foreign Live Edit must reject without append")
 
 popup(builder,360):fire(3)
@@ -324,7 +328,7 @@ popup(builder,290):fire(1)
 popup(builder,360):fire(1)
 button(builder,"Generate / Regenerate ACID Phrase"):fire()
 assert(#tool.writer_calls==4)
-builder.views.acid_program_key_popup:fire(5)
+pitch_key(builder,5):fire()
 local dirty_state=builder.views.acid_source_state.text
 assert(not tool.writer_calls[4].options.token:is_current(),"real edits revoke a prior manual request")
 complete(4)
@@ -348,7 +352,7 @@ assert(#tool.writer_calls==blocked_count,"a reopened integrity blocker still rej
 -- A new document warns about volatile drafts from the tracked old song, and a
 -- closed dialog's checkbox is not touched by the released runtime.
 fail_draft_persistence=true
-builder.views.acid_program_key_popup:fire(7)
+pitch_key(builder,7):fire()
 assert(require("runtime.draft_cache").has_volatile(song),
   "volatile draft fixture was not created")
 local warnings_before=#warnings

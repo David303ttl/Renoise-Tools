@@ -143,7 +143,8 @@ assert(independent.active==false,"a resolved unique target cannot be rekeyed aga
 assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
   "resolution replaces the unavailable placeholder with committed source status: "..
     tostring(builder.views.acid_source_state.text))
-assert(builder.views.acid_program_key_popup.value==source.pitch_events[1].key+1,
+assert(builder.views.acid_program_pitch_summary.text:find("P01",1,true) and
+    builder.views.acid_program_pitch_summary.text:find(tostring(source.pitch_events[1].note),1,true),
   "the independent phrase projects its cloned source")
 assert(live.value and writes==0,"armed Make Independent never enters the musical writer")
 local phrase_choice
@@ -151,7 +152,7 @@ for _,node in ipairs(builder.nodes)do
   if node.kind=="popup" and node.width==360 then phrase_choice=node end
 end
 assert(phrase_choice.value==3,"resolution keeps the selected object bound")
-builder.views.acid_program_key_popup:fire(EDITED_PITCH_KEY+1)
+builder.views[string.format("acid_program_key_%02d",EDITED_PITCH_KEY+1)]:fire()
 tool.app_idle_observable:fire()
 assert(writes==1 and last_writer_request.kind=="regenerate" and
     rawequal(last_writer_request.phrase,duplicate),

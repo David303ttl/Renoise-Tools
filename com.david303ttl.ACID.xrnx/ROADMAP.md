@@ -3,7 +3,7 @@
 **Project:** ARP/SEQ / ACID.xrnx  
 **Target:** Renoise 3.5+, Lua 5.1-compatible XRNX, scripting API 6.2  
 **Integration target:** `develop`
-**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision; M5 design accepted and implementation/acceptance pending. Remaining 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision; M5 Gates 1+2 passed deterministic verification and foundational review, and Gate 3 implementation passed repository regression. Gate 3 native feasibility and later acceptance remain pending. Remaining 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
 **Updated:** 2026-11-01
 
@@ -701,7 +701,7 @@ Callback latency is recorded without an acceptance threshold.
 
 **Scope:** Program/Grid source editing, pattern workflow, Extended operations, and Renoise editor integration. TAP recording and arrangement/playback engines are excluded.
 
-**Status:** Design accepted; implementation, regression gates, second-pass review, and Renoise acceptance remain pending. M4 closeout remains unchanged.
+**Status:** Design accepted; combined Gates 1+2 deterministic implementation and independent foundational review passed. Gate 3 implementation, deterministic verification and independent second pass passed; native layout feasibility remains unverified and pauses GUI-heavy Gates 4–7. Later gates, final M5 second-pass review, and Renoise acceptance remain pending. See [Gate 3 evidence](../tests/acid/runtime_acceptance.md#m5-gate-3-shell-and-grid-verification-2026-11-01). M4 closeout remains unchanged.
 
 **Dependency:** M4 scoped closeout. The complete normative contract, linear implementation gates, regression matrix, deletion inventory, and native acceptance procedure are in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
 

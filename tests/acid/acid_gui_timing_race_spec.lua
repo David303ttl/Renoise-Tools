@@ -230,6 +230,10 @@ local function open_gui()
   require("gui").show()
   return current_builder,dialogs[#dialogs]
 end
+local function pitch_key(builder,index)
+  return assert(builder.views[string.format("acid_program_key_%02d",index)],
+    "missing PITCH key button "..index)
+end
 local function button(builder,label)
   for _,node in ipairs(builder.nodes) do
     if node.kind=="button" and node.text==label then return node end
@@ -284,7 +288,7 @@ assert(live_checkbox)
 live_checkbox:fire(true)
 local before_live_edit=#tool.writer_calls
 assert(before_live_edit==2,"arming Live Edit does not write")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 local first=tool.writer_calls[#tool.writer_calls]
 assert(first.pattern.timing_mode=="triplet" and first.options.token:is_current(),
@@ -347,7 +351,7 @@ end
 assert(reopened_live)
 reopened_live:fire(true)
 local before_append=#tool.writer_calls
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(#tool.writer_calls==before_append+1,"an edit requests the armed append")
 local append=tool.writer_calls[#tool.writer_calls]
@@ -361,11 +365,11 @@ assert(other_instrument.phrases[2]==other_foreign,
   "foreign phrase remains untouched during Live Edit recovery")
 append_callback(terminal_result(append,"suspended","invalidated"))
 assert(#tool.writer_calls==before_append+1,"navigation does not queue an append")
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 assert(#tool.writer_calls==before_append+1,
   "foreign selection never redirects its source to append")
 phrase_choice:fire(3)
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 tool.app_idle_observable:fire()
 local explicit_new=tool.writer_calls[#tool.writer_calls]
 assert(explicit_new~=append and explicit_new.instrument_index==2 and explicit_new.target==3 and

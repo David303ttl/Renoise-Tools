@@ -258,6 +258,14 @@ local function button(builder,label)
   end
   error("missing button: "..label)
 end
+local function pitch_key(builder,index)
+  return assert(builder.views[string.format("acid_program_key_%02d",index)],
+    "missing PITCH key button "..index)
+end
+local function saved_pitch(phrase_id,index)
+  local entry=assert(persisted_drafts["1:"..phrase_id],"missing persisted phrase draft")
+  return entry.pattern.pitch_events[index]
+end
 local function popup(builder,width)
   for _,node in ipairs(builder.nodes) do
     if node.kind=="popup" and node.width==width then return node end
@@ -278,33 +286,42 @@ assert(phrase_choice.items[2]:find("%(tagged%)$") and
 phrase_two.name="Owned two"
 phrase_two.invalid_seal=nil
 assert(pb_range_popup(builder).value==2,"the selected phrase restores its stored PB Range")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 phrase_choice:fire(2)
 assert(pb_range_popup(builder).value==5,"switching phrases restores that phrase's PB Range")
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 phrase_choice:fire(1)
-assert(builder.views.acid_program_key_popup.value==2,
+assert(saved_pitch(11,1).key==1,
   "switching phrases restores the unsaved draft for phrase one")
 assert(pb_range_popup(builder).value==2,
   "switching phrases restores the unsaved PB Range draft for phrase one")
 phrase_choice:fire(2)
-assert(builder.views.acid_program_key_popup.value==3,
+assert(saved_pitch(12,1).key==2,
   "switching back restores the separate phrase two draft")
 
 dialog.visible=false
 tool.app_idle_observable:fire()
 builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
-assert(builder.views.acid_program_key_popup.value==2,
+assert(saved_pitch(11,1).key==1,
   "closing and reopening the editor recovers the phrase one draft")
-assert(pb_range_popup(builder).value==2,
-  "closing and reopening the editor recovers the phrase one's PB Range")
+assert(builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+  "reopening establishes the accepted PITCH baseline for the restored source")
 local recovered_status
 for _,node in ipairs(builder.nodes) do
   if node.kind=="multiline_textfield" then recovered_status=node end
 end
 assert(recovered_status.text:find("Recovered saved draft",1,true),
   "draft recovery reports song persistence")
+pitch_key(builder,3):fire()
+assert(builder.views.acid_program_pitch_summary.text:find("MODIFIED",1,true) and
+  not builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+  "a post-reopen edit differs from the newly established baseline")
+pitch_key(builder,2):fire()
+assert(builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+  "editing the restored draft back to its reopened baseline clears modified")
+assert(pb_range_popup(builder).value==2,
+  "closing and reopening the editor recovers the phrase one's PB Range")
 tool.app_release_document_observable:fire()
 assert(#warnings==0,"song-persistent drafts do not show a loss warning")
 dialog.visible=false
@@ -326,14 +343,14 @@ local go_to_error=button(builder,"Go to source error")
 assert(go_to_error.active,"invalid source exposes diagnostic navigation: "..builder.views.acid_source_diagnostic.text)
 go_to_error:fire()
 builder.views.acid_editor_view:fire(1)
-assert(builder.views.acid_program_time_position.value==3 and
-  builder.views.acid_program_pitch_position.value==2,
+assert(builder.views.acid_program_time_summary.text:find("TIME 03",1,true) and
+  builder.views.acid_program_pitch_summary.text:find("P02",1,true),
   "diagnostic navigation selects the failing TIME and PITCH positions")
 force_diagnostic=false
 song.selected_phrase_observable:fire()
 builder.views.acid_editor_view:fire(1)
 fail_draft_persistence=true
-builder.views.acid_program_key_popup:fire(6)
+pitch_key(builder,6):fire()
 assert(recovered_status.text=="DRAFT SAVE ERROR: session recovery only: test persistence failure",
   recovered_status.text)
 tool.app_release_document_observable:fire()
@@ -343,7 +360,9 @@ fail_draft_persistence=false
 dialog.visible=false
 builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
-builder.views.acid_program_pitch_position:fire(2)
+builder.views.acid_editor_view:fire(2)
+builder.views.acid_grid_pitch_02:fire()
+builder.views.acid_editor_view:fire(1)
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
@@ -352,7 +371,7 @@ end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
 assert(#render_callbacks==0,"arming Live Edit does not write")
-builder.views.acid_program_key_popup:fire(5)
+pitch_key(builder,5):fire()
 assert(builder.views.acid_live_edit_state.text=="LIVE EDIT DIRTY",
   "editing the armed source leaves a queued edit: "..builder.views.acid_live_edit_state.text)
 assert(#render_callbacks==1,"source editing starts Live Edit inside the user edit callback")
@@ -372,13 +391,13 @@ for _,node in ipairs(builder.nodes) do
   if node.kind=="multiline_textfield" then status=node end
 end
 assert(status.text=="LIVE EDIT ERROR: temporary render failure",status.text)
-builder.views.acid_program_key_popup:fire(6)
+pitch_key(builder,6):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key==5,
   "a source edit immediately retries the armed Live Edit: callbacks="..
     #render_callbacks.." calls="..#tool.writer_calls.." key="..
     tostring(tool.writer_calls[2] and tool.writer_calls[2].pattern.pitch_events[2].key))
-builder.views.acid_program_key_popup:fire(7)
+pitch_key(builder,7):fire()
 assert(#render_callbacks==2 and #tool.writer_calls==2,
   "rapid edits coalesce while one render is active")
 local long_diagnostic=string.rep("TIME step 05: SLIDE approximated: bend range exceeded; ",40)
@@ -403,7 +422,7 @@ assert(builder.views.acid_live_edit_state.text:find("APPROXIMATE",1,true),
 
 phrase_choice:fire(2)
 assert(#render_callbacks==3,"destination navigation does not write")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==4,
   "editing a destination with a recovered draft resumes Live Edit")
@@ -414,14 +433,14 @@ local target_popup=popup(builder,290)
 target_popup:fire(2)
 phrase_choice:fire(1)
 assert(#render_callbacks==4,"instrument navigation does not write")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==5,
   "explicit instrument selection rebinds Live Edit to its selected owned phrase")
 render_callbacks[5](terminal_result(tool.writer_calls[5],"committed","instrument rebound"))
 phrase_choice:fire(3)
 assert(#render_callbacks==5,"new phrase navigation does not write")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(live_checkbox.value and #render_callbacks==6 and tool.writer_calls[6].target==3,
   "editing NEW PHRASE starts an append render: "..#render_callbacks.." / "..tostring(tool.writer_calls[#tool.writer_calls].target).." / "..status.text)
@@ -430,9 +449,9 @@ tool.writer_calls[6].options.phrase_mutation(function()
   other_instrument.phrases[3]=explicit_append
   return explicit_append
 end)
-builder.views.acid_program_key_popup:fire(9)
+pitch_key(builder,9):fire()
 render_callbacks[6](terminal_result(tool.writer_calls[6],"committed","initial append"))
-builder.views.acid_program_key_popup:fire(9)
+pitch_key(builder,9):fire()
 
 assert(phrase_choice.value==3 and #render_callbacks==7 and tool.writer_calls[7].target==3,
   "an edit after accepted create regenerates the returned destination")
@@ -441,12 +460,12 @@ assert(tool.writer_calls[7].pattern.pitch_events[1].key==8,
 render_callbacks[7](terminal_result(tool.writer_calls[7],"committed","explicit phrase updated"))
 phrase_choice:fire(2)
 assert(#render_callbacks==7,"foreign phrase navigation does not write")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 assert(live_checkbox.value and #render_callbacks==7,
   "foreign phrase edits reject without overwriting or appending")
 assert(other_instrument.phrases[2]==other_foreign)
 phrase_choice:fire(4)
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==8 and tool.writer_calls[8].target==4,
   "only explicit New selection allows creating a separate phrase")
@@ -457,7 +476,7 @@ tool.writer_calls[8].options.phrase_mutation(function()
 end)
 render_callbacks[8](terminal_result(tool.writer_calls[8],"committed","foreign redirected"))
 assert(phrase_choice.value==4,"successful explicit create binds the returned phrase")
-builder.views.acid_program_key_popup:fire(8)
+pitch_key(builder,8):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==9 and tool.writer_calls[9].target==4,
   "the next edit regenerates the explicit created phrase")
@@ -465,9 +484,9 @@ render_callbacks[9](terminal_result(tool.writer_calls[9],"committed","separate p
 assert(#other_instrument.phrases==4 and other_instrument.phrases[2]==other_foreign,
   "foreign phrase stays in place and repeated edits do not append duplicates")
 assert(live_checkbox.value and status.text=="LIVE EDIT COMMITTED: separate phrase updated",status.text)
-builder.views.acid_program_key_popup:fire(8)
+pitch_key(builder,8):fire()
 assert(#render_callbacks==9,"an unchanged PITCH value does not render")
-builder.views.acid_program_key_popup:fire(9)
+pitch_key(builder,9):fire()
 tool.app_idle_observable:fire()
 other_instrument.phrases[4].foreign=true
 render_callbacks[10](terminal_result(tool.writer_calls[10],"suspended",
@@ -476,7 +495,7 @@ assert(#render_callbacks==10,
   "a target ownership change during rendering cannot redirect to append")
 assert(other_instrument.phrases[4]==separate_owned)
 phrase_choice:fire(5)
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
   "a fresh edit on explicitly selected New can create after blocked target rejection")
@@ -487,12 +506,12 @@ tool.writer_calls[11].options.phrase_mutation(function()
 end)
 render_callbacks[11](terminal_result(tool.writer_calls[11],"committed","safety append committed"))
 assert(phrase_choice.value==5,"explicit recovery create binds the returned phrase")
-builder.views.acid_program_key_popup:fire(10)
+pitch_key(builder,10):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==12 and tool.writer_calls[12].target==5,
   "edits after explicit recovery regenerate the created phrase")
 render_callbacks[12](terminal_result(tool.writer_calls[12],"committed","safety phrase updated"))
-builder.views.acid_program_key_popup:fire(8)
+pitch_key(builder,8):fire()
 tool.app_idle_observable:fire()
 render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnostic))
 assert(status.text:find(long_diagnostic,1,true),
@@ -508,18 +527,18 @@ assert(live_state:find("LIVE EDIT ERROR",1,true) and
   "a later render error preserves a concise summary of the prior successful commit")
 
 local before_reset=#render_callbacks
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==before_reset+1,"a source edit starts the held render")
 local held=render_callbacks[#render_callbacks]
 local held_request=tool.writer_calls[#tool.writer_calls]
-builder.views.acid_program_key_popup:fire(4)
+pitch_key(builder,4):fire()
 button(builder,"Reset Source"):fire()
 assert(not held_request.options.token:is_current(),"reset invalidates the held render")
 held(terminal_result(held_request,"suspended","source reset"))
 assert(#render_callbacks==before_reset+1 and live_checkbox.value,
   "reset discards pending edits without rendering and keeps Live Edit armed")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==before_reset+2,"the next real edit renders the reset source")
 assert(tool.writer_calls[#tool.writer_calls].pattern.pitch_events[1].key==1)
@@ -527,8 +546,8 @@ assert(tool.writer_calls[#tool.writer_calls].pattern.pitch_events[1].key==1)
 render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed","last edit settled"))
 local before_sync=#render_callbacks
 sync_next_result="committed"
-local next_key=builder.views.acid_program_key_popup.value==1 and 2 or 1
-builder.views.acid_program_key_popup:fire(next_key)
+local next_key=saved_pitch(11,1).key==0 and 2 or 1
+pitch_key(builder,next_key):fire()
 assert(#render_callbacks==before_sync+1 and tool.writer_calls[#tool.writer_calls].completed,
   "Live Edit write and completion finish before the native edit callback returns")
 assert(builder.views.acid_live_edit_state.text:find("LIVE EDIT COMMITTED",1,true),
@@ -541,7 +560,7 @@ assert(draft_cache.put(song,instrument,phrase_one,recovered_source,"play_once",2
 local recovery_token=assert(draft_cache.detach(song,instrument,phrase_one,"Native phrase changed"))
 target_popup:fire(1)
 phrase_choice:fire(#phrase_choice.items)
-builder.views.acid_program_key_popup:fire(4)
+pitch_key(builder,4):fire()
 local count_before_copy=#render_callbacks
 live_checkbox:fire(true)
 local recovery_popup=builder.views.acid_recovery_choice
@@ -556,7 +575,9 @@ assert(builder.views.acid_recovery_detail.text:find("Native phrase changed",1,tr
 builder.views.acid_recovery_copy:fire()
 assert(#render_callbacks==count_before_copy,"armed recovery never invokes the writer")
 assert(phrase_choice.value==#phrase_choice.items,"recovery binds explicit New")
-assert(builder.views.acid_program_key_popup.value==11 and pb_range_popup(builder).value==4,
+assert(builder.views.acid_program_pitch_summary.text:find("P01",1,true) and
+  builder.views.acid_program_pitch_summary.text:find("46",1,true) and
+  pb_range_popup(builder).value==4,
   "recovery projects source and bend range")
 local source,policy,pb=draft_cache.get(song,instrument,nil)
 assert(source.pitch_events[1].key==10 and policy=="play_once" and pb==24)

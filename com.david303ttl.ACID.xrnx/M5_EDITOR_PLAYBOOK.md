@@ -4,13 +4,15 @@
 contract. `ROADMAP.md` records milestone scope/status and links here. M4.7
 closeout evidence and limits remain historical and unchanged.
 
-**Status:** Design decisions are accepted. Gate 0 audit and independent second-pass
-verification passed; evidence is recorded in
-[`tests/acid/runtime_acceptance.md`](../tests/acid/runtime_acceptance.md#m5-gate-0-audit-2026-11-01).
-Implementation, deterministic tests for the new behavior, final M5 second-pass
-review, and Renoise acceptance are pending.
-Nothing in this manual asserts that M5 has been implemented or that the listed
-behavior is guaranteed by Renoise. Tests and evidence must report actual results.
+**Status:** Design decisions are accepted. Gate 0 audit and the combined Gates
+1+2 deterministic cutover passed, including independent foundational review;
+evidence is recorded in
+[`tests/acid/runtime_acceptance.md`](../tests/acid/runtime_acceptance.md#m5-gates-12-deterministic-exit-2026-11-01).
+Gate 3 implementation, deterministic verification and independent second-pass
+review passed. Its native layout feasibility check, later
+gates, final M5 second-pass review, and Renoise acceptance remain pending.
+This is not a claim of complete M5 implementation or guaranteed Renoise behavior.
+Tests and evidence must report actual results.
 
 **Execution rule:** Follow the gates in order; Gates 1+2 are one atomic gate.
 Stop at the first failed exit criterion. Do not implement later consumers against incomplete
@@ -2260,10 +2262,10 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | --- | --- | --- | --- | --- | --- |
 | Gate 0 baseline | Full ACID suite at `9d23f31` | `pwsh -File ./scripts/run_tests.ps1 -Tool ACID` | 70 specs passed, 0 failed; Lua 5.1 | No native behavior inferred; [audit evidence](../tests/acid/runtime_acceptance.md#m5-gate-0-audit-2026-11-01) | PASS |
 | Gate 0 SDK/inventory/review | Existing source/runtime/GUI/test owners and pinned SDK at `9d23f31` | See linked audit record | SDK verified, inventory/snapshot owner recorded, all 70 spec dispositions reconciled; independent findings resolved | No runtime changes; all new native acceptance unverified; later gates pending | PASS |
-| Gate 1 source/schema/history | Source/codec/draft specs |  |  |  | Unexecuted |
-| Gate 2 resolution/compiler | Mask/interpreter/planner specs |  |  |  | Unexecuted |
-| Gate 3 shell/Grid | GUI view/admission specs |  |  |  | Unexecuted |
-| Gate 3 native feasibility | Procedure 13.1.6 before GUI-heavy continuation |  |  |  | Unexecuted |
+| Gate 1 source/schema/history | Source/codec/draft specs; combined foundational exit | `pwsh -File ./scripts/run_tests.ps1 -Tool ACID` | 71 passed, 0 failed; independent provenance correction reviewed and rerun | [Foundational evidence](../tests/acid/runtime_acceptance.md#m5-gates-12-deterministic-exit-2026-11-01); native acceptance unverified | PASS (deterministic, combined with Gate 2) |
+| Gate 2 resolution/compiler | Mask/interpreter/planner specs; combined foundational exit | Same combined suite and independent follow-up | 71 passed, 0 failed | Same foundational evidence; no separate Gate 1-only acceptance | PASS (deterministic, combined with Gate 1) |
+| Gate 3 shell/Grid | GUI view/admission/independence/recovery/timing specs and native harness selector cutover | `pwsh -File ./scripts/run_offline_tests.ps1` | 18 groups passed, including 74 Lua specs, 0 failed; independent findings corrected/rechecked | [Gate 3 evidence](../tests/acid/runtime_acceptance.md#m5-gate-3-shell-and-grid-verification-2026-11-01); native feasibility remains separate | PASS (implementation, deterministic verification, second pass) |
+| Gate 3 native feasibility | Procedure 13.1.6 before GUI-heavy continuation | No native UI run; no running Renoise process detected | Not executed | Clipping, legibility and reachability remain unverified; Gates 4–7 paused | UNVERIFIED |
 | Gate 4 staged Program | Staging/GUI specs |  |  |  | Unexecuted |
 | Gate 5 audition mocks | Audition lifecycle spec |  |  |  | Unexecuted |
 | Gate 6 operations | Clipboard/label/duplicate specs |  |  |  | Unexecuted |
