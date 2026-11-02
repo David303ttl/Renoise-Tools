@@ -228,13 +228,15 @@ function M.show()
   local accepted_pitch_baseline
   local updating=false
   local scale_state={root=0,follow=false}
-  local custom_text,load_error=scale_preferences.load(tool)
-  local custom,parse_error=custom_text and scales.parse(custom_text) or nil
-  scale_state.custom=custom or {}
   local builtin=scales.builtin()
-  local catalog,catalog_error=scales.merge(builtin,scale_state.custom)
-  scale_state.catalog=catalog or builtin
-  scale_state.load_error=load_error or parse_error or catalog_error
+  do
+    local custom_text,load_error=scale_preferences.load(tool)
+    local custom,parse_error=custom_text and scales.parse(custom_text) or nil
+    scale_state.custom=custom or {}
+    local catalog,catalog_error=scales.merge(builtin,scale_state.custom)
+    scale_state.catalog=catalog or builtin
+    scale_state.load_error=load_error or parse_error or catalog_error
+  end
   local preview_cycle=1
   local update
   local runtime
@@ -2191,7 +2193,8 @@ function M.show()
     details_button,details,audition_status,status}
   select_instrument(selected_instrument)
   if scale_state.load_error then
-    status.text="Custom scales unavailable: "..tostring(scale_state.load_error).."; import disabled."
+    status.text=(status.text~="" and (status.text.."\n") or "")..
+      "Custom scales unavailable: "..tostring(scale_state.load_error).."; import disabled."
   end
   native_observers:attach(song,runtime,function()
     release_audition()

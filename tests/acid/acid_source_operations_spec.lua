@@ -156,7 +156,7 @@ assert(not seq.mask_candidate(source,"true",bits))
 assert(seq.same_source(source,original))
 local tie_first=assert(seq.operation_candidate(source,"randomize_time","active",
   {seed=1,note_weight=0,tie_weight=1,rest_weight=1}))
-local rng_state=1
+local _,rng_state=seq.random_choice(1,1)
 for i=1,7 do
   local bucket
   bucket,rng_state=seq.random_choice(rng_state,2)
