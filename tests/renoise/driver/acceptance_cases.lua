@@ -4323,7 +4323,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       not same_native_selection(native_selection_at_start,native_selection_before)
     local suppress_captured_notifiers=false
     local anonymous_checkbox_index,anonymous_pitch_selector,anonymous_time_selector=0,0,0
-    local key_items={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B","C+"}
     local function profile_function(target,key,name)
       if not detailed_profile then return end
       local original,installed=install_profile_wrapper(profile_mode,target,key,function(inner)
@@ -4669,7 +4668,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         local items=properties.items
         if type(items)=="table" then
           if #items==32 and items[1]=="1" then return "acid_pitch_length" end
-          if same_items(items,{"Play Once","Repeat"}) then return "acid_playback" end
           if same_items(items,{"Start","Repeating"}) then return "acid_preview" end
         end
       elseif name=="checkbox" then
@@ -4685,8 +4683,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         if properties.text=="Next TIME" then return "acid_next_time" end
         if properties.text=="Retry Live Edit" then return "acid_retry_live" end
         if properties.text=="Generate / Regenerate ACID Phrase" then return "acid_generate" end
-        for index,key_name in ipairs(key_items) do
-          if properties.text==key_name then return "acid_grid_key_button_"..index end
+        for index,label in ipairs({"Decoded","Pattern / Copy","Extended / Clear","Output","Recovery"}) do
+          if properties.text==label then return "acid_workspace_tab_"..index end
         end
         if properties.text=="NOTE" then return "acid_time_command_note" end
         if properties.text=="TIE" then return "acid_time_command_tie" end
@@ -5085,7 +5083,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local started=os.clock()
       local control=controls[callback_id]
       suppress_captured_notifiers=true
-      if control and control.value~=nil then control.value=value end
+      if control and value~=nil then control.value=value end
       suppress_captured_notifiers=false
       local dispatch_elapsed=detailed_profile and ((os.clock()-started)*1000) or nil
       if control then
@@ -5100,6 +5098,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if detailed_profile then
         metrics["gui_last_"..kind.."_callback_memory_delta_kb"]=collectgarbage("count")-memory_before
       end
+      samples[kind]=samples[kind] or {}
       samples[kind][#samples[kind]+1]=elapsed
       local updated,draft_policy,draft_pb=persisted.read_draft(song,instrument,phrase)
       if not updated or sequence.same_source(last_saved_source,updated) then
@@ -5202,10 +5201,23 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end
       callbacks[page_id]()
       callbacks[cell_id]()
+      local previous_view=controls.acid_editor_view.value
+      if previous_view~=1 then
+        suppress_captured_notifiers=true
+        controls.acid_editor_view.value=1
+        suppress_captured_notifiers=false
+        callbacks.acid_editor_view(1)
+      end
       local selected=(page-1)*16+cell
       local readout=kind=="pitch" and controls.acid_program_pitch_summary.text or
         controls.acid_program_time_summary.text
       local expected=string.format(kind=="pitch" and "P%02d" or "TIME %02d",selected)
+      if previous_view~=1 then
+        suppress_captured_notifiers=true
+        controls.acid_editor_view.value=previous_view
+        suppress_captured_notifiers=false
+        callbacks.acid_editor_view(previous_view)
+      end
       if not readout:find(expected,1,true) then
         return nil,"GUI "..kind.." selector did not update the Program readout"
       end
@@ -5251,7 +5263,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     local command_values={first_command_value,first_command_value%3+1,(first_command_value+1)%3+1}
     for _,value in ipairs(command_values) do
       local expected=({"N","T","R"})[value]
-      local command_id=({"NOTE","TIE","REST"})[value]
+      local command_id=({"acid_time_command_note","acid_time_command_tie","acid_time_command_rest"})[value]
       local ok,reason=invoke("command",command_id,callbacks[command_id],nil,function(updated)
         current_command=expected
         if updated.time_events[2]~=current_command then
@@ -5283,7 +5295,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       {"last-step","acid_last_step",31,function(updated)return updated.length==31,"LAST STEP did not update the source length" end},
       {"timing-mode","acid_timing",2,function(updated)return updated.timing_mode=="triplet","Timing control did not update source timing" end},
       {"pitch-length","acid_pitch_length",17,function(updated)return updated.pitch_length==17,"PITCH span did not update source pitch length" end},
-      {"output-policy","acid_playback",2,function(updated,policy)return policy=="repeat","Output policy did not update the saved draft" end},
+      {"output-policy","acid_output_policy",2,function(updated,policy)return policy=="repeat","Output policy did not update the saved draft" end},
       {"pb-range","acid_pb_range",2,function(updated,policy,pb)
         return pb==require("model.policies").PB_CHOICES[2],"PB Range did not update the saved draft"
       end}
@@ -5306,6 +5318,11 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       return controls.acid_grid_panel.visible==true,"Grid view did not update panel visibility"
     end,false)
     if not grid_ok then return nil,grid_error end
+    local grid_width_before=controls.acid_grid_panel.width
+    local pitch_widths_before={}
+    for cell=1,16 do
+      pitch_widths_before[cell]=controls[string.format("acid_grid_pitch_%02d",cell)].width
+    end
     local time_page_one_ok,time_page_one_error=run_button("time-page-1","acid_time_page_1")
     if not time_page_one_ok then return nil,time_page_one_error end
     local grid_pitch_index=2
@@ -5319,8 +5336,25 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end)
     if not grid_command_ok then close_test_gui();return nil,grid_command_error end
     actions[#actions+1]="grid-time-command"
+    for key_index=1,12 do
+      local key_id=string.format("acid_grid_key_%02d",key_index)
+      local key_ok,key_error=invoke("grid-label",key_id,callbacks[key_id],nil,function(updated)
+        return updated.pitch_events[grid_pitch_index].key==key_index-1,
+          "Grid pitch-class sweep did not update raw key"
+      end)
+      if not key_ok then return nil,key_error end
+      if controls.acid_grid_panel.width~=grid_width_before then
+        return nil,"Grid panel width changed during pitch-class sweep"
+      end
+      for cell=1,16 do
+        if controls[string.format("acid_grid_pitch_%02d",cell)].width~=pitch_widths_before[cell] then
+          return nil,"Grid PITCH cell width changed during pitch-class sweep"
+        end
+      end
+    end
+    metrics.gui_grid_pitch_classes_verified=12
     local grid_actions={
-      {"grid-key",string.format("acid_grid_key_button_%02d",grid_pitch_value),nil,function(updated)return updated.pitch_events[grid_pitch_index].key==grid_pitch_value-1,"Grid key did not update the selected source pitch" end},
+      {"grid-key",string.format("acid_grid_key_%02d",grid_pitch_value),nil,function(updated)return updated.pitch_events[grid_pitch_index].key==grid_pitch_value-1,"Grid key did not update the selected source pitch" end},
       {"grid-octave","acid_grid_octave_up",nil,function(updated)return updated.pitch_events[grid_pitch_index].octave==1,"Grid octave did not update the selected source pitch" end},
       {"grid-accent","acid_grid_accent",false,function(updated)return updated.pitch_events[grid_pitch_index].accent==false,"Grid accent did not update the selected source pitch" end},
       {"grid-slide","acid_grid_slide",true,function(updated)return updated.pitch_events[grid_pitch_index].slide==true,"Grid slide did not update the selected source pitch" end}
@@ -5342,6 +5376,16 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         publish_phrase_profile("gui_grid_key_profile")
       end
       if not ok then return nil,reason end
+      if controls.acid_grid_panel.width~=grid_width_before then
+        return nil,"Grid panel width changed after "..action[1]
+      end
+      for cell=1,16 do
+        if controls[string.format("acid_grid_pitch_%02d",cell)].width~=pitch_widths_before[cell] then
+          return nil,"Grid PITCH cell width changed after "..action[1]
+        end
+      end
+      metrics.gui_grid_width_stable=true
+      metrics.gui_grid_width=grid_width_before
     end
     local page_ok,page_error=run_button("pitch-page-2","acid_pitch_page_2",function()
       return controls.acid_pitch_page_2.text:find("17-32",1,true)~=nil,"PITCH page navigation did not update the page label"
@@ -5351,6 +5395,23 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       return controls.acid_time_page_2.text:find("17-32",1,true)~=nil,"TIME page navigation did not update the page label"
     end)
     if not time_page_ok then return nil,time_page_error end
+    local workspace_panels={"acid_decoded_panel","acid_pattern_copy_panel","acid_extended_panel",
+      "acid_output_panel","acid_recovery_panel"}
+    for index,panel_id in ipairs(workspace_panels) do
+      local tab_ok,tab_error=run_button("workspace-tab-"..index,"acid_workspace_tab_"..index,function()
+        return controls[panel_id].visible==true,"Workspace tab did not reveal "..panel_id
+      end)
+      if not tab_ok then return nil,tab_error end
+      if controls.acid_grid_panel.width~=grid_width_before then
+        return nil,"Grid panel width changed after workspace tab selection"
+      end
+    end
+    metrics.gui_workspace_tabs_verified=#workspace_panels
+    metrics.gui_output_controls_available=controls.acid_output_policy.active~=false and
+      controls.acid_pb_range.active~=false
+    if not metrics.gui_output_controls_available then
+      return nil,"Output tab controls are unavailable"
+    end
     local grid_pitch_ok,grid_pitch_error=run_button("grid-pitch-cell","acid_grid_pitch_02")
     if not grid_pitch_ok then return nil,grid_pitch_error end
     local program_view_ok,program_view_error=run_value("program-view","acid_editor_view",1,phrase,function()

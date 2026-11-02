@@ -439,6 +439,130 @@ audition and later operation gates are not part of this change.
   cannot establish display-scale fit. GUI-heavy Gates 4–7 must wait for actual
   native feasibility evidence.
 
+### Gate 3 revalidation (2026-11-02)
+
+- A delegated contract audit confirmed that the remaining Gate 3 obligation is
+  native layout feasibility procedure 13.1.6, not later Program staging or
+  operation implementation. This checkpoint does not advance Gates 4–7.
+- Fresh `pwsh -File ./scripts/run_offline_tests.ps1` initially encountered two
+  Lua executables on PATH, causing interpreter resolution to supply an array
+  where the runner expects one executable. An explicit `-LuaCommand` resolved
+  unambiguously, but the interpreter-policy group still failed its
+  forwarding-command-wrapper assertion.
+- A further full offline run, with the second Lua installation removed from PATH
+  for that process only, completed **74 Lua specs, 0 failed**, using Lua 5.1 in
+  isolated processes. The other **17 offline groups passed**, including GUI
+  regressions, development/release packaging and synthetic audio checks. The
+  interpreter-policy group again failed the forwarding-wrapper assertion, so
+  the aggregate offline command exited 1. This is not a fresh 18-group pass;
+  the earlier dated successful receipt remains historical evidence. No runner
+  or machine-wide environment changes were made.
+- Read-only process detection found no running Renoise process. No native UI,
+  installation or song operations were performed. Clipping, legibility and
+  reachability remain **UNVERIFIED**; mocks and offline package checks do not
+  close procedure 13.1.6. GUI-heavy Gates 4–7 remain paused at this dependency.
+- A separate focused run of `pwsh -File ./scripts/run_tests.ps1 -Tool ACID`
+  with an explicit `-LuaCommand` selecting the installed Lua 5.1 executable
+  exited 0: **71 specs passed, 0 failed**, in 25.74 seconds. `git diff --check`
+  passed for this acceptance-record update.
+- The additional independent implementation review subsequently found a stale
+  projection after an accepted local edit whose runtime draft transition failed.
+  The runtime revision remained unchanged, so the GUI cache could keep showing
+  the previous source. `gui.lua` now invalidates that cache after edit admission
+  and history movement, including failed draft saves. Navigation behavior is
+  unchanged. The admission spec covers the failed edit and failed-save Undo:
+  divergence reports a resolution-association error rather than stale preview,
+  and restoring the matching source displays a valid projection again.
+- The reviewer ran the ACID suite after the fix: **71 specs passed, 0 failed**.
+  Coordinator verification of the final runtime/test changes used
+  `pwsh -File ./scripts/run_tests.ps1` with an explicit Lua 5.1 `-LuaCommand`:
+  exit 0, **74 specs passed, 0 failed**, in 26.39 seconds. Earlier offline-group
+  and packaging results above precede this fix and are not final-build native
+  evidence. No deterministic Gate 3 review finding remains unresolved.
+
+### Native editor execution follow-up (2026-11-02)
+
+- Subsequent operator visual inspection **FAILED** layout feasibility: editing
+  Grid pitches expands the dialog width. The supplied screenshot shows longer
+  sharp/key-10 labels widening the first PITCH row beyond the TIME rows.
+  This supersedes the earlier unverified disposition with an observed fit
+  failure; a corrected build requires renewed visual inspection. Pattern / Copy
+  and Extended / Clear operation placeholders belong to later implementation
+  gates and are not evidence that those operations have been implemented.
+  Output contains active output-policy and PB-range controls; Recovery contains
+  the existing recovery controls and an empty-state message when no detached
+  draft is available. Neither panel is an unavailable-operation placeholder.
+- Renoise 3.5.4 Demo / API 6.2 was available later in the session. The native
+  runner used separate runner-owned processes and disposable documents, rather
+  than attaching to the existing user process. The Native smoke suite passed;
+  report: `tmp/interactive-e149fce9443f471684b02667114cf398/report.json`.
+- The first `editor-responsiveness` run failed on unsupported `Button.value`
+  access in the acceptance harness. Subsequent runs exposed stale TIME callback
+  aliases, a Program-only readout assertion while Grid was visible, missing
+  sample arrays for Grid actions, and a zero-padded Grid key alias mismatch.
+  These harness defects were corrected in `tests/renoise/driver/acceptance_cases.lua`.
+  No production GUI behavior was weakened to pass the checks.
+- Final native command: `pwsh -File ./scripts/run_interactive_tests.ps1 -Install
+  -ApproveDisposableSong -AcceptanceCase editor-responsiveness` with the installed
+  Renoise 3.5.4 executable selected explicitly. Result: **PASS**;
+  report: `tmp/interactive-d307f0f4ea614b4aaaaa228d294a5000/report.json`.
+  This is functional native editor evidence, not pixel-based layout acceptance
+  or performance acceptance. Run artifacts remain ignored and uncommitted.
+- Final repository Lua regression run with explicit Lua 5.1: **74 specs passed,
+  0 failed**, 26.66 seconds. Native runs built the development bundle and restored
+  their temporary installation and disposable fixture state on completion.
+- Before the subsequent operator failure above, procedure 13.1.6 was
+  **UNVERIFIED** for visual clipping, legibility and physical control reachability.
+  The available harness exercises callbacks and
+  native widgets but does not capture or inspect desktop pixels. Actual visual
+  observation is still required; the native functional pass does not authorize
+  advancing GUI-heavy Gates 4–7.
+
+### Grid fit correction verification (2026-11-02)
+
+- The operator screenshot exposed unequal PITCH button widths driven by longer
+  pitch labels. The correction uses explicit API 6.2 `size` bounds for cells and
+  dynamic readouts. Output and Recovery panel selection now has explicit GUI
+  regression coverage; later-gate copy/transform placeholders remain unchanged.
+- The native `editor-responsiveness` harness now compares the Grid panel width
+  and all 16 visible PITCH cell widths before and after source edits. It sweeps
+  all twelve pitch-class keys, including sharps and raw keys 10/11, and exercises
+  octave, accent and slide edits. It also selects all five lower workspace tabs
+  and verifies active Output controls. The assertions use actual native widget
+  dimensions, not mock `size` values.
+- Native Renoise 3.5.4 / API 6.2 run passed with the twelve-class sweep:
+  `tmp/interactive-9ea0a41c7865456994a1829cada307ff/report.json`.
+  This verifies width stability for the exercised build and actions, not pixel
+  legibility or final integrated native acceptance. The development package
+  validation script also passed with the explicit Lua 5.1 interpreter.
+- An intermediate repository regression run during GUI-test updates failed only
+  the views spec's decoded paging fixture assertion (74 specs, 1 failed). This
+  development failure is not a final successful regression receipt.
+- Integration review rejected an intermediate tooltip-only compact label because
+  raw controls and ACCENT/SLIDE must remain visible. The final cell is a fixed
+  98x38 column: an 18-pixel position/SRM header and a 20-pixel button displaying
+  raw note/key/octave and both flag states (for example `60/12+1 A-S-`). Alternate
+  raw encodings remain distinguishable. The two rows of eight cells are retained.
+- Final native run against that hierarchy passed:
+  `tmp/interactive-5e190aeba24e4ea486fd8d2623589237/report.json`. The Grid measured
+  **812 pixels wide**, remained stable through the twelve-class sweep and
+  octave/flag edits, and all **five tabs** selected successfully. Output controls
+  were available. Fixture store, inventory and native selection restoration passed.
+- Final repository Lua run: **74 specs passed, 0 failed**, 31.73 seconds; the
+  implementer also passed **71 ACID specs**. Independent final integration review
+  found no defect in visible raw fields, fixed cell hierarchy or rendering purity.
+  `pwsh -File ./scripts/package.ps1 -Tool ACID` built
+  `dist/com.david303ttl.ACID_0.1.xrnx` with 31 runtime files. Manifest unchanged.
+- The reported width-growth defect is corrected and natively regression-tested.
+  Operator visually rechecked the corrected build after the final native run and
+  confirmed Gate 3 layout acceptance. This supersedes the preceding screenshot
+  failure. Program/Grid, both pages, fixed lower workspace, Decoded/Recovery
+  paging, label readability, reachability and stable pitch-edit width were
+  inspected at the operator's normal display scale. Pattern/Copy and
+  Extended/Clear remain intentionally unavailable pending their later gates;
+  Output and Recovery are available. Gate 3 native feasibility is PASS. Gate 11
+  must repeat visual acceptance against the final integrated M5 build.
+
 ## M5 Gates 1+2 deterministic exit (2026-11-01)
 
 **Disposition: PASS for the combined deterministic Gates 1+2 cutover.** Source,

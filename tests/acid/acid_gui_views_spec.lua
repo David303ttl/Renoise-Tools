@@ -432,10 +432,25 @@ assert_navigation_neutral(navigation,"workspace view navigation")
 view:fire(1)
 assert(display_snapshot()==initial)
 assert_navigation_neutral(navigation,"return workspace navigation")
-for _,tab in ipairs({"Decoded","Pattern / Copy","Extended / Clear","Output","Recovery"}) do
+local workspace_tabs={"Decoded","Pattern / Copy","Extended / Clear","Output","Recovery"}
+local workspace_panels={"acid_decoded_panel","acid_pattern_copy_panel","acid_extended_panel",
+  "acid_output_panel","acid_recovery_panel"}
+for index,tab in ipairs(workspace_tabs) do
   text_control(tab):fire()
+  for panel_index,id in ipairs(workspace_panels) do
+    assert(control(id).visible==(panel_index==index),
+      tab.." selects its workspace panel without leaving other panels visible")
+  end
 end
+assert(text_control("Session copy and paste controls are not available in this editor build.") and
+  text_control("Extended transformations and scoped clear controls are not available here."),
+  "Pattern / Copy and Extended / Clear remain explicit deferred-operation placeholders")
+assert(control("acid_output_policy").active and control("acid_pb_range").active,
+  "Output provides active phrase policy and PB Range controls")
 assert_navigation_neutral(navigation,"workspace tab navigation")
+assert(control("acid_recovery_choice").items[1]=="No detached drafts" and
+  control("acid_recovery_detail"),
+  "Recovery remains available and reports the empty-recovery state instead of an unavailable placeholder")
 assert(summary_writes==0,"unchanged summary text is not assigned again")
 assert(recovery_item_reads<=1,
   "recovery items are read only to seed the rendered-value cache")
@@ -465,13 +480,17 @@ assert(control("acid_program_pitch_summary").text:find("P17",1,true),
 assert_navigation_neutral(nav_before,"independent cursor and page navigation")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_02").text:find("36/12%-1"),
-  "PITCH navigation preserves raw (36,12,-1): "..control("acid_grid_pitch_02").text)
+assert(control("acid_grid_pitch_header_02").text=="P02 S--" and
+  control("acid_grid_pitch_02").text=="36/12-1 A+S+" and
+  control("acid_grid_pitch_02").tooltip:find("36/12%-1"),
+  "the visible cell header and button preserve raw (36,12,-1) and active flags")
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_03").text:find("48/12%+0"),
-  "PITCH navigation preserves raw (48,12,0): "..control("acid_grid_pitch_03").text)
-assert(control("acid_grid_pitch_04").text:find("60/12%+1"),
-  "PITCH navigation preserves loaded raw (60,12,1)")
+assert(control("acid_grid_pitch_header_03").text=="P03 S--" and
+  control("acid_grid_pitch_03").text=="48/12+0 A-S-",
+  "the visible cell preserves raw (48,12,0) and inactive flags")
+assert(control("acid_grid_pitch_header_04").text=="P04 S--" and
+  control("acid_grid_pitch_04").text=="60/12+1 A-S-",
+  "the visible cell preserves the MIDI-60 encoding and inactive flags")
 control("acid_grid_pitch_03"):fire()
 view:fire(1)
 program_key(2):fire()
@@ -480,8 +499,8 @@ assert(raw48_edit.note==37 and raw48_edit.key==1 and raw48_edit.octave==0,
   "a genuine edit canonicalizes raw (48,12,0) through keyboard mapping")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_03").text:find("37/1%+0"),
-  "the canonicalized raw-48 pitch survives subsequent navigation")
+assert(control("acid_grid_pitch_03").text=="37/1+0 A-S-",
+  "the visible cell preserves the canonicalized raw-48 pitch and flags")
 control("acid_grid_pitch_04"):fire()
 view:fire(1)
 program_key(1):fire()
@@ -490,8 +509,8 @@ assert(raw60_edit.note==48 and raw60_edit.key==0 and raw60_edit.octave==1,
   "a genuine edit canonicalizes loaded raw (60,12,1) through keyboard mapping")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_04").text:find("48/0%+1"),
-  "the canonicalized loaded endpoint survives subsequent navigation")
+assert(control("acid_grid_pitch_04").text=="48/0+1 A-S-",
+  "the visible cell preserves the canonicalized loaded endpoint and flags")
 view:fire(1)
 view:fire(2)
 control("acid_pitch_page_1"):fire()
@@ -519,8 +538,10 @@ local function inspect_pitch_rows(node)
   if node.kind=="row" then
     local cells=0
     for _,child in ipairs(node.views or {}) do
-      if type(child.id)=="string" and child.id:match("^acid_grid_pitch_%d%d$") then
-        cells=cells+1
+      for _,candidate in ipairs(child.views or {child}) do
+        if type(candidate.id)=="string" and candidate.id:match("^acid_grid_pitch_%d%d$") then
+          cells=cells+1
+        end
       end
     end
     if cells>0 then assert(cells==8,"each PITCH memory row contains exactly eight cells");pitch_rows=pitch_rows+1 end
@@ -550,7 +571,40 @@ assert(time_rows==2,"TIME memory uses exactly two rows of eight cells per page")
 control("acid_pitch_page_1"):fire()
 control("acid_grid_pitch_01"):fire()
 local edit_neutral=navigation_snapshot()
-program_key(3):fire()
+view:fire(2)
+local bounded_views={
+  {control("acid_grid_pitch_01"),98},
+  {control("acid_grid_pitch_header_01"),98},
+  {control("acid_grid_pitch_column_01"),98},
+  {control("acid_source_summary"),820},
+  {control("acid_preview_summary"),820},
+  {control("acid_source_diagnostic"),820},
+  {control("acid_status"),820},
+  {control("acid_decoded_rows"),820}
+}
+local widths={}
+for index,entry in ipairs(bounded_views) do
+  local view,width=entry[1],entry[2]
+  assert(view.size and view.size.width==width,
+    "Grid pitch and readout views have explicit bounded widths")
+  widths[index]=view.size.width
+end
+local pitch_cell=control("acid_grid_pitch_01")
+local pitch_header=control("acid_grid_pitch_header_01")
+local old_grid_label=pitch_cell.text
+control("acid_grid_key_03"):fire()
+assert(pitch_cell.text~=old_grid_label and
+  pitch_cell.text:match("^%d+/%d+[+-]%d A[+-]S[+-]$") and
+  pitch_header.text=="P01 SRM",
+  "Grid pitch edits keep raw pitch fields and A/S flags visible with updated SRM markers")
+assert(control("acid_grid_pitch_column_01").size.height==38 and
+  control("acid_grid_pitch_header_01").size.height==18 and pitch_cell.size.height==20,
+  "the position header and raw-pitch button fit the original 38-pixel cell height")
+for index,entry in ipairs(bounded_views) do
+  assert(entry[1].size.width==widths[index],
+    "Grid pitch edits preserve explicit width constraint "..index)
+end
+view:fire(1)
 assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true),
   "a genuine PITCH edit differs from the accepted baseline")
 button("Undo"):fire()
@@ -600,8 +654,9 @@ assert(endpoint_draft.pitch_events[1].note==60 and
     tostring(endpoint_draft.pitch_events[1].octave))
 view:fire(2)
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_01").text:find("60/12%+1"),
-  "navigating away and back retains the MIDI-60 endpoint encoding")
+assert(control("acid_grid_pitch_header_01").text=="P01 SRM" and
+  control("acid_grid_pitch_01").text=="60/12+1 A-S-",
+  "navigating away and back retains the visible MIDI-60 encoding and flags")
 view:fire(1)
 program_key(1):fire()
 control("acid_program_octave_normal"):fire()
@@ -618,7 +673,7 @@ assert(alternate_draft.pitch_events[2].note==25 and
 local decoded_rows
 local decoded_page_label
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_text" and node.height==76 then decoded_rows=node end
+  if node.kind=="multiline_text" and node.size.height==76 then decoded_rows=node end
   if node.kind=="text" and node.text=="TIME 01-04 / 32" then decoded_page_label=node end
 end
 assert(decoded_rows and decoded_page_label,"decoded paging controls were not built")

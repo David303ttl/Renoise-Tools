@@ -226,18 +226,18 @@ function M.show()
     labels[i]=string.format("%02X: %s",i-1,name)
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
-  local status=vb:multiline_textfield{width=820,height=80,active=true,
+  local status=vb:multiline_textfield{id="acid_status",size={width=820,height=80},active=true,
     font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
-  local live_state_view=vb:multiline_text{id="acid_live_edit_state",width=820,height=48,font="bold",
+  local live_state_view=vb:multiline_text{id="acid_live_edit_state",size={width=820,height=48},font="bold",
     text="LIVE EDIT DISABLED"}
-  local source_state=vb:text{id="acid_source_state",width=820,font="bold",text=""}
-  local diagnostic=vb:text{id="acid_source_diagnostic",width=820,font="bold",text=""}
+  local source_state=vb:text{id="acid_source_state",size={width=820,height=18},font="bold",text=""}
+  local diagnostic=vb:text{id="acid_source_diagnostic",size={width=820,height=18},font="bold",text=""}
   local navigate_diagnostic
   local diagnostic_jump=vb:button{text="Go to source error",active=false,notifier=function()
     if navigate_diagnostic then navigate_diagnostic() end
   end}
-  local summary=vb:text{id="acid_source_summary",width=820,font="bold",text=""}
-  local map_text=vb:text{id="acid_preview_summary",width=820,font="bold",text=""}
+  local summary=vb:text{id="acid_source_summary",size={width=820,height=18},font="bold",text=""}
+  local map_text=vb:text{id="acid_preview_summary",size={width=820,height=18},font="bold",text=""}
   local length_items={}
   for n=1,sequencer.MAX_STEPS do length_items[n]=tostring(n) end
   local last_step_box=vb:valuebox{width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=sequencer.PAGE_SIZE,
@@ -262,7 +262,7 @@ function M.show()
   local program_accent,program_slide,program_c_plus,grid_c_plus
   local pitch_length_popup=vb:popup{items=length_items,width=78,value=sequencer.PAGE_SIZE}
   local timing_popup=vb:popup{id="acid_timing",items={"Straight","Triplet"},width=105,value=1}
-  local playback_popup=vb:popup{items={"Play Once","Repeat"},width=105,value=2}
+  local playback_popup=vb:popup{id="acid_output_policy",items={"Play Once","Repeat"},width=105,value=2}
   local pb_range_values=policies.PB_CHOICES
   local pb_range_items={}
   for index,value in ipairs(pb_range_values) do
@@ -277,7 +277,7 @@ function M.show()
     end}
   local step_division=vb:text{text="Straight 1/16"}
   local pitch_page_buttons,time_page_buttons={},{}
-  local pitch_cells,time_cells,time_headers={}, {}, {}
+  local pitch_cells,pitch_headers,pitch_columns,time_cells,time_headers={},{},{},{},{}
   local accent=vb:checkbox{value=false}
   local slide=vb:checkbox{value=false}
   local phrase_choice,phrase_targets
@@ -373,6 +373,17 @@ function M.show()
       p.accent and " A" or "",p.slide and " S" or "",markers,
       index>pattern.pitch_length and " i" or "")
   end
+  local function grid_pitch_header(index,p,projection)
+    if index>#pattern.pitch_events then return string.format("P%02d ---",index) end
+    local markers="S"..(projection.used[index] and "R" or "-")..
+      (accepted_pitch_baseline and not same_pitch(p,accepted_pitch_baseline.pitch_events[index]) and "M" or "-")
+    return string.format("P%02d %s",index,markers)
+  end
+  local function grid_pitch_value(index,p)
+    if index>#pattern.pitch_events then return "--" end
+    return string.format("%d/%d%+d A%sS%s",p.note,p.key,p.octave,
+      p.accent and "+" or "-",p.slide and "+" or "-")
+  end
   render=function(view,property,value)
     if property~="value" and not (rawequal(view,status) and property=="text") then
       local cache=rendered[view]
@@ -439,7 +450,8 @@ function M.show()
       local p=pitch_at(i)
       local b=pitch_cells[cell]
       render(b,"active",true)
-      render(b,"text",view_label(i,p,projection))
+      render(pitch_headers[cell],"text",grid_pitch_header(i,p,projection))
+      render(b,"text",grid_pitch_value(i,p))
       render(b,"tooltip",view_label(i,p,projection)..string.format(
         " | note=%d key=%d octave=%+d accent=%s slide=%s",p.note,p.key,p.octave,
         tostring(p.accent),tostring(p.slide)))
@@ -581,6 +593,7 @@ function M.show()
   local function changed(request_live)
     if not history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom) then update();return end
     local saved,save_error,effects=save_draft(request_live==false and "reset" or "edit")
+    invalidate_projection()
     update()
     update_live_state(saved==true)
     local state=runtime:generation_state()
@@ -655,7 +668,8 @@ function M.show()
     local key=index-1
     local program=vb:button{id=string.format("acid_program_key_%02d",index),
       text=key_name,width=38,notifier=function() choose_key(key) end}
-    local grid=vb:button{text=key_name,width=38,notifier=function() choose_key(key) end}
+    local grid=vb:button{id=string.format("acid_grid_key_%02d",index),text=key_name,width=38,
+      notifier=function() choose_key(key) end}
     ui.program.key_buttons[index]=program
     ui.grid.key_buttons[index]=grid
   end
@@ -711,8 +725,8 @@ function M.show()
       update()
     end}
   end
-  program_pitch_summary=vb:text{id="acid_program_pitch_summary",text="P01",font="bold"}
-  program_time_summary=vb:text{id="acid_program_time_summary",text="TIME 01",font="bold"}
+  program_pitch_summary=vb:text{id="acid_program_pitch_summary",size={width=820,height=18},text="P01",font="bold"}
+  program_time_summary=vb:text{id="acid_program_time_summary",size={width=820,height=18},text="TIME 01",font="bold"}
   program_c_plus=vb:button{id="acid_program_c_plus",text="C+ / MIDI 60",width=120,
     notifier=choose_c_plus}
   grid_c_plus=vb:button{text="C+ / MIDI 60",width=120,notifier=choose_c_plus}
@@ -728,9 +742,9 @@ function M.show()
   local time_pages=vb:row{spacing=6}
   for p=1,editor.MAX_PAGES do
     local page=p
-    pitch_page_buttons[p]=vb:button{id="acid_pitch_page_"..p,width=155,text="P",notifier=function()
+    pitch_page_buttons[p]=vb:button{id="acid_pitch_page_"..p,size={width=155,height=22},text="P",notifier=function()
       pitch_page=page;update() end}
-    time_page_buttons[p]=vb:button{id="acid_time_page_"..p,width=155,text="T",notifier=function()
+    time_page_buttons[p]=vb:button{id="acid_time_page_"..p,size={width=155,height=22},text="T",notifier=function()
       time_page=page;update() end}
     pitch_pages:add_child(pitch_page_buttons[p])
     time_pages:add_child(time_page_buttons[p])
@@ -741,14 +755,19 @@ function M.show()
     local t_row=vb:row{spacing=4}
     for col=1,grid_columns do
       local cell=(row-1)*grid_columns+col
-      pitch_cells[cell]=vb:button{id=string.format("acid_grid_pitch_%02d",cell),width=98,height=38,text="--",notifier=function()
+      pitch_headers[cell]=vb:text{id=string.format("acid_grid_pitch_header_%02d",cell),
+        size={width=98,height=18},text="P"}
+      pitch_cells[cell]=vb:button{id=string.format("acid_grid_pitch_%02d",cell),
+        size={width=98,height=20},text="--",notifier=function()
         choose_pitch(editor.index_on_page(pitch_page,cell)) end}
-      time_headers[cell]=vb:text{width=98,height=22,text="TIME"}
-      time_cells[cell]=vb:button{id=string.format("acid_grid_select_time_%02d",cell),width=98,
-        height=30,text="--",notifier=function()
+      pitch_columns[cell]=vb:column{id=string.format("acid_grid_pitch_column_%02d",cell),
+        size={width=98,height=38},spacing=0,pitch_headers[cell],pitch_cells[cell]}
+      time_headers[cell]=vb:text{size={width=98,height=22},text="TIME"}
+      time_cells[cell]=vb:button{id=string.format("acid_grid_select_time_%02d",cell),
+        size={width=98,height=30},text="--",notifier=function()
           choose_time(editor.index_on_page(time_page,cell))
       end}
-      p_row:add_child(pitch_cells[cell])
+      p_row:add_child(pitch_columns[cell])
       t_row:add_child(vb:column{spacing=2,time_headers[cell],time_cells[cell]})
     end
     pitch_grid:add_child(p_row)
@@ -1111,6 +1130,7 @@ function M.show()
     pb_range=next_state.pb_range
     phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
     if not history:commit(proposal) then return end
+    invalidate_projection()
     local saved,save_error=save_draft()
     status.text=saved and (direction=="undo" and "Edit undone and saved with the song." or
       "Edit redone and saved with the song.") or
@@ -1127,7 +1147,7 @@ function M.show()
   local recovery_entries={}
   local recovery_choice
   local copy_recovery,discard_recovery,independent,revalidate
-  local recovery_detail=vb:multiline_text{id="acid_recovery_detail",width=820,height=56,text=""}
+  local recovery_detail=vb:multiline_text{id="acid_recovery_detail",size={width=820,height=56},text=""}
   ui.recovery={page=1,lines={""},detail=recovery_detail}
   local render_recovery_page
   ui.recovery.previous=vb:button{id="acid_recovery_previous",text="Previous",width=90,
@@ -1307,22 +1327,22 @@ function M.show()
   end}
   ui.decoded.previous,ui.decoded.next=decoded_previous_button,decoded_next_button
   ui.decoded.page_label=vb:text{id="acid_decoded_page_label",text="TIME 01-04 / 32",font="bold"}
-  ui.decoded.text=vb:multiline_text{id="acid_decoded_rows",width=820,height=76,text=""}
-  local decoded_panel=vb:column{spacing=4,
+  ui.decoded.text=vb:multiline_text{id="acid_decoded_rows",size={width=820,height=76},text=""}
+  local decoded_panel=vb:column{id="acid_decoded_panel",spacing=4,
     vb:row{spacing=6,vb:text{text="Decoded view"},preview_popup,decoded_previous_button,
       ui.decoded.page_label,decoded_next_button},ui.decoded.text}
-  local pattern_copy_panel=vb:column{spacing=4,
+  local pattern_copy_panel=vb:column{id="acid_pattern_copy_panel",spacing=4,
     vb:text{text="PATTERN / COPY",font="bold"},
     vb:text{text="Session copy and paste controls are not available in this editor build."}}
-  local extended_panel=vb:column{spacing=4,
+  local extended_panel=vb:column{id="acid_extended_panel",spacing=4,
     vb:text{text="EXTENDED / CLEAR",font="bold"},
     vb:text{text="Extended transformations and scoped clear controls are not available here."}}
-  local output_panel=vb:column{spacing=4,
+  local output_panel=vb:column{id="acid_output_panel",spacing=4,
     vb:text{text="OUTPUT",font="bold"},
     vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
       vb:text{text="PB Range"},pb_range_popup},
     vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."}}
-  local recovery_panel=vb:column{spacing=3,
+  local recovery_panel=vb:column{id="acid_recovery_panel",spacing=3,
     vb:row{spacing=8,independent,revalidate},
     vb:row{spacing=6,vb:text{text="Recover Draft"},recovery_choice,copy_recovery,discard_recovery},
     recovery_detail,
@@ -1339,7 +1359,7 @@ function M.show()
   end
   ui.workspace.panels={decoded_panel,pattern_copy_panel,extended_panel,output_panel,recovery_panel}
   local workspace=vb:column{spacing=4,tab_row,
-    vb:stack{autosize=false,width=820,height=132,views={
+    vb:stack{autosize=false,size={width=820,height=132},views={
       decoded_panel,pattern_copy_panel,extended_panel,output_panel,recovery_panel}}
   }
   for _,panel in ipairs(ui.workspace.panels) do

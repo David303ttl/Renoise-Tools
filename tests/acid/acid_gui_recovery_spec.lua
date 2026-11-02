@@ -518,8 +518,8 @@ assert(status.text:find(long_diagnostic,1,true),
   "the bounded details field retains a current request complete diagnostic")
 local live_state=builder.views.acid_live_edit_state.text
 local live_state_view=builder.views.acid_live_edit_state
-assert(live_state_view.kind=="multiline_text" and live_state_view.width==820 and
-  live_state_view.height==48,
+assert(live_state_view.kind=="multiline_text" and live_state_view.size.width==820 and
+  live_state_view.size.height==48,
   "live status uses a fixed-size wrapping view so long diagnostics cannot widen the dialog")
 assert(live_state:find("LIVE EDIT ERROR",1,true) and
   live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID explicit recovery",1,true) and

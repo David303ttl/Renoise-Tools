@@ -302,6 +302,21 @@ end
 assert(not fail_next_edit_transition and status_view and
   status_view.text:find("DRAFT SAVE ERROR: session recovery only: Injected editor transition failure",1,true),
   "a failed editor transition must not report a saved draft")
+assert(not builder.views.acid_preview_summary.text:find("NOTE P01:37",1,true),
+  "a failed editor transition must not keep displaying the pre-edit projection: "..
+    builder.views.acid_preview_summary.text)
+assert(builder.views.acid_source_diagnostic.text:find("ERROR",1,true),
+  "a source that diverges from the runtime resolution snapshot reports the diagnostic: "..
+    builder.views.acid_source_diagnostic.text)
+fail_next_edit_transition=true
+button(builder,"Undo"):fire()
+assert(builder.views.acid_preview_summary.text:find("NOTE P01:37",1,true) and
+  not builder.views.acid_preview_summary.text:find("NOTE P01:38",1,true),
+  "a failed undo draft save still refreshes the displayed projection: "..
+    builder.views.acid_preview_summary.text)
+assert(builder.views.acid_source_diagnostic.text:find("VALID",1,true),
+  "restoring the source that matches the runtime snapshot projects valid again: "..
+    builder.views.acid_source_diagnostic.text)
 
 local context=contexts[#contexts]
 local original=instrument.phrases[1]

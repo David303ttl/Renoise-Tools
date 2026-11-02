@@ -8,9 +8,12 @@ closeout evidence and limits remain historical and unchanged.
 1+2 deterministic cutover passed, including independent foundational review;
 evidence is recorded in
 [`tests/acid/runtime_acceptance.md`](../tests/acid/runtime_acceptance.md#m5-gates-12-deterministic-exit-2026-11-01).
-Gate 3 implementation, deterministic verification and independent second-pass
-review passed. Its native layout feasibility check, later
-gates, final M5 second-pass review, and Renoise acceptance remain pending.
+Gate 3 implementation, deterministic verification, independent second-pass
+review and native visual feasibility passed. The reported Grid pitch-edit width
+growth was corrected, verified by native width sweep, and visually rechecked by
+the operator at normal display scale. Gate 11 must repeat visual acceptance on
+the final integrated build. Later gates, final M5 second-pass review and Renoise
+acceptance remain pending.
 This is not a claim of complete M5 implementation or guaranteed Renoise behavior.
 Tests and evidence must report actual results.
 
@@ -2265,7 +2268,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 1 source/schema/history | Source/codec/draft specs; combined foundational exit | `pwsh -File ./scripts/run_tests.ps1 -Tool ACID` | 71 passed, 0 failed; independent provenance correction reviewed and rerun | [Foundational evidence](../tests/acid/runtime_acceptance.md#m5-gates-12-deterministic-exit-2026-11-01); native acceptance unverified | PASS (deterministic, combined with Gate 2) |
 | Gate 2 resolution/compiler | Mask/interpreter/planner specs; combined foundational exit | Same combined suite and independent follow-up | 71 passed, 0 failed | Same foundational evidence; no separate Gate 1-only acceptance | PASS (deterministic, combined with Gate 1) |
 | Gate 3 shell/Grid | GUI view/admission/independence/recovery/timing specs and native harness selector cutover | `pwsh -File ./scripts/run_offline_tests.ps1` | 18 groups passed, including 74 Lua specs, 0 failed; independent findings corrected/rechecked | [Gate 3 evidence](../tests/acid/runtime_acceptance.md#m5-gate-3-shell-and-grid-verification-2026-11-01); native feasibility remains separate | PASS (implementation, deterministic verification, second pass) |
-| Gate 3 native feasibility | Procedure 13.1.6 before GUI-heavy continuation | No native UI run; no running Renoise process detected | Not executed | Clipping, legibility and reachability remain unverified; Gates 4–7 paused | UNVERIFIED |
+| Gate 3 native feasibility | Procedure 13.1.6 before GUI-heavy continuation | Operator visual recheck of corrected build, plus native 2026-11-02 editor exercise | Program/Grid and both pages; workspace, Decoded/Recovery paging; labels/readability/reachability accepted at normal display scale; corrected Grid width stable across pitch edits | Pattern/Copy and Extended/Clear are later-gate placeholders; Gate 11 must repeat on final integrated build | PASS |
 | Gate 4 staged Program | Staging/GUI specs |  |  |  | Unexecuted |
 | Gate 5 audition mocks | Audition lifecycle spec |  |  |  | Unexecuted |
 | Gate 6 operations | Clipboard/label/duplicate specs |  |  |  | Unexecuted |
