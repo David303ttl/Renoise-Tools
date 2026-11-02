@@ -5289,6 +5289,95 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       actions[#actions+1]=name
       return true,reason
     end
+    local function verify_program_entry()
+      local app_factory=renoise.app
+      local native_app=app_factory()
+      local expected_prompt
+      local prompt_count=0
+      local before_data=song.tool_data
+      local before_source=assert(persisted.read_draft(song,instrument,phrase))
+      local before_phrase=assert(ownership.snapshot(phrase))
+      local function unchanged()
+        assert(song.tool_data==before_data,"Program candidate changed durable song data")
+        local draft=assert(persisted.read_draft(song,instrument,phrase))
+        assert(sequence.same_source(before_source,draft),"Program candidate changed canonical draft")
+        assert(ownership.compare(before_phrase,assert(ownership.snapshot(phrase))),
+          "Program candidate changed native phrase")
+      end
+      local function prompt(title,answer,button_count,action)
+        expected_prompt={title=title,answer=answer,count=button_count}
+        action()
+        assert(expected_prompt==nil,"Program action did not request its confirmation")
+      end
+      local called,reason=pcall(function()
+        renoise.app=function()
+          return setmetatable({}, {__index=function(_,name)
+            if name=="show_prompt" then return function(_,title,message,buttons)
+              assert(expected_prompt and title==expected_prompt.title,"Unexpected Program prompt: "..tostring(title))
+              assert(#buttons==expected_prompt.count,"Program guard offered incorrect decisions")
+              local answer=expected_prompt.answer
+              local available=false
+              for _,button in ipairs(buttons) do if button==answer then available=true end end
+              assert(available,"Program prompt omitted requested decision")
+              expected_prompt=nil
+              prompt_count=prompt_count+1
+              return answer
+            end end
+            local member=native_app[name]
+            if type(member)=="function" then return function(_,...) return member(native_app,...) end end
+            return member
+          end})
+        end
+        prompt("Re-enter PITCH","Proceed",2,callbacks.acid_program_reenter_pitch)
+        assert(not controls.acid_program_finish.active,"Incomplete Program candidate enabled Finish")
+        callbacks.acid_program_pitch_page_2()
+        callbacks.acid_program_select_pitch_16()
+        callbacks.acid_program_enter()
+        assert(not controls.acid_program_finish.active,"Final Enter bypassed missing positions")
+        unchanged()
+        prompt("Program entry staged","Stay",2,callbacks.acid_undo)
+        unchanged()
+        callbacks.acid_program_restart()
+        for position=1,before_source.pitch_length do callbacks.acid_program_enter() end
+        assert(controls.acid_program_finish.active,"Complete Program candidate disabled Finish")
+        callbacks.acid_program_restart()
+        callbacks.acid_program_key_02()
+        assert(not controls.acid_program_finish.active,"Candidate edit retained entered marker")
+        unchanged()
+        callbacks.acid_program_enter()
+        assert(controls.acid_program_finish.active,"Re-entered candidate did not restore Finish")
+        prompt("Program entry staged","Discard",3,callbacks.acid_undo)
+        unchanged()
+        assert(not controls.acid_program_enter.active,"Discard retained Program candidate")
+        prompt("Re-enter TIME","Proceed",2,callbacks.acid_program_reenter_time)
+        callbacks.acid_program_select_time_02()
+        local time_command=before_source.time_events[2]=="R" and "N" or "R"
+        callbacks[time_command=="R" and "acid_time_command_rest" or "acid_time_command_note"]()
+        callbacks.acid_program_restart()
+        for position=1,before_source.length do callbacks.acid_program_enter() end
+        assert(controls.acid_program_finish.active,"Complete TIME candidate disabled Finish")
+        unchanged()
+        callbacks.acid_program_finish()
+        local finished=assert(persisted.read_draft(song,instrument,phrase))
+        local expected=assert(sequence.copy_source(before_source))
+        for position=1,expected.length do expected.time_events[position]="N" end
+        expected.time_events[2]=time_command
+        assert(sequence.same_source(expected,finished),"Finish did not persist exact TIME candidate")
+        assert(not controls.acid_program_enter.active,"Finish retained candidate")
+        callbacks.acid_undo()
+        local restored=assert(persisted.read_draft(song,instrument,phrase))
+        assert(sequence.same_source(before_source,restored),"One Undo did not restore pre-stage source")
+        assert(ownership.compare(before_phrase,assert(ownership.snapshot(phrase))),"Finish with Live Edit off changed native phrase")
+      end)
+      renoise.app=app_factory
+      if not called then return nil,"Program entry native callbacks: "..tostring(reason) end
+      metrics.gui_program_entry_native_checked=true
+      metrics.gui_program_entry_prompt_responses_simulated=true
+      metrics.gui_program_entry_prompt_count=prompt_count
+      return true
+    end
+    local entry_ok,entry_error=verify_program_entry()
+    if not entry_ok then close_test_gui();return nil,entry_error end
     local stored_now,stored_policy,stored_pb=persisted.read_draft(song,instrument,phrase)
     if not stored_now then close_test_gui();return nil,"GUI draft unavailable before settings benchmark: "..tostring(stored_policy) end
     local settings_actions={

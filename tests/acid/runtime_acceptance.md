@@ -2,8 +2,33 @@
 
 M5 sections below are dated checkpoint records. Earlier statements that later
 gates were pending describe those checkpoints, not the current implementation.
-See [Gate 3 verification](#m5-gate-3-shell-and-grid-verification-2026-11-01) for
-the current shell work and its native feasibility limitation.
+See [Gate 4 verification](#m5-gate-4-program-staging-2026-11-02) for current
+Program staging results and native acceptance limits.
+
+## M5 Gate 4 Program staging (2026-11-02)
+
+**Disposition:** implementation and deterministic second-pass verification PASS.
+Gates 5–12 remain pending. Revision: `5ccaa982` plus this working tree.
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Detached entry and Finish | `acid_program_staging_spec.lua`: PITCH/TIME initialization, flags, inactive storage, entered markers, final-position entry, marker invalidation, navigation, normalization, equal-source Finish, one-edit Finish and failed-save recovery | PASS; no candidate history, draft or writer effects before Finish |
+| Admission | Same spec: complete/incomplete decision matrix for existing source/settings/history/target/generation controls, direct incomplete Finish rejection, explicit reinvocation, canonical Grid and disabled edits | PASS; no guarded-action replay |
+| Origin and recovery | Same spec: runtime/history revision drift, native selection, deletion, ownership loss, close, document release/new-document notifications, failed origin save | PASS; no replacement-target commit or native selection reversal; canonical recovery retained |
+| Check | Same spec: canonical/candidate diagnostics, missing markers, coordinate-free and bounded coordinate navigation, stale-origin rejection | PASS; read-only |
+| Resolved keyboard | Same spec: alternate key-12 encodings, C+ endpoint, scale mask, candidate Program and canonical Grid | PASS; shared prepared records drive highlights; raw controls preserved |
+| Final ACID regression | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `tmp/gate4-acid-final.log` | PASS; 72 specs, 0 failed, exit 0 |
+| Broader offline checks | `./scripts/run_offline_tests.ps1 -LuaCommand <lua-5.1-executable>`; `tmp/gate4-offline.log` | 17 groups passed; interpreter-policy wrapper failed with the non-ASCII executable path; repository Lua selection passed 75 specs |
+| Interpreter-policy recheck | `./tests/lua_interpreter_spec.ps1 -LuaCommand <short-ascii-lua-5.1-executable>`; `tmp/gate4-lua-policy.log` | PASS, exit 0; all 18 offline groups passed across the run and isolated recheck |
+| Independent second pass | Separate contract, implementation and final diagnostic reviewers; focused staging/GUI/editor/draft/request checks | PASS; cursor coherence, discard reporting and diagnostic findings corrected and rechecked |
+| Native functional entry | Renoise 3.5.4 Demo / API 6.2; `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-2a94cd3870954c279a4c06e69d16712e/report.json` | PASS; real widgets, exact song-data/draft/phrase isolation, marker completion/invalidation, Stay/Discard, TIME Finish and one Undo |
+| Native isolation | Same native report: disposable runner-owned process, fixture inventory/store/selection and original installation restoration | PASS |
+| Interactive Native + Keyboard | `./scripts/run_interactive_tests.ps1 -Suite All -Install -ApproveDisposableSong -AllowKeyboardFocusActivation -TestEnvironment <local-keyboard-environment.json>`; `tmp/interactive-4eec55c7fd2843879f5ccc8d2db6e43d/report.json` | PASS; Ctrl+Alt+B opens ACID, Escape closes it, Alt+Down changes instrument 1 to 2; native scenarios and keyboard guards pass |
+| Tested build identity | Both interactive bundles compared with working-tree `gui.lua` | Exact SHA-256 matches; Renoise 3.5.4 Demo / API 6.2; original installations restored |
+| Native limits | Prompt responses scripted through test-only application facade; procedure 13.2 manual modal/focus, external lifecycle, visual fit and complete manual workflow | UNVERIFIED; functional harness does not establish manual or final integrated acceptance |
+| SDK | `./scripts/setup_sdk.ps1`; API 6.2 `definitions/library/renoise/application.lua` and offline `docs/API/renoise/renoise.Application.html` prompt contract | Verified; SDK excluded from runtime |
+| Package | `./scripts/package.ps1 -Tool ACID`; archive root and development-file exclusion checks | PASS; 31 runtime files, root manifest/main; manifest unchanged |
+| Test environment | Two `lua.exe` installations on PATH | Explicit Lua 5.1 executable selected |
 
 ## M5 Gate 0 audit (2026-11-01)
 

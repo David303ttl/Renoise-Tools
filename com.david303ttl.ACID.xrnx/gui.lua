@@ -154,6 +154,8 @@ local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
   tie={0x5D,0x88,0xB7},rest={0x4B,0x4D,0x56},
   warning={0xF2,0x77,0x77}}
+local STAGE_ORIGIN_FIELDS={"song","epoch","session","edit_revision","target_revision",
+  "operation_serial","instrument","phrase","kind","id","history_revision"}
 
 local function wrap_lines(text,width)
   local lines,current={},""
@@ -200,6 +202,10 @@ function M.show()
   local update
   local runtime
   local session
+  local stage
+  local guard_stage,finish_stage
+  local stage_status,stage_actions
+  local refresh_stage
   local function current_session()
     local state=runtime and runtime:lifetime_state()
     return state and state.open and state.session==session
@@ -218,6 +224,9 @@ function M.show()
   local redo_button
   local selected_instrument=math.min(song.selected_instrument_index,#song.instruments)
   local editor_view=1
+  local function edit_source()
+    return stage and editor_view==1 and stage.candidate or pattern
+  end
   local labels={}
   local instrument_targets={}
   for i,instrument in ipairs(song.instruments) do
@@ -247,6 +256,13 @@ function M.show()
     notifier=function(value)
       if updating then return end
       editor_view=value
+      if stage and value==1 then
+        if stage.memory=="pitch" then
+          selected_pitch=stage.cursor;pitch_page=editor.page_for(stage.cursor)
+        else
+          selected_step=stage.cursor;time_page=editor.page_for(stage.cursor)
+        end
+      end
       status.text=value==1 and "Program view: edit selected PITCH and TIME positions."
         or "Grid view: edit PITCH and TIME memory pages directly."
       update()
@@ -289,6 +305,33 @@ function M.show()
   local function bound_instrument() return destination().instrument end
   local function bound_phrase() return destination().phrase end
   local function revision() return runtime:revision_state().edit_revision end
+  local function stage_origin()
+    local life=runtime:lifetime_state()
+    local revisions=runtime:revision_state()
+    local target=destination()
+    return {song=song,epoch=life.epoch,session=life.session,
+      history_revision=history.revision,
+      edit_revision=revisions.edit_revision,target_revision=revisions.target_revision,
+      operation_serial=revisions.operation_serial,instrument=target.instrument,
+      phrase=target.phrase,kind=target.kind,id=target.id}
+  end
+  local function valid_stage()
+    if not stage then return false end
+    local current=stage_origin()
+    for _,key in ipairs(STAGE_ORIGIN_FIELDS) do
+      if not rawequal(current[key],stage.origin[key]) then return false end
+    end
+    return current_session()
+  end
+  local function missing_positions()
+    local missing={}
+    if stage then for _,position in ipairs(stage.target_positions) do
+      if not stage.entered[position] then
+        missing[#missing+1]=string.format(stage.memory=="pitch" and "P%02d" or "T%02d",position)
+      end
+    end end
+    return missing
+  end
   local projected_revision,cached_projection,projected_instrument,projected_phrase
   local function invalidate_projection()
     cached_projection=nil
@@ -299,10 +342,18 @@ function M.show()
         not rawequal(projected_phrase,bound_phrase()) then
       local snapshot=runtime:editor_state()
       cached_projection=editor.project(pattern,snapshot and snapshot.prepared_resolution)
+      cached_projection.resolved_records=snapshot and snapshot.prepared_resolution and
+        snapshot.prepared_resolution.resolved_records
       projected_revision=revision()
       projected_instrument,projected_phrase=bound_instrument(),bound_phrase()
     end
     return cached_projection
+  end
+  local function stage_resolution()
+    if not stage.prepared_resolution then
+      stage.prepared_resolution=assert(sequencer.prepare_resolution(stage.candidate))
+    end
+    return stage.prepared_resolution
   end
   local update_live_state
   local update_actions
@@ -347,10 +398,7 @@ function M.show()
     return sequencer.new_pitch(0,0,false,false)
   end
   local function pitch_at(index)
-    return pattern.pitch_events[index] or default_pitch()
-  end
-  local function fill_to(index)
-    for i=#pattern.pitch_events+1,index do pattern.pitch_events[i]=default_pitch() end
+    return edit_source().pitch_events[index] or default_pitch()
   end
   local function same_pitch(left,right)
     return left and right and left.note==right.note and left.key==right.key and
@@ -408,9 +456,37 @@ function M.show()
       cache[property]=retain_render_value(value)
     end
   end
+  refresh_stage=function()
+    if stage_status then
+      local missing=missing_positions()
+      render(stage_status,"text",stage and (editor_view==2 and
+        "Program entry staged; return to Program to finish or discard" or
+        string.upper(stage.memory).." CANDIDATE | "..(#missing==0 and "All positions entered" or
+          "Missing: "..table.concat(missing,", "))) or "Edit One | canonical source")
+      render(stage_actions.back,"active",stage~=nil)
+      render(stage_actions.enter,"active",stage~=nil)
+      render(stage_actions.restart,"active",stage~=nil)
+      render(stage_actions.finish,"active",stage~=nil and #missing==0)
+      render(stage_actions.discard,"active",stage~=nil)
+    end
+  end
+  local function show_diagnostic(projection)
+    local error_info=projection.error
+    if error_info then
+      render(diagnostic,"text","ERROR: "..error_info.message..
+        (error_info.step and "  [TIME "..error_info.step.."]" or "")..
+        (error_info.pitch_index and "  [PITCH "..error_info.pitch_index.."]" or ""))
+      render(diagnostic_jump,"active",error_info.step~=nil or error_info.pitch_index~=nil)
+    else
+      render(diagnostic,"text",string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
+        projection.plan.note_count,step_division.text))
+      render(diagnostic_jump,"active",false)
+    end
+  end
   update=function()
     updating=true
     local projection=project()
+    refresh_stage()
     render(view_heading,"text",editor_view==1 and "PROGRAM VIEW" or "GRID VIEW")
     render(view_hint,"text",editor_view==1 and
       "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
@@ -429,8 +505,8 @@ function M.show()
       if value==pb_range then render(pb_range_popup,"value",index);break end
     end
     render(pb_range_popup,"active",true)
-    if undo_button then render(undo_button,"active",history:can_undo()) end
-    if redo_button then render(redo_button,"active",history:can_redo()) end
+    if undo_button then render(undo_button,"active",stage~=nil or history:can_undo()) end
+    if redo_button then render(redo_button,"active",stage~=nil or history:can_redo()) end
     render(preview_popup,"value",preview_cycle)
     render(preview_popup,"active",true)
     render(last_step_box,"value",pattern.length)
@@ -472,11 +548,16 @@ function M.show()
       render(time_header,"style",step>pattern.length and "disabled" or "strong")
     end end
     if editor_view==2 then
-      render(accent,"active",true)
-      render(slide,"active",true)
+      render(accent,"active",stage==nil)
+      render(slide,"active",stage==nil)
+      for _,button in ipairs(ui.grid.key_buttons) do render(button,"active",stage==nil) end
+      for _,button in ipairs(ui.grid.octave_buttons) do render(button,"active",stage==nil) end
     end
     local p=pitch_at(selected_pitch)
     local key,octave=sequencer.pitch_controls(p)
+    local records=stage and editor_view==1 and stage_resolution().resolved_records or
+      projection.resolved_records
+    key=records and records[selected_pitch] and records[selected_pitch].note%12
     if editor_view==2 then
       for key_index,button in ipairs(ui.grid.key_buttons) do
         render(button,"color",key==key_index-1 and colors.selected or colors.idle)
@@ -490,12 +571,17 @@ function M.show()
     if program_pitch_summary and editor_view==1 then
       for cell,button in ipairs(ui.program.pitch_selectors) do
         local index=editor.index_on_page(pitch_page,cell)
-        render(button,"text",string.format("P%02d",index))
+        render(button,"text",string.format("P%02d%s",index,
+          stage and stage.memory=="pitch" and stage.entered[index] and " +" or ""))
+        render(button,"active",not stage or stage.memory~="pitch" or index<=#stage.target_positions)
         render(button,"color",index==selected_pitch and colors.selected or colors.idle)
       end
       for cell,button in ipairs(ui.program.time_selectors) do
         local index=editor.index_on_page(time_page,cell)
-        render(button,"text",string.format("T%02d%s",index,index>pattern.length and " *" or ""))
+        render(button,"text",string.format("T%02d%s",index,
+          stage and stage.memory=="time" and stage.entered[index] and " +" or
+          (index>pattern.length and " *" or "")))
+        render(button,"active",not stage or stage.memory~="time" or index<=#stage.target_positions)
         render(button,"color",index==selected_step and colors.selected or
           (index>pattern.length and colors.idle or colors.note))
       end
@@ -506,7 +592,7 @@ function M.show()
       render(program_pitch_summary,"text",view_label(selected_pitch,p,projection).." | "..
         pitch_indicator(selected_pitch,projection))
       render(program_time_summary,"text",string.format("TIME %02d = %s | %s",
-        selected_step,pattern.time_events[selected_step],
+        selected_step,(stage and stage.candidate or pattern).time_events[selected_step],
         selected_step<=pattern.length and editor.step_text(projection,selected_step,preview_cycle)
           or "OUTSIDE LAST STEP | READ ONLY"))
       for key_index,button in ipairs(ui.program.key_buttons) do
@@ -519,13 +605,20 @@ function M.show()
       render(program_slide,"value",p.slide==true)
       render(program_c_plus,"active",p.octave==1)
       render(program_c_plus,"color",p.note==60 and colors.selected or colors.idle)
+      local pitch_active=not stage or (stage.memory=="pitch" and selected_pitch<=#stage.target_positions)
+      for _,button in ipairs(ui.program.key_buttons) do render(button,"active",pitch_active) end
+      for _,button in ipairs(ui.program.octave_buttons) do render(button,"active",pitch_active) end
+      render(program_accent,"active",pitch_active)
+      render(program_slide,"active",pitch_active)
+      render(program_c_plus,"active",pitch_active and p.octave==1)
     end
     if editor_view==2 then
-      render(grid_c_plus,"active",p.octave==1)
+      render(grid_c_plus,"active",stage==nil and p.octave==1)
       render(grid_c_plus,"color",p.note==60 and colors.selected or colors.idle)
     end
     for _,button in ipairs(ui.time_assignment) do
-      render(button,"active",selected_step<=pattern.length)
+      render(button,"active",selected_step<=pattern.length and (not stage or
+        (editor_view==1 and stage.memory=="time" and selected_step<=#stage.target_positions)))
     end
     for tab,panel in ipairs(ui.workspace.panels) do
       render(panel,"visible",tab==workspace_tab)
@@ -553,41 +646,44 @@ function M.show()
       selected_step,selected_step>pattern.length and " OUTSIDE LAST STEP" or "",
       editor.step_text(projection,selected_step,1),
       editor.step_text(projection,selected_step,2)))
-    local plan=projection.plan
-    local error_info=projection.error
-    if error_info then
-      render(diagnostic,"text","ERROR: "..error_info.message..
-        (error_info.step and "  [TIME "..error_info.step.."]" or "")..
-        (error_info.pitch_index and "  [PITCH "..error_info.pitch_index.."]" or ""))
-      if diagnostic_jump then render(diagnostic_jump,"active",true) end
-    else
-      render(diagnostic,"text",string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
-        plan.note_count,step_division.text))
-      if diagnostic_jump then render(diagnostic_jump,"active",false) end
-    end
+    show_diagnostic(projection)
     updating=false
   end
   local function choose_pitch(index)
+    if stage and not valid_stage() then return end
+    if stage and editor_view==1 and stage.memory=="pitch" then
+      if index>#stage.target_positions then return end
+      stage.cursor=index
+    end
     selected_pitch=index
     pitch_page=editor.page_for(index)
     update()
   end
   local function choose_time(index)
+    if stage and not valid_stage() then return end
+    if stage and editor_view==1 and stage.memory=="time" then
+      if index>#stage.target_positions then return end
+      stage.cursor=index
+    end
     selected_step=index
     time_page=editor.page_for(index)
     update()
   end
   navigate_diagnostic=function()
-    local error_info=project().error
+    if stage and not valid_stage() then status.text="Entry origin changed; diagnostic navigation unavailable.";return end
+    local error_info=(stage and editor.project(stage.candidate,stage_resolution()) or project()).error
     if not error_info then return end
-    if error_info.pitch_index then
+    if error_info.pitch_index and (not stage or (stage.memory=="pitch" and
+        error_info.pitch_index<=#stage.target_positions)) then
       selected_pitch=error_info.pitch_index
       pitch_page=editor.page_for(selected_pitch)
     end
-    if error_info.step then
+    if error_info.step and (not stage or (stage.memory=="time" and
+        error_info.step<=#stage.target_positions)) then
       selected_step=error_info.step
       time_page=editor.page_for(selected_step)
     end
+    if stage then stage.cursor=stage.memory=="pitch" and selected_pitch or selected_step end
     update()
   end
   local function changed(request_live)
@@ -611,13 +707,76 @@ function M.show()
       runtime:flush_pending()
     end
   end
+  finish_stage=function()
+    if not stage then return false end
+    if not valid_stage() then status.text="Entry origin changed; Finish unavailable.";return false end
+    local eligible,eligibility_error=runtime:musical_eligibility()
+    if not eligible then status.text="Cannot finish: "..tostring(eligibility_error);return false end
+    local missing=missing_positions()
+    if #missing>0 then status.text="Missing entered positions: "..table.concat(missing,", ");return false end
+    local valid,reason=sequencer.validate(stage.candidate)
+    if not valid then status.text=tostring(reason);return false end
+    local candidate=stage.candidate
+    if sequencer.same_source(candidate,pattern) then stage=nil;update();return true end
+    pattern=assert(sequencer.copy_source(candidate))
+    stage=nil
+    changed()
+    return true
+  end
+  guard_stage=function()
+    if not stage then return false end
+    if not valid_stage() then
+      stage=nil;update();status.text="Uncommitted entry discarded: origin changed.";return true
+    end
+    local missing=missing_positions()
+    local buttons=#missing==0 and {"Stay","Discard","Finish"} or {"Stay","Discard"}
+    local answer=renoise.app():show_prompt("Program entry staged",
+      #missing==0 and "Resolve entry, then invoke the requested action again." or
+        "Missing entered positions: "..table.concat(missing,", "),buttons)
+    if answer=="Finish" and #missing==0 then finish_stage()
+    elseif answer=="Discard" then stage=nil;update() end
+    update()
+    return true
+  end
+  local function begin_stage(memory)
+    if guard_stage() then return end
+    local eligible,reason=runtime:musical_eligibility()
+    if not eligible then status.text="Cannot re-enter: "..tostring(reason);return end
+    local origin=stage_origin()
+    local count=memory=="pitch" and pattern.pitch_length or pattern.length
+    local positions={}
+    for index=1,count do positions[index]=string.format(memory=="pitch" and "P%02d" or "T%02d",index) end
+    local answer=renoise.app():show_prompt("Re-enter "..string.upper(memory),
+      table.concat(positions,", ")..(memory=="pitch" and
+        ": C/NORMAL, ACCENT off, SLIDE off. All other positions and TIME preserved." or
+        ": NOTE. All other positions and PITCH flags preserved."),{"Cancel","Proceed"})
+    if answer~="Proceed" then return end
+    stage={memory=memory,candidate=assert(sequencer.copy_source(pattern)),
+      target_positions={},entered={},cursor=1,origin=origin}
+    if not valid_stage() then stage=nil;status.text="Entry origin changed during confirmation.";return end
+    for index=1,count do
+      stage.target_positions[index]=index
+      stage.entered[index]=false
+      if memory=="pitch" then stage.candidate.pitch_events[index]=default_pitch()
+      else stage.candidate.time_events[index]="N" end
+    end
+    if memory=="pitch" then choose_pitch(1) else choose_time(1) end
+    update()
+  end
+  local function candidate_edit(memory,position)
+    if not stage then return true end
+    if not valid_stage() then status.text="Entry origin changed; candidate is unavailable.";return false end
+    return editor_view==1 and stage.memory==memory and position<=#stage.target_positions
+  end
   timing_popup:add_notifier(function(value)
     if updating then return end
+    if guard_stage() then update();return end
     pattern.timing_mode=value==2 and "triplet" or "straight"
     changed()
   end)
   playback_popup:add_notifier(function(value)
     if updating then return end
+    if guard_stage() then update();return end
     output_policy=value==2 and "repeat" or "play_once"
     status.text=output_policy=="repeat" and "Repeat output selected for this phrase."
       or "Play Once output selected for this phrase."
@@ -625,6 +784,7 @@ function M.show()
   end)
   pb_range_popup:add_notifier(function(value)
     if updating then return end
+    if guard_stage() then update();return end
     pb_range=pb_range_values[value] or policies.DEFAULT_PB_RANGE
     status.text=pb_range==0 and
       "Pitch bend off; connected plugin/MIDI SLIDE uses overlapping notes." or
@@ -633,12 +793,12 @@ function M.show()
   end)
   local function write_pitch(key,octave,is_accent,is_slide)
     if updating then return end
-    fill_to(selected_pitch)
+    if not candidate_edit("pitch",selected_pitch) then update();return end
     local current=pitch_at(selected_pitch)
     local candidate=sequencer.new_pitch(key,octave,is_accent,is_slide)
     if same_pitch(current,candidate) then return end
-    pattern.pitch_events[selected_pitch]=candidate
-    changed()
+    edit_source().pitch_events[selected_pitch]=candidate
+    if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
   end
   local function choose_key(key)
     local pitch=pitch_at(selected_pitch)
@@ -649,20 +809,25 @@ function M.show()
     write_pitch(pitch.note%12,octave,pitch.accent,pitch.slide)
   end
   local function choose_c_plus()
+    if updating or not candidate_edit("pitch",selected_pitch) then return end
     local pitch=pitch_at(selected_pitch)
     if pitch.octave~=1 then return end
-    fill_to(selected_pitch)
     local candidate=sequencer.new_pitch(12,1,pitch.accent,pitch.slide)
     if same_pitch(pitch,candidate) then return end
-    pattern.pitch_events[selected_pitch]=candidate
-    changed()
+    edit_source().pitch_events[selected_pitch]=candidate
+    if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
   end
   local function set_time_command(command)
+    if updating or not candidate_edit("time",selected_step) then return end
     if selected_step>pattern.length then return end
-    local previous=pattern.time_events[selected_step]
-    local result,reason=sequencer.set_time(pattern,selected_step,command)
+    local source=edit_source()
+    local previous=source.time_events[selected_step]
+    local result,reason=sequencer.set_time(source,selected_step,command)
     if not result then status.text=reason;return end
-    if previous~=result then changed() else update() end
+    if previous~=result then
+      if stage then stage.prepared_resolution=nil;stage.entered[selected_step]=false;update() else changed() end
+    else update() end
+    if selected_step==1 and command=="T" then status.text="TIME 01 TIE normalized to NOTE." end
   end
   for index,key_name in ipairs(keys) do
     local key=index-1
@@ -704,10 +869,10 @@ function M.show()
   end)
   for cell=1,sequencer.PAGE_SIZE do
     local position=cell
-    ui.program.pitch_selectors[cell]=vb:button{width=45,text="P",notifier=function()
+    ui.program.pitch_selectors[cell]=vb:button{id=string.format("acid_program_select_pitch_%02d",cell),width=45,text="P",notifier=function()
       choose_pitch(editor.index_on_page(pitch_page,position))
     end}
-    ui.program.time_selectors[cell]=vb:button{width=45,text="T",notifier=function()
+    ui.program.time_selectors[cell]=vb:button{id=string.format("acid_program_select_time_%02d",cell),width=45,text="T",notifier=function()
       choose_time(editor.index_on_page(time_page,position))
     end}
   end
@@ -775,6 +940,7 @@ function M.show()
   end
   last_step_box:add_notifier(function(n)
     if updating then return end
+    if guard_stage() then update();return end
     n=tonumber(n)
     if not n then update();return end
     n=math.max(1,math.min(sequencer.MAX_STEPS,math.floor(n+0.5)))
@@ -783,6 +949,7 @@ function M.show()
   end)
   pitch_length_popup:add_notifier(function(value)
     if updating then return end
+    if guard_stage() then update();return end
     local ok,reason=sequencer.set_pitch_length(pattern,tonumber(value))
     if not ok then status.text=reason end
     if ok then changed() else update() end
@@ -834,6 +1001,10 @@ function M.show()
     return names,targets
   end
   local function load_target(index,native_selection)
+    if stage then
+      if not native_selection then if guard_stage() then update();return end
+      else stage=nil end
+    end
     local instrument=instrument_targets[selected_instrument]
     local target=phrase_targets[index]
     if target==nil then return end
@@ -888,10 +1059,21 @@ function M.show()
   phrase_choice=vb:popup{width=360,items=phrase_names,
     value=#phrase_names,notifier=function(n)
       if not loading then
+        if guard_stage() then
+          loading=true
+          for index,phrase in ipairs(phrase_targets) do
+            if rawequal(phrase,bound_phrase()) or (phrase==false and not bound_phrase()) then
+              render(phrase_choice,"value",index);break
+            end
+          end
+          loading=false
+          return
+        end
         load_target(n)
       end
     end}
   local function select_instrument(n)
+    if guard_stage() then loading=true;render(instrument_choice,"value",selected_instrument);loading=false;return end
     selected_instrument=n
     local options
     options,phrase_targets=options_for_instrument()
@@ -957,11 +1139,15 @@ function M.show()
     loading=false
     refresh_phrase_choices(bound_phrase())
   end
-  apply_pending_selected_phrase_selection=function()
+  local function reconcile_selected_phrase_selection()
     if not current_session() then return false end
     if native_projection_dirty then native_observers:refresh() end
     local before=destination()
     local target,effects=runtime:reconcile()
+    if stage and not valid_stage() then
+      stage=nil
+      update()
+    end
     if native_projection_dirty then
       native_projection_dirty=false
       refresh_native_choices()
@@ -1025,6 +1211,17 @@ function M.show()
     end
     status.text="Native destination is unavailable; select the destination again."
     return false
+  end
+  apply_pending_selected_phrase_selection=function()
+    local staged=stage~=nil
+    local changed=reconcile_selected_phrase_selection()
+    if staged and not stage then
+      status.text="Uncommitted entry discarded: native destination changed.\n"..status.text
+      if drafts.has_volatile(song) then
+        status.text=status.text.."\nDRAFT WARNING: unsaved canonical draft retained in session recovery."
+      end
+    end
+    return changed
   end
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)if not loading then select_instrument(n) end end}
@@ -1098,6 +1295,10 @@ function M.show()
     update_live_state()
   end
   live_checkbox=vb:checkbox{id="acid_live_edit",value=false,notifier=function(value)
+    if updating then return end
+    if guard_stage() then
+      updating=true;render(live_checkbox,"value",runtime:revision_state().armed==true);updating=false;return
+    end
     if value then
       apply_pending_selected_phrase_selection()
       runtime:transition("arm")
@@ -1111,6 +1312,7 @@ function M.show()
   end}
   active_live_checkbox=live_checkbox
   local function move_history(direction)
+    if guard_stage() then return end
     local proposal=history:propose(direction)
     if not proposal then return end
     local next_state=proposal.state
@@ -1191,6 +1393,7 @@ function M.show()
   recovery_choice=vb:popup{id="acid_recovery_choice",width=420,items={"No detached drafts"},value=1,
     notifier=function() if not loading and update_actions then update_actions() end end}
   copy_recovery=vb:button{id="acid_recovery_copy",text="Copy to New",active=false,notifier=function()
+    if guard_stage() then return end
     if not current_session() then return end
     local entry=selected_recovery()
     if not entry then return end
@@ -1207,6 +1410,7 @@ function M.show()
     update_live_state()
   end}
   discard_recovery=vb:button{id="acid_recovery_discard",text="Discard",active=false,notifier=function()
+    if guard_stage() then return end
     if not current_session() then return end
     local entry=selected_recovery()
     if not entry then return end
@@ -1215,6 +1419,7 @@ function M.show()
     update_live_state()
   end}
   independent=vb:button{id="acid_make_independent",text="Make Independent",active=false,notifier=function()
+    if guard_stage() then return end
     if not current_session() then return end
     local changed,result=runtime:make_independent()
     if changed then
@@ -1233,6 +1438,7 @@ function M.show()
     update_live_state()
   end}
   revalidate=vb:button{id="acid_revalidate",text="Revalidate",active=false,notifier=function()
+    if guard_stage() then return end
     if not current_session() then return end
     local state,proof=runtime:revalidation_status()
     if not state.verified then status.text=state.reason or "Recovery consistency could not be verified."
@@ -1303,10 +1509,45 @@ function M.show()
     program_octave_row:add_child(ui.program.octave_buttons[index])
     grid_octave_row:add_child(ui.grid.octave_buttons[index])
   end
+  stage_status=vb:text{id="acid_program_stage_status",size={width=820,height=18},text="Edit One",font="bold"}
+  local function stage_navigation(action)
+    if not stage or not valid_stage() then return end
+    if action=="enter" then
+      stage.entered[stage.cursor]=true
+      stage.cursor=math.min(#stage.target_positions,stage.cursor+1)
+    elseif action=="back" then stage.cursor=math.max(1,stage.cursor-1)
+    else stage.cursor=1 end
+    if stage.memory=="pitch" then choose_pitch(stage.cursor) else choose_time(stage.cursor) end
+  end
+  stage_actions={
+    back=vb:button{id="acid_program_back",text="Back",notifier=function() stage_navigation("back") end},
+    enter=vb:button{id="acid_program_enter",text="Enter and Advance",notifier=function() stage_navigation("enter") end},
+    restart=vb:button{id="acid_program_restart",text="Restart Cursor",notifier=function() stage_navigation("restart") end},
+    finish=vb:button{id="acid_program_finish",text="Finish",notifier=function() finish_stage() end},
+    discard=vb:button{id="acid_program_discard",text="Discard",notifier=function()
+      if stage and renoise.app():show_prompt("Discard entry","Discard the detached candidate?",{"Stay","Discard"})=="Discard" then
+        stage=nil;update()
+      end
+    end}}
+  local entry_controls=vb:row{spacing=4,
+    vb:button{id="acid_program_edit_one",text="Edit One",notifier=function() guard_stage() end},
+    vb:button{id="acid_program_reenter_pitch",text="Re-enter PITCH",notifier=function() begin_stage("pitch") end},
+    vb:button{id="acid_program_reenter_time",text="Re-enter TIME",notifier=function() begin_stage("time") end},
+    vb:button{id="acid_program_check",text="Check",notifier=function()
+      if stage and not valid_stage() then status.text="Entry origin changed; Check unavailable.";return end
+      local projection=stage and editor.project(stage.candidate,stage_resolution()) or project()
+      show_diagnostic(projection)
+      status.text=projection.error and ("SOURCE ERROR: "..projection.error.message) or "Source valid."
+      local missing=missing_positions()
+      if #missing>0 then status.text=status.text.." Missing entered positions: "..table.concat(missing,", ") end
+    end}}
+  local entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
+    stage_actions.restart,stage_actions.finish,stage_actions.discard}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
+    entry_controls,entry_navigation,
     vb:text{text="PITCH POSITION | page and position selection are independent of TIME",font="bold"},
     program_pitch_page_row,selector_rows(ui.program.pitch_selectors),program_pitch_summary,
-    vb:row{spacing=4,vb:text{text="PITCH CLASS"},program_keyboard},
+    vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},program_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},program_octave_row,
       vb:text{text="ACCENT"},program_accent,vb:text{text="SLIDE"},program_slide,program_c_plus},
     vb:text{text="TIME POSITION | inactive positions remain inspectable",font="bold"},
@@ -1314,7 +1555,7 @@ function M.show()
   grid_panel=vb:column{id="acid_grid_panel",spacing=4,
     vb:text{text="PITCH MEMORY | S stored, R referenced, M modified; dim entries are outside active span",font="bold"},
     pitch_pages,pitch_grid,
-    vb:row{spacing=4,vb:text{text="PITCH CLASS"},grid_keyboard},
+    vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},grid_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},grid_octave_row,
       vb:text{text="ACCENT"},accent,vb:text{text="SLIDE"},slide,grid_c_plus},
     vb:text{text="TIME MEMORY | choose a step, then use shared assignment controls",font="bold"},
@@ -1376,6 +1617,7 @@ function M.show()
     vb:row{spacing=8,
       vb:text{text="Editor"},view_popup,
       vb:button{text="Reset Source",notifier=function()
+        if guard_stage() then return end
         reset_source(last_step_box.value)
         selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
         status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
@@ -1384,13 +1626,14 @@ function M.show()
       undo_button,
       redo_button,
       vb:text{text="Undo and Redo include source, phrase output, and PB Range."}},
-    view_heading,view_hint,program_panel,grid_panel,
+    view_heading,view_hint,stage_status,program_panel,grid_panel,
     vb:row{spacing=5,vb:text{text="Assign selected TIME"},
       ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
     workspace,
     summary,map_text,diagnostic,diagnostic_jump,
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
+        if guard_stage() then return end
         if runtime:revision_state().armed then
           local accepted,reason=runtime:request_generation("live")
           if not accepted then status.text=describe_result({kind="failure",status="error",reason=reason},"LIVE EDIT ") end
@@ -1399,6 +1642,7 @@ function M.show()
       end}},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
+        if guard_stage() then return end
         if not current_session() then
           status.text="Song changed. Close and reopen ACID.";return
         end
@@ -1453,6 +1697,7 @@ function M.show()
       return
     end
     detach_this_watch()
+    stage=nil
     native_observers:detach()
     runtime:transition("disarm")
     runtime:close_dialog()

@@ -12,8 +12,10 @@ Gate 3 implementation, deterministic verification, independent second-pass
 review and native visual feasibility passed. The reported Grid pitch-edit width
 growth was corrected, verified by native width sweep, and visually rechecked by
 the operator at normal display scale. Gate 11 must repeat visual acceptance on
-the final integrated build. Later gates, final M5 second-pass review and Renoise
-acceptance remain pending.
+the final integrated build. Gate 4 implementation and deterministic second-pass
+verification passed; [evidence](../tests/acid/runtime_acceptance.md#m5-gate-4-program-staging-2026-11-02)
+separates native functional checks from unverified manual acceptance. Gates 5–12
+remain pending.
 This is not a claim of complete M5 implementation or guaranteed Renoise behavior.
 Tests and evidence must report actual results.
 
@@ -2269,7 +2271,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 2 resolution/compiler | Mask/interpreter/planner specs; combined foundational exit | Same combined suite and independent follow-up | 71 passed, 0 failed | Same foundational evidence; no separate Gate 1-only acceptance | PASS (deterministic, combined with Gate 1) |
 | Gate 3 shell/Grid | GUI view/admission/independence/recovery/timing specs and native harness selector cutover | `pwsh -File ./scripts/run_offline_tests.ps1` | 18 groups passed, including 74 Lua specs, 0 failed; independent findings corrected/rechecked | [Gate 3 evidence](../tests/acid/runtime_acceptance.md#m5-gate-3-shell-and-grid-verification-2026-11-01); native feasibility remains separate | PASS (implementation, deterministic verification, second pass) |
 | Gate 3 native feasibility | Procedure 13.1.6 before GUI-heavy continuation | Operator visual recheck of corrected build, plus native 2026-11-02 editor exercise | Program/Grid and both pages; workspace, Decoded/Recovery paging; labels/readability/reachability accepted at normal display scale; corrected Grid width stable across pitch edits | Pattern/Copy and Extended/Clear are later-gate placeholders; Gate 11 must repeat on final integrated build | PASS |
-| Gate 4 staged Program | Staging/GUI specs |  |  |  | Unexecuted |
+| Gate 4 staged Program | Staging/GUI/editor/draft/request specs; independent second pass; native functional harness | Full ACID suite with explicit Lua 5.1; native `editor-responsiveness`; ACID package | 72 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-4-program-staging-2026-11-02); modal answers scripted; manual/final integrated acceptance unverified | PASS (implementation, deterministic verification, second pass) |
 | Gate 5 audition mocks | Audition lifecycle spec |  |  |  | Unexecuted |
 | Gate 6 operations | Clipboard/label/duplicate specs |  |  |  | Unexecuted |
 | Gate 7 transforms | Source operations/RNG specs |  |  |  | Unexecuted |
