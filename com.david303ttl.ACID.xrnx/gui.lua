@@ -170,6 +170,7 @@ local DECODED_ROWS=4
 local DECODED_PAGES=sequencer.MAX_STEPS/DECODED_ROWS
 local RANDOM_SEED_MAX=2147483646
 local RANDOM_WEIGHT_MAX=1000
+local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
 local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
@@ -1824,14 +1825,6 @@ function M.show()
     "rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
   local operation_names={"Clear PITCH","Clear TIME","Clear TIE","Clear REST","Clear SLIDE","Clear ACCENT",
     "REST to NOTE","TIE to REST","Randomize PITCH","Randomize TIME"}
-  local operation_rules={
-    "Set raw PITCH to C/NORMAL (36,0,0); clear ACCENT and SLIDE; preserve mask.",
-    "Set TIME commands to NOTE; preserve PITCH and mask.",
-    "Replace only TIE with NOTE.","Replace only REST with NOTE.",
-    "Clear only SLIDE; preserve ACCENT.","Clear only ACCENT; preserve SLIDE.",
-    "Replace only REST with NOTE.","Replace only TIE with REST; protect TIME 01.",
-    "Generate canonical raw PITCH; preserve ACCENT/SLIDE; mask does not quantize generated values.",
-    "Generate TIME commands; normalize TIME 01 TIE to NOTE without another draw; preserve PITCH and mask."}
   local operation_choice=vb:popup{id="acid_operation",items=operation_names,width=180,value=1}
   local operation_scope=vb:popup{id="acid_operation_scope",items={"Active memory","All 32 stored"},width=150,value=1}
   local function run_operation()
@@ -1842,15 +1835,19 @@ function M.show()
     local choice=operation_choice.value
     local operation=operation_ids[choice]
     local scope=operation_scope.value==1 and "active" or "all"
-    local memory=operation:find("pitch",1,true) or operation=="clear_slide" or operation=="clear_accent"
-    local count=scope=="all" and sequencer.MAX_STEPS or (memory and pattern.pitch_length or pattern.length)
-    local positions={}
-    for index=1,count do positions[index]=string.format(memory and "P%02d" or "T%02d",index) end
-    local parameters,details={},""
+    local parameters={}
     if operation=="randomize_pitch" or operation=="randomize_time" then
       local inputs=renoise.ViewBuilder()
       local fields={}
-      local content=inputs:column{margin=12,spacing=6}
+      local memory=operation=="randomize_pitch" and "PITCH" or "TIME"
+      local count=scope=="all" and sequencer.MAX_STEPS or
+        (memory=="PITCH" and pattern.pitch_length or pattern.length)
+      local content=inputs:column{margin=12,spacing=6,
+        inputs:text{text=string.format("%s: %s 01..%02d. LAST STEP %d; PITCH span %d.",
+          scope=="active" and "Active memory" or "All stored",memory,count,pattern.length,pattern.pitch_length)},
+        inputs:text{text=memory=="PITCH" and "Raw PITCH only; preserve TIME and ACCENT/SLIDE." or
+          "TIME only; normalize leading TIE to NOTE; preserve PITCH."},
+        inputs:text{text="Preserve bounds, mask, output, PB Range and label. Undo restores the previous state."}}
       local function field(name,label,min,max,value)
         fields[name]=inputs:valuebox{id="acid_operation_"..name,min=min,max=max,value=value,width=160,steps={1,10},
           tostring=function(number) return string.format("%.0f",number) end,tonumber=tonumber}
@@ -1858,31 +1855,18 @@ function M.show()
       end
       field("seed","Seed",1,RANDOM_SEED_MAX,1)
       if operation=="randomize_pitch" then
-        field("min_note","Minimum raw MIDI",24,60,24);field("max_note","Maximum raw MIDI",24,60,60)
+        field("min_note","Minimum raw MIDI",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN)
+        field("max_note","Maximum raw MIDI",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MAX)
       else
         field("note_weight","NOTE weight",0,RANDOM_WEIGHT_MAX,2)
         field("tie_weight","TIE weight",0,RANDOM_WEIGHT_MAX,1)
         field("rest_weight","REST weight",0,RANDOM_WEIGHT_MAX,1)
       end
-      if renoise.app():show_custom_prompt(operation_names[choice],content,{"Cancel","Continue"})~="Continue" then return end
+      if renoise.app():show_custom_prompt(operation_names[choice],content,{"Cancel","Apply"})~="Apply" then return end
       for name,control in pairs(fields) do parameters[name]=control.value end
     end
     if not admit_operation(origin) then return end
     local candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
-    if not candidate then status.text=tostring(reason);return end
-    if operation=="randomize_pitch" then
-      details=string.format("\nSeed %d; raw MIDI %d..%d inclusive.",parameters.seed,parameters.min_note,parameters.max_note)
-    elseif operation=="randomize_time" then
-      details=string.format("\nSeed %d; NOTE/TIE/REST weights %d/%d/%d.",parameters.seed,parameters.note_weight,parameters.tie_weight,parameters.rest_weight)
-    end
-    local message=(scope=="active" and "Active memory" or "All 32 stored")..": "..
-      string.upper(memory and "PITCH" or "TIME").." positions "..table.concat(positions,", ")..
-      string.format("\nLAST STEP %d; PITCH span %d. Both bounds preserved.\n",pattern.length,pattern.pitch_length)..
-      operation_rules[choice]..details.."\nPreserve out-of-scope values, unrelated memory, timing, mask, output, PB Range and label."..
-      (operation=="clear_pitch" and "" or " Preserve unrelated ACCENT/SLIDE flags.")
-    if renoise.app():show_prompt(operation_names[choice],message,{"Cancel","Apply"})~="Apply" then return end
-    if not admit_operation(origin) then return end
-    candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
     if not candidate then status.text=tostring(reason);return end
     apply_candidate(candidate)
   end
@@ -1909,7 +1893,7 @@ function M.show()
     ui.mask.classes[index]=control
     mask_row:add_child(vb:text{text=name});mask_row:add_child(control)
   end
-  local operation_button=vb:button{id="acid_operation_open",text="Configure / Apply",notifier=run_operation}
+  local operation_button=vb:button{id="acid_operation_open",text="Apply",notifier=run_operation}
   ui.operation_controls={operation_choice,operation_scope,operation_button}
   extended_panel=vb:column{id="acid_extended_panel",spacing=4,
     vb:text{text="EXTENDED / CLEAR",font="bold"},
@@ -1959,13 +1943,6 @@ function M.show()
         if guard_stage() then return end
         apply_pending_selected_phrase_selection()
         local origin=stage_origin()
-        if not ui.admit_operation(origin) then return end
-        if renoise.app():show_prompt("Reset Pattern",
-          "Reset PITCH 01..32 to C/NORMAL (36,0,0), ACCENT/SLIDE false; TIME 01..32 to NOTE; "..
-          "PITCH span to 16; timing to Straight; mask disabled with all twelve classes enabled; "..
-          "output to "..policies.DEFAULT_OUTPUT_POLICY.."; PB Range to "..policies.DEFAULT_PB_RANGE..
-          ". Preserve LAST STEP "..pattern.length..", label and custom-label state.",
-          {"Cancel","Reset"})~="Reset" then return end
         if not ui.admit_operation(origin) then return end
         reset_source(pattern.length)
         changed()

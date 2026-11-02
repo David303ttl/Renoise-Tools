@@ -16,7 +16,8 @@
 3. Edit TIME 17, reduce LAST STEP 16, then restore 17. Confirm TIME 17 remains
    unchanged. Save and reopen the XRNS and repeat the check.
 4. Enter TIE at TIME 01. Confirm it is stored as NOTE. Click Reset Pattern
-   beside the Editor selector, then Reset in the confirmation. Verify
+   beside the Editor selector. Verify immediate application without a prompt in
+   both Program and Grid, and verify
    the reset preserves LAST STEP and label/custom state. Use Undo and Redo
    and confirm the complete source/settings edit follows each action.
 

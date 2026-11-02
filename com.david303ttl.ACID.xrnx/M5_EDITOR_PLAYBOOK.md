@@ -24,7 +24,9 @@ functional checks passed. [Gate 7 evidence](../tests/acid/runtime_acceptance.md#
 records the reported manual pass; final integrated acceptance remains unverified.
 Gate 8 user documentation and native procedure readiness passed; see
 [evidence](../tests/acid/runtime_acceptance.md#m5-gate-8-documentation-readiness-2026-11-02).
-Gates 9–12 remain pending.
+Gate 9 deterministic regression, packaging and second-pass verification passed;
+see [evidence](../tests/acid/runtime_acceptance.md#m5-gate-9-regression-and-packaging-2026-11-02).
+Gates 10–12 remain pending.
 This is not a claim of complete M5 implementation or guaranteed Renoise behavior.
 Tests and evidence must report actual results.
 
@@ -922,8 +924,8 @@ identity from an index. Test complete and incomplete stages for all these paths.
     with twelve true bits, and output policy/PB range to existing defaults from
     `model.policies`. This preserves the current reset bound/settings behavior
     while fixing the new metadata policy. It is one ordinary undoable edit,
-    or a no-op if every resulting value already matches. Confirm the exact
-    affected fields before applying. Reset does not rename or reset history.
+    or a no-op if every resulting value already matches. Apply immediately in
+    Program and Grid without confirmation. Reset does not rename or reset history.
     Clear PITCH/TIME uses section 8.4 and never resets label or output settings.
 
 ### 8.2 Session clipboard
@@ -1039,8 +1041,8 @@ identity from an index. Test complete and incomplete stages for all these paths.
 
 ### 8.4 Scoped clear and targeted transforms
 
-Every destructive operation uses a focused confirmation showing operation,
-memory, exact positions, bounds, flags, and resulting rule. Cancel has no effect.
+Clear and transform operations apply immediately in Program and Grid using
+the selected scope, without confirmation.
 Each changed operation is one history item and one normal edit request. Equality
 no-op means no history, draft write, or Live Edit request.
 
@@ -1092,8 +1094,10 @@ no-op means no history, draft write, or Live Edit request.
    scope. Per position one bucket in `[0,sum-1]`; NOTE interval `[0,N)`, TIE
    `[N,N+T)`, REST remainder. Preserve all non-TIME data and normalize T01
    without additional draw.
-8. Dialog validates all fields before confirmation. Confirmation shows exact
-   scope/bounds, seed, range or weights, affected values rule and mask behavior.
+8. Use one parameter dialog with Cancel and Apply. Show exact scope/bounds,
+   seed, range or weights, affected values rule and mask behavior in that dialog.
+   Validate all fields before Apply; Cancel has no effect. Apply performs the
+   edit without a second confirmation in Program and Grid.
 9. Capture focused operation parameters and editor revision. Revalidate both
    immediately before applying candidate. If target/source changes while dialog
    is open, abort without touching current source. One result is one history/edit.
@@ -1506,12 +1510,15 @@ binding drift suppresses only UI selection.
    preserve evidence and block; never blindly overwrite.
 10. Every clear/transform × Active/All scope asserts precisely the changed
    coordinates and untouched fields, bound retention, one history item, undo /
-   redo, no-op and T01 invariant.
+   redo, no-op and T01 invariant. Assert immediate application without a modal
+   in Program and Grid; Reset has the same immediate, single-undo behavior.
 11. Park–Miller seed 1 state vector and note/command vectors in section 8.5 are
     exact assertions. Test seed min/max, invalid 0/max+1, same seed reproducible,
     inclusive note limits, note 60 encoding, every octave boundary, flags
     retained, one draw even singleton, zero-weight boundaries, weight maximum,
     invalid zero sum, T01 normalize without extra draw, and out-of-scope values.
+    Assert one parameter dialog with visible scope/rules and Cancel/Apply in
+    both views: Cancel is inert, Apply creates one edit without a second prompt.
 12. With LAST STEP 7 and distinctive TIME values at 8..32, compare Active and
     All-32 Clear/transform/Randomize. Only All-32 can change inactive storage;
     neither changes the bound. Direct TIME 17 editing still rejects. Verify
@@ -1877,8 +1884,10 @@ and duplicate never proceeds if original dirty draft cannot be durably saved.
    TIME candidate path without changing direct `set_time` bounds.
 2. Implement Park–Miller with exact integer state transitions, one draw per
    position, explicit seed/range/weights and TIME 01 normalization.
-3. Wire focused dialogs and exact confirmation text. Capture parameter values
-   and editor revision; revalidate before applying a detached candidate.
+3. Apply Clear, transforms and Reset immediately in both views. Randomization
+   uses one Cancel/Apply parameter dialog showing scope and rules. Capture
+   parameter values and editor revision; revalidate before applying a detached
+   candidate, without a second confirmation.
 4. Wire mask enable/class controls through source operations. Reject empty
    enabled mask atomically. Do not make raw randomization mask-aware.
 5. Bound Decoded to four rows with paging; display TIME command, consumed PITCH
@@ -2174,16 +2183,20 @@ rollback result is uncertain; do not overwrite evidence to continue.
 
 ### 13.5 Clear and randomization
 
-1. For each Clear/Transform operation, select Active and All scope separately.
-   Read confirmation, record affected positions, cancel once and confirm no
-   change; execute once and inspect every changed/out-of-scope field.
+1. For each Clear/Transform operation in Program and Grid, select Active and
+   All scope separately. Record affected positions, apply once and verify no
+   confirmation appears. Inspect every changed/out-of-scope field and verify
+   one Undo restores the complete prior state.
 2. Verify Clear PITCH retains mask and clears flags only in scope; Clear TIME
    retains PITCH; Clear TIE differs from TIE-to-REST; Clear REST and REST-to-NOTE
    affect only R; Clear ACCENT/SLIDE preserve other flag.
-3. Run fixed seed 1 over pitch range 24..60; verify notes 24,28,51,40,43 for
+3. Open Randomize PITCH and inspect scope/rules in its parameter dialog. Cancel
+   once and verify no change, then reopen and Apply without a second prompt.
+   Run fixed seed 1 over pitch range 24..60; verify notes 24,28,51,40,43 for
    first five generated positions and exact canonical controls. Confirm flags
    retained and raw mask not applied.
-4. Run TIME weights 2/1/1 seed 1; verify N,N,R,N,T vector, with T at TIME 01
+4. Repeat the single-dialog Cancel/Apply checks for Randomize TIME in both
+   views. Run TIME weights 2/1/1 seed 1; verify N,N,R,N,T vector, with T at TIME 01
    normalized only if it lands there and no extra draw behavior via subsequent
    expected positions. Use a testable pattern/scope to expose TIME 01.
 5. Undo/redo each operation and save/reopen source, mask, labels, settings and
@@ -2192,7 +2205,8 @@ rollback result is uncertain; do not overwrite evidence to continue.
    All-32 operations separately with undo between them. Active leaves inactive
    storage untouched; All-32 changes it as specified without changing LAST STEP.
    Restore LAST STEP 32 to inspect retained values, then save/reopen and compare.
-7. From nondefault source/settings with a custom label, Reset Pattern. Confirm
+7. From nondefault source/settings with a custom label, Reset Pattern in both
+   views. Verify immediate application without confirmation. Confirm
    LAST STEP and label/custom remain, every field listed in section 8.1.13 resets,
    and one undo restores everything. Repeat Reset on identical state and confirm
    no new edit or generation. With Live Edit off, committed phrase/source remains
@@ -2293,7 +2307,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 6 operations | Clipboard/label/duplicate specs; independent second pass; native functional harness | Full Lua 5.1 suite; native `editor-responsiveness`; ACID package | 79 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-6-clipboard-labels-and-duplicate-2026-11-02); manual/final integrated acceptance unverified | PASS (implementation, deterministic verification, second pass) |
 | Gate 7 transforms | Source/RNG, GUI admission, Decoded specs; rotated second pass; native functional harness | Full Lua 5.1 suite; native `editor-responsiveness`; ACID package | 80 repository specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-7-extended-operations-and-decoded-2026-11-02); operator reports manual visual, keyboard and acoustic acceptance passed; final integrated acceptance remains | PASS (implementation, deterministic verification, second pass) |
 | Gate 8 documentation readiness | User docs/native procedures; independent second pass | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `git diff --check` | 77 specs passed, 0 failed; docs and procedure readiness checked | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-8-documentation-readiness-2026-11-02); no native checks performed; packaging not required | PASS (documentation readiness) |
-| Gate 9 final verification | Full suite/diff/package as required |  |  |  | Unexecuted |
+| Gate 9 final verification | Full ACID suite, archive/source comparison, rotated second pass and diff review | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `./scripts/package.ps1 -Tool ACID`; `git diff --check` | 77 specs passed, 0 failed; 32 source-identical archive entries; second pass passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-9-regression-and-packaging-2026-11-02); final integrated native acceptance unverified | PASS (deterministic verification and packaging) |
 | Gate 10 native preparation | Host/build identity; disposable fixture and recovery preimages |  |  |  | Unexecuted |
 | Gate 11 native source/GUI | Procedures 13.1–13.2 |  |  |  | Unexecuted |
 | Gate 11 mask/output | Procedure 13.3 |  |  |  | Unexecuted |

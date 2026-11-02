@@ -362,6 +362,20 @@ local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
 local view=builder.views.acid_editor_view
 assert(program.visible and not grid.visible)
+for _,id in ipairs({"acid_program_pitch_position","acid_program_time_position",
+    "acid_program_key_popup","acid_program_octave_popup"}) do
+  assert(builder.views[id]==nil,"removed memory dropdown remains: "..id)
+end
+for id in pairs(builder.views) do
+  assert(not id:match("^acid_grid_time_"),"removed TIME cell popup remains: "..id)
+end
+local function assert_direct_memory_controls(node)
+  assert(node.kind~="popup","memory editing must use direct controls")
+  assert(node.kind~="multiline_text","decoded preview belongs in its workspace tab")
+  for _,child in ipairs(node.views) do assert_direct_memory_controls(child) end
+end
+assert_direct_memory_controls(program)
+assert_direct_memory_controls(grid)
 local function display_snapshot()
   return table.concat({builder.views.acid_source_summary.text,
     builder.views.acid_preview_summary.text,builder.views.acid_source_diagnostic.text,
@@ -825,7 +839,7 @@ timing_popup:fire(2)
 assert(timing_popup.value==2)
 local reset_preview=builder.views.acid_preview_summary.text
 local reset_pitch=builder.views.acid_program_pitch_summary.text
-app.show_prompt=function() return "Reset" end
+app.show_prompt=function() error("Reset must not prompt") end
 button("Reset Pattern"):fire()
 app.show_prompt=function() return "Cancel" end
 assert(timing_popup.value==1,"Reset Source restores straight timing")
@@ -928,8 +942,6 @@ local armed_projections=projection_calls
 builder.views.acid_editor_view:fire(2)
 assert(render_calls==live_render_base and projection_calls==armed_projections,
   "armed view navigation reuses projection without rendering")
-button("Reset Pattern"):fire()
-assert(render_calls==live_render_base,"cancelled reset does not request a render")
 program_key(2):fire()
 tool.app_idle_observable:fire()
 assert(render_calls==live_render_base+1 and generation_request.target_index==4,
@@ -1267,7 +1279,6 @@ do
   dialog=main_dialog
 end
 do
-  local renders=render_calls
   phrase_popup:fire(#phrase_popup.items)
   local mask=control("acid_mask_enabled")
   assert(not mask.value)
@@ -1278,128 +1289,128 @@ do
   assert(not mask.value and control("acid_mask_class_02").value)
   button("Undo"):fire();button("Undo"):fire()
   assert(control("acid_mask_class_02").value and not mask.value)
-  local confirmations=0
+  local confirmations,parameter_dialogs=0,0
   app.show_prompt=function() confirmations=confirmations+1;return "Cancel" end
-  app.show_custom_prompt=function()
-    control("acid_operation_seed").value=1
-    control("acid_operation_min_note").value=60
-    control("acid_operation_max_note").value=24
-    return "Continue"
-  end
-  control("acid_operation").value=9
-  control("acid_operation_open"):fire()
-  assert(confirmations==0,"invalid random range is rejected before confirmation")
-  app.show_custom_prompt=function()
-    control("acid_operation_seed").value=1.5
-    return "Continue"
-  end
-  control("acid_operation_open"):fire()
-  assert(confirmations==0,"fractional seed is rejected before formatting confirmation")
-  app.show_custom_prompt=function()
-    control("acid_operation_note_weight").value=0
-    control("acid_operation_tie_weight").value=0
-    control("acid_operation_rest_weight").value=0
-    return "Continue"
-  end
-  control("acid_operation").value=10
-  control("acid_operation_open"):fire()
-  assert(confirmations==0,"zero random weights are rejected before confirmation")
-  control("acid_operation").value=1
-  control("acid_operation_open"):fire()
-  assert(confirmations==1 and render_calls==renders,"cancelled operation performs no generation")
-  local before_modal=navigation_snapshot()
-  app.show_prompt=function(_,title)
-    if title=="Re-enter PITCH" then return "Proceed" end
-    control("acid_program_reenter_pitch"):fire()
-    return "Apply"
-  end
-  control("acid_operation_open"):fire()
-  assert(control("acid_status").text:find("resolve entry or the label editor",1,true),
-    "confirmation rejects a newly staged entry")
-  assert(draft_writes==before_modal.drafts and render_calls==before_modal.writes,
-    "entry staged during confirmation preserves source")
-  assert(control("acid_program_discard").active,"blocked operation preserves the staged entry")
-  app.show_prompt=function() return "Discard" end
-  control("acid_program_discard"):fire()
-  assert(button("Undo").active==before_modal.undo and button("Redo").active==before_modal.redo,
-    "entry staged during confirmation preserves history")
-  before_modal=navigation_snapshot()
-  local main_dialog=dialog
-  app.show_prompt=function()
-    control("acid_label_rename"):fire()
-    return "Apply"
-  end
-  control("acid_operation_open"):fire()
-  assert(control("acid_status").text:find("resolve entry or the label editor",1,true) and
-    draft_writes==before_modal.drafts and render_calls==before_modal.writes and
-    button("Undo").active==before_modal.undo and button("Redo").active==before_modal.redo,
-    "label editor opened during confirmation preserves source and history")
-  control("acid_label_discard"):fire()
-  dialog=main_dialog
-  local writes=draft_writes
-  local mask_bit=control("acid_mask_class_02").value
-  app.show_prompt=function()
-    control("acid_mask_class_02"):fire(not mask_bit)
-    return "Apply"
-  end
-  control("acid_operation_open"):fire()
-  assert(control("acid_status").text:find("editor or target changed",1,true) and draft_writes==writes+1,
-    "confirmation cannot overwrite an intervening source edit: "..control("acid_status").text.." writes "..draft_writes.."/"..writes)
-  assert(control("acid_mask_class_02").value~=mask_bit)
-  app.show_prompt=function()
-    phrase_popup:fire(2)
-    return "Apply"
-  end
-  writes=draft_writes
-  control("acid_operation_open"):fire()
-  assert(control("acid_status").text:find("editor or target changed",1,true) and draft_writes==writes,
-    "confirmation cannot apply an operation to a replacement target")
-  control("acid_operation").value=9
-  confirmations=0
-  app.show_prompt=function() confirmations=confirmations+1;return "Apply" end
   local function valid_random_parameters()
     control("acid_operation_seed").value=17
     control("acid_operation_min_note").value=24
     control("acid_operation_max_note").value=60
   end
-  mask_bit=control("acid_mask_class_02").value
-  app.show_custom_prompt=function()
-    valid_random_parameters()
-    control("acid_mask_class_02"):fire(not mask_bit)
-    return "Continue"
-  end
-  writes=draft_writes
+  control("acid_live_edit"):fire(false)
+  program_key(5):fire()
+  local before_clear=assert(sequencer.copy_source(label_context:editor_state().source))
+  local clear_writes=draft_writes
+  control("acid_operation").value=1
   control("acid_operation_open"):fire()
-  assert(confirmations==0 and draft_writes==writes+1 and
-    control("acid_mask_class_02").value~=mask_bit and
-    control("acid_status").text:find("editor or target changed",1,true),
-    "parameter modal source edit cancels before confirmation")
+  assert(draft_writes==clear_writes+1,"Clear immediately creates one edit")
   button("Undo"):fire()
-  assert(control("acid_mask_class_02").value==mask_bit)
-  app.show_custom_prompt=function()
-    valid_random_parameters()
-    control("acid_mask_class_02"):fire(not mask_bit)
-    button("Undo"):fire()
-    return "Continue"
+  assert(sequencer.same_source(before_clear,label_context:editor_state().source),
+    "one Undo restores Clear")
+  for _,mode in ipairs({1,2}) do
+    view:fire(mode)
+    for _,live in ipairs({false,true}) do
+      control("acid_live_edit"):fire(live)
+      control("acid_operation").value=1
+      control("acid_operation_open"):fire()
+      local writes=draft_writes
+      control("acid_operation_open"):fire()
+      assert(draft_writes==writes,"identical Clear is inert")
+      button("Reset Pattern"):fire()
+      writes=draft_writes
+      button("Reset Pattern"):fire()
+      assert(draft_writes==writes,"identical Reset is inert")
+      for operation=1,8 do
+        control("acid_operation").value=operation
+        control("acid_operation_open"):fire()
+      end
+      assert(confirmations==0,"routine Clear and Reset never prompt")
+      control("acid_live_edit"):fire(false)
+    end
   end
+  local function parameters(action)
+    app.show_custom_prompt=function(_,title,content,buttons)
+      parameter_dialogs=parameter_dialogs+1
+      assert(buttons[1]=="Cancel" and buttons[2]=="Apply" and #buttons==2)
+      valid_random_parameters()
+      return action()
+    end
+  end
+  control("acid_operation").value=9
+  local before=navigation_snapshot()
+  parameters(function()return "Cancel"end)
+  control("acid_operation_open"):fire()
+  assert_navigation_neutral(before,"cancelled random parameters")
+  local dialogs=parameter_dialogs
+  parameters(function()return "Apply"end)
+  local previous=assert(sequencer.copy_source(label_context:editor_state().source))
+  local writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(parameter_dialogs==dialogs+1 and confirmations==0 and draft_writes==writes+1,
+    "random Apply uses one parameter dialog and one edit")
+  button("Undo"):fire()
+  assert(sequencer.same_source(previous,label_context:editor_state().source),"one Undo restores random edit")
+  for _,invalid in ipairs({
+      function()control("acid_operation_min_note").value=60;control("acid_operation_max_note").value=24 end,
+      function()control("acid_operation_seed").value=1.5 end}) do
+    parameters(function()invalid();return "Apply"end)
+    writes=draft_writes
+    control("acid_operation_open"):fire()
+    assert(draft_writes==writes and confirmations==0,"invalid random parameters never edit")
+  end
+  control("acid_operation").value=10
+  parameters(function()
+    control("acid_operation_note_weight").value=0
+    control("acid_operation_tie_weight").value=0
+    control("acid_operation_rest_weight").value=0
+    return "Apply"
+  end)
   writes=draft_writes
   control("acid_operation_open"):fire()
-  assert(confirmations==0 and draft_writes==writes+2 and
-    control("acid_mask_class_02").value==mask_bit and
-    control("acid_status").text:find("editor or target changed",1,true),
-    "parameter modal edit and undo invalidates captured revision despite restored source")
-  app.show_custom_prompt=function()
-    valid_random_parameters()
-    phrase_popup:fire(1)
-    return "Continue"
+  assert(draft_writes==writes and confirmations==0,"zero random weights never edit")
+  control("acid_operation").value=9
+  app.show_prompt=function(_,title)
+    if title=="Re-enter PITCH" then return "Proceed" end
+    return "Discard"
   end
+  parameters(function()control("acid_program_reenter_pitch"):fire();return "Apply"end)
+  before=navigation_snapshot()
+  control("acid_operation_open"):fire()
+  assert(control("acid_status").text:find("resolve entry or the label editor",1,true) and
+    draft_writes==before.drafts and render_calls==before.writes,
+    "parameter dialog cannot overwrite newly staged entry")
+  assert(control("acid_program_discard").active)
+  control("acid_program_discard"):fire()
+  local main_dialog=dialog
+  parameters(function()control("acid_label_rename"):fire();return "Apply"end)
   writes=draft_writes
   control("acid_operation_open"):fire()
-  assert(confirmations==0 and draft_writes==writes and
-    control("acid_status").text:find("editor or target changed",1,true),
-    "parameter modal target change cancels before confirmation")
-  app.show_prompt=function() return "Cancel" end
+  assert(control("acid_status").text:find("resolve entry or the label editor",1,true) and draft_writes==writes,
+    "parameter dialog cannot overwrite open label editor")
+  control("acid_label_discard"):fire()
+  dialog=main_dialog
+  for _,restore in ipairs({false,true}) do
+    local mask_bit=control("acid_mask_class_02").value
+    parameters(function()
+      control("acid_mask_class_02"):fire(not mask_bit)
+      if restore then button("Undo"):fire() end
+      return "Apply"
+    end)
+    writes=draft_writes
+    control("acid_operation_open"):fire()
+    assert(draft_writes==writes+(restore and 2 or 1) and
+      control("acid_status").text:find("editor or target changed",1,true),
+      "parameter dialog rejects intervening edit even when Undo restores source")
+    if not restore then button("Undo"):fire() end
+    assert(control("acid_mask_class_02").value==mask_bit)
+  end
+  parameters(function()phrase_popup:fire(1);return "Apply"end)
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(draft_writes==writes and control("acid_status").text:find("editor or target changed",1,true),
+    "parameter dialog cannot apply to replacement target")
+  app.show_prompt=function()return "Cancel"end
 end
+
 dialog.visible=false
 tool.app_idle_observable:fire()
 assert(song.selected_phrase_observable:listener_count()==0,

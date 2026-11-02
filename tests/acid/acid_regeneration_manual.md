@@ -45,7 +45,7 @@ For save/reopen, record the saved file and a fresh Renoise process identity.
 ## Actual operation dialogs and inactive memory
 
 This fixture distinguishes scopes through the real controls. Do not substitute
-scripted confirmation callbacks or a 32/32 active fixture.
+scripted modal callbacks or a 32/32 active fixture. Repeat in Program and Grid.
 
 1. In **Grid**, set LAST STEP and Active PITCH span to 32. Across both pages,
    enter REST/TIE at T02..T07 and non-C flagged notes at P01..P05 so each
@@ -55,24 +55,23 @@ scripted confirmation callbacks or a 32/32 active fixture.
    baseline, then set LAST STEP to 7 and Active PITCH span to 5 with Live Edit
    off. Record this dirty draft and the unchanged committed phrase.
 2. Select workspace **Extended / Clear**, operation **Clear TIME**, scope
-   **Active memory**, then **Configure / Apply**. Read the confirmation:
-   T01..T07, LAST STEP 7 and PITCH span 5. Click **Cancel** and verify exact
-   source/draft/history/output equality. Repeat and click **Apply**. Confirm
+   **Active memory**, then **Apply**. Verify immediate application without a
+   prompt, retaining LAST STEP 7 and PITCH span 5. Confirm
    T01..T07 are NOTE and T08..T32 are unchanged. Raise LAST STEP to 32 for Grid
    inspection, then use ACID **Undo** to restore that bound and the operation.
-3. Repeat **Clear TIME** with **All 32 stored**. Confirmation lists T01..T32;
+3. Repeat **Clear TIME** with **All 32 stored** for T01..T32;
    Apply changes inactive TIME too while LAST STEP remains 7. Undo. Repeat
-   **Clear PITCH** with both scopes: Active lists P01..P05, All lists P01..P32;
+   **Clear PITCH** with both scopes: Active affects P01..P05, All affects P01..P32;
    inspect retained notes and flags on both Grid pages after temporarily raising
    the span. Undo inspection edits before comparing the operation baseline.
-4. Select **Randomize PITCH > Active memory > Configure / Apply**. In the
+4. Select **Randomize PITCH > Active memory > Apply**. In the
    actual parameter dialog set Seed 1, Minimum raw MIDI 24, Maximum raw MIDI 60.
-   Cancel once and verify no change. Reopen, click **Continue**, inspect scope
-   and parameters in confirmation, Cancel once, then repeat through **Apply**.
+   Inspect scope, bounds and rules in the same dialog. Cancel once and verify
+   no change. Reopen and click **Apply**; verify no second prompt appears.
    Verify P01..P05 raw MIDI 24,28,51,40,43, flags preserved and P06..P32 intact.
    Undo; repeat with All 32 stored and inspect inactive entries as well.
 5. Repeat **Randomize TIME** using Seed 1, NOTE/TIE/REST weights 2/1/1, both
-   scopes and both cancellation points. The first five commands are N,N,R,N,T;
+   scopes and the single Cancel/Apply dialog. The first five commands are N,N,R,N,T;
    Active retains T08..T32. Inspect TIME 01 normalization using the canonical
    13.5 fixture. Scope changes never change LAST STEP or PITCH span.
 6. After each applied scope case, save the dirty draft, close Renoise, reopen
@@ -80,6 +79,6 @@ scripted confirmation callbacks or a 32/32 active fixture.
    bounds, mask, settings and label with the captured draft; committed phrase
    cells remain the baseline until Generate. Use separate saved fixture copies
    for Active and All so neither comparison depends on a prior operation.
-7. Execute the remaining 13.5 operations, Reset Pattern, no-op and Undo/Redo
-   checks. Record actual dialog legibility and button reachability. Keep each
+7. Execute the remaining 13.5 operations, immediate Reset Pattern, no-op and
+   single Undo/Redo checks. Record parameter-dialog legibility and button reachability. Keep each
    result separate from automated modal-response coverage.

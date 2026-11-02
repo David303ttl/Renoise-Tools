@@ -5564,7 +5564,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local native_app=app_factory()
       local baseline=assert(ownership.snapshot(phrase))
       local selection=native_selection(song)
-      local confirmation="Apply"
+      local parameter_action="Apply"
+      local parameter_prompts=0
+      local original_view=controls.acid_editor_view.value
       local parameters={seed=17,min_note=24,max_note=60,note_weight=2,tie_weight=1,rest_weight=1}
       local operations={"clear_pitch","clear_time","clear_tie","clear_rest","clear_slide",
         "clear_accent","rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
@@ -5613,16 +5615,17 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         renoise.app=function()
           return setmetatable({}, {__index=function(_,name)
             if name=="show_custom_prompt" then return function(_,title,content,buttons)
-              assert(buttons[2]=="Continue","Unexpected operation parameter buttons")
+              assert(buttons[1]=="Cancel" and buttons[2]=="Apply" and #buttons==2,
+                "Unexpected operation parameter buttons")
+              parameter_prompts=parameter_prompts+1
               for parameter,next_value in pairs(parameters) do
                 local control=controls["acid_operation_"..parameter]
                 if control then control.value=next_value end
               end
-              return "Continue"
+              return parameter_action
             end end
-            if name=="show_prompt" then return function(_,title,message,buttons)
-              assert(type(message)=="string" and #message>0,"Empty operation confirmation")
-              return title=="Reset Pattern" and "Reset" or confirmation
+            if name=="show_prompt" then return function()
+              error("Routine source operation requested confirmation")
             end end
             local member=native_app[name]
             if type(member)=="function" then return function(_,...) return member(native_app,...) end end
@@ -5653,31 +5656,42 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             assert(sequence.operation_candidate(scope_source,operation,"all",parameters))),
             "Operation scope fixture does not distinguish inactive storage: "..operation)
         end
-        for operation_index,operation in ipairs(operations) do
-          for scope_index,scope in ipairs({"active","all"}) do
-            local before=state()
-            local candidate=assert(sequence.operation_candidate(before.source,operation,scope,parameters))
-            value("acid_operation",operation_index)
-            value("acid_operation_scope",scope_index)
-            confirmation="Cancel"
-            local raw=song.tool_data
-            callbacks.acid_operation_open()
-            assert(song.tool_data==raw,"Canceled operation persisted data")
-            exact(before)
-            confirmation="Apply"
-            callbacks.acid_operation_open()
-            local expected={source=candidate,label=before.label,label_custom=before.label_custom,
-              output_policy=before.output_policy,pb_range=before.pb_range}
-            exact(expected)
-            scope_preserved(before.source,state().source,operation,scope)
-            if sequence.same_source(before.source,candidate) then
-              assert(song.tool_data==raw,"No-op operation persisted data")
-            else
-              callbacks.acid_undo();exact(before)
-              callbacks.acid_redo()
+        for _,view_index in ipairs({1,2}) do
+          value("acid_editor_view",view_index)
+          for operation_index,operation in ipairs(operations) do
+            for scope_index,scope in ipairs({"active","all"}) do
+              local before=state()
+              local candidate=assert(sequence.operation_candidate(before.source,operation,scope,parameters))
+              value("acid_operation",operation_index)
+              value("acid_operation_scope",scope_index)
+              local raw=song.tool_data
+              local randomizes=operation=="randomize_pitch" or operation=="randomize_time"
+              local prompts_before=parameter_prompts
+              if randomizes then
+                parameter_action="Cancel"
+                callbacks.acid_operation_open()
+                assert(parameter_prompts==prompts_before+1,"Randomization did not open one parameter dialog")
+                assert(song.tool_data==raw,"Canceled operation persisted data")
+                exact(before)
+              end
+              parameter_action="Apply"
+              prompts_before=parameter_prompts
+              callbacks.acid_operation_open()
+              assert(parameter_prompts==prompts_before+(randomizes and 1 or 0),
+                "Operation opened an unexpected parameter dialog")
+              local expected={source=candidate,label=before.label,label_custom=before.label_custom,
+                output_policy=before.output_policy,pb_range=before.pb_range}
               exact(expected)
               scope_preserved(before.source,state().source,operation,scope)
-              callbacks.acid_undo();exact(before)
+              if sequence.same_source(before.source,candidate) then
+                assert(song.tool_data==raw,"No-op operation persisted data")
+              else
+                callbacks.acid_undo();exact(before)
+                callbacks.acid_redo()
+                exact(expected)
+                scope_preserved(before.source,state().source,operation,scope)
+                callbacks.acid_undo();exact(before)
+              end
             end
           end
         end
@@ -5715,22 +5729,26 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         assert(song.tool_data==raw and state().source.scale_mask[1],"Last enabled class was removed")
         for index=1,edits do callbacks.acid_undo() end
         exact(before)
-        callbacks.acid_pattern_reset()
-        local reset=state()
-        assert(sequence.same_source(sequence.new_pattern(before.source.length),reset.source),
-          "Reset did not restore canonical source defaults")
-        assert(reset.label==before.label and reset.label_custom==before.label_custom,
-          "Reset changed label")
-        local policy=require("model.policies")
-        assert(reset.output_policy==policy.DEFAULT_OUTPUT_POLICY and reset.pb_range==policy.DEFAULT_PB_RANGE,
-          "Reset did not restore output defaults")
-        raw=song.tool_data
-        callbacks.acid_pattern_reset()
-        assert(song.tool_data==raw,"Identical Reset persisted data")
-        if not sequence.same_source(before.source,reset.source) or before.output_policy~=reset.output_policy or
-            before.pb_range~=reset.pb_range then callbacks.acid_undo();exact(before) end
+        for _,view_index in ipairs({1,2}) do
+          value("acid_editor_view",view_index)
+          callbacks.acid_pattern_reset()
+          local reset=state()
+          assert(sequence.same_source(sequence.new_pattern(before.source.length),reset.source),
+            "Reset did not restore canonical source defaults")
+          assert(reset.label==before.label and reset.label_custom==before.label_custom,
+            "Reset changed label")
+          local policy=require("model.policies")
+          assert(reset.output_policy==policy.DEFAULT_OUTPUT_POLICY and reset.pb_range==policy.DEFAULT_PB_RANGE,
+            "Reset did not restore output defaults")
+          raw=song.tool_data
+          callbacks.acid_pattern_reset()
+          assert(song.tool_data==raw,"Identical Reset persisted data")
+          if not sequence.same_source(before.source,reset.source) or before.output_policy~=reset.output_policy or
+              before.pb_range~=reset.pb_range then callbacks.acid_undo();exact(before) end
+        end
         assert(ownership.compare(baseline,assert(ownership.snapshot(phrase))),
           "Extended operations with Live Edit off changed native phrase")
+        value("acid_editor_view",original_view)
         assert(same_native_selection(selection,native_selection(song)),"Extended operations changed selection")
       end)
       renoise.app,renoise.ViewBuilder=app_factory,builder_factory
@@ -5930,9 +5948,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     local reset_app=reset_app_factory()
     renoise.app=function()
       return setmetatable({}, {__index=function(_,name)
-        if name=="show_prompt" then return function(_,title)
-          assert(title=="Reset Pattern","Unexpected Reset confirmation")
-          return "Reset"
+        if name=="show_prompt" then return function()
+          error("Reset Pattern requested routine confirmation")
         end end
         local member=reset_app[name]
         if type(member)=="function" then return function(_,...) return member(reset_app,...) end end

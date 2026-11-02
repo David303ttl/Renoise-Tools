@@ -2,6 +2,7 @@
 -- Physical gate edges in 256 subdivisions per sequencer step.
 local compiler=require("model.cycle_interpreter")
 local policies=require("model.policies")
+local sequencer=require("model.sequencer")
 -- Articulation timeline units are independent of phrase-line resolution.
 local M={UNITS_PER_STEP=256,DEFAULT_GATE_FRACTION=0.5}
 local UNITS_PER_STEP=M.UNITS_PER_STEP
@@ -93,8 +94,11 @@ function M.compile(pattern,options)
   local prepared=options.prepared
   local prepared_ok,prepared_error
   if prepared~=nil then
-    prepared_ok,prepared_error=require("model.sequencer").validate_prepared(prepared,pattern)
+    prepared_ok,prepared_error=sequencer.validate_prepared(prepared,pattern)
     if not prepared_ok then return nil,prepared_error end
+  elseif not plan or successor then
+    prepared,prepared_error=sequencer.prepare_resolution(pattern)
+    if not prepared then return nil,prepared_error end
   end
   if not plan then
     local exit

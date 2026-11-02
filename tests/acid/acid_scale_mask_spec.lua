@@ -117,6 +117,24 @@ local materialized=assert(planner.plan_for_materialization(repeat_source,"play_o
 assert(materialized.source.scale_mask_enabled and materialized.expected.lines[1].note_columns[1].note_value==
   repeat_bundle.resolved_records[1].note)
 seq.resolve_pitches=original_resolver
+local resolution_count=0
+seq.resolve_pitches=function(value)
+  resolution_count=resolution_count+1
+  return original_resolver(value)
+end
+for _,policy in ipairs({"play_once","repeat"}) do
+  resolution_count=0
+  local direct=assert(control.compile(repeat_source,{output_policy=policy}))
+  assert(resolution_count==1,"direct gate compilation must resolve its source exactly once")
+  assert(direct.semantic.steps[1].note==repeat_bundle.resolved_records[1].note)
+  assert(direct.successor.steps[1].note==repeat_bundle.resolved_records[1].note)
+  resolution_count=0
+  local supplied=assert(control.compile(repeat_source,{output_policy=policy,
+    plan=direct.semantic,successor=direct.successor}))
+  assert(resolution_count==1,"supplied gate plan verification must share one resolution")
+  assert(supplied.successor.steps[1].note==repeat_bundle.resolved_records[1].note)
+end
+seq.resolve_pitches=original_resolver
 local changed_bundle=assert(seq.detach_prepared(prepared,mask))
 changed_bundle.source.scale_mask_enabled=false
 assert(not compiler.compile_cycle(mask,nil,changed_bundle))

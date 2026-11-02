@@ -2,8 +2,34 @@
 
 M5 sections below are dated checkpoint records. Earlier statements that later
 gates were pending describe those checkpoints, not the current implementation.
-See [Gate 8 verification](#m5-gate-8-documentation-readiness-2026-11-02)
-for current documentation readiness and remaining native acceptance.
+See [direct operations verification](#direct-editor-operations-verification-2026-11-02)
+for current deterministic verification and remaining native acceptance.
+
+## Direct editor operations verification (2026-11-02)
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Routine edits | `acid_gui_views_spec.lua`, `acid_gui_admission_spec.lua` | PASS; Clear/transforms/Reset have no confirmation; one Undo restores changed edits; repeated no-ops add no write; Program/Grid and Live Edit on/off checked |
+| Randomization | `acid_gui_views_spec.lua` | PASS; one Cancel/Apply parameter dialog; cancellation and invalid inputs are inert; stage/label/source/revision/target drift rejects |
+| Regression | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `tmp/editor-immediate-final-acid.log` | PASS; 77 specs, 0 failed; Lua 5.1.5 |
+| Native functional | `./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-4223d1fdfb78458a9937c9ac0b11d5a1/report.json` | PASS; Renoise 3.5.4 Demo / API 6.2; both views, ten operations in both scopes, Reset, exact draft/source preservation and Undo/Redo; routine prompts reject; random parameter responses scripted |
+| Native isolation | Same report | PASS; fixture inventory/store/selection restored; runner-owned process stopped; original installation restored |
+| Second pass/package | Rotated independent reviewer; focused GUI/model/harness specs; `./scripts/package.ps1 -Tool ACID`; `git diff --check` | PASS; admission/history/no-op checks retained; 32 runtime files; no compatibility aliases or extra mutation path |
+| Manual acceptance | Playbook 13.1–13.8 | UNVERIFIED for human-operated modal, visual and acoustic checks; final integrated native acceptance remains pending |
+
+## M5 Gate 9 Regression and packaging (2026-11-02)
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Build | `b265c2f` plus this diff; PowerShell 7 / Lua 5.1.5 | ACID gate-timeline preparation and regression assertions only; API, manifests, frozen tool and M4.7 claims unchanged |
+| ACID regression | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `tmp/gate9/acid-suite.log`, post-documentation `tmp/gate9-final-acid.log` | PASS; 77 specs, 0 failed; exact discovery: 71 ACID + 6 Renoise harness specs |
+| Shared resolution | `acid_scale_mask_spec.lua`, `acid_control_signals_spec.lua`, `acid_planner_association_spec.lua` | PASS; one preparation for source-dependent timeline compilation and successor verification under both output policies; semantic-only Play Once remains source-independent; 1,936 successor oracle cases |
+| Removed controls/schema | `acid_gui_views_spec.lua`, `acid_pattern_store_codec_spec.lua`; runtime inventory search | PASS; removed Program dropdowns/TIME popups and stacked memory preview absent; schema 1 has rejection-only coverage |
+| Release archive | `./scripts/package.ps1 -Tool ACID`; `tmp/gate9/package.log` | PASS; 32 source-identical entries, including 30 Lua files; root manifest/main/LICENSE and private modules present; SDK/development files excluded; output ignored |
+| Second pass | Rotated source/compiler, GUI/store and fresh correction reviewers; focused specs | PASS; reviewed resolution and source-free semantic paths, obsolete-control assertions and final diff |
+| Diff | `git diff --check`; complete changed-file review | PASS; no unrelated runtime/layout or compatibility changes |
+| Additional offline check | `./scripts/run_offline_tests.ps1 -LuaCommand <lua-5.1-executable>`; `tmp/gate9-offline.log` | FAIL in unmodified `tests/lua_interpreter_spec.ps1:45`: command-wrapper forwarding assertion; cause unresolved. Optional run stopped after this failure; remaining groups unverified. No all-offline pass claimed |
+| Native acceptance | No Renoise session launched for Gate 9 | UNVERIFIED on this build; Gates 10–12 and final integrated procedures 13.1–13.8 remain pending; prior native metadata Undo failure remains recorded |
 
 ## Integrated editor and Live Edit verification (2026-11-02)
 

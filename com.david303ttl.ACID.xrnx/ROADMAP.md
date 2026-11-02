@@ -3,7 +3,7 @@
 **Project:** ARP/SEQ / ACID.xrnx  
 **Target:** Renoise 3.5+, Lua 5.1-compatible XRNX, scripting API 6.2  
 **Integration target:** `develop`
-**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision. M5 Gates 1–7 passed implementation and deterministic second-pass verification; native functional checks and operator-reported visual, keyboard and acoustic acceptance are recorded. Gate 8 documentation readiness passed; Gates 9–12 remain pending. Final integrated native acceptance remains unverified. Remaining M4 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision. M5 Gates 1–7 passed implementation and deterministic second-pass verification; native functional checks and operator-reported visual, keyboard and acoustic acceptance are recorded. Gate 8 documentation readiness and Gate 9 regression/packaging passed; Gates 10–12 remain pending. Final integrated native acceptance remains unverified. Remaining M4 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
 **Updated:** 2026-11-02
 
@@ -701,7 +701,7 @@ Callback latency is recorded without an acceptance threshold.
 
 **Scope:** Program/Grid source editing, pattern workflow, Extended operations, and Renoise editor integration. TAP recording and arrangement/playback engines are excluded.
 
-**Status:** Gates 1–7 passed implementation and deterministic second-pass verification, with native functional checks and operator-reported manual acceptance recorded. Gate 8 documentation readiness passed; Gates 9–12 remain pending. Gate 11 must verify the final integrated build. M4 closeout remains unchanged.
+**Status:** Gates 1–7 passed implementation and deterministic second-pass verification, with native functional checks and operator-reported manual acceptance recorded. Gate 8 documentation readiness and Gate 9 regression/packaging passed; Gates 10–12 remain pending. Gate 11 must verify the final integrated build. M4 closeout remains unchanged.
 
 **Dependency:** M4 scoped closeout. The complete normative contract, linear implementation gates, regression matrix, deletion inventory, and native acceptance procedure are in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
 

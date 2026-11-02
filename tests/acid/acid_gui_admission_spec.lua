@@ -65,8 +65,7 @@ function app:show_custom_dialog(_,content)
 end
 function app:show_warning(message) warnings[#warnings+1]=message end
 function app:show_prompt(title)
-  assert(title=="Reset Pattern")
-  return "Cancel"
+  error("Unexpected confirmation: "..tostring(title))
 end
 
 local persisted_drafts={}
@@ -253,11 +252,10 @@ phrase_popup:fire(2)
 phrase_popup:fire(1)
 builder.views.acid_editor_view:fire(2)
 builder.views.acid_editor_view:fire(1)
-button(builder,"Reset Pattern"):fire()
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
 builder.views.acid_pb_range:fire(builder.views.acid_pb_range.value)
 assert(#admissions==0 and #tool.writer_calls==0,
-  "arming, target/source restoration, view navigation, canceled reset and no-op edits must make zero requests")
+  "arming, target/source restoration, view navigation and no-op edits must make zero requests")
 
 sync_next_result="error"
 button(builder,"Generate / Regenerate ACID Phrase"):fire()

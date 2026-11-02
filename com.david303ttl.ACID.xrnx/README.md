@@ -195,19 +195,22 @@ last enabled class is rejected. Decoded Start/Repeating pages show four TIME
 steps at a time, including consumed PITCH index, raw and resolved note, and
 articulation. The renderer uses the same resolution.
 
-Clear and transform operations offer Active memory or All 32 stored scope,
-with confirmation before applying. Clear PITCH resets notes and both flags;
+Clear and transform operations offer Active memory or All 32 stored scope
+and apply immediately in Program and Grid. Clear PITCH resets notes and both flags;
 Clear TIME sets NOTE. Clear TIE changes TIE to NOTE, while TIE-to-REST changes
 it to REST. Clear REST and REST-to-NOTE change REST to NOTE. Clear ACCENT or
 SLIDE changes only that flag. Seeded PITCH randomization uses a selected raw
 24–60 range and retains flags; TIME randomization uses NOTE/TIE/REST weights.
+Randomization uses one parameter dialog with visible scope and rules, Cancel
+and Apply; Apply performs the edit without another confirmation.
 TIME 01 normalizes a drawn TIE to NOTE. Scope never changes active bounds;
 All 32 also edits inactive storage. Each changed result is one undoable edit.
 
 **Reset Pattern** preserves LAST STEP and label. It resets all pitch notes and
 flags, all TIME commands, PITCH span to 16, timing to straight, mask to disabled
 with every class selected, and output/PB settings to defaults. An identical
-reset has no edit effect.
+reset has no edit effect. Reset applies immediately in both views and one
+Undo restores the complete changed state.
 
 ## Using generated phrases in Renoise
 
