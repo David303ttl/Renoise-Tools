@@ -144,7 +144,7 @@ assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
   "resolution replaces the unavailable placeholder with committed source status: "..
     tostring(builder.views.acid_source_state.text))
 assert(builder.views.acid_program_pitch_summary.text:find("P01",1,true) and
-    builder.views.acid_program_pitch_summary.text:find(tostring(source.pitch_events[1].note),1,true),
+    builder.views.acid_program_pitch_summary.tooltip:find(tostring(source.pitch_events[1].note),1,true),
   "the independent phrase projects its cloned source")
 assert(live.value and writes==0,"armed Make Independent never enters the musical writer")
 local phrase_choice

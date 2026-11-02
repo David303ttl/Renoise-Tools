@@ -309,7 +309,7 @@ builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
 assert(saved_pitch(11,1).key==1,
   "closing and reopening the editor recovers the phrase one draft")
-assert(builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+assert(builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
   "reopening establishes the accepted PITCH baseline for the restored source")
 local recovered_status
 for _,node in ipairs(builder.nodes) do
@@ -318,11 +318,11 @@ end
 assert(recovered_status.text:find("Recovered saved draft",1,true),
   "draft recovery reports song persistence")
 pitch_key(builder,3):fire()
-assert(builder.views.acid_program_pitch_summary.text:find("MODIFIED",1,true) and
-  not builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+assert(builder.views.acid_program_pitch_summary.tooltip:find("MODIFIED",1,true) and
+  not builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
   "a post-reopen edit differs from the newly established baseline")
 pitch_key(builder,2):fire()
-assert(builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
+assert(builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
   "editing the restored draft back to its reopened baseline clears modified")
 assert(pb_range_popup(builder).value==2,
   "closing and reopening the editor recovers the phrase one's PB Range")
@@ -348,7 +348,7 @@ assert(go_to_error.active,"invalid source exposes diagnostic navigation: "..buil
 go_to_error:fire()
 builder.views.acid_editor_view:fire(1)
 assert(builder.views.acid_program_time_summary.text:find("TIME 03",1,true) and
-  builder.views.acid_program_pitch_summary.text:find("P02",1,true),
+  builder.views.acid_program_pitch_summary.tooltip:find("P02",1,true),
   "diagnostic navigation selects the failing TIME and PITCH positions")
 force_diagnostic=false
 song.selected_phrase_observable:fire()
@@ -580,8 +580,8 @@ assert(builder.views.acid_recovery_detail.text:find("Native phrase changed",1,tr
 builder.views.acid_recovery_copy:fire()
 assert(#render_callbacks==count_before_copy,"armed recovery never invokes the writer")
 assert(phrase_choice.value==#phrase_choice.items,"recovery binds explicit New")
-assert(builder.views.acid_program_pitch_summary.text:find("P01",1,true) and
-  builder.views.acid_program_pitch_summary.text:find("46",1,true) and
+assert(builder.views.acid_program_pitch_summary.tooltip:find("P01",1,true) and
+  builder.views.acid_program_pitch_summary.tooltip:find("46",1,true) and
   pb_range_popup(builder).value==4,
   "recovery projects source and bend range")
 local source,policy,pb=draft_cache.get(song,instrument,nil)

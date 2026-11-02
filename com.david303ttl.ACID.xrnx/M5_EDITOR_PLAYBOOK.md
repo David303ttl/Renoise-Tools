@@ -507,7 +507,8 @@ Keep this order in both Program and Grid:
 4. Selected editor view.
 5. One fixed-height lower workspace with tabs: Decoded, Pattern / Copy,
    Extended / Clear, Output, Recovery.
-6. Live Edit, Generate/Regenerate, persistent source/result status outside tabs.
+6. Live Edit and Generate/Regenerate outside tabs. Routine source/Live Edit
+   reports in collapsed Details; source errors and generation results visible.
 
 1. Existing GUI has 820-wide lower controls. Preserve a comparable native
    window baseline and the accepted hierarchy; the exact prior widths do not
@@ -551,12 +552,14 @@ Keep this order in both Program and Grid:
 
 1. Render two rows of eight PITCH cells and two rows of eight TIME cells for
    the selected memory page. Each memory has independent page controls.
-2. PITCH cells display position, raw key/octave and flags, selected state,
-   active-span dimming, and enough note text to distinguish endpoint MIDI 60.
+2. PITCH cells display position, resolved Renoise note name, enabled ACC/SLD
+   flags, selected state and active-span dimming. Tooltips retain raw
+   note/key/octave and stored/referenced/modified markers.
    Span dimming is descriptive only; it is not a statement that a value is
    absent or cannot be edited.
-3. TIME cells display position and N/T/R. Selecting a TIME cell does not edit.
-   Shared assignment buttons set it via `sequencer.set_time`.
+3. TIME cells display position and Note/Tie/Rest. Selecting a TIME cell does not
+   edit. Shared assignment buttons highlight the selected command and set it
+   via `sequencer.set_time`.
 4. Remove per-cell TIME popups and every `acid_grid_time_XX` ID. Their former
    assignment action differs from the new selection-only buttons. Give those
    buttons behavior-specific IDs such as `acid_grid_select_time_XX`, update
@@ -601,7 +604,9 @@ selects 60. Test alternate encodings before navigation and after genuine edits.
    twelve-key chromatic keyboard, separate DOWN/NORMAL/UP controls, ACCENT and
    SLIDE controls. Keep sharps legible and selected state unmistakable.
 3. Expose TIME command editing through NOTE/TIE/REST buttons; do not use a
-   selected cell as an implicit edit.
+   selected cell as an implicit edit. Selectors and readouts show Note/Tie/Rest;
+   assignment controls highlight the selected command. Show entry navigation
+   and staging status only during re-entry.
 4. Edit One changes exactly the selected raw pitch or TIME command. PITCH edit
    preserves TIME, unrelated PITCH entries, both bounds, timing, mask, output,
    label and unrelated flags. TIME edit preserves PITCH flags and all unrelated

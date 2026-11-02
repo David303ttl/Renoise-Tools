@@ -42,9 +42,13 @@ entered; navigation and Check never mark or commit it. Incomplete stages offer
 Discard/Stay only. Guard resolution never resumes the blocked action.
 
 PITCH and TIME cursors/pages are independent. Grid shows canonical source;
-inactive TIME slots are inspectable but direct editing is blocked. Stored,
-referenced and modified indicators distinguish retained slots, actual NOTE
-consumption and differences from the accepted session baseline. Audition uses
+inactive TIME slots are inspectable but direct editing is blocked. TIME labels
+show Note/Tie/Rest; assignment controls highlight the selected command. Grid
+pitches show resolved Renoise note names and enabled ACC/SLD flags. Tooltips
+retain raw values and stored/referenced/modified markers. Details starts
+collapsed and holds routine source/Live Edit reports and pattern inspection;
+source errors and generation results remain visible. Entry navigation is shown
+only during re-entry. Audition uses
 the resolved selected or PITCH-stage note without source/draft/history writes.
 A captured song/instrument/track lifecycle releases before replacement onset
 and context changes; removed objects make cleanup best effort.

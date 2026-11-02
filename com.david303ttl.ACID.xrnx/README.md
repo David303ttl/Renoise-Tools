@@ -20,10 +20,17 @@ PITCH or Re-enter TIME. Both views
 edit the same source; switching views does not change or regenerate the
 sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
 is increased again; inactive TIME positions remain inspectable but cannot be
-edited directly. All 32 PITCH entries remain stored and editable. S marks stored
-entries, R marks pitches consumed by the current TIME traversal, and M marks
-changes from the accepted editor baseline. Editing back to baseline clears M.
-Stage entry markers are separate; Grid always shows canonical source.
+edited directly. All 32 PITCH entries remain stored and editable.
+
+TIME buttons show **Note**, **Tie** or **Rest**; assignment controls highlight
+the selected command. Grid pitches show Renoise note names with **ACC** and
+**SLD** when enabled. Hover for raw pitch values and source markers: S stored,
+R referenced, M modified from the accepted baseline. Grid shows canonical
+source; Program shows the candidate during re-entry.
+
+**Show Details** reveals source counts, playback mapping, source/Live Edit
+status and pattern inspection. Source errors and generation results remain
+visible with Details collapsed. Entry navigation appears only during re-entry.
 
 Re-enter starts a detached candidate over the active memory span. Set each value
 and press **Enter and Advance** to mark it entered. Back and Restart Cursor only
@@ -243,6 +250,9 @@ receiver-controlled note overlap. Generation requires LPB transport timing and
 rejects unsupported speed timing before changing phrases or saved source.
 
 ## Development checks
+
+Use the [editor presentation checklist](../tests/acid/acid_editor_presentation_manual.md)
+for labels, Details, staging visibility and layout.
 
 From the repository root in PowerShell 7:
 

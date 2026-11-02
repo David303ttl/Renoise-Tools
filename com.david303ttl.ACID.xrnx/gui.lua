@@ -229,7 +229,7 @@ function M.show()
   local label_ui={}
   local clipboard={scopes={"pitch","time","both"},names={pitch="PITCH",time="TIME",both="Both"}}
   local guard_stage,finish_stage
-  local stage_status,stage_actions
+  local stage_status,stage_actions,entry_navigation
   local refresh_stage
   local function current_session()
     local state=runtime and runtime:lifetime_state()
@@ -260,16 +260,19 @@ function M.show()
     labels[i]=string.format("%02X: %s",i-1,name)
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
-  local status=vb:multiline_textfield{id="acid_status",size={width=820,height=80},active=true,
+  local status=vb:multiline_textfield{id="acid_status",size={width=820,height=40},active=true,
     font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
-  local audition_status=vb:multiline_text{id="acid_audition_status",size={width=820,height=32},text=""}
+  local audition_status=vb:multiline_text{id="acid_audition_status",size={width=820,height=32},visible=false,text=""}
   local preview=audition.new({song=function() return renoise.song() end,tool=tool,
     on_outcome=function(outcome)
       local errors={}
       if outcome.onset_error then errors[#errors+1]="Cannot audition: "..tostring(outcome.onset_error) end
       if outcome.release_error then errors[#errors+1]=tostring(outcome.release_error) end
       for _,reason in ipairs(outcome.cleanup_errors or {}) do errors[#errors+1]=tostring(reason) end
-      if #errors>0 then audition_status.text="Audition cleanup is best effort: "..table.concat(errors,"; ") end
+      if #errors>0 then
+        audition_status.text="Audition cleanup is best effort: "..table.concat(errors,"; ")
+        audition_status.visible=true
+      end
     end})
   active_audition=preview
   local function release_audition() preview:release("editor context changed") end
@@ -306,11 +309,10 @@ function M.show()
       update()
     end}
   local view_heading=vb:text{text="PROGRAM VIEW",font="bold"}
-  local view_hint=vb:text{text="Select one PITCH entry and TIME step to edit the shared source."}
   local program_panel,grid_panel
   local ui={program={pitch_selectors={},time_selectors={},pitch_pages={},time_pages={},
       key_buttons={},octave_buttons={}},
-    grid={key_buttons={},octave_buttons={}},time_assignment={},
+    grid={key_buttons={},octave_buttons={}},time_assignment={},time_names={N="Note",T="Tie",R="Rest"},
     workspace={panels={},tabs={}},decoded={rows=DECODED_ROWS,pages=DECODED_PAGES},mask={classes={}}}
   local program_pitch_summary,program_time_summary
   local program_accent,program_slide,program_c_plus,grid_c_plus
@@ -459,16 +461,16 @@ function M.show()
       p.accent and " A" or "",p.slide and " S" or "",markers,
       index>pattern.pitch_length and " i" or "")
   end
-  local function grid_pitch_header(index,p,projection)
-    if index>#pattern.pitch_events then return string.format("P%02d ---",index) end
-    local markers="S"..(projection.used[index] and "R" or "-")..
-      (accepted_pitch_baseline and not same_pitch(p,accepted_pitch_baseline.pitch_events[index]) and "M" or "-")
-    return string.format("P%02d %s",index,markers)
+  local function grid_pitch_header(index)
+    return string.format("P%02d%s",index,index>pattern.pitch_length and " (inactive)" or "")
   end
   local function grid_pitch_value(index,p)
     if index>#pattern.pitch_events then return "--" end
-    return string.format("%d/%d%+d A%sS%s",p.note,p.key,p.octave,
-      p.accent and "+" or "-",p.slide and "+" or "-")
+    local records=project().resolved_records
+    local note=records and records[index] and records[index].note
+    return string.format("%s%s%s",note and
+      (keys[note%12+1]..tostring(math.floor(note/12))) or "--",
+      p.accent and " ACC" or "",p.slide and " SLD" or "")
   end
   render=function(view,property,value)
     if property~="value" and not (rawequal(view,status) and property=="text") then
@@ -499,6 +501,8 @@ function M.show()
     if audition_button then render(audition_button,"active",current_session() and
       (not stage or (stage.memory=="pitch" and valid_stage()))) end
     if stage_status then
+      render(stage_status,"visible",stage~=nil)
+      render(entry_navigation,"visible",stage~=nil)
       local missing=missing_positions()
       render(stage_status,"text",stage and (editor_view==2 and
         "Program entry staged; return to Program to finish or discard" or
@@ -513,6 +517,8 @@ function M.show()
   end
   local function show_diagnostic(projection)
     local error_info=projection.error
+    render(diagnostic,"visible",error_info~=nil)
+    render(diagnostic_jump,"visible",error_info~=nil)
     if error_info then
       render(diagnostic,"text","ERROR: "..error_info.message..
         (error_info.step and "  [TIME "..error_info.step.."]" or "")..
@@ -538,9 +544,6 @@ function M.show()
         clipboard.payload.length and ("LAST STEP "..clipboard.payload.length) or "") or "Clipboard empty")
     end
     render(view_heading,"text",editor_view==1 and "PROGRAM VIEW" or "GRID VIEW")
-    render(view_hint,"text",editor_view==1 and
-      "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
-      "Edit sixteen PITCH positions and TIME steps directly across two pages (01–32).")
     if program_panel then render(program_panel,"visible",editor_view==1) end
     if grid_panel then render(grid_panel,"visible",editor_view==2) end
     render(pitch_length_popup,"value",pattern.pitch_length or sequencer.PAGE_SIZE)
@@ -576,7 +579,7 @@ function M.show()
       local p=pitch_at(i)
       local b=pitch_cells[cell]
       render(b,"active",true)
-      render(pitch_headers[cell],"text",grid_pitch_header(i,p,projection))
+      render(pitch_headers[cell],"text",grid_pitch_header(i))
       render(b,"text",grid_pitch_value(i,p))
       render(b,"tooltip",view_label(i,p,projection)..string.format(
         " | note=%d key=%d octave=%+d accent=%s slide=%s",p.note,p.key,p.octave,
@@ -589,7 +592,7 @@ function M.show()
       local time_header=time_headers[cell]
       local cmd=pattern.time_events[step]
       render(time,"active",true)
-      render(time,"text",string.format("%02d %s%s",step,cmd,
+      render(time,"text",string.format("%02d %s%s",step,ui.time_names[cmd],
         step>pattern.length and " *" or ""))
       render(time,"color",projection.error and projection.error.step==step
         and colors.warning or (step==selected_step and colors.selected)
@@ -628,23 +631,27 @@ function M.show()
       end
       for cell,button in ipairs(ui.program.time_selectors) do
         local index=editor.index_on_page(time_page,cell)
-        render(button,"text",string.format("T%02d%s",index,
+        local command=(stage and stage.candidate or pattern).time_events[index]
+        render(button,"text",string.format("%02d %s%s",index,ui.time_names[command],
           stage and stage.memory=="time" and stage.entered[index] and " +" or
           (index>pattern.length and " *" or "")))
         render(button,"active",not stage or stage.memory~="time" or index<=#stage.target_positions)
         render(button,"color",index==selected_step and colors.selected or
-          (index>pattern.length and colors.idle or colors.note))
+          (index>pattern.length and colors.inactive or
+            (command=="N" and colors.note or command=="T" and colors.tie or colors.rest)))
       end
       for page=1,editor.MAX_PAGES do
         render(ui.program.pitch_pages[page],"color",page==pitch_page and colors.selected or colors.idle)
         render(ui.program.time_pages[page],"color",page==time_page and colors.selected or colors.idle)
       end
-      render(program_pitch_summary,"text",view_label(selected_pitch,p,projection).." | "..
+      render(program_pitch_summary,"text",string.format("P%02d: %s",selected_pitch,
+        records and records[selected_pitch] and
+          (keys[records[selected_pitch].note%12+1]..tostring(math.floor(records[selected_pitch].note/12))) or "Unavailable"))
+      render(program_pitch_summary,"tooltip",view_label(selected_pitch,p,projection).." | "..
         pitch_indicator(selected_pitch,projection))
-      render(program_time_summary,"text",string.format("TIME %02d = %s | %s",
-        selected_step,(stage and stage.candidate or pattern).time_events[selected_step],
-        selected_step<=pattern.length and editor.step_text(projection,selected_step,preview_cycle)
-          or "OUTSIDE LAST STEP | READ ONLY"))
+      render(program_time_summary,"text",string.format("TIME %02d: %s%s",
+        selected_step,ui.time_names[(stage and stage.candidate or pattern).time_events[selected_step]],
+        selected_step>pattern.length and " (inactive)" or ""))
       for key_index,button in ipairs(ui.program.key_buttons) do
         render(button,"color",key==key_index-1 and colors.selected or colors.idle)
       end
@@ -666,7 +673,9 @@ function M.show()
       render(grid_c_plus,"active",stage==nil and p.octave==1)
       render(grid_c_plus,"color",p.note==60 and colors.selected or colors.idle)
     end
-    for _,button in ipairs(ui.time_assignment) do
+    for index,button in ipairs(ui.time_assignment) do
+      render(button,"color",(stage and stage.candidate or pattern).time_events[selected_step]==({"N","T","R"})[index]
+        and colors.selected or colors.idle)
       render(button,"active",selected_step<=pattern.length and (not stage or
         (editor_view==1 and stage.memory=="time" and selected_step<=#stage.target_positions)))
     end
@@ -948,7 +957,7 @@ function M.show()
     ui.program.pitch_selectors[cell]=vb:button{id=string.format("acid_program_select_pitch_%02d",cell),width=45,text="P",notifier=function()
       choose_pitch(editor.index_on_page(pitch_page,position))
     end}
-    ui.program.time_selectors[cell]=vb:button{id=string.format("acid_program_select_time_%02d",cell),width=45,text="T",notifier=function()
+    ui.program.time_selectors[cell]=vb:button{id=string.format("acid_program_select_time_%02d",cell),width=94,text="TIME",notifier=function()
       choose_time(editor.index_on_page(time_page,position))
     end}
   end
@@ -1703,7 +1712,7 @@ function M.show()
       local missing=missing_positions()
       if #missing>0 then status.text=status.text.." Missing entered positions: "..table.concat(missing,", ") end
     end}}
-  local entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
+  entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
     stage_actions.restart,stage_actions.finish,stage_actions.discard}
   audition_button=vb:button{id="acid_audition",text="Audition PITCH",notifier=function()
     if not current_session() or (stage and (stage.memory~="pitch" or not valid_stage())) then return end
@@ -1724,20 +1733,20 @@ function M.show()
   end}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
     entry_controls,entry_navigation,
-    vb:text{text="PITCH POSITION | page and position selection are independent of TIME",font="bold"},
+    vb:text{text="PITCH",font="bold"},
     program_pitch_page_row,selector_rows(ui.program.pitch_selectors),program_pitch_summary,
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},program_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},program_octave_row,
       vb:text{text="ACCENT"},program_accent,vb:text{text="SLIDE"},program_slide,program_c_plus},
-    vb:text{text="TIME POSITION | inactive positions remain inspectable",font="bold"},
+    vb:text{text="TIME",font="bold"},
     program_time_page_row,selector_rows(ui.program.time_selectors),program_time_summary}
   grid_panel=vb:column{id="acid_grid_panel",spacing=4,
-    vb:text{text="PITCH MEMORY | S stored, R referenced, M modified; dim entries are outside active span",font="bold"},
+    vb:text{text="PITCH",font="bold"},
     pitch_pages,pitch_grid,
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},grid_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},grid_octave_row,
       vb:text{text="ACCENT"},accent,vb:text{text="SLIDE"},slide,grid_c_plus},
-    vb:text{text="TIME MEMORY | choose a step, then use shared assignment controls",font="bold"},
+    vb:text{text="TIME",font="bold"},
     time_pages,time_grid}
   local decoded_previous_button=vb:button{id="acid_decoded_previous",text="Previous 4",width=100,notifier=function()
     release_audition();if decoded_page>1 then decoded_page=decoded_page-1;update() end
@@ -1923,6 +1932,12 @@ function M.show()
     panel.origin={0,0}
     panel.size={width=820,height=132}
   end
+  local details=vb:column{id="acid_details_panel",spacing=4,visible=false,
+    summary,map_text,source_state,live_state_view,inspect}
+  local details_button=vb:button{id="acid_details_toggle",text="Show Details",notifier=function()
+    details.visible=not details.visible
+    vb.views.acid_details_toggle.text=details.visible and "Hide Details" or "Show Details"
+  end}
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
     vb:row{spacing=6,vb:text{text="Target instrument"},target,
@@ -1939,13 +1954,12 @@ function M.show()
         changed()
       end},
       undo_button,
-      redo_button,audition_button,
-      vb:text{text="Undo and Redo include source, phrase output, and PB Range."}},
-    view_heading,view_hint,stage_status,program_panel,grid_panel,
+      redo_button,audition_button},
+    view_heading,stage_status,program_panel,grid_panel,
     vb:row{spacing=5,vb:text{text="Assign selected TIME"},
       ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
     workspace,
-    summary,map_text,diagnostic,diagnostic_jump,
+    diagnostic,diagnostic_jump,
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
         if guard_stage() then return end
@@ -1977,8 +1991,7 @@ function M.show()
       vb:button{text="Sampler audit",notifier=function()
         status.text=sampler.describe(instrument_targets[selected_instrument])
       end}},
-    vb:text{text="Live Edit applies changes automatically. With Live Edit off, Generate applies the saved draft."},
-    source_state,live_state_view,inspect,audition_status,status}
+    details_button,details,audition_status,status}
   select_instrument(selected_instrument)
   native_observers:attach(song,runtime,function()
     release_audition()
