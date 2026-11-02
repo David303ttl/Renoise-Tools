@@ -3,7 +3,7 @@
 **Project:** ARP/SEQ / ACID.xrnx  
 **Target:** Renoise 3.5+, Lua 5.1-compatible XRNX, scripting API 6.2  
 **Integration target:** `develop`
-**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision. M5 Gates 1–7 passed implementation and deterministic second-pass verification; native functional checks and operator-reported visual, keyboard and acoustic acceptance are recorded. Gate 8 documentation readiness and Gate 9 regression/packaging passed; Gates 10–12 remain pending. Final integrated native acceptance remains unverified. Remaining M4 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+**Document status:** M4 / Gate 8 PASS under the scoped 2026-11-01 acceptance decision. M5 Gates 1–12 passed and closed on 2026-11-02. Gate 11 native acceptance passed per operator confirmation for procedures 13.1–13.8; per-check operator notes were not recorded. Remaining M4 16×8 stress execution and sample/VST audio capture are waived, and no latency ceiling is active. See [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md) and [M4.7 closeout](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 **Current manifest:** `0.1` (experimental; do not increment as part of roadmap work)  
 **Updated:** 2026-11-02
 
@@ -79,7 +79,7 @@ Renoise checks; deterministic tests do not establish audio behavior.
 | **Implementation complete; Renoise acceptance open** | **M3.5 — Sequencer-first rendering and instrument independence** | Unrestricted valid edits, sample/plugin/MIDI targets, adaptive articulation, persistent Live Edit | M3 semantic model + existing writer safety |
 | **Implementation complete; P0 playback acceptance open** | **M3.6 — Plugin/MIDI pitch-bend slide (small follow-up)** | Optional PB Range selector; existing Renoise MIDI pitch bend for instruments without usable portamento | M3.5 source/output/ownership contract |
 | Completed (scoped closeout) | **M4 — Timing modes and tempo robustness** | Exact straight/triplet phrase timing independent of song LPB/BPM/meter | Closed by accepted scope; remaining host/audio limitations are recorded under M4.7 |
-| Next | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M4 scoped closeout |
+| Completed (operator-accepted closeout) | **M5 — Source programming and Renoise workflow** | Original programming workflow, source management and Extended editing | M4 scoped closeout |
 | Final | **M6 — Stability, documentation and release** | Testable, packaged, supportable ACID tool | M3.5–M5, including M3.6 |
 
 **Milestone completion** normally requires deterministic Lua checks and targeted Renoise verification for rendered notes, audio, GUI, phrases, persistence, or undo. If a user accepts deferring a check, record the scope decision and keep the deferred claim explicitly unverified; a passing mock test alone is not an audio conformance result.
@@ -701,7 +701,7 @@ Callback latency is recorded without an acceptance threshold.
 
 **Scope:** Program/Grid source editing, pattern workflow, Extended operations, and Renoise editor integration. TAP recording and arrangement/playback engines are excluded.
 
-**Status:** Gates 1–7 passed implementation and deterministic second-pass verification, with native functional checks and operator-reported manual acceptance recorded. Gate 8 documentation readiness and Gate 9 regression/packaging passed; Gates 10–12 remain pending. Gate 11 must verify the final integrated build. M4 closeout remains unchanged.
+**Status:** Gates 1–12 passed and closed on 2026-11-02. Gate 11 native acceptance passed per operator confirmation for procedures 13.1–13.8. M4 closeout remains unchanged.
 
 **Dependency:** M4 scoped closeout. The complete normative contract, linear implementation gates, regression matrix, deletion inventory, and native acceptance procedure are in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
 
