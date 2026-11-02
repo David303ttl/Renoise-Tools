@@ -5668,8 +5668,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
               if operation=="randomize_pitch" or operation=="randomize_time" then
                 local seed_control=operation=="randomize_pitch" and controls.acid_operation_pitch_seed
                   or controls.acid_operation_time_seed
-                assert(seed_control.value==parameters.seed%seed_control.max+1,
-                  "Random Apply did not advance the displayed seed")
+                assert(seed_control.value==parameters.seed,
+                  "Random Apply changed the displayed seed")
               end
               local expected={source=candidate,label=before.label,label_custom=before.label_custom,
                 output_policy=before.output_policy,pb_range=before.pb_range}
@@ -5798,12 +5798,21 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           value("acid_operation_max_note",60)
           callbacks.acid_operation_open()
           local randomized_one=state()
-          assert(controls.acid_operation_pitch_seed.value==2,"Native first random seed did not advance")
+          assert(controls.acid_operation_pitch_seed.value==1,"Native random Apply changed the seed")
           callbacks.acid_undo()
+          value("acid_operation_pitch_seed",2)
           callbacks.acid_operation_open()
           local randomized_two=state()
           assert(randomized_one.source.pitch_events[1].note~=randomized_two.source.pitch_events[1].note,
             "Consecutive random seeds reused the first masked pitch")
+          value("acid_operation_pitch_seed",1)
+          callbacks.acid_operation_open()
+          exact(randomized_one)
+          value("acid_operation_pitch_seed",2)
+          callbacks.acid_operation_open()
+          exact(randomized_two)
+          callbacks.acid_undo()
+          callbacks.acid_undo()
           callbacks.acid_undo()
           exact(applied)
           callbacks.acid_undo()

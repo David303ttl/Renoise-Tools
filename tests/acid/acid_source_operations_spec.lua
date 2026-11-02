@@ -46,9 +46,19 @@ for _,scope in ipairs({"active","all"}) do
   local pitch=assert(seq.operation_candidate(source,"randomize_pitch",scope,{seed=1,min_note=24,max_note=60}))
   local repeat_pitch=assert(seq.operation_candidate(source,"randomize_pitch",scope,{seed=1,min_note=24,max_note=60}))
   assert(seq.same_source(pitch,repeat_pitch))
+  local other_pitch=assert(seq.operation_candidate(pitch,"randomize_pitch",scope,
+    {seed=29,min_note=24,max_note=60}))
+  local restored_pitch=assert(seq.operation_candidate(other_pitch,"randomize_pitch",scope,
+    {seed=1,min_note=24,max_note=60}))
+  assert(seq.same_source(pitch,restored_pitch),"returning to a PITCH seed restores its notes without Undo")
   for i=1,5 do assert(pitch.pitch_events[i].note==({25,49,37,37,25})[i]) end
   local time=assert(seq.operation_candidate(source,"randomize_time",scope,
     {seed=1,note_weight=2,tie_weight=1,rest_weight=1}))
+  local other_time=assert(seq.operation_candidate(time,"randomize_time",scope,
+    {seed=29,note_weight=2,tie_weight=1,rest_weight=1}))
+  local restored_time=assert(seq.operation_candidate(other_time,"randomize_time",scope,
+    {seed=1,note_weight=2,tie_weight=1,rest_weight=1}))
+  assert(seq.same_source(time,restored_time),"returning to a TIME seed restores its commands without Undo")
   for i=1,5 do assert(time.time_events[i]==({"N","R","N","T","N"})[i]) end
   local bound=scope=="all" and 32 or 7
   for i=1,32 do

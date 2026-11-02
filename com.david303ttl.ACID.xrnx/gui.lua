@@ -1862,11 +1862,11 @@ function M.show()
   end
   local random_state={last={}}
   local pitch_parameters=vb:row{id="acid_random_pitch_parameters",spacing=4,visible=false,
-    vb:text{text="Next seed"},random_field("pitch_seed",1,RANDOM_SEED_MAX,1),
+    vb:text{text="Seed"},random_field("pitch_seed",1,RANDOM_SEED_MAX,1),
     vb:text{text="MIDI range"},random_field("min_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN),
     vb:text{text="to"},random_field("max_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MAX)}
   local time_parameters=vb:row{id="acid_random_time_parameters",spacing=4,visible=false,
-    vb:text{text="Next seed"},random_field("time_seed",1,RANDOM_SEED_MAX,1),
+    vb:text{text="Seed"},random_field("time_seed",1,RANDOM_SEED_MAX,1),
     vb:text{text="NOTE"},random_field("note_weight",0,RANDOM_WEIGHT_MAX,2),
     vb:text{text="TIE"},random_field("tie_weight",0,RANDOM_WEIGHT_MAX,1),
     vb:text{text="REST"},random_field("rest_weight",0,RANDOM_WEIGHT_MAX,1)}
@@ -1916,7 +1916,6 @@ function M.show()
     apply_candidate(candidate)
     if seed_control then
       random_state.last[operation]=parameters.seed
-      if not repeat_last then seed_control.value=parameters.seed%RANDOM_SEED_MAX+1 end
       random_state.refresh()
     end
   end
@@ -2099,7 +2098,7 @@ function M.show()
     vb:row{spacing=6,vb:text{text="Root"},ui.scale_controls.root,ui.scale_controls.category,ui.scale_controls.choice,
       vb:text{text="Follow scale"},ui.scale_controls.follow},
     vb:row{spacing=6,vb:text{text="Search"},ui.scale_controls.search,ui.scale_controls.import},ui.scale_controls.detail,mask_row,
-    vb:text{text="Apply advances this operation's seed. Repeat last reuses Last used with current settings."},
+    vb:text{text="Apply keeps the seed. Return to a seed and Apply with the same settings to recall its result."},
     vb:text{text="Root browses without editing; choose a scale to apply MASK. Follow snaps new notes."}}
   end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,

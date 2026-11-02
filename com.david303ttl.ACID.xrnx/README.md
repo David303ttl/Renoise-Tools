@@ -78,10 +78,11 @@ With MASK enabled, **Randomize PITCH** samples allowed notes in the MIDI range.
 Follow defaults off. Root/browser/Follow are session controls; MASK is saved with
 the pattern and supports Undo/Redo.
 
-PITCH and TIME have separate next seeds and **Last used** values. Random
-operations decorrelate adjacent seeds before sampling. **Apply** increments
-only that operation's seed, wrapping 2147483646 to 1. **Repeat last**
-reuses Last used with current settings/mask without advancing the next seed.
+PITCH and TIME have separate seeds and **Last used** values. Random
+operations decorrelate adjacent seeds before sampling. **Apply** keeps the
+entered seed. Change the seed for another result; return to an earlier seed
+and Apply with the same range/weights, mask and scope to recall its result.
+**Repeat last** reuses Last used with current settings/mask without changing the seed field.
 Undo restores the pattern, not seed controls. Seeds last for the editor session.
 
 **Import .txt** adds scales such as `My scale = 0 2 3 5 7 9 10`, saves them in

@@ -2,8 +2,19 @@
 
 M5 sections below are dated checkpoint records. Earlier statements that later
 gates were pending describe those checkpoints, not the current implementation.
-See [direct operations verification](#direct-editor-operations-verification-2026-11-02)
+See [seed recall verification](#randomization-seed-recall-verification-2026-11-02)
+and [direct operations verification](#direct-editor-operations-verification-2026-11-02)
 for current deterministic and native acceptance status.
+
+## Randomization seed recall verification (2026-11-02)
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Seed controls | `acid_gui_views_spec.lua` | PASS; Apply retains the entered seed, including no-ops and the maximum seed; PITCH/TIME controls remain independent |
+| Seed recall | `acid_source_operations_spec.lua`, `acid_gui_views_spec.lua` | PASS; returning to earlier PITCH/TIME seeds restores generated values without Undo when parameters, mask and scope are unchanged |
+| Regression | `./scripts/run_tests.ps1 -Tool ACID` | PASS; 79 specs, 0 failed; Lua 5.1 |
+| Package | `./scripts/package.ps1 -Tool ACID`; archive inspection | PASS; 35 runtime files; manifest and main at archive root, module directories retained, SDK and development files excluded |
+| Manual acceptance | Operator confirmation in Renoise | PASS; operator verified the seed recall fix. Extended native harness seed-recall assertions were added but not executed in Renoise for this change |
 
 ## Direct editor operations verification (2026-11-02)
 

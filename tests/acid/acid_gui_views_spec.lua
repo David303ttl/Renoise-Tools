@@ -1387,17 +1387,29 @@ do
   control("acid_operation_open"):fire()
   assert(confirmations==0 and draft_writes==writes+1,"random Apply immediately creates one edit")
   local randomized=assert(sequencer.copy_source(label_context:editor_state().source))
-  assert(control("acid_operation_pitch_seed").value==2,"successful random Apply advances seed")
+  assert(control("acid_operation_pitch_seed").value==1,"successful random Apply retains the used seed")
   writes=draft_writes
+  control("acid_operation_pitch_seed").value=2
   control("acid_operation_open"):fire()
-  assert(draft_writes==writes+1,"repeated Apply creates a fresh random edit")
+  assert(draft_writes==writes+1,"Apply with a different seed creates a fresh random edit")
   assert(not sequencer.same_source(randomized,label_context:editor_state().source),"next seed changes pitches")
+  local second_randomized=assert(sequencer.copy_source(label_context:editor_state().source))
+  control("acid_operation_pitch_seed").value=1
+  control("acid_operation_open"):fire()
+  assert(sequencer.same_source(randomized,label_context:editor_state().source),
+    "returning to a PITCH seed restores the earlier melody without Undo")
+  control("acid_operation_pitch_seed").value=2
+  control("acid_operation_open"):fire()
+  assert(sequencer.same_source(second_randomized,label_context:editor_state().source),
+    "PITCH seeds can be revisited in either direction")
+  button("Undo"):fire()
+  button("Undo"):fire()
   button("Undo"):fire()
   control("acid_operation_pitch_seed").value=1
   writes=draft_writes
   control("acid_operation_open"):fire()
   assert(draft_writes==writes,"same random seed and parameters produce a no-op")
-  assert(control("acid_operation_pitch_seed").value==2,"valid no-op randomization also advances seed")
+  assert(control("acid_operation_pitch_seed").value==1,"valid no-op randomization retains the used seed")
   button("Undo"):fire()
   assert(sequencer.same_source(previous,label_context:editor_state().source),"one Undo restores random edit")
   button("Redo"):fire()
@@ -1412,27 +1424,35 @@ do
     writes=draft_writes
     repeat_last:fire()
     assert(draft_writes==writes and pitch_seed.value==25,
-      "Repeat last reuses the previous seed without consuming the next seed")
+      "Repeat last reuses the previous seed without changing the entered seed")
     control("acid_operation"):fire(RANDOM_TIME)
     assert(time_seed.value==1 and not repeat_last.active and last_used.text=="Last used: —",
       "TIME starts with its own seed and no previous result")
     time_seed.value=7
     control("acid_operation_open"):fire()
-    assert(time_seed.value==8 and pitch_seed.value==25 and last_used.text=="Last used: 7",
-      "TIME Apply advances only TIME and records its used seed")
+    assert(time_seed.value==7 and pitch_seed.value==25 and last_used.text=="Last used: 7",
+      "TIME Apply retains its seed and records its used seed independently of PITCH")
     local time_result=assert(sequencer.copy_source(label_context:editor_state().source))
+    time_seed.value=8
+    control("acid_operation_open"):fire()
+    time_seed.value=7
+    control("acid_operation_open"):fire()
+    assert(sequencer.same_source(time_result,label_context:editor_state().source),
+      "returning to a TIME seed restores earlier timing without Undo")
+    button("Undo"):fire()
+    button("Undo"):fire()
     button("Undo"):fire()
     repeat_last:fire()
-    assert(sequencer.same_source(time_result,label_context:editor_state().source) and time_seed.value==8,
+    assert(sequencer.same_source(time_result,label_context:editor_state().source) and time_seed.value==7,
       "Repeat last reproduces TIME after Undo without advancing its seed")
     button("Undo"):fire()
     control("acid_operation"):fire(RANDOM_PITCH)
     assert(last_used.text=="Last used: 1" and pitch_seed.value==25,
-      "operation navigation restores the operation's next and last seed")
+      "operation navigation restores the operation's entered and last seed")
     pitch_seed.value=pitch_seed.max
     control("acid_operation_open"):fire()
-    assert(pitch_seed.value==pitch_seed.min and time_seed.value==8,
-      "maximum PITCH seed wraps without changing TIME seed")
+    assert(pitch_seed.value==pitch_seed.max and time_seed.value==7,
+      "maximum PITCH seed remains repeatable without changing TIME seed")
     assert(last_used.text=="Last used: "..tostring(pitch_seed.max))
     button("Undo"):fire()
   end
@@ -1443,12 +1463,12 @@ do
     invalid()
     writes=draft_writes
     local last_used=control("acid_random_last_seed").text
-    local next_seed=control("acid_operation_pitch_seed").value
+    local entered_seed=control("acid_operation_pitch_seed").value
     control("acid_operation_open"):fire()
     assert(draft_writes==writes and confirmations==0,"invalid random parameters never edit")
     assert(control("acid_random_last_seed").text==last_used and
-      control("acid_operation_pitch_seed").value==next_seed,
-      "invalid random parameters preserve next and last seeds")
+      control("acid_operation_pitch_seed").value==entered_seed,
+      "invalid random parameters preserve entered and last seeds")
   end
   control("acid_operation"):fire(RANDOM_TIME)
   before=navigation_snapshot()

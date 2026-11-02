@@ -135,20 +135,26 @@ a 32/32 active fixture. Repeat in Program and Grid.
    edits alone leave source/history/draft unchanged. Click **Apply** and verify
    direct application without a prompt.
    Verify P01..P05 raw MIDI 28,51,40,43,32, flags preserved and P06..P32 intact.
-   Verify Seed advances to 2; Apply again and verify a fresh result and Seed 3.
+   Verify Seed stays 1; Apply again and verify no change. Set Seed to 2 and
+   Apply: verify a fresh result and Seed stays 2.
+   Without Undo, set Seed to 1 and Apply: verify the first result returns.
+   Set Seed to 2 and Apply: verify the second result returns. Undo these two
+   recall edits before continuing. Keep range, mask and scope unchanged.
    Undo the second Apply. Set Seed to 1 and Apply: the original result stays
-   unchanged and Seed advances to 2. Undo the first edit and Redo it.
+   unchanged and Seed stays 1. Undo the first edit and Redo it.
    Undo; reset Seed to 1, repeat with All 32 stored and inspect inactive entries as well.
 5. Repeat **Randomize TIME** using Seed 1, NOTE/TIE/REST weights 2/1/1, both
    scopes and direct Apply. The first five commands are N,R,N,T,N;
    Active retains T08..T32. Inspect TIME 01 normalization using the canonical
    13.5 fixture. Scope changes never change LAST STEP or PITCH span.
-   Confirm PITCH/TIME retain separate next seeds and Last used values when
+   Apply Seed 7, then Seed 8, then Seed 7 again without Undo: verify the first
+   timing result returns with unchanged weights and scope.
+   Confirm PITCH/TIME retain separate seeds and Last used values when
    switching operations. Undo a random edit, then **Repeat last** with unchanged
-   settings/mask: verify the result returns and the next seed stays unchanged.
+   settings/mask: verify the result returns and the seed field stays unchanged.
    Before an operation's first valid Apply, Repeat last is disabled. Set a seed
-   to 2147483646 and Apply: verify Last used shows it and next seed wraps to 1.
-   Invalid parameters and staged entry leave next/last seeds unchanged.
+   to 2147483646 and Apply: verify Last used and the seed field both show it.
+   Invalid parameters and staged entry leave seed fields and Last used unchanged.
 6. After each applied scope case, save the dirty draft, close Renoise, reopen
    the exact XRNS in a fresh process and open ACID. Compare all 32 stored values,
    bounds, mask, settings and label with the captured draft; committed phrase

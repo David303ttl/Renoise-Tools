@@ -1085,10 +1085,11 @@ no-op means no history, draft write, or Live Edit request.
    synchronous edit admission. Parameter changes alone never edit source.
    One result is one history/edit.
 10. If resulting source equals current source, no-op has no history, draft write,
-    or Live Edit request. After every valid random Apply, advance the displayed
-    operation's next seed by one, wrapping the maximum to 1, including no-ops.
-    PITCH/TIME next seeds and Last used are independent session controls.
-    Repeat last uses Last used with current parameters/mask without advancing.
+    or Live Edit request. Random Apply retains the entered seed, including no-ops.
+    Return to an earlier seed and Apply with unchanged range/weights, mask and
+    scope to reproduce that operation's result.
+    PITCH/TIME seeds and Last used are independent session controls.
+    Repeat last uses Last used with current parameters/mask without changing the seed field.
     Invalid or blocked operations preserve both seeds and Last used.
 
 ## 9. Request, Draft, and Transaction Threading
