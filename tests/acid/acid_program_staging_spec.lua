@@ -537,4 +537,84 @@ highlighted("acid_program_key_",2)
 fire("acid_program_check")
 highlighted("acid_program_key_",2)
 assert(seq.same_source(current(),masked),"candidate resolution cannot rewrite canonical source")
+local note_calls,timers={},{}
+renoise.Track={TRACK_TYPE_SEQUENCER=1,TRACK_TYPE_MASTER=2,TRACK_TYPE_GROUP=4}
+function tool:has_timer(callback)return timers[callback]~=nil end
+function tool:add_timer(callback,interval)timers[callback]=interval end
+function tool:remove_timer(callback)timers[callback]=nil end
+song.selected_track={type=renoise.Track.TRACK_TYPE_SEQUENCER}
+song.tracks={song.selected_track}
+song.tracks_observable=observable()
+song.selected_track_observable=observable()
+function song:trigger_instrument_note_on(i,t,n,v)note_calls[#note_calls+1]={kind="on",note=n}end
+function song:trigger_instrument_note_off(i,t,n)note_calls[#note_calls+1]={kind="off",note=n}end
+fire("acid_audition")
+assert(note_calls[#note_calls].note==38 and note_calls[#note_calls].kind=="on")
+fire("acid_program_check")
+assert(note_calls[#note_calls].kind=="off","Check releases audition")
+fire("acid_audition")
+fire("acid_program_pitch_page_2")
+assert(note_calls[#note_calls].kind=="off","page navigation releases audition")
+fire("acid_program_pitch_page_1")
+
+fire("acid_program_key_09")
+local before_audition=assert(seq.copy_source(current()))
+local audition_writes,audition_saves=writes,saves
+fire("acid_audition")
+assert(note_calls[#note_calls].note==48,"PITCH audition resolves detached candidate")
+assert(seq.same_source(before_audition,current()) and writes==audition_writes and saves==audition_saves)
+answer="Discard";fire("acid_program_discard")
+assert(note_calls[#note_calls].kind=="off","Discard releases before its prompt")
+fire("acid_audition")
+assert(note_calls[#note_calls].note==38,"canonical audition resolves mask")
+begin("time")
+assert(not view("acid_audition").active,"TIME staging disables audition")
+local calls_before_time=#note_calls
+fire("acid_audition")
+assert(#note_calls==calls_before_time,"TIME-stage notifier cannot trigger audition")
+answer="Discard";fire("acid_program_discard")
+local function releases(action,label)
+  fire("acid_audition")
+  assert(note_calls[#note_calls].kind=="on",label.." onset")
+  local count=#note_calls
+  action()
+  assert(#note_calls==count+1 and note_calls[#note_calls].kind=="off",label.." releases once")
+  assert(next(timers)==nil,label.." detaches timer")
+end
+for _,id in ipairs({"acid_program_select_pitch_01","acid_program_select_time_01",
+    "acid_pitch_page_1","acid_time_page_1","acid_program_time_page_1",
+    "acid_decoded_next","acid_decoded_previous","acid_recovery_previous","acid_recovery_next",
+    "acid_recovery_choice","acid_program_check"}) do
+  releases(function()fire(id)end,id)
+end
+releases(function()song.selected_track_observable:fire()end,"native track selection")
+releases(function()song.selected_instrument_observable:fire()end,"native instrument selection")
+releases(function()fire("acid_editor_view",2)end,"Grid switch")
+releases(function()fire("acid_editor_view",1)end,"Program switch")
+local prompt_impl=app.show_prompt
+function app:show_prompt(...)
+  assert(next(timers)==nil and note_calls[#note_calls].kind=="off","release precedes modal entry")
+  return prompt_impl(self,...)
+end
+releases(function()begin("pitch")end,"Re-enter prompt")
+releases(function()fire("acid_program_enter")end,"Enter navigation")
+releases(function()fire("acid_program_back")end,"Back navigation")
+releases(function()fire("acid_program_restart")end,"Restart navigation")
+releases(function()answer="Stay";button("Undo"):fire()end,"pending-stage guard")
+releases(function()answer="Discard";fire("acid_program_discard")end,"Discard prompt")
+app.show_prompt=prompt_impl
+local note_off=song.trigger_instrument_note_off
+function song:trigger_instrument_note_off(...)error("injected note-off failure")end
+fire("acid_audition")
+fire("acid_program_check")
+assert(view("acid_audition_status").text:find("injected note-off failure",1,true),
+  "Check status cannot overwrite cleanup failure")
+song.trigger_instrument_note_off=note_off
+releases(function()dialog.visible=false;tool.app_idle_observable:fire()end,"dialog close")
+gui.show()
+releases(function()tool.app_release_document_observable:fire()end,"document release")
+gui.show()
+releases(function()tool.app_new_document_observable:fire()end,"new document")
+gui.show()
+releases(function()tool.tool_will_unload_observable:fire()end,"tool unload")
 print("acid_program_staging_spec: OK")

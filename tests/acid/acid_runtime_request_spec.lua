@@ -4,8 +4,15 @@ local seq=require('model.sequencer')
 local store=require('renoise.pattern_store')
 local cache=require('runtime.draft_cache')
 local unreachable=dofile('tests/assert_unreachable.lua')
-local function fixture(new)
+local NATIVE_PHRASE_ID=101
+local OTHER_NATIVE_PHRASE_ID=102
+local function fixture(new,native_phrases)
  local song,instrument,phrase,other,source=helper.fixture(new and 'new')
+ if native_phrases then
+  phrase,other=helper.phrase(source,NATIVE_PHRASE_ID),helper.phrase(source,OTHER_NATIVE_PHRASE_ID)
+  phrase.name,other.name="Native phrase","Other native phrase"
+  instrument.phrases={phrase,other}
+ end
  local writer={status='idle'}
  function writer:state()return self.status,self.token end
  function writer:is_temporary()return false end
@@ -363,7 +370,7 @@ do
   assert(not log.request.token:is_current(),'failed checkpoint retained writer token authorization')
 end
 do
-  local ctx,log=fixture(true)
+  local ctx,log=fixture(true,true)
   local before=ctx:revision_state()
   assert(ctx:rename_label("Custom",true))
   local after=ctx:revision_state()

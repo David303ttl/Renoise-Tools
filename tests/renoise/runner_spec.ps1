@@ -645,6 +645,15 @@ $coldPidReportLine = @($coldPidInvocation | ForEach-Object { [string]$_ } | Wher
 Assert ($coldPidReportLine.Count -eq 1) 'cold-process PID rejection did not emit a report'
 $coldPidReport = Get-Content -LiteralPath $coldPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($coldPidReport.error -match 'requires the runner to launch and own') 'cold-process PID rejection was not explicit'
+$recoveryPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase recovery-labels-prepare -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'recovery-label cold reopen accepted a selected Renoise PID'
+$recoveryPidReportLine = @($recoveryPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($recoveryPidReportLine.Count -eq 1) 'recovery-label PID rejection did not emit a report'
+$recoveryPidReport = Get-Content -LiteralPath $recoveryPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($recoveryPidReport.error -match 'requires a runner-owned process' -and
+    @($recoveryPidReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+    'recovery-label cold reopen did not reject an unowned PID before starting Renoise'
 $profileRejectedInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
     -Suite Native -AcceptanceCase make-independent -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
 Assert ($LASTEXITCODE -ne 0) 'runner accepted a profile option for an unrelated native case'

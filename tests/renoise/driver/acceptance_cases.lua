@@ -4215,6 +4215,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   local original_view_builder
   local original_app_factory
   local captured_test_dialog
+  local captured_audition,audition_note
   local gui_context_module,original_gui_context_new,gui_context,gui_transition_context
   local gui_live_trace_enabled=false
   local gui_live_sink_counting=false
@@ -4980,7 +4981,21 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       original_app_factory=nil
       return nil,"GUI test dialog capture could not wrap renoise.app: "..tostring(app_wrap_error)
     end
+    local audition_module=require("runtime.audition")
+    local original_audition_new=audition_module.new
+    audition_module.new=function(options)
+      local owner=original_audition_new(options)
+      local start=owner.start
+      owner.start=function(self,note)
+        audition_note=note
+        return start(self,note)
+      end
+      captured_audition=owner
+      return owner
+    end
+    phrase_profile_restore[#phrase_profile_restore+1]={target=audition_module,key="new",original=original_audition_new}
     local shown,show_error=pcall(function() require("gui").show() end)
+    audition_module.new=original_audition_new
     pcall(function() renoise.ViewBuilder=builder_factory end)
     original_view_builder=nil
     pcall(function() renoise.app=app_factory end)
@@ -5297,12 +5312,29 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local before_data=song.tool_data
       local before_source=assert(persisted.read_draft(song,instrument,phrase))
       local before_phrase=assert(ownership.snapshot(phrase))
+      local before_selection=native_selection(song)
       local function unchanged()
         assert(song.tool_data==before_data,"Program candidate changed durable song data")
         local draft=assert(persisted.read_draft(song,instrument,phrase))
         assert(sequence.same_source(before_source,draft),"Program candidate changed canonical draft")
         assert(ownership.compare(before_phrase,assert(ownership.snapshot(phrase))),
           "Program candidate changed native phrase")
+        assert(same_native_selection(before_selection,native_selection(song)),
+          "Program audition changed native selection")
+      end
+      local function start_audition(expected_note)
+        assert(captured_audition and controls.acid_audition.active,"Audition PITCH unavailable")
+        callbacks.acid_audition()
+        assert(captured_audition:active(),"Native audition onset failed")
+        assert(audition_note==expected_note,"Audition did not use selected resolved pitch")
+        unchanged()
+      end
+      local function released()
+        assert(not captured_audition:active(),"Audition remained active across editor action")
+        local outcome=assert(captured_audition:last_outcome())
+        assert(outcome.onset_ok and outcome.release_attempted and outcome.release_ok,
+          "Native audition onset/release failed")
+        assert(#outcome.cleanup_errors==0,"Native audition retained timer or notifier")
       end
       local function prompt(title,answer,button_count,action)
         expected_prompt={title=title,answer=answer,count=button_count}
@@ -5313,6 +5345,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         renoise.app=function()
           return setmetatable({}, {__index=function(_,name)
             if name=="show_prompt" then return function(_,title,message,buttons)
+              if captured_audition then assert(not captured_audition:active(),"Prompt opened before audition release") end
               assert(expected_prompt and title==expected_prompt.title,"Unexpected Program prompt: "..tostring(title))
               assert(#buttons==expected_prompt.count,"Program guard offered incorrect decisions")
               local answer=expected_prompt.answer
@@ -5328,9 +5361,31 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             return member
           end})
         end
+        callbacks.acid_pitch_page_1()
+        callbacks.acid_grid_pitch_01()
+        local canonical_note=assert(sequence.prepare_resolution(before_source)).resolved_records[1].note
+        start_audition(canonical_note)
+        start_audition(canonical_note)
+        local second_outcome=assert(captured_audition:last_outcome())
+        assert(second_outcome.reason=="second audition" and second_outcome.release_ok and
+          #second_outcome.cleanup_errors==0,"Second audition did not release prior lifecycle")
+        callbacks.acid_pitch_page_1()
+        released()
+        start_audition(canonical_note)
         prompt("Re-enter PITCH","Proceed",2,callbacks.acid_program_reenter_pitch)
+        released()
         assert(not controls.acid_program_finish.active,"Incomplete Program candidate enabled Finish")
+        callbacks.acid_program_key_02()
+        local candidate=assert(sequence.copy_source(before_source))
+        for position=1,candidate.pitch_length do
+          candidate.pitch_events[position]=sequence.new_pitch(0,0,false,false)
+        end
+        candidate.pitch_events[1]=sequence.new_pitch(1,0,false,false)
+        local candidate_note=assert(sequence.prepare_resolution(candidate)).resolved_records[1].note
+        start_audition(candidate_note)
+        assert(not controls.acid_program_finish.active,"Audition marked candidate entered")
         callbacks.acid_program_pitch_page_2()
+        released()
         callbacks.acid_program_select_pitch_16()
         callbacks.acid_program_enter()
         assert(not controls.acid_program_finish.active,"Final Enter bypassed missing positions")
@@ -5341,7 +5396,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         for position=1,before_source.pitch_length do callbacks.acid_program_enter() end
         assert(controls.acid_program_finish.active,"Complete Program candidate disabled Finish")
         callbacks.acid_program_restart()
-        callbacks.acid_program_key_02()
+        callbacks.acid_program_key_03()
         assert(not controls.acid_program_finish.active,"Candidate edit retained entered marker")
         unchanged()
         callbacks.acid_program_enter()
@@ -5350,6 +5405,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         unchanged()
         assert(not controls.acid_program_enter.active,"Discard retained Program candidate")
         prompt("Re-enter TIME","Proceed",2,callbacks.acid_program_reenter_time)
+        assert(not controls.acid_audition.active,"TIME stage enabled audition")
+        callbacks.acid_audition()
+        assert(not captured_audition:active(),"TIME stage started audition")
         callbacks.acid_program_select_time_02()
         local time_command=before_source.time_events[2]=="R" and "N" or "R"
         callbacks[time_command=="R" and "acid_time_command_rest" or "acid_time_command_note"]()
@@ -5372,6 +5430,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       renoise.app=app_factory
       if not called then return nil,"Program entry native callbacks: "..tostring(reason) end
       metrics.gui_program_entry_native_checked=true
+      metrics.gui_audition_native_functional_checked=true
+      metrics.gui_audition_sound_verified=false
+      metrics.gui_audition_timer_duration_verified=false
       metrics.gui_program_entry_prompt_responses_simulated=true
       metrics.gui_program_entry_prompt_count=prompt_count
       return true
@@ -9162,6 +9223,17 @@ end
 
 function M.run(case_name, done, json, profile_mode, options)
   if type(done) ~= "function" then return false, "completion callback is required" end
+  if case_name=="persistence-failures" then
+    return dofile(renoise.tool().bundle_path.."/__dev/persistence_acceptance.lua").failures(done)
+  end
+  if case_name=="recovery-labels-prepare" or case_name=="recovery-labels-cold" then
+    return dofile(renoise.tool().bundle_path.."/__dev/recovery_acceptance.lua").run(case_name,done,
+      {save=save_independent_fixture,baseline=persisted_baseline})
+  end
+  if case_name=="metadata-undo-prepare" or case_name=="metadata-undo" then
+    M.metadata_undo=M.metadata_undo or dofile(renoise.tool().bundle_path.."/__dev/metadata_undo_acceptance.lua")
+    return M.metadata_undo.run(case_name,done)
+  end
   if case_name=="phrase-midi-delivery" then return run_phrase_midi_delivery(done,options,json) end
   if PRODUCTION_SESSION_CASES[case_name] then
     if options and type(options.stage)=="string" and options.stage:match("^playback%-") then

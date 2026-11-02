@@ -12,6 +12,11 @@ local OWNED_PHRASE_ID=101
 local CREATED_PHRASE_ID=103
 local function fixture(new)
  local song,instrument,phrase,other,source=helper.fixture(new and 'new')
+ if new then
+  phrase,other=helper.phrase(source,OWNED_PHRASE_ID),helper.phrase(source,CREATED_PHRASE_ID)
+  phrase.name,other.name="Native phrase","Other native phrase"
+  instrument.phrases={phrase,other}
+ end
  local log={captures=0,sinks=0,requests={},done={},cancels=0}
  local ctx=context.new{writer={state=function()return 'idle',nil end},
   capture=function(trigger,token)
@@ -111,6 +116,110 @@ do
  assert(draft and label=="Untitled" and label_custom==true)
  local raw=song.tool_data
  assert(not ctx:rename_label(" bad",true) and song.tool_data==raw)
+end
+
+do
+ local ctx,log,song=fixture(true)
+ local update_label=store.update_label
+ local before=ctx:editor_state()
+ store.update_label=function()return false,"Rejected",store.LABEL_WRITE_UNCHANGED end
+ assert(not ctx:rename_label("Rejected",true))
+ assert(not ctx:integrity_state().blocked,"verified unchanged metadata blocked the document")
+ local raw=song.tool_data
+ local writes=0
+ store.update_label=function()
+  writes=writes+1
+  song.tool_data="unverified storage"
+  return false,"Uncertain",store.LABEL_WRITE_UNCERTAIN
+ end
+ assert(not ctx:rename_label("Uncertain",true))
+ assert(ctx:integrity_state().blocked,"uncertain label persistence did not block writes")
+ assert(ctx:editor_state().label==before.label,"failed label was installed in the editor")
+ assert(not ctx:rename_label("Blocked",true) and writes==1)
+ assert(not ctx:request_generation("manual") and log.sinks==0)
+ assert(not ctx:revalidation_status().verified)
+ song.tool_data=raw
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and proof,"restored label storage could not be revalidated")
+ assert(ctx:integrity_state().blocked,"inspection cleared the label blocker")
+ assert(ctx:revalidate(proof))
+ store.update_label=update_label
+ assert(ctx:rename_label("Verified",true))
+ assert(not ctx:integrity_state().blocked)
+ store.update_label=function()error("Interrupted metadata write")end
+ assert(not ctx:rename_label("Interrupted",true))
+ store.update_label=update_label
+ assert(ctx:integrity_state().blocked,"interrupted persistence did not block writes")
+ local interrupted_status,interrupted_proof=ctx:revalidation_status()
+ assert(interrupted_status.verified and ctx:revalidate(interrupted_proof))
+end
+
+do
+ local ctx,log,song,instrument,phrase,_,source=fixture()
+ local recovered_label='Recovered bass'
+ assert(ctx:rename_label(recovered_label,true))
+ local recovered=copy_edit(source,FIRST_COMMITTED_NOTE)
+ assert(ctx:transition('edit',values(recovered)))
+ assert(cache.detach(song,instrument,phrase,'Changed target'))
+ local entry=assert(ctx:recovery_entries())[1]
+ assert(entry and ctx:copy_recovery_to_new(entry.token,entry.revision))
+ local editor=ctx:editor_state()
+ assert(seq.same_source(editor.source,recovered) and editor.label==recovered_label and editor.label_custom,
+   'recovery copy lost source label metadata')
+ local edited=copy_edit(recovered,NEWER_EDIT_NOTE)
+ assert(ctx:transition('edit',values(edited)))
+ local draft,_,_,label,label_custom=store.read_draft(song,instrument,nil)
+ assert(seq.same_source(draft,edited) and label==recovered_label and label_custom,
+   'editing recovery copy replaced its durable label metadata')
+ assert(ctx:request_generation('manual'))
+ local request=log.requests[1]
+ assert(request.label==recovered_label and request.label_custom,
+   'generation replaced recovered label metadata')
+ assert(ctx:editor_state().label==recovered_label and ctx:editor_state().label_custom)
+end
+
+do
+ local ctx,log,song,instrument,phrase,_,source=fixture(true)
+ assert(ctx:rename_label("Accepted label",true))
+ local before=ctx:editor_state()
+ local revision=ctx:revision_state()
+ local raw=song.tool_data
+ local stored=raw
+ local writes=0
+ local corrupt=true
+ song.tool_data=nil
+ setmetatable(song,{__index=function(_,key)
+  if key=="tool_data" then return stored end
+ end,__newindex=function(object,key,value)
+  if key~="tool_data" then rawset(object,key,value);return end
+  writes=writes+1
+  stored=corrupt and "unexpected store bytes" or value
+ end})
+ assert(not ctx:rename_label("Rejected label",true))
+ assert(ctx:integrity_state().blocked and writes==1)
+ local rejected=ctx:editor_state()
+ assert(rejected.label==before.label and rejected.label_custom==before.label_custom and
+   seq.same_source(rejected.source,before.source),"uncertain rename changed accepted editor metadata")
+ assert(ctx:revision_state().metadata_revision==revision.metadata_revision,
+   "uncertain rename advanced accepted metadata history")
+ stored=raw
+ corrupt=false
+ local draft,_,_,label,label_custom=store.read_draft(song,instrument,nil)
+ assert(seq.same_source(draft,source) and label==before.label and label_custom==before.label_custom)
+ local edited=copy_edit(source,FIRST_COMMITTED_NOTE)
+ assert(ctx:transition("edit",values(edited)))
+ assert(ctx:bind_phrase(instrument,phrase).kind=="unavailable")
+ assert(not ctx:restore_editor_target(instrument,phrase))
+ assert(seq.same_source(ctx:editor_state().source,edited) and ctx:target_state().kind=="new",
+   "blocked target switch discarded the dirty editor")
+ assert(writes==1,"blocked edit or target switch persisted a draft")
+ assert(not ctx:request_generation("manual") and log.sinks==0)
+ assert(not ctx:rename_label("Still blocked",true) and writes==1)
+ local status,proof=ctx:revalidation_status()
+ assert(status.verified and ctx:integrity_state().blocked)
+ assert(ctx:revalidate(proof))
+ assert(ctx:bind_new(instrument))
+ assert(ctx:rename_label("Revalidated label",true) and writes>1)
 end
 
 local function verify_create_transfer(failure)

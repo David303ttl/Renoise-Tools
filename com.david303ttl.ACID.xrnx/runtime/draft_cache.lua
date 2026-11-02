@@ -617,10 +617,10 @@ function M.copy_to_new(song,instrument,selection,revision_or_options,options)
   local record=bucket(song,instrument,false)[NEW]
   if not record then return nil,save_error end
   record.origin={token=token,revision=record.revision}
-  local source,policy,pb,meta=values(record)
+  local source,policy,pb,meta,label,label_custom=values(record)
   meta.recovery_token=token
   meta.warning=not saved and save_error or nil
-  return source,policy,pb,meta
+  return source,policy,pb,meta,label,label_custom
 end
 
 function M.clear(song,instrument,phrase)

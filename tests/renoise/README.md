@@ -68,6 +68,23 @@ process, or select an existing instance with a disposable song:
 ./scripts/run_interactive_tests.ps1 -RenoiseProcessId <pid> -Install -ApproveDisposableSong
 ```
 
+| Acceptance case | Checks |
+| --- | --- |
+| `persistence-failures` | Injected setter failures over native song storage, exact rollback/cache isolation, native phrase preimages and explicit integrity revalidation |
+| `recovery-labels-prepare` | Save a custom-labeled recovery draft, restart the runner-owned Renoise process, compare exact persisted state, then recover and generate |
+| `metadata-undo` | Real Enter-driven label rename followed by native Undo/Redo; fails if the host exposes no undo entry or does not restore exact metadata |
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures -RenoiseExe <renoise-executable>
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase recovery-labels-prepare -RenoiseExe <renoise-executable>
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase metadata-undo -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
+```
+
+`recovery-labels-prepare` requires a runner-owned process and performs its cold
+verification automatically. `metadata-undo` uses the existing guarded AutoHotkey
+Enter action. Fault injection uses a test-only proxy; it does not emulate disk
+failure. All cases use disposable songs and restore the original tool installation.
+
 Other instances and virtual desktops can stay in use. No dedicated account,
 active-desktop check, profile registry match, screenshots or trace evidence is
 required. Install release XRNX tools normally in Renoise; they have no test-harness dependencies.

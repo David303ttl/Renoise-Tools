@@ -9,6 +9,8 @@ local ownership=require("renoise.phrase_ownership")
 local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
+local audition=require("runtime.audition")
+local active_audition
 local dialog
 local runtime_context=require("runtime.context")
 local native_observers=require("runtime.observers").new()
@@ -76,6 +78,11 @@ local function detach_dialog_watch()
   return true
 end
 local function stop_live_context()
+  if active_audition then
+    local preview=active_audition
+    active_audition=nil
+    preview:close()
+  end
   if active_runtime then
     active_runtime:transition("disarm")
     active_runtime:close_dialog()
@@ -86,6 +93,11 @@ local function stop_live_context()
 end
 local function release_context()
   if not lifecycle_enabled then return true end
+  if active_audition then
+    local preview=active_audition
+    active_audition=nil
+    preview:close()
+  end
   local song=attached_song or renoise.song()
   if song and drafts.has_volatile(song) then
     renoise.app():show_warning(
@@ -237,6 +249,18 @@ function M.show()
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
   local status=vb:multiline_textfield{id="acid_status",size={width=820,height=80},active=true,
     font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
+  local audition_status=vb:multiline_text{id="acid_audition_status",size={width=820,height=32},text=""}
+  local preview=audition.new({song=function() return renoise.song() end,tool=tool,
+    on_outcome=function(outcome)
+      local errors={}
+      if outcome.onset_error then errors[#errors+1]="Cannot audition: "..tostring(outcome.onset_error) end
+      if outcome.release_error then errors[#errors+1]=tostring(outcome.release_error) end
+      for _,reason in ipairs(outcome.cleanup_errors or {}) do errors[#errors+1]=tostring(reason) end
+      if #errors>0 then audition_status.text="Audition cleanup is best effort: "..table.concat(errors,"; ") end
+    end})
+  active_audition=preview
+  local function release_audition() preview:release("editor context changed") end
+  local audition_button
   local live_state_view=vb:multiline_text{id="acid_live_edit_state",size={width=820,height=48},font="bold",
     text="LIVE EDIT DISABLED"}
   local source_state=vb:text{id="acid_source_state",size={width=820,height=18},font="bold",text=""}
@@ -255,6 +279,7 @@ function M.show()
   local view_popup=vb:popup{id="acid_editor_view",items={"Program","Grid"},width=105,value=1,
     notifier=function(value)
       if updating then return end
+      release_audition()
       editor_view=value
       if stage and value==1 then
         if stage.memory=="pitch" then
@@ -457,6 +482,8 @@ function M.show()
     end
   end
   refresh_stage=function()
+    if audition_button then render(audition_button,"active",current_session() and
+      (not stage or (stage.memory=="pitch" and valid_stage()))) end
     if stage_status then
       local missing=missing_positions()
       render(stage_status,"text",stage and (editor_view==2 and
@@ -650,6 +677,7 @@ function M.show()
     updating=false
   end
   local function choose_pitch(index)
+    release_audition()
     if stage and not valid_stage() then return end
     if stage and editor_view==1 and stage.memory=="pitch" then
       if index>#stage.target_positions then return end
@@ -660,6 +688,7 @@ function M.show()
     update()
   end
   local function choose_time(index)
+    release_audition()
     if stage and not valid_stage() then return end
     if stage and editor_view==1 and stage.memory=="time" then
       if index>#stage.target_positions then return end
@@ -670,6 +699,7 @@ function M.show()
     update()
   end
   navigate_diagnostic=function()
+    release_audition()
     if stage and not valid_stage() then status.text="Entry origin changed; diagnostic navigation unavailable.";return end
     local error_info=(stage and editor.project(stage.candidate,stage_resolution()) or project()).error
     if not error_info then return end
@@ -708,6 +738,7 @@ function M.show()
     end
   end
   finish_stage=function()
+    release_audition()
     if not stage then return false end
     if not valid_stage() then status.text="Entry origin changed; Finish unavailable.";return false end
     local eligible,eligibility_error=runtime:musical_eligibility()
@@ -724,6 +755,7 @@ function M.show()
     return true
   end
   guard_stage=function()
+    release_audition()
     if not stage then return false end
     if not valid_stage() then
       stage=nil;update();status.text="Uncommitted entry discarded: origin changed.";return true
@@ -793,6 +825,7 @@ function M.show()
   end)
   local function write_pitch(key,octave,is_accent,is_slide)
     if updating then return end
+    release_audition()
     if not candidate_edit("pitch",selected_pitch) then update();return end
     local current=pitch_at(selected_pitch)
     local candidate=sequencer.new_pitch(key,octave,is_accent,is_slide)
@@ -809,6 +842,7 @@ function M.show()
     write_pitch(pitch.note%12,octave,pitch.accent,pitch.slide)
   end
   local function choose_c_plus()
+    release_audition()
     if updating or not candidate_edit("pitch",selected_pitch) then return end
     local pitch=pitch_at(selected_pitch)
     if pitch.octave~=1 then return end
@@ -818,6 +852,7 @@ function M.show()
     if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
   end
   local function set_time_command(command)
+    release_audition()
     if updating or not candidate_edit("time",selected_step) then return end
     if selected_step>pattern.length then return end
     local source=edit_source()
@@ -881,12 +916,12 @@ function M.show()
     local page_start=(page-1)*sequencer.PAGE_SIZE+1
     ui.program.pitch_pages[page]=vb:button{id="acid_program_pitch_page_"..page,
       text=string.format("P %02d-%02d",page_start,page*sequencer.PAGE_SIZE),width=86,notifier=function()
-      pitch_page=selected_page
+      release_audition();pitch_page=selected_page
       update()
     end}
     ui.program.time_pages[page]=vb:button{id="acid_program_time_page_"..page,
       text=string.format("T %02d-%02d",page_start,page*sequencer.PAGE_SIZE),width=86,notifier=function()
-      time_page=selected_page
+      release_audition();time_page=selected_page
       update()
     end}
   end
@@ -908,9 +943,9 @@ function M.show()
   for p=1,editor.MAX_PAGES do
     local page=p
     pitch_page_buttons[p]=vb:button{id="acid_pitch_page_"..p,size={width=155,height=22},text="P",notifier=function()
-      pitch_page=page;update() end}
+      release_audition();pitch_page=page;update() end}
     time_page_buttons[p]=vb:button{id="acid_time_page_"..p,size={width=155,height=22},text="T",notifier=function()
-      time_page=page;update() end}
+      release_audition();time_page=page;update() end}
     pitch_pages:add_child(pitch_page_buttons[p])
     time_pages:add_child(time_page_buttons[p])
   end
@@ -1001,6 +1036,7 @@ function M.show()
     return names,targets
   end
   local function load_target(index,native_selection)
+    release_audition()
     if stage then
       if not native_selection then if guard_stage() then update();return end
       else stage=nil end
@@ -1354,11 +1390,11 @@ function M.show()
   local render_recovery_page
   ui.recovery.previous=vb:button{id="acid_recovery_previous",text="Previous",width=90,
     notifier=function()
-      if ui.recovery.page>1 then ui.recovery.page=ui.recovery.page-1;render_recovery_page() end
+      release_audition();if ui.recovery.page>1 then ui.recovery.page=ui.recovery.page-1;render_recovery_page() end
     end}
   ui.recovery.next=vb:button{id="acid_recovery_next",text="Next",width=90,
     notifier=function()
-      local pages=math.max(1,math.ceil(#ui.recovery.lines/4))
+      release_audition();local pages=math.max(1,math.ceil(#ui.recovery.lines/4))
       if ui.recovery.page<pages then ui.recovery.page=ui.recovery.page+1;render_recovery_page() end
     end}
   ui.recovery.page_label=vb:text{id="acid_recovery_page_label",text="1 / 1",font="bold"}
@@ -1391,7 +1427,7 @@ function M.show()
     update()
   end
   recovery_choice=vb:popup{id="acid_recovery_choice",width=420,items={"No detached drafts"},value=1,
-    notifier=function() if not loading and update_actions then update_actions() end end}
+    notifier=function() release_audition();if not loading and update_actions then update_actions() end end}
   copy_recovery=vb:button{id="acid_recovery_copy",text="Copy to New",active=false,notifier=function()
     if guard_stage() then return end
     if not current_session() then return end
@@ -1525,6 +1561,7 @@ function M.show()
     restart=vb:button{id="acid_program_restart",text="Restart Cursor",notifier=function() stage_navigation("restart") end},
     finish=vb:button{id="acid_program_finish",text="Finish",notifier=function() finish_stage() end},
     discard=vb:button{id="acid_program_discard",text="Discard",notifier=function()
+      release_audition()
       if stage and renoise.app():show_prompt("Discard entry","Discard the detached candidate?",{"Stay","Discard"})=="Discard" then
         stage=nil;update()
       end
@@ -1534,6 +1571,7 @@ function M.show()
     vb:button{id="acid_program_reenter_pitch",text="Re-enter PITCH",notifier=function() begin_stage("pitch") end},
     vb:button{id="acid_program_reenter_time",text="Re-enter TIME",notifier=function() begin_stage("time") end},
     vb:button{id="acid_program_check",text="Check",notifier=function()
+      release_audition()
       if stage and not valid_stage() then status.text="Entry origin changed; Check unavailable.";return end
       local projection=stage and editor.project(stage.candidate,stage_resolution()) or project()
       show_diagnostic(projection)
@@ -1543,6 +1581,23 @@ function M.show()
     end}}
   local entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
     stage_actions.restart,stage_actions.finish,stage_actions.discard}
+  audition_button=vb:button{id="acid_audition",text="Audition PITCH",notifier=function()
+    if not current_session() or (stage and (stage.memory~="pitch" or not valid_stage())) then return end
+    local records=stage and stage_resolution().resolved_records or project().resolved_records
+    local record=records and records[selected_pitch]
+    if not record then status.text="Cannot audition: selected pitch is unavailable.";return end
+    local started,reason=preview:start(record.note)
+    if not started then
+      local outcome=preview:last_outcome()
+      status.text="Cannot audition: "..tostring(reason)
+      if outcome and outcome.release_error then
+        status.text=status.text.." Cleanup is best effort: "..tostring(outcome.release_error)
+      end
+      if outcome and outcome.cleanup_errors and #outcome.cleanup_errors>0 then
+        status.text=status.text.." Cleanup is best effort: "..table.concat(outcome.cleanup_errors,"; ")
+      end
+    end
+  end}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
     entry_controls,entry_navigation,
     vb:text{text="PITCH POSITION | page and position selection are independent of TIME",font="bold"},
@@ -1561,10 +1616,10 @@ function M.show()
     vb:text{text="TIME MEMORY | choose a step, then use shared assignment controls",font="bold"},
     time_pages,time_grid}
   local decoded_previous_button=vb:button{id="acid_decoded_previous",text="Previous 4",width=100,notifier=function()
-    if decoded_page>1 then decoded_page=decoded_page-1;update() end
+    release_audition();if decoded_page>1 then decoded_page=decoded_page-1;update() end
   end}
   local decoded_next_button=vb:button{id="acid_decoded_next",text="Next 4",width=100,notifier=function()
-    if decoded_page<8 then decoded_page=decoded_page+1;update() end
+    release_audition();if decoded_page<8 then decoded_page=decoded_page+1;update() end
   end}
   ui.decoded.previous,ui.decoded.next=decoded_previous_button,decoded_next_button
   ui.decoded.page_label=vb:text{id="acid_decoded_page_label",text="TIME 01-04 / 32",font="bold"}
@@ -1593,7 +1648,7 @@ function M.show()
   for index,name in ipairs(tab_names) do
     local tab=index
     ui.workspace.tabs[index]=vb:button{width=150,text=name,notifier=function()
-      workspace_tab=tab
+      release_audition();workspace_tab=tab
       update()
     end}
     tab_row:add_child(ui.workspace.tabs[index])
@@ -1624,7 +1679,7 @@ function M.show()
         changed(false)
       end},
       undo_button,
-      redo_button,
+      redo_button,audition_button,
       vb:text{text="Undo and Redo include source, phrase output, and PB Range."}},
     view_heading,view_hint,stage_status,program_panel,grid_panel,
     vb:row{spacing=5,vb:text{text="Assign selected TIME"},
@@ -1663,9 +1718,10 @@ function M.show()
         status.text=sampler.describe(instrument_targets[selected_instrument])
       end}},
     vb:text{text="Live Edit applies changes automatically. With Live Edit off, Generate applies the saved draft."},
-    source_state,live_state_view,inspect,status}
+    source_state,live_state_view,inspect,audition_status,status}
   select_instrument(selected_instrument)
   native_observers:attach(song,runtime,function()
+    release_audition()
     native_projection_dirty=true
     invalidate_projection()
   end)
@@ -1697,6 +1753,8 @@ function M.show()
       return
     end
     detach_this_watch()
+    preview:close()
+    if rawequal(active_audition,preview) then active_audition=nil end
     stage=nil
     native_observers:detach()
     runtime:transition("disarm")
@@ -1714,6 +1772,8 @@ function M.show()
       "idle notifier registration was ineffective")
   end)
   if not idle_registered then
+    preview:close()
+    if rawequal(active_audition,preview) then active_audition=nil end
     idle_active=false
     runtime:set_observer_error("Native observer failure: idle notifier registration failed: "..tostring(idle_error))
     remove_idle_watch()

@@ -42,6 +42,47 @@ end
 local function prepare(song,id,guard,capture)
   return assert(store.prepare(song,id,seq.new_pattern(5),"play_once",12,guard or yes,capture))
 end
+for _,operation in ipairs({"label","draft"}) do
+  for _,has_draft in ipairs({false,true}) do
+    local song,ins,owned=fresh()
+    if has_draft then assert(store.write_draft(song,ins,owned,seq.new_pattern(6),"repeat",0)) end
+    local previous=song.tool_data
+    local stored=previous
+    local write_attempts=0
+    song.tool_data=nil
+    setmetatable(song,{
+      __index=function(_,key)if key=="tool_data" then return stored end end,
+      __newindex=function(target,key,value)
+        if key=="tool_data" then
+          write_attempts=write_attempts+1
+          error("injected rejected metadata write")
+        end
+        rawset(target,key,value)
+      end})
+    if operation=="label" then
+      assert(not store.update_label(song,ins,owned,"Rejected",true,previous))
+    else
+      assert(not store.write_draft_metadata(song,ins,owned,seq.new_pattern(7),"repeat",0,"Rejected",true))
+    end
+    assert(write_attempts==1,"metadata regression must reach the failing persistence setter")
+    assert(stored==previous)
+    local _,_,_,label,custom=store.read_entry(song,1)
+    assert(label=="Pattern 1" and custom==false,
+      "failed owned metadata writes must preserve cached committed metadata")
+    local draft,_,_,draft_label,draft_custom=store.read_draft(song,ins,owned)
+    assert((not has_draft and not draft) or
+      (draft and draft.length==6 and draft_label=="Pattern 1" and draft_custom==false),
+      "failed owned metadata writes must preserve cached pending metadata")
+    getmetatable(song).__newindex=function(target,key,value)
+      if key=="tool_data" then stored=value else rawset(target,key,value) end
+    end
+    assert(store.save(song,3,seq.new_pattern(5),"repeat",0))
+    assert(not stored:find("52656A6563746564",1,true),
+      "an unrelated source write must not persist rejected label metadata")
+    local _,_,_,persisted_label,persisted_custom=store.read_entry(song,1)
+    assert(persisted_label=="Pattern 1" and persisted_custom==false)
+  end
+end
 local byte_song,byte_ins=fresh()
 assert(store.write_draft(byte_song,byte_ins,nil,seq.new_pattern(6),"repeat",0))
 local byte_candidate=prepare(byte_song,3)

@@ -5,6 +5,9 @@ local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("renoise.phrase_ownership")
 local M = {}
+M.LABEL_WRITE_UNCHANGED="unchanged"
+M.LABEL_WRITE_UNCERTAIN="uncertain"
+M.LABEL_WRITE_COMMITTED="committed"
 local MAGIC = "ACID-PITCH-TIME-2"
 local MAX_ID = 2147483647
 local candidates=setmetatable({}, {__mode="k"})
@@ -28,10 +31,16 @@ local function encode_pitch(p)
     p.accent and 1 or 0,p.slide and 1 or 0)
 end
 
+local function canonical_integer(token)
+  local value=type(token)=="string" and tonumber(token)
+  return value and token~="-0" and tostring(value)==token and value or nil
+end
+
 local function decode_pitch(token, line)
   local note,key,octave,flags=token:match("^(%d+):(%d+):(-?%d+):([01][01])$")
-  if not note then return nil,"Corrupt pitch at line "..line end
-  return {note=tonumber(note),key=tonumber(key),octave=tonumber(octave),
+  note,key,octave=canonical_integer(note),canonical_integer(key),canonical_integer(octave)
+  if not note or not key or not octave then return nil,"Corrupt pitch at line "..line end
+  return {note=note,key=key,octave=octave,
     accent=flags:sub(1,1)=="1",slide=flags:sub(2,2)=="1"}
 end
 
@@ -50,11 +59,6 @@ local function valid_label(label)
   return true
 end
 M.valid_label=valid_label
-
-local function canonical_integer(token)
-  local value=type(token)=="string" and tonumber(token)
-  return value and tostring(value)==token and value or nil
-end
 
 local function decode_source(item,is_draft,line_number)
   if not policies.in_integer_range(item.length,1,sequencer.MAX_STEPS) or
@@ -405,6 +409,8 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
     if phrase_id>0 then
       local committed=entries[phrase_id]
       if not committed then return nil,"ACID source missing from song data" end
+      committed=copy_map(committed)
+      entries[phrase_id]=committed
       committed.label,committed.label_custom=label,label_custom
     end
     drafts[key]={pattern=stored_pattern,output_policy=output_policy,pb_range=pb_range,
@@ -472,9 +478,12 @@ function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,p
   if phrase_id>0 then
     local entry=entries[phrase_id]
     if not entry then return nil,"ACID source missing from song data" end
+    entry=copy_map(entry)
+    entries[phrase_id]=entry
     entry.label,entry.label_custom=label,label_custom
     local pending,key,err=saved_phrase_draft(drafts,phrase_id)
     if err then return nil,err end
+    if pending then pending=copy_map(pending);drafts[key]=pending end
     if not pending and pattern then
       local valid,source_error=interpreter.validate_source(pattern)
       if not valid then return nil,source_error end
@@ -491,6 +500,7 @@ function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,p
     if pending and pending.instrument_name~=instrument_name then
       return nil,"New phrase draft destination changed"
     end
+    if pending then pending=copy_map(pending);drafts[pending_key]=pending end
     if not pending then
       local valid,source_error=interpreter.validate_source(pattern)
       if not valid then return nil,source_error end
@@ -513,21 +523,23 @@ function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,p
   if current~=previous then return nil,"ACID song data changed before label write" end
   local ok,write_error=pcall(function()song.tool_data=candidate end)
   local written,verify_error=raw_data(song)
-  if verify_error then return nil,"ACID label write outcome is uncertain: "..verify_error end
+  if verify_error then return nil,"ACID label write outcome is uncertain: "..verify_error,M.LABEL_WRITE_UNCERTAIN end
   if written==candidate then
     if not ok then
       pcall(function()song.tool_data=previous end)
       local after=raw_data(song)
       if after==previous then
-        return nil,"ACID label setter failed after mutation; exact candidate was restored: "..tostring(write_error)
+        return nil,"ACID label setter failed after mutation; exact candidate was restored: "..tostring(write_error),M.LABEL_WRITE_UNCHANGED
       end
-      return nil,"ACID label setter failed and candidate rollback is uncertain"
+      return nil,"ACID label setter failed and candidate rollback is uncertain",M.LABEL_WRITE_UNCERTAIN
     end
     decoded_raw,decoded_entries,decoded_drafts=candidate,entries,drafts
-    return true,candidate
+    return true,candidate,M.LABEL_WRITE_COMMITTED
   end
-  if written==previous then return nil,not ok and tostring(write_error) or "ACID label write did not persist" end
-  return nil,"ACID label write outcome is uncertain; preserved changed storage"
+  if written==previous then
+    return nil,not ok and tostring(write_error) or "ACID label write did not persist",M.LABEL_WRITE_UNCHANGED
+  end
+  return nil,"ACID label write outcome is uncertain; preserved changed storage",M.LABEL_WRITE_UNCERTAIN
 end
 
 function M.has_drafts(song)

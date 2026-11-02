@@ -2,8 +2,55 @@
 
 M5 sections below are dated checkpoint records. Earlier statements that later
 gates were pending describe those checkpoints, not the current implementation.
-See [Gate 4 verification](#m5-gate-4-program-staging-2026-11-02) for current
-Program staging results and native acceptance limits.
+See [Gate 5 verification](#m5-gate-5-audition-2026-11-02) for audition results
+and native acceptance limits.
+
+## Interactive persistence acceptance (2026-11-02)
+
+| Check | Command / evidence | Observed result |
+| --- | --- | --- |
+| Native storage failure injection | `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures -RenoiseExe <renoise-executable>`; `tmp/interactive-b32c8a272c0f45e5b5ccefa4f2859894/report.json` | PASS; before-write failure, mutate/throw rollback, unexpected third bytes, exact cache/native phrase preservation and explicit revalidation before writes resume |
+| Cold recovery | Same command with `-AcceptanceCase recovery-labels-prepare`; `tmp/interactive-bc4d5b8b3d454e4581d14f6842ade6ce/report.json` | PASS; process 14780 stopped, process 17000 opened saved XRNS; exact committed source and detached New draft/mask/settings/label restored read-only; recovery copy and real writer generation verified |
+| Native metadata undo | `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase metadata-undo -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation`; `tmp/interactive-7b97248e7ac249f2babef022c4ffa921/report.json` | FAIL; real Enter callback renamed label exactly without musical changes, but `song:can_undo()` returned false; no native undo entry for metadata-only persistence; redo not reached |
+| Musical native undo/redo | Same keyboard-enabled command with `-AcceptanceCase revision-undo`; `tmp/interactive-11425cf82f1240b7bc6477de1424bda3/report.json` | PASS; one-step Undo/Redo and GUI source restoration |
+| Host and isolation | All four reports | Renoise 3.5.4 Demo / API 6.2; disposable songs; original tool installations restored, including failed metadata-undo run |
+| Injection boundary | `tests/renoise/driver/persistence_acceptance.lua` | Synthetic Lua setter faults forward to native song storage; not an actual disk failure or human-operated modal test |
+| Full Lua regression | `./scripts/run_tests.ps1 -Tool All -LuaCommand <lua-5.1-executable>`; `tmp/interactive-persistence-regression.log` | PASS; 76 specs, 0 failed |
+| Runner and package | `tests/renoise/runner_spec.ps1`, `tests/renoise/test_package_dev.ps1`, `./scripts/package.ps1 -Tool ACID` | PASS; cold selected-PID rejection, fixed case/module allowlists, six development-module hashes/syntax checks, 32 release runtime files; manifest unchanged |
+| Independent second pass | Separate module, runner and final reviewers | No remaining test implementation findings; native metadata undo remains a measured failure |
+| API references | Pinned API 6.2 definitions and offline docs for `Song` undo/redo/selection, `Instrument` name/phrase insertion and `Application.save_song_as` | Verified; development-only modules excluded from release package |
+
+## Persistence review verification (2026-11-02)
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Failed metadata writes | `acid_store_candidate_spec.lua`, `acid_pattern_store_codec_spec.lua`: rejected owned-label/draft writes, pending New labels, exact readback and unrelated successful writes | PASS; rejected metadata cannot contaminate decoded cache or later persistence |
+| Canonical pitch wire values | Codec spec: noncanonical note/key/octave integers in SOURCE and DRAFT records | PASS; malformed bytes rejected and preserved |
+| Recovery labels | Editor and runtime writer integration specs: custom-label recovery copy, source edit, real writer create and persisted metadata | PASS; source, label/custom and editor agree |
+| Uncertain label persistence | Runtime editor spec: real store setter produces unexpected bytes; verified unchanged failures, persistence exceptions, blocked draft/label/generation/recovery writes and dirty target changes | PASS; accepted metadata retained; exact-state proof plus explicit revalidation required |
+| Independent second pass | Separate store, recovery and integrity reviewers; focused codec/candidate/editor/draft/request/integrity/writer specs | PASS; failure-injection reachability and draft-write admission findings corrected and rechecked |
+| Full regression | `./scripts/run_tests.ps1 -Tool All -LuaCommand <lua-5.1-executable>`; `tmp/persistence-review-regression.log` | PASS; 76 specs, 0 failed |
+| Native functional regression | Renoise 3.5.4 Demo / API 6.2; `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-3b55dacf7ea743d09e38f855d70ae10b/report.json` | PASS; Program/Grid, staging, audition, draft/generation isolation and fixture restoration; original installation restored |
+| Tested build and package | Native bundle SHA-256 comparison for GUI, audition, store, context and draft cache; `./scripts/package.ps1 -Tool ACID` | PASS; tested runtime matches working tree; 32 runtime files; manifest unchanged |
+| Interactive persistence checks | [Interactive acceptance](#interactive-persistence-acceptance-2026-11-02) | Failure injection, cold recovery and musical Undo/Redo PASS; metadata-only native undo FAIL; human-operated modal checks remain unverified |
+
+## M5 Gate 5 Audition (2026-11-02)
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Identity and lifecycle | `acid_audition_lifecycle_spec.lua`: fresh indices, non-send tracks, replacement/removal, selection changes, document lifecycle, one-shot timer, onset/release faults, registration/detach faults, reentrant calls and captured-song garbage collection | PASS; removed identities never redirect release to replacement objects |
+| GUI integration | `acid_program_staging_spec.lua`: canonical masked and detached candidate resolution, no source/history/draft/render effects, TIME disabled, navigation/guard/modal release matrix, cleanup diagnostics, close/document/unload | PASS |
+| Baseline | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>` | PASS; 72 specs, 0 failed |
+| ACID regression and second pass | Same command; `tmp/gate5-acid-first.log`, `tmp/gate5-acid-second.log`; independent lifecycle, GUI and final reviewers | PASS; 73 specs, 0 failed; focused regressions passed after review corrections |
+| Broader offline checks | `./scripts/run_offline_tests.ps1 -LuaCommand <lua-5.1-executable>`; `tmp/gate5-offline.log` | PASS; 18 groups, including 76 Lua specs; explicit ASCII short executable path avoids interpreter-wrapper path encoding issues |
+| Native functional audition | Renoise 3.5.4 Demo / API 6.2; `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-97aa0b6635384bca8ab59b6073dcd9bc/report.json` | PASS; real note-on/off, canonical/candidate selection, second audition, navigation/modal release, TIME disabled and read-only state |
+| Native isolation | Same report; disposable runner-owned process and fixture | PASS; store, phrase inventory, native selection and original tool installation restored |
+| Tested build identity | Native development bundle versus working-tree `gui.lua` and `runtime/audition.lua` | PASS; exact SHA-256 matches |
+| Native harness correction | `tmp/interactive-70cc9adc2ab7478886b96e44141148f9/report.json` | Initial FAIL: marker test repeated the pitch already set by audition setup; changed test to a distinct pitch, rerun passed; fixture/store/inventory restored |
+| API references | `./scripts/setup_sdk.ps1`; API 6.2 `definitions/library/renoise/song.lua`: selected-object/list observables and `trigger_instrument_note_on/off`; `definitions/library/renoise/tool.lua`: `add_timer`, `has_timer`, `remove_timer`; `definitions/library/renoise/song/track.lua`: track constants; offline `docs/API/renoise/renoise.Song.html` and `renoise.ScriptingTool.html` | Verified; GUI-thread preview, send-track exclusion and workload/modal timer restrictions retained |
+| Package | `./scripts/package.ps1 -Tool ACID`; archive inspection | PASS; 32 runtime files, root manifest/main, `runtime/audition.lua` included, SDK/tests/development files excluded; manifest unchanged |
+| Native limits | Procedure 13.6; final integrated visual acceptance | UNVERIFIED: audible response, release timing under load, real modal suppression, native object removal, manual lifecycle and added outcome-view sizing; mask mapping verified offline |
+
 
 ## M5 Gate 4 Program staging (2026-11-02)
 

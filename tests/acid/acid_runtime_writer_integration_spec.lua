@@ -638,6 +638,39 @@ do
   reentrant_ctx:release_document()
 end
 
+do
+  local recovery_ctx=new_context()
+  local recovery_results,recovery_delivery=delivered()
+  recovery_ctx:attach_document(song)
+  recovery_ctx:open_dialog(recovery_delivery)
+  recovery_ctx:bind_new(instrument)
+  local recovered_label="Recovered bass"
+  local recovered_note,edited_note=48,50
+  edit(recovery_ctx,source(recovered_note))
+  assert(recovery_ctx:rename_label(recovered_label,true))
+  assert(drafts.detach(song,instrument,nil,"Detached scratch"))
+  local entries=assert(recovery_ctx:recovery_entries())
+  local entry=assert(entries[#entries])
+  assert(recovery_ctx:copy_recovery_to_new(entry.token,entry.revision))
+  assert(recovery_ctx:editor_state().label==recovered_label and
+      recovery_ctx:editor_state().label_custom==true,
+    "recovery copy did not restore custom label metadata")
+  edit(recovery_ctx,source(edited_note))
+  dispatch(recovery_ctx)
+  drain(recovery_results,1,"recovered scratch create")
+  local recovered_phrase=assert(recovery_results[1].phrase)
+  assert_success(recovery_results[1],recovered_phrase,"recovered scratch create")
+  local persisted,_,_,label,label_custom=store.read_entry(song,assert(ownership.id(recovered_phrase)))
+  assert(first_note(persisted)==edited_note and recovered_phrase.cells[1].note_value==edited_note,
+    "recovery edit was not committed by the real phrase writer")
+  assert(label==recovered_label and label_custom==true,
+    "real phrase writer replaced recovered custom label metadata")
+  assert(recovery_ctx:editor_state().label==recovered_label and
+      recovery_ctx:editor_state().label_custom==true,
+    "recovery commit did not preserve editor label metadata")
+  recovery_ctx:release_document()
+end
+
 -- Once apply has produced a verified receipt, a later native edit must be
 -- preserved and reported as blocked instead of rolling back over that edit.
 do

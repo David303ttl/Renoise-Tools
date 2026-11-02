@@ -4,6 +4,8 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 
 | Check | Result |
 | --- | --- |
+| Interactive persistence (2026-11-02) | PASS: injected setter failures, exact rollback/cache isolation, explicit revalidation and fresh-process recovery-label restoration/generation; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
+| Native Undo/Redo (2026-11-02) | Musical generation PASS; metadata-only rename FAIL: no native undo entry (`can_undo=false`); exact rename verified; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
 | Full offline runner | PASS: 18 groups; final Lua rerun 67/67; deterministic audio/oracle checks pass |
 | Editor responsiveness | PASS: 30 UI actions below 30 ms; note/octave/command maxima 1.66/1.72/1.92 ms; armed/busy edits 3.89/28.22 ms with latest-note commit; clean edits perform no native cell scans or seal hashes; cold phrase validation 59.48 ms; `interactive-b0e25d94064c43f0a7f4f5f40ae9c6b3` |
 | Native and keyboard suite | PASS: transport, both inventory scenarios, real ACID shortcut, Escape and native instrument navigation; `interactive-8d3b6767f79c4cf5816a609adc228a07` |

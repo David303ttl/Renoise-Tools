@@ -972,6 +972,8 @@ function M.new(options)
 
   preserve_editor=function(force,verified_target)
     if (not editor_dirty and not force) or not editor or not inventory or not current_song then return end
+    local state=context:integrity_state()
+    if state.blocked then editor.draft_warning=state.reason;return end
     local target=verified_target or inventory:target_state()
     if not target.instrument then return end
     if not editor_target or not rawequal(target.instrument,editor_target.instrument) or
@@ -1053,6 +1055,8 @@ function M.new(options)
     if not current_song or not opened or not editor or not editor.valid then
       return false,"No valid editor source is installed"
     end
+    local integrity_state=self:integrity_state()
+    if integrity_state.blocked then return false,integrity_state.reason end
     if type(label_custom)~="boolean" or not require("renoise.pattern_store").valid_label(label) then
       return false,"Phrase label must be 1..32 valid ASCII bytes"
     end
@@ -1068,16 +1072,28 @@ function M.new(options)
         return false,"Committed source association is unavailable"
       end
     elseif target.kind~="new" then return false,"Current destination is not writable" end
-    local raw,read_error
+    local raw
     local ok,value=pcall(function()return current_song.tool_data end)
     if not ok then return false,"Cannot read song metadata: "..tostring(value) end
     raw=value
+    local evidence,capture_error=integrity:capture_mutation()
+    if not evidence then return false,capture_error end
     local pending_source=(target.kind=="new" or editor_dirty) and editor.source or nil
-    local stored,write_result,detail=pcall(require("renoise.pattern_store").update_label,
+    local store=require("renoise.pattern_store")
+    local stored,write_result,detail,outcome=pcall(store.update_label,
       current_song,target.instrument,target.phrase,label,label_custom,raw,
       pending_source,editor.output_policy,editor.pb_range)
     if not stored or write_result~=true then
-      return false,stored and detail or write_result or read_error or "Phrase label was not saved"
+      if not stored or outcome==store.LABEL_WRITE_UNCERTAIN then
+        local recorded,result=pcall(integrity.record,integrity,evidence)
+        if not recorded or result~=true then
+          mutation_recording_failed_reason="Label persistence recovery evidence could not be recorded"
+          mutation_recording_failed_song=current_song
+        end
+        transitions:transition("blocker")
+        invalidate("Song integrity requires revalidation")
+      end
+      return false,stored and detail or write_result or "Phrase label was not saved"
     end
     if drafts and type(drafts.accept_label)=="function" then
       drafts.accept_label(current_song,target.instrument,target.phrase,label,label_custom)
@@ -1411,6 +1427,8 @@ function M.new(options)
 
   function context:discard_recovery(token,revision)
     if not current_song then return false,"No current document is attached" end
+    local state=self:integrity_state()
+    if state.blocked then return false,state.reason end
     if not policies.is_integer(token) or not policies.is_integer(revision) then
       return false,"Invalid recovery selection"
     end
@@ -1419,6 +1437,8 @@ function M.new(options)
 
   function context:copy_recovery_to_new(token,revision)
     if not current_song or not opened then return false,"No current document dialog is open" end
+    local state=self:integrity_state()
+    if state.blocked then return false,state.reason end
     if mutation_depth>0 or mutation_failed then return false,"Synchronous mutation is active or requires recovery" end
     if not policies.is_integer(token) or not policies.is_integer(revision) then
       return false,"Invalid recovery selection"
@@ -1442,11 +1462,12 @@ function M.new(options)
       preserve_editor()
     end
     if not selected_entry_is_current() then return false,"Recovery entry changed while preserving the current editor" end
-    local source,output_policy,pb_range,metadata=drafts.copy_to_new(current_song,instrument,
+    local source,output_policy,pb_range,metadata,label,label_custom=drafts.copy_to_new(current_song,instrument,
       token,revision,self:draft_options())
     if not source then return false,output_policy end
     local restored,restore_error=self:transition("programmatic",{source=source,
-      output_policy=output_policy,pb_range=pb_range,restore=true,draft=true})
+      output_policy=output_policy,pb_range=pb_range,label=label,label_custom=label_custom,
+      restore=true,draft=true})
     if not restored then return false,restore_error end
     return true,{instrument=instrument,token=token,revision=revision,metadata=metadata,
       warning=metadata and metadata.warning}
@@ -1454,6 +1475,10 @@ function M.new(options)
 
   local function transition_target(kind,values,for_restore)
       values=values or {}
+      local state=context:integrity_state()
+      if state.blocked and editor_dirty then
+        return {kind="unavailable",reason=state.reason}
+      end
       pending_trigger=nil
       local before
       local changed
@@ -1526,6 +1551,8 @@ function M.new(options)
 
   function context:restore_editor_target(instrument,phrase,native_selection)
     if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
+    local state=self:integrity_state()
+    if state.blocked and editor_dirty then return nil,state.reason end
     if not inventory or not current_song then return nil,"No current document is attached" end
     local kind=native_selection==true and "native_target" or "target"
     local target,target_effects=transition_target(kind,{instrument=instrument,phrase=phrase,

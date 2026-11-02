@@ -59,20 +59,25 @@ local rollback_before=rollback_raw
 assert(not store.update_label(rollback_song,rollback_instrument,nil,"Changed",true,"stale raw",
   seq.new_pattern(3),"repeat",0) and rollback_raw==rollback_before)
 setter_mode="before"
-local before_write=store.update_label(rollback_song,rollback_instrument,nil,"Changed",true,
+local before_write,_,before_outcome=store.update_label(rollback_song,rollback_instrument,nil,"Changed",true,
   rollback_before,seq.new_pattern(3),"repeat",0)
 assert(not before_write and rollback_raw==rollback_before,
   "pre-mutation setter failure must preserve the exact old bytes")
+assert(before_outcome==store.LABEL_WRITE_UNCHANGED)
+local _,_,_,unchanged_label,unchanged_custom=store.read_draft(rollback_song,rollback_instrument,nil)
+assert(unchanged_label=="Untitled" and unchanged_custom==false,
+  "failed pending label writes must leave cached metadata unchanged")
 setter_mode="after"
 local label_saved=store.update_label(rollback_song,rollback_instrument,nil,"Changed",true,
   rollback_before,seq.new_pattern(3),"repeat",0)
 assert(not label_saved and rollback_raw==rollback_before,
   "mutate-then-throw label setter must restore only its exact candidate")
 setter_mode="third"
-local third=store.update_label(rollback_song,rollback_instrument,nil,"Changed",true,
+local third,_,third_outcome=store.update_label(rollback_song,rollback_instrument,nil,"Changed",true,
   rollback_before,seq.new_pattern(3),"repeat",0)
 assert(not third and rollback_raw=="third-party bytes",
   "uncertain third-value label storage must never be overwritten")
+assert(third_outcome==store.LABEL_WRITE_UNCERTAIN)
 setter_mode=nil
 assert(store.save(song,2,source,"repeat",24))
 assert(song.tool_data==raw,"snapshot encoding must preserve draft bytes")
@@ -147,10 +152,15 @@ assert(not failed and failed_error and store.read_draft(failed_song,failed_instr
   "a failed write must not publish its unpersisted draft into the decoded cache")
 
 local function reject(record,category)
-  song.tool_data=header.."\n"..record.."\n"..label_record.."\n"
+  if record:match("^DRAFT|") then
+    song.tool_data=header.."\n"..snapshot.."\n"..label_record.."\n"..record.."\n"
+  else
+    song.tool_data=header.."\n"..record.."\n"..label_record.."\n"
+  end
   local before=song.tool_data
   local result,err=store.read(song)
   assert(not result and type(err)=="string",tostring(category)..": "..tostring(err))
+  if category=="Noncanonical pitch" then assert(err:find("Corrupt pitch",1,true),err) end
   assert(not store.write_draft(song,instrument,nil,source,"repeat",24))
   assert(song.tool_data==before,"malformed data must remain untouched")
 end
@@ -168,6 +178,9 @@ for _,item in ipairs({{snapshot,"snapshot"},{draft,"draft"}}) do
   reject(record:gsub("|3|17|","|3|0|",1),"Invalid ACID "..kind.." header")
   reject(record:gsub("|triplet|","|unknown|",1),"Invalid ACID "..(kind=="draft" and "draft source:" or "source:"))
   reject(record:gsub("36:0:0:00,","36:0:0:02,",1),"Corrupt pitch")
+  for _,pitch in ipairs({"036:0:0:00","36:00:0:00","36:0:-0:00","36:0:00:00"}) do
+    reject(record:gsub("36:0:0:00,",pitch..",",1),"Noncanonical pitch")
+  end
   reject(record:gsub("36:0:0:00,","36:0:0:00,,",1),kind=="draft" and "Invalid ACID draft pitch data" or "Invalid pitch separators")
   reject(record:gsub("36:0:0:00,","",1),kind=="draft" and "Invalid ACID draft pitch data" or "ACID source must store exactly 32 pitches")
   reject(record.."|extra","Invalid ACID snapshot header")

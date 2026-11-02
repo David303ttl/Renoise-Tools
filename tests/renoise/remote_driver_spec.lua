@@ -951,6 +951,8 @@ local function test_fixed_native_acceptance_command()
         case_name == "independence-undo-fixture" or case_name == "independence-undo-prepare" or case_name == "independence-undo" or
         case_name == "revision-undo-fixture" or case_name == "revision-undo-prepare" or case_name == "revision-undo" or
         case_name == "revision-live-undo-fixture" or case_name == "revision-live-undo-prepare" or case_name == "revision-live-undo" or
+        case_name == "persistence-failures" or case_name == "recovery-labels-prepare" or case_name == "recovery-labels-cold" or
+        case_name == "metadata-undo-prepare" or case_name == "metadata-undo" or
         case_name == "cold-reopen-regenerate" or
         case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow" or
         case_name == "selection-feasibility" or case_name == "direct-output-feasibility" or
@@ -981,6 +983,21 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(invalid, "acceptance-profile-invalid-case").error.code, "invalid_arguments")
   assert_equal(find_response(invalid, "acceptance-profile-invalid-value").error.code, "invalid_arguments")
   assert_equal(completion, nil, "invalid acceptance command reached its runner")
+
+  local persistence_cases = {"persistence-failures", "recovery-labels-prepare", "recovery-labels-cold",
+    "metadata-undo-prepare", "metadata-undo"}
+  for _, case_name in ipairs(persistence_cases) do
+    for index, extra in ipairs({{stage = "undo"}, {profile = "Warm"},
+        {midi_output_device = "test loopback"}, {fault = "write"}}) do
+      local args = {case = case_name}
+      for key, value in pairs(extra) do args[key] = value end
+      local id = case_name .. "-invalid-" .. index
+      send_request(host, client, id, "acid.acceptance.run", args)
+      fire_idle(host)
+      assert_equal(find_response(take_responses(client), id).error.code, "invalid_arguments")
+      assert_equal(completion, nil, "unbounded persistence acceptance arguments reached its runner")
+    end
+  end
 
   for index, args in ipairs({
     {case = "production-latency-8x8"},
@@ -1118,6 +1135,8 @@ local function test_fixed_native_acceptance_command()
   assert_equal(negatives.result.status, "PASS")
   for _, case_name in ipairs({ "selection-feasibility", "direct-output-feasibility", "source-undo-feasibility",
       "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
+      "persistence-failures", "recovery-labels-prepare", "recovery-labels-cold",
+      "metadata-undo-prepare", "metadata-undo",
       "revision-live-undo-fixture", "revision-live-undo-prepare", "revision-live-undo" }) do
     local request_id = "acceptance-" .. case_name
     send_request(host, client, request_id, "acid.acceptance.run", { case = case_name })

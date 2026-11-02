@@ -19,6 +19,7 @@ $testRoot = Join-Path $repoTempRoot ('renoise-package-dev-spec-日本語-' + [gu
 $sourceToolName = 'com.david303ttl.ACID.xrnx'
 $runtimeExtensions = @('.lua', '.xml', '.txt', '.json', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.wav', '.aif', '.aiff', '.flac', '.ogg', '.bin')
 $bootstrapMarker = '-- ACID development bootstrap'
+$driverNames = @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'recovery_acceptance.lua')
 . (Join-Path $repoRoot 'scripts/lua_interpreter.ps1')
 $luaCommandInfo = Resolve-LuaInterpreter -LuaCommand $LuaCommand
 
@@ -70,13 +71,13 @@ function Assert-LuaSyntax {
   try {
     Set-Location -LiteralPath (Split-Path -Parent $MainPath)
     $checker = @'
-local chunk, compile_error = loadfile("main.lua")
+local chunk, compile_error = loadfile(arg[1])
 if not chunk then
   io.stderr:write(compile_error, "\n")
   os.exit(1)
 end
 '@
-    $output = @($checker | & $luaCommandInfo.Source - 2>&1)
+    $output = @($checker | & $luaCommandInfo.Source - (Split-Path -Leaf $MainPath) 2>&1)
     $exitCode = $LASTEXITCODE
   }
   finally {
@@ -211,9 +212,9 @@ function New-FixtureRepository {
   foreach ($relative in $paths) { New-Item -ItemType Directory -Path (Join-Path $Root $relative) -Force | Out-Null }
   Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/package.ps1') -Destination (Join-Path $Root 'scripts/package.ps1')
   Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/package_dev.ps1') -Destination (Join-Path $Root 'scripts/package_dev.ps1')
-  Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/remote_driver.lua') -Destination (Join-Path $Root 'tests/renoise/driver/remote_driver.lua')
-  Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/json.lua') -Destination (Join-Path $Root 'tests/renoise/driver/json.lua')
-  Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/renoise/driver/acceptance_cases.lua') -Destination (Join-Path $Root 'tests/renoise/driver/acceptance_cases.lua')
+  foreach ($name in $driverNames) {
+    Copy-Item -LiteralPath (Join-Path $repoRoot "tests/renoise/driver/$name") -Destination (Join-Path $Root "tests/renoise/driver/$name")
+  }
   Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/acid/writer_request.lua') -Destination (Join-Path $Root 'tests/acid/writer_request.lua')
   foreach ($referenceName in @('pattrns_writer.lua', 'script_runner.lua', 'gate_writer.lua')) {
     Copy-Item -LiteralPath (Join-Path $repoRoot "tests/acid/reference/$referenceName") -Destination (Join-Path $Root "tests/acid/reference/$referenceName")
@@ -350,9 +351,7 @@ function Test-RealDevelopmentBundle {
       $_.Extension.ToLowerInvariant() -in $runtimeExtensions -or $_.Name -eq 'LICENSE'
     })
     $expectedPaths = @($sourceFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
-    $expectedPaths += '__dev/remote_driver.lua'
-    $expectedPaths += '__dev/json.lua'
-    $expectedPaths += '__dev/acceptance_cases.lua'
+    $expectedPaths += @($driverNames | ForEach-Object { "__dev/$_" })
     $expectedPaths += '__dev/writer_request.lua'
     $expectedPaths += '__dev/reference/pattrns_writer.lua'
     $expectedPaths += '__dev/reference/script_runner.lua'
@@ -435,9 +434,7 @@ try {
     $_.Extension.ToLowerInvariant() -in $runtimeExtensions -or $_.Name -eq 'LICENSE'
   })
   $expectedDevPaths = @($sourcePayloadFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
-  $expectedDevPaths += '__dev/remote_driver.lua'
-  $expectedDevPaths += '__dev/json.lua'
-  $expectedDevPaths += '__dev/acceptance_cases.lua'
+  $expectedDevPaths += @($driverNames | ForEach-Object { "__dev/$_" })
   $expectedDevPaths += '__dev/writer_request.lua'
   $expectedDevPaths += '__dev/reference/pattrns_writer.lua'
   $expectedDevPaths += '__dev/reference/script_runner.lua'
@@ -517,12 +514,12 @@ try {
     Assert-True (Test-Path -LiteralPath $devPath -PathType Leaf) "Development production file '$relative' is missing."
     Assert-True ((Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $devPath -Algorithm SHA256).Hash) "Development production file '$relative' differs from source."
   }
-  $driverDevPath = Join-Path $devToolOne '__dev/remote_driver.lua'
-  Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/remote_driver.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $driverDevPath -Algorithm SHA256).Hash) 'Development driver differs from its source.'
-  $codecDevPath = Join-Path $devToolOne '__dev/json.lua'
-  Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/json.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $codecDevPath -Algorithm SHA256).Hash) 'Development JSON codec differs from its source.'
-  $acceptanceDevPath = Join-Path $devToolOne '__dev/acceptance_cases.lua'
-  Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/renoise/driver/acceptance_cases.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $acceptanceDevPath -Algorithm SHA256).Hash) 'Development acceptance cases differ from source.'
+  foreach ($name in $driverNames) {
+    $devPath = Join-Path $devToolOne "__dev/$name"
+    $sourcePath = Join-Path $fixture "tests/renoise/driver/$name"
+    Assert-True ((Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $devPath -Algorithm SHA256).Hash) "Development driver module '$name' differs from source."
+    Assert-LuaSyntax -MainPath $devPath -Context "Development driver module '$name'"
+  }
   $requestDevPath = Join-Path $devToolOne '__dev/writer_request.lua'
   Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/acid/writer_request.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $requestDevPath -Algorithm SHA256).Hash) 'Development request factory differs from source.'
   foreach ($referenceName in @('pattrns_writer.lua', 'script_runner.lua', 'gate_writer.lua')) {
@@ -591,6 +588,21 @@ try {
   $missingResult = Invoke-PackageDev -FixtureRoot $missingDriverRepo -OutputPath $missingOutputRelative
   Assert-ChildFailure -Result $missingResult -Context 'Missing driver case'
   Assert-True (-not (Test-Path -LiteralPath $missingOutput)) 'Missing driver case left a development output behind.'
+
+  foreach ($moduleCase in @('missing-acceptance', 'unexpected-module')) {
+    $moduleRepo = New-FixtureRepository -Root (Join-Path $testRoot $moduleCase)
+    $moduleRoot = Join-Path $moduleRepo 'tests/renoise/driver'
+    if ($moduleCase -eq 'missing-acceptance') {
+      Remove-Item -LiteralPath (Join-Path $moduleRoot 'recovery_acceptance.lua')
+    }
+    else {
+      [IO.File]::WriteAllText((Join-Path $moduleRoot 'unexpected.lua'), 'return {}')
+    }
+    $moduleOutput = 'tmp/rejected-module'
+    $moduleResult = Invoke-PackageDev -FixtureRoot $moduleRepo -OutputPath $moduleOutput
+    Assert-ChildFailure -Result $moduleResult -Context $moduleCase
+    Assert-True (-not (Test-Path -LiteralPath (Join-Path $moduleRepo $moduleOutput))) 'Invalid driver inventory left a development output behind.'
+  }
 
   foreach ($fixtureCase in @('empty', 'nested', 'unsupported')) {
     $invalidFixtureRepo = New-FixtureRepository -Root (Join-Path $testRoot ('fixture-' + $fixtureCase))
