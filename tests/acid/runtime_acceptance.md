@@ -3,7 +3,7 @@
 M5 sections below are dated checkpoint records. Earlier statements that later
 gates were pending describe those checkpoints, not the current implementation.
 See [direct operations verification](#direct-editor-operations-verification-2026-11-02)
-for current deterministic verification and remaining native acceptance.
+for current deterministic and native acceptance status.
 
 ## Direct editor operations verification (2026-11-02)
 
@@ -15,7 +15,7 @@ for current deterministic verification and remaining native acceptance.
 | Native functional | `./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-64d0ea2282d142f39ac0a1f75007b465/report.json` | PASS; Renoise 3.5.4 Demo / API 6.2; both views, ten operations in both scopes, inline parameters, Reset, exact draft/source preservation and Undo/Redo; operation prompts reject |
 | Native isolation | Same report | PASS; fixture inventory/store/selection restored; runner-owned process stopped; original installation restored |
 | Second pass/package | Rotated independent reviewer; focused GUI/model/harness specs; `./scripts/package.ps1 -Tool ACID`; `git diff --check` | PASS; synchronous admission/history/no-op checks retained; 32 runtime files; popup implementation and modal race scaffolding removed |
-| Manual acceptance | Playbook 13.1–13.8 | UNVERIFIED for human-operated controls, visual and acoustic checks; final integrated native acceptance remains pending |
+| Manual acceptance | Playbook 13.1–13.8; operator confirmation | PASS; operator confirms all eight procedures passed |
 
 ## M5 Gate 9 Regression and packaging (2026-11-02)
 
