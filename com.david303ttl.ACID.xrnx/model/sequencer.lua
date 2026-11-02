@@ -251,6 +251,86 @@ local function canonical_pitch(note)
   return {note=note,key=note%12,octave=math.floor((note-M.BASE_NOTE)/12)}
 end
 
+function M.mask_candidate(source,enabled,bits)
+  local candidate,err=M.copy_source(source)
+  if not candidate then return nil,err end
+  candidate.scale_mask_enabled=enabled
+  candidate.scale_mask=bits
+  return M.copy_source(candidate)
+end
+local RNG_MODULUS=2147483647
+local RNG_MULTIPLIER=16807
+local RNG_MAX_SEED=RNG_MODULUS-1
+local MIN_NOTE,MAX_NOTE=24,60
+local MAX_WEIGHT=1000
+local OPERATIONS={clear_pitch="pitch",clear_time="time",clear_tie="time",
+  clear_rest="time",clear_slide="pitch",clear_accent="pitch",
+  rest_to_note="time",tie_to_rest="time",randomize_pitch="pitch",randomize_time="time"}
+
+function M.random_choice(state,count)
+  if not integer_between(state,1,RNG_MAX_SEED) or
+      not integer_between(count,1,MAX_WEIGHT*3) then return nil,"invalid random choice" end
+  state=(state*RNG_MULTIPLIER)%RNG_MODULUS
+  return math.floor((state-1)*count/RNG_MAX_SEED),state
+end
+
+function M.operation_candidate(source,operation,scope,parameters)
+  local memory=OPERATIONS[operation]
+  if not memory then return nil,"invalid source operation" end
+  if scope~="active" and scope~="all" then return nil,"invalid operation scope" end
+  local candidate,err=M.copy_source(source)
+  if not candidate then return nil,err end
+  local randomize=operation=="randomize_pitch" or operation=="randomize_time"
+  local state,count
+  if randomize then
+    if type(parameters)~="table" or not integer_between(parameters.seed,1,RNG_MAX_SEED) then
+      return nil,"seed must be 1..2147483646"
+    end
+    state=parameters.seed
+    if memory=="pitch" then
+      if not integer_between(parameters.min_note,MIN_NOTE,MAX_NOTE) or
+          not integer_between(parameters.max_note,MIN_NOTE,MAX_NOTE) or
+          parameters.min_note>parameters.max_note then return nil,"invalid pitch range" end
+      count=parameters.max_note-parameters.min_note+1
+    else
+      for _,field in ipairs({"note_weight","tie_weight","rest_weight"}) do
+        if not integer_between(parameters[field],0,MAX_WEIGHT) then return nil,"invalid TIME weight" end
+      end
+      count=parameters.note_weight+parameters.tie_weight+parameters.rest_weight
+      if count==0 then return nil,"TIME weights must have a positive sum" end
+    end
+  end
+  local bound=scope=="all" and M.MAX_STEPS or
+    (memory=="pitch" and source.pitch_length or source.length)
+  for index=1,bound do
+    local pitch=candidate.pitch_events[index]
+    local command=candidate.time_events[index]
+    if operation=="clear_pitch" then candidate.pitch_events[index]=M.new_pitch(0,0,false,false)
+    elseif operation=="clear_slide" then pitch.slide=false
+    elseif operation=="clear_accent" then pitch.accent=false
+    elseif operation=="clear_time" then command="N"
+    elseif operation=="clear_tie" and command=="T" then command="N"
+    elseif (operation=="clear_rest" or operation=="rest_to_note") and command=="R" then command="N"
+    elseif operation=="tie_to_rest" and command=="T" then command="R"
+    elseif randomize then
+      local bucket
+      bucket,state=M.random_choice(state,count)
+      if memory=="pitch" then
+        local sampled=canonical_pitch(parameters.min_note+bucket)
+        sampled.accent,sampled.slide=pitch.accent,pitch.slide
+        candidate.pitch_events[index]=sampled
+      elseif bucket<parameters.note_weight then command="N"
+      elseif bucket<parameters.note_weight+parameters.tie_weight then command="T"
+      else command="R" end
+    end
+    if memory=="time" then
+      candidate.time_events[index]=assert(M.normalize_time_entry(index,command))
+    end
+  end
+  local valid,validation_error=M.validate(candidate)
+  if not valid then return nil,validation_error end
+  return candidate
+end
 function M.resolve_pitches(source)
   local valid,err=M.validate(source)
   if not valid then return nil,err end

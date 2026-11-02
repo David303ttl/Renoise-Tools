@@ -66,6 +66,10 @@ function app:show_custom_dialog(_,content)
   return dialog
 end
 function app:show_warning(message) warnings[#warnings+1]=message end
+function app:show_prompt(title,_,buttons)
+  assert(title=="Reset Pattern" and buttons[2]=="Reset")
+  return "Reset"
+end
 
 local persisted_drafts={}
 local fail_draft_persistence=false
@@ -366,7 +370,7 @@ builder.views.acid_editor_view:fire(1)
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="checkbox" and node.value==false then live_checkbox=node end
+  if node.id=="acid_live_edit" then live_checkbox=node end
 end
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
@@ -533,14 +537,15 @@ assert(#render_callbacks==before_reset+1,"a source edit starts the held render")
 local held=render_callbacks[#render_callbacks]
 local held_request=tool.writer_calls[#tool.writer_calls]
 pitch_key(builder,4):fire()
-button(builder,"Reset Source"):fire()
+builder.views.acid_pattern_reset:fire()
 assert(not held_request.options.token:is_current(),"reset invalidates the held render")
 held(terminal_result(held_request,"suspended","source reset"))
-assert(#render_callbacks==before_reset+1 and live_checkbox.value,
-  "reset discards pending edits without rendering and keeps Live Edit armed")
+assert(#render_callbacks==before_reset+2 and live_checkbox.value,
+  "reset queues one ordinary render and keeps Live Edit armed")
+render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed","reset settled"))
 pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
-assert(#render_callbacks==before_reset+2,"the next real edit renders the reset source")
+assert(#render_callbacks==before_reset+3,"the next real edit renders the reset source")
 assert(tool.writer_calls[#tool.writer_calls].pattern.pitch_events[1].key==1)
 
 render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed","last edit settled"))

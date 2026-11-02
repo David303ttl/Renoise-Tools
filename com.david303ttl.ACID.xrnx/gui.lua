@@ -166,6 +166,10 @@ register_lifecycle(tool.tool_will_unload_observable,"Tool unload",unload_notifie
 unload_record=lifecycle_records[#lifecycle_records]
 
 local keys={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}
+local DECODED_ROWS=4
+local DECODED_PAGES=sequencer.MAX_STEPS/DECODED_ROWS
+local RANDOM_SEED_MAX=2147483646
+local RANDOM_WEIGHT_MAX=1000
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
 local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
@@ -305,7 +309,7 @@ function M.show()
   local ui={program={pitch_selectors={},time_selectors={},pitch_pages={},time_pages={},
       key_buttons={},octave_buttons={}},
     grid={key_buttons={},octave_buttons={}},time_assignment={},
-    workspace={panels={},tabs={}},decoded={}}
+    workspace={panels={},tabs={}},decoded={rows=DECODED_ROWS,pages=DECODED_PAGES},mask={classes={}}}
   local program_pitch_summary,program_time_summary
   local program_accent,program_slide,program_c_plus,grid_c_plus
   local pitch_length_popup=vb:popup{items=length_items,width=78,value=sequencer.PAGE_SIZE}
@@ -669,16 +673,24 @@ function M.show()
       render(ui.workspace.tabs[tab],"color",tab==workspace_tab and colors.selected or colors.idle)
     end
     if ui.decoded.text then
-      local first=(decoded_page-1)*4+1
+      local first=(decoded_page-1)*ui.decoded.rows+1
       local lines={}
-      for step=first,math.min(first+3,sequencer.MAX_STEPS) do
+      for step=first,math.min(first+ui.decoded.rows-1,sequencer.MAX_STEPS) do
         lines[#lines+1]=string.format("%02d%s  %s",step,
           step>pattern.length and " *" or "",editor.step_text(projection,step,preview_cycle))
       end
       render(ui.decoded.text,"text",table.concat(lines,"\n"))
-      render(ui.decoded.page_label,"text",string.format("TIME %02d-%02d / 32",first,math.min(first+3,32)))
+      render(ui.decoded.page_label,"text",string.format("TIME %02d-%02d / %d",first,math.min(first+ui.decoded.rows-1,sequencer.MAX_STEPS),sequencer.MAX_STEPS))
       render(ui.decoded.previous,"active",decoded_page>1)
-      render(ui.decoded.next,"active",decoded_page<8)
+      render(ui.decoded.next,"active",decoded_page<ui.decoded.pages)
+    end
+    if ui.mask.enabled then
+      render(ui.mask.enabled,"value",pattern.scale_mask_enabled)
+      render(ui.mask.enabled,"active",stage==nil)
+      for index,control in ipairs(ui.mask.classes) do
+        render(control,"value",pattern.scale_mask[index]);render(control,"active",stage==nil)
+      end
+      for _,control in ipairs(ui.operation_controls) do render(control,"active",stage==nil) end
     end
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
@@ -1728,7 +1740,7 @@ function M.show()
     release_audition();if decoded_page>1 then decoded_page=decoded_page-1;update() end
   end}
   local decoded_next_button=vb:button{id="acid_decoded_next",text="Next 4",width=100,notifier=function()
-    release_audition();if decoded_page<8 then decoded_page=decoded_page+1;update() end
+    release_audition();if decoded_page<ui.decoded.pages then decoded_page=decoded_page+1;update() end
   end}
   ui.decoded.previous,ui.decoded.next=decoded_previous_button,decoded_next_button
   ui.decoded.page_label=vb:text{id="acid_decoded_page_label",text="TIME 01-04 / 32",font="bold"}
@@ -1780,9 +1792,126 @@ function M.show()
         if not accepted then status.text="Cannot duplicate: "..tostring(reason)
         elseif reason then status.text=tostring(reason) end
       end}},clipboard.status}
-  local extended_panel=vb:column{id="acid_extended_panel",spacing=4,
+  local extended_panel
+  do
+  local function origin_current(origin)
+    if not current_session() then return false end
+    local current=stage_origin()
+    for _,key in ipairs(STAGE_ORIGIN_FIELDS) do
+      if not rawequal(current[key],origin[key]) then return false end
+    end
+    return true
+  end
+  local function admit_operation(origin)
+    apply_pending_selected_phrase_selection()
+    if not origin_current(origin) then status.text="Operation cancelled: editor or target changed.";return false end
+    local eligible,reason=runtime:musical_eligibility()
+    if not eligible then status.text="Cannot edit: "..tostring(reason);return false end
+    return true
+  end
+  ui.admit_operation=admit_operation
+  local function apply_candidate(candidate)
+    if sequencer.same_source(candidate,pattern) then update();return end
+    pattern=candidate
+    changed()
+  end
+  local operation_ids={"clear_pitch","clear_time","clear_tie","clear_rest","clear_slide","clear_accent",
+    "rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
+  local operation_names={"Clear PITCH","Clear TIME","Clear TIE","Clear REST","Clear SLIDE","Clear ACCENT",
+    "REST to NOTE","TIE to REST","Randomize PITCH","Randomize TIME"}
+  local operation_rules={
+    "Set raw PITCH to C/NORMAL (36,0,0); clear ACCENT and SLIDE; preserve mask.",
+    "Set TIME commands to NOTE; preserve PITCH and mask.",
+    "Replace only TIE with NOTE.","Replace only REST with NOTE.",
+    "Clear only SLIDE; preserve ACCENT.","Clear only ACCENT; preserve SLIDE.",
+    "Replace only REST with NOTE.","Replace only TIE with REST; protect TIME 01.",
+    "Generate canonical raw PITCH; preserve ACCENT/SLIDE; mask does not quantize generated values.",
+    "Generate TIME commands; normalize TIME 01 TIE to NOTE without another draw; preserve PITCH and mask."}
+  local operation_choice=vb:popup{id="acid_operation",items=operation_names,width=180,value=1}
+  local operation_scope=vb:popup{id="acid_operation_scope",items={"Active memory","All 32 stored"},width=150,value=1}
+  local function run_operation()
+    if guard_stage() then return end
+    apply_pending_selected_phrase_selection()
+    local origin=stage_origin()
+    if not admit_operation(origin) then return end
+    local choice=operation_choice.value
+    local operation=operation_ids[choice]
+    local scope=operation_scope.value==1 and "active" or "all"
+    local memory=operation:find("pitch",1,true) or operation=="clear_slide" or operation=="clear_accent"
+    local count=scope=="all" and sequencer.MAX_STEPS or (memory and pattern.pitch_length or pattern.length)
+    local positions={}
+    for index=1,count do positions[index]=string.format(memory and "P%02d" or "T%02d",index) end
+    local parameters,details={},""
+    if operation=="randomize_pitch" or operation=="randomize_time" then
+      local inputs=renoise.ViewBuilder()
+      local fields={}
+      local content=inputs:column{margin=12,spacing=6}
+      local function field(name,label,min,max,value)
+        fields[name]=inputs:valuebox{id="acid_operation_"..name,min=min,max=max,value=value,width=160,steps={1,10},
+          tostring=function(number) return string.format("%.0f",number) end,tonumber=tonumber}
+        content:add_child(inputs:row{spacing=8,inputs:text{text=label,width=160},fields[name]})
+      end
+      field("seed","Seed",1,RANDOM_SEED_MAX,1)
+      if operation=="randomize_pitch" then
+        field("min_note","Minimum raw MIDI",24,60,24);field("max_note","Maximum raw MIDI",24,60,60)
+      else
+        field("note_weight","NOTE weight",0,RANDOM_WEIGHT_MAX,2)
+        field("tie_weight","TIE weight",0,RANDOM_WEIGHT_MAX,1)
+        field("rest_weight","REST weight",0,RANDOM_WEIGHT_MAX,1)
+      end
+      if renoise.app():show_custom_prompt(operation_names[choice],content,{"Cancel","Continue"})~="Continue" then return end
+      for name,control in pairs(fields) do parameters[name]=control.value end
+    end
+    if not admit_operation(origin) then return end
+    local candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
+    if not candidate then status.text=tostring(reason);return end
+    if operation=="randomize_pitch" then
+      details=string.format("\nSeed %d; raw MIDI %d..%d inclusive.",parameters.seed,parameters.min_note,parameters.max_note)
+    elseif operation=="randomize_time" then
+      details=string.format("\nSeed %d; NOTE/TIE/REST weights %d/%d/%d.",parameters.seed,parameters.note_weight,parameters.tie_weight,parameters.rest_weight)
+    end
+    local message=(scope=="active" and "Active memory" or "All 32 stored")..": "..
+      string.upper(memory and "PITCH" or "TIME").." positions "..table.concat(positions,", ")..
+      string.format("\nLAST STEP %d; PITCH span %d. Both bounds preserved.\n",pattern.length,pattern.pitch_length)..
+      operation_rules[choice]..details.."\nPreserve out-of-scope values, unrelated memory, timing, mask, output, PB Range and label."..
+      (operation=="clear_pitch" and "" or " Preserve unrelated ACCENT/SLIDE flags.")
+    if renoise.app():show_prompt(operation_names[choice],message,{"Cancel","Apply"})~="Apply" then return end
+    if not admit_operation(origin) then return end
+    candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
+    if not candidate then status.text=tostring(reason);return end
+    apply_candidate(candidate)
+  end
+  local function edit_mask(index,value)
+    if updating then return end
+    if guard_stage() then update();return end
+    local origin=stage_origin()
+    if not admit_operation(origin) then update();return end
+    local bits={}
+    for class,enabled in ipairs(pattern.scale_mask) do bits[class]=enabled end
+    if index then bits[index]=value end
+    local enabled=pattern.scale_mask_enabled
+    if not index then enabled=value end
+    local candidate,reason=sequencer.mask_candidate(pattern,enabled,bits)
+    if not candidate then update();status.text=tostring(reason);return end
+    apply_candidate(candidate)
+  end
+  ui.mask.enabled=vb:checkbox{id="acid_mask_enabled",value=false,notifier=function(value) edit_mask(nil,value) end}
+  local mask_row=vb:row{spacing=4,vb:text{text="MASK"},ui.mask.enabled}
+  for index,name in ipairs(keys) do
+    local class=index
+    local control=vb:checkbox{id=string.format("acid_mask_class_%02d",index),value=true,
+      notifier=function(value) edit_mask(class,value) end}
+    ui.mask.classes[index]=control
+    mask_row:add_child(vb:text{text=name});mask_row:add_child(control)
+  end
+  local operation_button=vb:button{id="acid_operation_open",text="Configure / Apply",notifier=run_operation}
+  ui.operation_controls={operation_choice,operation_scope,operation_button}
+  extended_panel=vb:column{id="acid_extended_panel",spacing=4,
     vb:text{text="EXTENDED / CLEAR",font="bold"},
-    vb:text{text="Extended transformations and scoped clear controls are not available here."}}
+    vb:row{spacing=6,operation_choice,operation_scope,
+      operation_button},mask_row,
+    vb:text{text="Mask classes remain editable while disabled. Enabled mask requires at least one class."}}
+  end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,
     vb:text{text="OUTPUT",font="bold"},
     vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
@@ -1821,12 +1950,20 @@ function M.show()
       vb:text{text="Active PITCH span"},pitch_length_popup},
     vb:row{spacing=8,
       vb:text{text="Editor"},view_popup,
-      vb:button{text="Reset Source",notifier=function()
+      vb:button{id="acid_pattern_reset",text="Reset Pattern",notifier=function()
         if guard_stage() then return end
-        reset_source(last_step_box.value)
-        selected_pitch=1;selected_step=1;pitch_page=1;time_page=1
-        status.text="Source reset: all PITCH entries are C and active TIME steps are NOTE."
-        changed(false)
+        apply_pending_selected_phrase_selection()
+        local origin=stage_origin()
+        if not ui.admit_operation(origin) then return end
+        if renoise.app():show_prompt("Reset Pattern",
+          "Reset PITCH 01..32 to C/NORMAL (36,0,0), ACCENT/SLIDE false; TIME 01..32 to NOTE; "..
+          "PITCH span to 16; timing to Straight; mask disabled with all twelve classes enabled; "..
+          "output to "..policies.DEFAULT_OUTPUT_POLICY.."; PB Range to "..policies.DEFAULT_PB_RANGE..
+          ". Preserve LAST STEP "..pattern.length..", label and custom-label state.",
+          {"Cancel","Reset"})~="Reset" then return end
+        if not ui.admit_operation(origin) then return end
+        reset_source(pattern.length)
+        changed()
       end},
       undo_button,
       redo_button,audition_button,

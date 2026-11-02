@@ -282,7 +282,7 @@ timing:fire(2)
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="checkbox" and node.value==false then live_checkbox=node end
+  if node.id=="acid_live_edit" then live_checkbox=node end
 end
 assert(live_checkbox)
 live_checkbox:fire(true)
@@ -346,7 +346,7 @@ assert(timing.value==2 and pb_range_popup(builder).value==1,
   "the second instrument retains its own uncommitted timing")
 local reopened_live
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="checkbox" and node.value==false then reopened_live=node end
+  if node.id=="acid_live_edit" then reopened_live=node end
 end
 assert(reopened_live)
 reopened_live:fire(true)

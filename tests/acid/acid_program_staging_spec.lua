@@ -270,7 +270,7 @@ write_count=writes
 local actions={
   function()button("Undo"):fire()end,
   function()button("Redo"):fire()end,
-  function()button("Reset Source"):fire()end,
+  function()button("Reset Pattern"):fire()end,
   function()fire("acid_timing",2)end,
   function()fire("acid_output_policy",2)end,
   function()fire("acid_pb_range",2)end,

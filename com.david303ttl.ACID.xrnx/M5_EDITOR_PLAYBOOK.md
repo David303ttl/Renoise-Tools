@@ -11,14 +11,18 @@ evidence is recorded in
 Gate 3 implementation, deterministic verification, independent second-pass
 review and native visual feasibility passed. The reported Grid pitch-edit width
 growth was corrected, verified by native width sweep, and visually rechecked by
-the operator at normal display scale. Gate 11 must repeat visual acceptance on
-the final integrated build. Gate 4 implementation and deterministic second-pass
+the operator at normal display scale. The operator reports Gate 7 manual visual,
+keyboard and acoustic acceptance passed. Gate 11 must repeat visual acceptance
+on the final integrated build. Gate 4 implementation and deterministic second-pass
 verification passed; [evidence](../tests/acid/runtime_acceptance.md#m5-gate-4-program-staging-2026-11-02)
 separates native functional checks from unverified manual acceptance. Gate 5
 implementation, deterministic second-pass verification and native functional
 checks passed; [evidence](../tests/acid/runtime_acceptance.md#m5-gate-5-audition-2026-11-02)
-retains native sound, timing and manual acceptance as unverified. Gates 7–12
-remain pending.
+records Gate 5 native limits and the later operator-reported acoustic acceptance.
+Gates 6–7 implementation, deterministic second-pass verification and native
+functional checks passed. [Gate 7 evidence](../tests/acid/runtime_acceptance.md#m5-gate-7-extended-operations-and-decoded-2026-11-02)
+records the reported manual pass; final integrated acceptance remains unverified.
+Gates 8–12 remain pending.
 This is not a claim of complete M5 implementation or guaranteed Renoise behavior.
 Tests and evidence must report actual results.
 
@@ -2285,7 +2289,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 4 staged Program | Staging/GUI/editor/draft/request specs; independent second pass; native functional harness | Full ACID suite with explicit Lua 5.1; native `editor-responsiveness`; ACID package | 72 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-4-program-staging-2026-11-02); modal answers scripted; manual/final integrated acceptance unverified | PASS (implementation, deterministic verification, second pass) |
 | Gate 5 audition | Lifecycle/GUI specs; independent second pass; native functional harness | Full ACID suite with Lua 5.1; native `editor-responsiveness`; ACID package | 73 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-5-audition-2026-11-02); native sound, timing and manual acceptance unverified | PASS (implementation, deterministic verification, second pass) |
 | Gate 6 operations | Clipboard/label/duplicate specs; independent second pass; native functional harness | Full Lua 5.1 suite; native `editor-responsiveness`; ACID package | 79 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-6-clipboard-labels-and-duplicate-2026-11-02); manual/final integrated acceptance unverified | PASS (implementation, deterministic verification, second pass) |
-| Gate 7 transforms | Source operations/RNG specs |  |  |  | Unexecuted |
+| Gate 7 transforms | Source/RNG, GUI admission, Decoded specs; rotated second pass; native functional harness | Full Lua 5.1 suite; native `editor-responsiveness`; ACID package | 80 repository specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-7-extended-operations-and-decoded-2026-11-02); operator reports manual visual, keyboard and acoustic acceptance passed; final integrated acceptance remains | PASS (implementation, deterministic verification, second pass) |
 | Gate 8 documentation readiness | User docs/native procedures; suite/diff/package as required |  |  |  | Unexecuted |
 | Gate 9 final verification | Full suite/diff/package as required |  |  |  | Unexecuted |
 | Gate 10 native preparation | Host/build identity; disposable fixture and recovery preimages |  |  |  | Unexecuted |

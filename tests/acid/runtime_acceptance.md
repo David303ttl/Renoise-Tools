@@ -34,6 +34,22 @@ and native acceptance limits.
 | Tested build and package | Native bundle SHA-256 comparison for GUI, audition, store, context and draft cache; `./scripts/package.ps1 -Tool ACID` | PASS; tested runtime matches working tree; 32 runtime files; manifest unchanged |
 | Interactive persistence checks | [Interactive acceptance](#interactive-persistence-acceptance-2026-11-02) | Failure injection, cold recovery and musical Undo/Redo PASS; metadata-only native undo FAIL; human-operated modal checks remain unverified |
 
+## M5 Gate 7 Extended operations and Decoded (2026-11-02)
+
+| Check | Evidence | Result |
+| --- | --- | --- |
+| Lua regression | `./scripts/run_tests.ps1 -LuaCommand <lua-5.1-executable>`; `tmp/gate7-verified-regression.log` | PASS; 80 repository specs, 0 failed; Lua 5.1.5 |
+| Source operations | `acid_source_operations_spec.lua` | PASS; all transforms and RNG in Active/All scope, inactive storage, exact seed vectors, T01 normalization, canonical controls, mask/flags, output-policy invariance, no-op, undo/redo and draft roundtrip |
+| GUI admission | `acid_gui_views_spec.lua`, `acid_program_staging_spec.lua`, admission/recovery/timing specs | PASS; invalid parameters before confirmation, cancel, disabled-mask edits, Reset, stage guards, stale source/target and edit-undo revision rejection at both modal boundaries |
+| Decoded | `acid_editor_spec.lua`, GUI paging specs | PASS; detached raw/resolved values, held flags, explicit transitions, compiler agreement and four-row paging |
+| Independent second pass | Rotated model, GUI and integration reviewers; focused reruns | PASS; no remaining blockers |
+| Native functional checks | Renoise 3.5.4 Demo / API 6.2; `tmp/interactive-860f572732834bc38f53d56533ee274a/report.json` | PASS; ten operations × two scopes, cancel/no-op, undo/redo, mask rejection and Reset; prompt responses simulated |
+| Native isolation | Same report | PASS; exact store, phrase inventory, native selection and original installation restored |
+| Tested runtime | SHA-256 comparison against native development bundle | PASS; GUI, sequencer and editor state match working tree |
+| Manual acceptance | Operator report in chat | PASS; visual, keyboard and acoustic acceptance |
+| Package | `./scripts/package.ps1 -Tool ACID`; `tmp/gate7-package.log`; `git diff --check` | PASS; 32 runtime files; manifest unchanged |
+| Remaining native acceptance | Final integrated Gate 11 and remaining Playbook 13 checks | UNVERIFIED; final-build visual recheck, detailed native playback/lifecycle and other unexecuted procedures |
+
 ## M5 Gate 6 Clipboard, labels and duplicate (2026-11-02)
 
 | Check | Command / evidence | Result |
@@ -64,7 +80,7 @@ and native acceptance limits.
 | Native harness correction | `tmp/interactive-70cc9adc2ab7478886b96e44141148f9/report.json` | Initial FAIL: marker test repeated the pitch already set by audition setup; changed test to a distinct pitch, rerun passed; fixture/store/inventory restored |
 | API references | `./scripts/setup_sdk.ps1`; API 6.2 `definitions/library/renoise/song.lua`: selected-object/list observables and `trigger_instrument_note_on/off`; `definitions/library/renoise/tool.lua`: `add_timer`, `has_timer`, `remove_timer`; `definitions/library/renoise/song/track.lua`: track constants; offline `docs/API/renoise/renoise.Song.html` and `renoise.ScriptingTool.html` | Verified; GUI-thread preview, send-track exclusion and workload/modal timer restrictions retained |
 | Package | `./scripts/package.ps1 -Tool ACID`; archive inspection | PASS; 32 runtime files, root manifest/main, `runtime/audition.lua` included, SDK/tests/development files excluded; manifest unchanged |
-| Native limits | Procedure 13.6; final integrated visual acceptance | UNVERIFIED: audible response, release timing under load, real modal suppression, native object removal, manual lifecycle and added outcome-view sizing; mask mapping verified offline |
+| Native limits | Procedure 13.6; operator report recorded in Gate 7 evidence | Acoustic acceptance reported PASS; release timing under load, real modal suppression, native object removal, manual lifecycle and final integrated outcome-view sizing remain unverified |
 
 
 ## M5 Gate 4 Program staging (2026-11-02)

@@ -64,6 +64,10 @@ function app:show_custom_dialog(_,content)
   return dialog
 end
 function app:show_warning(message) warnings[#warnings+1]=message end
+function app:show_prompt(title)
+  assert(title=="Reset Pattern")
+  return "Cancel"
+end
 
 local persisted_drafts={}
 local fail_draft_persistence=false
@@ -232,11 +236,7 @@ context_module.new=function(options)
   return context
 end
 local function live_control(builder)
-  local selected
-  for _,node in ipairs(builder.nodes) do
-    if node.kind=="checkbox" then selected=node end
-  end
-  return assert(selected,"missing Live Edit checkbox")
+  return assert(builder.views.acid_live_edit,"missing Live Edit checkbox")
 end
 local function complete(index,status)
   local call=tool.writer_calls[index]
@@ -253,11 +253,11 @@ phrase_popup:fire(2)
 phrase_popup:fire(1)
 builder.views.acid_editor_view:fire(2)
 builder.views.acid_editor_view:fire(1)
-button(builder,"Reset Source"):fire()
+button(builder,"Reset Pattern"):fire()
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
 builder.views.acid_pb_range:fire(builder.views.acid_pb_range.value)
 assert(#admissions==0 and #tool.writer_calls==0,
-  "arming, target/source restoration, view navigation, reset and no-op edits must make zero requests")
+  "arming, target/source restoration, view navigation, canceled reset and no-op edits must make zero requests")
 
 sync_next_result="error"
 button(builder,"Generate / Regenerate ACID Phrase"):fire()
@@ -302,7 +302,7 @@ end
 assert(not fail_next_edit_transition and status_view and
   status_view.text:find("DRAFT SAVE ERROR: session recovery only: Injected editor transition failure",1,true),
   "a failed editor transition must not report a saved draft")
-assert(not builder.views.acid_preview_summary.text:find("NOTE P01:37",1,true),
+assert(not builder.views.acid_preview_summary.text:find("NOTE P01 RAW 37 RES 37",1,true),
   "a failed editor transition must not keep displaying the pre-edit projection: "..
     builder.views.acid_preview_summary.text)
 assert(builder.views.acid_source_diagnostic.text:find("ERROR",1,true),
@@ -310,8 +310,8 @@ assert(builder.views.acid_source_diagnostic.text:find("ERROR",1,true),
     builder.views.acid_source_diagnostic.text)
 fail_next_edit_transition=true
 button(builder,"Undo"):fire()
-assert(builder.views.acid_preview_summary.text:find("NOTE P01:37",1,true) and
-  not builder.views.acid_preview_summary.text:find("NOTE P01:38",1,true),
+assert(builder.views.acid_preview_summary.text:find("NOTE P01 RAW 37 RES 37",1,true) and
+  not builder.views.acid_preview_summary.text:find("NOTE P01 RAW 38 RES 38",1,true),
   "a failed undo draft save still refreshes the displayed projection: "..
     builder.views.acid_preview_summary.text)
 assert(builder.views.acid_source_diagnostic.text:find("VALID",1,true),

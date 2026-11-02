@@ -74,6 +74,8 @@ function M.project(pattern,prepared)
     return out
   end
   out.plan=plans[1]
+  out.raw_notes={}
+  for index,pitch in ipairs(pattern.pitch_events) do out.raw_notes[index]=pitch.note end
   for cycle=1,2 do
     local mapping=cycle==1 and out.mapping or out.repeat_mapping
     for step,event in ipairs(plans[cycle].steps) do
@@ -94,12 +96,13 @@ function M.step_text(projection, step, cycle)
   if event.missing_pitch then return "NOTE !PITCH" end
   if event.kind=="rest" then return "REST --" end
   if event.kind=="tie" then
-    return event.note and string.format("TIE P%02d",event.pitch_index) or "TIE (silent)"
+    return event.note and string.format("TIE P%02d RAW %d RES %d%s%s HOLD",event.pitch_index,
+      projection.raw_notes[event.pitch_index],event.note,
+      event.voice.accent and " ACC" or "",event.voice.slide and " OUT" or "") or "TIE (silent)"
   end
-  local transition=event.transition=="attack" and " A" or
-    event.transition=="slide" and " S" or " X"
-  return string.format("NOTE P%02d:%d%s%s%s",event.pitch_index,event.note,
-    event.accent and " ACC" or "",event.slide and " OUT" or "",transition)
+  return string.format("NOTE P%02d RAW %d RES %d%s%s %s",event.pitch_index,
+    projection.raw_notes[event.pitch_index],event.note,
+    event.accent and " ACC" or "",event.slide and " OUT" or "",string.upper(event.transition))
 end
 
 local copy_source=seq.copy_source

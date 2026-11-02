@@ -108,6 +108,7 @@ function app:show_custom_dialog(_,content)
   return dialog
 end
 function app:show_warning(message) error(message) end
+function app:show_prompt() return "Cancel" end
 
 local render_calls=0
 local writer_releases=0
@@ -449,8 +450,8 @@ end
 assert(control("acid_clipboard_copy").active~=false and not control("acid_clipboard_paste").active and
   control("acid_clipboard_status").text=="Clipboard empty",
   "Pattern / Copy exposes Copy and disables empty Paste")
-assert(text_control("Extended transformations and scoped clear controls are not available here."),
-  "Extended / Clear retains its deferred-operation placeholder")
+assert(control("acid_operation_open") and control("acid_mask_enabled"),
+  "Extended / Clear exposes scoped operations and mask controls")
 assert(control("acid_output_policy").active and control("acid_pb_range").active,
   "Output provides active phrase policy and PB Range controls")
 assert_navigation_neutral(navigation,"workspace tab navigation")
@@ -822,7 +823,11 @@ assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("
 local timing_popup=builder.views.acid_timing
 timing_popup:fire(2)
 assert(timing_popup.value==2)
-button("Reset Source"):fire()
+local reset_preview=builder.views.acid_preview_summary.text
+local reset_pitch=builder.views.acid_program_pitch_summary.text
+app.show_prompt=function() return "Reset" end
+button("Reset Pattern"):fire()
+app.show_prompt=function() return "Cancel" end
 assert(timing_popup.value==1,"Reset Source restores straight timing")
 assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
 assert(builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
@@ -832,10 +837,10 @@ assert(button("Undo").active)
 button("Undo"):fire()
 assert(timing_popup.value==2,"Undo restores the previous timing")
 assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
-assert(builder.views.acid_preview_summary.text:find("Start: REST",1,true))
+assert(builder.views.acid_preview_summary.text==reset_preview)
 builder.views.acid_editor_view:fire(1)
-assert(builder.views.acid_program_pitch_summary.text:find("UNMODIFIED",1,true),
-  "undo returns PITCH to its accepted source baseline")
+assert(builder.views.acid_program_pitch_summary.text==reset_pitch,
+  "undo restores selected PITCH without changing selection")
 assert(output_popup.value==1,"Undo restores the previous output policy")
 assert(pb_range_popup.value==3,"Undo restores the prior PB Range")
 assert(button("Redo").active)
@@ -915,10 +920,7 @@ assert(not draft_cache.get(song,instrument_two,instrument_two.phrases[1]),
 target_popup:fire(1)
 phrase_popup:fire(4)
 local live_render_base=render_calls
-local live_checkbox
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="checkbox" and node.value==false then live_checkbox=node end
-end
+local live_checkbox=builder.views.acid_live_edit
 assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
 assert(render_calls==live_render_base,"arming Live Edit does not request a render")
@@ -926,8 +928,8 @@ local armed_projections=projection_calls
 builder.views.acid_editor_view:fire(2)
 assert(render_calls==live_render_base and projection_calls==armed_projections,
   "armed view navigation reuses projection without rendering")
-button("Reset Source"):fire()
-assert(render_calls==live_render_base,"resetting an armed source does not request a render")
+button("Reset Pattern"):fire()
+assert(render_calls==live_render_base,"cancelled reset does not request a render")
 program_key(2):fire()
 tool.app_idle_observable:fire()
 assert(render_calls==live_render_base+1 and generation_request.target_index==4,
@@ -1234,6 +1236,111 @@ do
   assert(render_calls==renders and draft_writes==draft_count)
   label_context.rename_label=rename
   dialog=main_dialog
+end
+do
+  local renders=render_calls
+  phrase_popup:fire(#phrase_popup.items)
+  local mask=control("acid_mask_enabled")
+  assert(not mask.value)
+  control("acid_mask_class_02"):fire(false)
+  assert(not mask.value and not control("acid_mask_class_02").value,
+    "editing disabled mask preserves disabled state: "..control("acid_status").text)
+  control("acid_mask_class_02"):fire(true)
+  assert(not mask.value and control("acid_mask_class_02").value)
+  button("Undo"):fire();button("Undo"):fire()
+  assert(control("acid_mask_class_02").value and not mask.value)
+  local confirmations=0
+  app.show_prompt=function() confirmations=confirmations+1;return "Cancel" end
+  app.show_custom_prompt=function()
+    control("acid_operation_seed").value=1
+    control("acid_operation_min_note").value=60
+    control("acid_operation_max_note").value=24
+    return "Continue"
+  end
+  control("acid_operation").value=9
+  control("acid_operation_open"):fire()
+  assert(confirmations==0,"invalid random range is rejected before confirmation")
+  app.show_custom_prompt=function()
+    control("acid_operation_seed").value=1.5
+    return "Continue"
+  end
+  control("acid_operation_open"):fire()
+  assert(confirmations==0,"fractional seed is rejected before formatting confirmation")
+  app.show_custom_prompt=function()
+    control("acid_operation_note_weight").value=0
+    control("acid_operation_tie_weight").value=0
+    control("acid_operation_rest_weight").value=0
+    return "Continue"
+  end
+  control("acid_operation").value=10
+  control("acid_operation_open"):fire()
+  assert(confirmations==0,"zero random weights are rejected before confirmation")
+  control("acid_operation").value=1
+  control("acid_operation_open"):fire()
+  assert(confirmations==1 and render_calls==renders,"cancelled operation performs no generation")
+  local writes=draft_writes
+  local mask_bit=control("acid_mask_class_02").value
+  app.show_prompt=function()
+    control("acid_mask_class_02"):fire(not mask_bit)
+    return "Apply"
+  end
+  control("acid_operation_open"):fire()
+  assert(control("acid_status").text:find("editor or target changed",1,true) and draft_writes==writes+1,
+    "confirmation cannot overwrite an intervening source edit: "..control("acid_status").text.." writes "..draft_writes.."/"..writes)
+  assert(control("acid_mask_class_02").value~=mask_bit)
+  app.show_prompt=function()
+    phrase_popup:fire(2)
+    return "Apply"
+  end
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(control("acid_status").text:find("editor or target changed",1,true) and draft_writes==writes,
+    "confirmation cannot apply an operation to a replacement target")
+  control("acid_operation").value=9
+  confirmations=0
+  app.show_prompt=function() confirmations=confirmations+1;return "Apply" end
+  local function valid_random_parameters()
+    control("acid_operation_seed").value=17
+    control("acid_operation_min_note").value=24
+    control("acid_operation_max_note").value=60
+  end
+  mask_bit=control("acid_mask_class_02").value
+  app.show_custom_prompt=function()
+    valid_random_parameters()
+    control("acid_mask_class_02"):fire(not mask_bit)
+    return "Continue"
+  end
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(confirmations==0 and draft_writes==writes+1 and
+    control("acid_mask_class_02").value~=mask_bit and
+    control("acid_status").text:find("editor or target changed",1,true),
+    "parameter modal source edit cancels before confirmation")
+  button("Undo"):fire()
+  assert(control("acid_mask_class_02").value==mask_bit)
+  app.show_custom_prompt=function()
+    valid_random_parameters()
+    control("acid_mask_class_02"):fire(not mask_bit)
+    button("Undo"):fire()
+    return "Continue"
+  end
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(confirmations==0 and draft_writes==writes+2 and
+    control("acid_mask_class_02").value==mask_bit and
+    control("acid_status").text:find("editor or target changed",1,true),
+    "parameter modal edit and undo invalidates captured revision despite restored source")
+  app.show_custom_prompt=function()
+    valid_random_parameters()
+    phrase_popup:fire(1)
+    return "Continue"
+  end
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(confirmations==0 and draft_writes==writes and
+    control("acid_status").text:find("editor or target changed",1,true),
+    "parameter modal target change cancels before confirmation")
+  app.show_prompt=function() return "Cancel" end
 end
 dialog.visible=false
 tool.app_idle_observable:fire()

@@ -4689,7 +4689,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       elseif name=="button" then
         if properties.text=="Undo" then return "acid_undo" end
         if properties.text=="Redo" then return "acid_redo" end
-        if properties.text=="Reset Source" then return "acid_reset_source" end
         if properties.text=="Previous TIME" then return "acid_previous_time" end
         if properties.text=="Next TIME" then return "acid_next_time" end
         if properties.text=="Retry Live Edit" then return "acid_retry_live" end
@@ -5560,6 +5559,136 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     local labels_ok,labels_error=verify_labels()
     if not labels_ok then close_test_gui();return nil,labels_error end
+    local function verify_extended_operations()
+      local app_factory,builder_factory=renoise.app,renoise.ViewBuilder
+      local native_app=app_factory()
+      local baseline=assert(ownership.snapshot(phrase))
+      local selection=native_selection(song)
+      local confirmation="Apply"
+      local parameters={seed=17,min_note=24,max_note=60,note_weight=2,tie_weight=1,rest_weight=1}
+      local operations={"clear_pitch","clear_time","clear_tie","clear_rest","clear_slide",
+        "clear_accent","rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
+      local function state() return assert(gui_context:editor_state()) end
+      local function exact(expected)
+        local actual=state()
+        assert(sequence.same_source(expected.source,actual.source),"Extended operation source differs")
+        assert(actual.label==expected.label and actual.label_custom==expected.label_custom and
+          actual.output_policy==expected.output_policy and actual.pb_range==expected.pb_range,
+          "Extended operation changed excluded metadata")
+      end
+      local function value(id,next_value)
+        suppress_captured_notifiers=true
+        controls[id].value=next_value
+        suppress_captured_notifiers=false
+        if callbacks[id] then callbacks[id](next_value) end
+      end
+      local ok,reason=pcall(function()
+        renoise.ViewBuilder=captured_builder_factory
+        renoise.app=function()
+          return setmetatable({}, {__index=function(_,name)
+            if name=="show_custom_prompt" then return function(_,title,content,buttons)
+              assert(buttons[2]=="Continue","Unexpected operation parameter buttons")
+              for parameter,next_value in pairs(parameters) do
+                local control=controls["acid_operation_"..parameter]
+                if control then control.value=next_value end
+              end
+              return "Continue"
+            end end
+            if name=="show_prompt" then return function(_,title,message,buttons)
+              assert(type(message)=="string" and #message>0,"Empty operation confirmation")
+              return title=="Reset Pattern" and "Reset" or confirmation
+            end end
+            local member=native_app[name]
+            if type(member)=="function" then return function(_,...) return member(native_app,...) end end
+            return member
+          end})
+        end
+        for operation_index,operation in ipairs(operations) do
+          for scope_index,scope in ipairs({"active","all"}) do
+            local before=state()
+            local candidate=assert(sequence.operation_candidate(before.source,operation,scope,parameters))
+            value("acid_operation",operation_index)
+            value("acid_operation_scope",scope_index)
+            confirmation="Cancel"
+            local raw=song.tool_data
+            callbacks.acid_operation_open()
+            assert(song.tool_data==raw,"Canceled operation persisted data")
+            exact(before)
+            confirmation="Apply"
+            callbacks.acid_operation_open()
+            exact({source=candidate,label=before.label,label_custom=before.label_custom,
+              output_policy=before.output_policy,pb_range=before.pb_range})
+            if sequence.same_source(before.source,candidate) then
+              assert(song.tool_data==raw,"No-op operation persisted data")
+            else
+              callbacks.acid_undo();exact(before)
+              callbacks.acid_redo()
+              assert(sequence.same_source(candidate,state().source),"Operation redo differs")
+              callbacks.acid_undo();exact(before)
+            end
+          end
+        end
+        local before=state()
+        local edits=0
+        local function mask(id,next_value)
+          local previous=state().source
+          value(id,next_value)
+          if not sequence.same_source(previous,state().source) then edits=edits+1 end
+        end
+        mask("acid_mask_enabled",false)
+        for class=1,12 do mask(string.format("acid_mask_class_%02d",class),false) end
+        assert(not state().source.scale_mask_enabled,"Disabled class edits enabled mask")
+        local raw=song.tool_data
+        value("acid_mask_enabled",true)
+        assert(song.tool_data==raw and not state().source.scale_mask_enabled,
+          "Empty enabled mask was accepted")
+        mask("acid_mask_class_01",true)
+        assert(not state().source.scale_mask_enabled,"Enabling a disabled class enabled mask")
+        mask("acid_mask_enabled",true)
+        assert(state().source.scale_mask_enabled,"Nonempty mask did not enable")
+        local projection=editor.project(state().source)
+        for step,event in ipairs(projection.mapping) do
+          if event.kind=="note" then
+            assert(event.note%12==0,"C-only mask produced another pitch class")
+            local text=editor.step_text(projection,step)
+            assert(text:find("RAW ",1,true) and text:find("RES "..event.note,1,true),
+              "Decoded omitted raw/resolved pitch")
+          end
+        end
+        raw=song.tool_data
+        value("acid_mask_class_01",false)
+        assert(song.tool_data==raw and state().source.scale_mask[1],"Last enabled class was removed")
+        for index=1,edits do callbacks.acid_undo() end
+        exact(before)
+        callbacks.acid_pattern_reset()
+        local reset=state()
+        assert(sequence.same_source(sequence.new_pattern(before.source.length),reset.source),
+          "Reset did not restore canonical source defaults")
+        assert(reset.label==before.label and reset.label_custom==before.label_custom,
+          "Reset changed label")
+        local policy=require("model.policies")
+        assert(reset.output_policy==policy.DEFAULT_OUTPUT_POLICY and reset.pb_range==policy.DEFAULT_PB_RANGE,
+          "Reset did not restore output defaults")
+        raw=song.tool_data
+        callbacks.acid_pattern_reset()
+        assert(song.tool_data==raw,"Identical Reset persisted data")
+        if not sequence.same_source(before.source,reset.source) or before.output_policy~=reset.output_policy or
+            before.pb_range~=reset.pb_range then callbacks.acid_undo();exact(before) end
+        assert(ownership.compare(baseline,assert(ownership.snapshot(phrase))),
+          "Extended operations with Live Edit off changed native phrase")
+        assert(same_native_selection(selection,native_selection(song)),"Extended operations changed selection")
+      end)
+      renoise.app,renoise.ViewBuilder=app_factory,builder_factory
+      suppress_captured_notifiers=false
+      if not ok then return nil,"Extended native callbacks: "..tostring(reason) end
+      metrics.gui_extended_operations_native_functional_checked=true
+      metrics.gui_mask_native_functional_checked=true
+      metrics.gui_reset_native_functional_checked=true
+      metrics.gui_extended_prompt_responses_simulated=true
+      return true
+    end
+    local extended_ok,extended_error=verify_extended_operations()
+    if not extended_ok then close_test_gui();return nil,extended_error end
     local function verify_duplicate()
       local before=assert(gui_context:editor_state())
       local raw=song.tool_data
@@ -5739,10 +5868,24 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     if not undo_ok then return nil,undo_error end
     local redo_ok,redo_error=run_button("redo","acid_redo")
     if not redo_ok then return nil,redo_error end
-    local reset_ok,reset_error=run_button("reset-source","acid_reset_source",function()
+    local reset_app_factory=renoise.app
+    local reset_app=reset_app_factory()
+    renoise.app=function()
+      return setmetatable({}, {__index=function(_,name)
+        if name=="show_prompt" then return function(_,title)
+          assert(title=="Reset Pattern","Unexpected Reset confirmation")
+          return "Reset"
+        end end
+        local member=reset_app[name]
+        if type(member)=="function" then return function(_,...) return member(reset_app,...) end end
+        return member
+      end})
+    end
+    local reset_ok,reset_error=run_button("reset-pattern","acid_pattern_reset",function()
       local reset_source=persisted.read_draft(song,instrument,phrase)
-      return reset_source~=nil,"Reset Source did not save a new draft revision"
+      return reset_source~=nil,"Reset Pattern did not save a new draft revision"
     end)
+    renoise.app=reset_app_factory
     if not reset_ok then return nil,reset_error end
     local new_phrase_choice_index
     for index,item in ipairs(controls.acid_phrase_choice.items or {}) do
