@@ -69,7 +69,10 @@ a 32/32 active fixture. Repeat in Program and Grid.
    edits alone leave source/history/draft unchanged. Click **Apply** and verify
    direct application without a prompt.
    Verify P01..P05 raw MIDI 24,28,51,40,43, flags preserved and P06..P32 intact.
-   Undo; repeat with All 32 stored and inspect inactive entries as well.
+   Verify Seed advances to 2; Apply again and verify a fresh result and Seed 3.
+   Undo the second Apply. Set Seed to 1 and Apply: the original result stays
+   unchanged and Seed advances to 2. Undo the first edit and Redo it.
+   Undo; reset Seed to 1, repeat with All 32 stored and inspect inactive entries as well.
 5. Repeat **Randomize TIME** using Seed 1, NOTE/TIE/REST weights 2/1/1, both
    scopes and direct Apply. The first five commands are N,N,R,N,T;
    Active retains T08..T32. Inspect TIME 01 normalization using the canonical

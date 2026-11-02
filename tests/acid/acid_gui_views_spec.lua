@@ -1375,9 +1375,17 @@ do
   control("acid_operation_open"):fire()
   assert(confirmations==0 and draft_writes==writes+1,"random Apply immediately creates one edit")
   local randomized=assert(sequencer.copy_source(label_context:editor_state().source))
+  assert(control("acid_operation_seed").value==2,"successful random Apply advances seed")
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(draft_writes==writes+1,"repeated Apply creates a fresh random edit")
+  assert(not sequencer.same_source(randomized,label_context:editor_state().source),"next seed changes pitches")
+  button("Undo"):fire()
+  control("acid_operation_seed").value=1
   writes=draft_writes
   control("acid_operation_open"):fire()
   assert(draft_writes==writes,"same random seed and parameters produce a no-op")
+  assert(control("acid_operation_seed").value==2,"valid no-op randomization also advances seed")
   button("Undo"):fire()
   assert(sequencer.same_source(previous,label_context:editor_state().source),"one Undo restores random edit")
   button("Redo"):fire()

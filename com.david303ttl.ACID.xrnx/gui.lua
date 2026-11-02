@@ -1871,6 +1871,9 @@ function M.show()
     local candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
     if not candidate then status.text=tostring(reason);return end
     apply_candidate(candidate)
+    if operation=="randomize_pitch" or operation=="randomize_time" then
+      seed.value=parameters.seed%RANDOM_SEED_MAX+1
+    end
   end
   local function edit_mask(index,value)
     if updating then return end
@@ -1901,7 +1904,8 @@ function M.show()
     vb:text{text="EXTENDED / CLEAR",font="bold"},
     vb:row{spacing=6,operation_choice,operation_scope,
       operation_button},parameter_row,mask_row,
-    vb:text{text="Mask classes remain editable while disabled. Enabled mask requires at least one class."}}
+    vb:text{text="Seed advances after Apply; enter a seed to repeat a result."},
+    vb:text{text="Enable MASK to allow only checked note classes in output; not every class is guaranteed."}}
   end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,
     vb:text{text="OUTPUT",font="bold"},
