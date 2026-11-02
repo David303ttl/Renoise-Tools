@@ -118,6 +118,33 @@ do
  assert(not ctx:rename_label(" bad",true) and song.tool_data==raw)
 end
 
+-- Both owned and New label writes are independent of unrelated native content.
+for _,new in ipairs({false,true}) do
+ local ctx,log,song,instrument,_,other=fixture(new)
+ local ownership=require('renoise.phrase_ownership')
+ local capture_recovery=ownership.capture_recovery
+ local reads=0
+ local function unreadable()
+  reads=reads+1;error('Unrelated phrase content is unavailable')
+ end
+ other.line=unreadable
+ local foreign={name='Foreign phrase',line=unreadable}
+ song.instruments[2]=helper.instrument({foreign})
+ song.instruments[2].name='Unrelated instrument'
+ ownership.capture_recovery=function()
+  reads=reads+1;error('Label rename must not capture native phrase recovery')
+ end
+ local before=ctx:revision_state()
+ local renamed,reason=ctx:rename_label('Independent label',true)
+ ownership.capture_recovery=capture_recovery
+ assert(renamed,reason)
+ assert(reads==0,'label rename inspected native phrase recovery or unrelated cells')
+ assert(ctx:editor_state().label=='Independent label' and log.sinks==0)
+ assert(ctx:revision_state().edit_revision==before.edit_revision)
+ assert(ctx:revision_state().metadata_revision==before.metadata_revision+1)
+ assert(instrument.phrases[2]==other and song.instruments[2].phrases[1]==foreign)
+end
+
 do
  local ctx,log,song=fixture(true)
  local update_label=store.update_label

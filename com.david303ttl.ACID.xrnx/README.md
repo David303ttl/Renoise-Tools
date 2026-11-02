@@ -59,6 +59,10 @@ writer job is already active, only the latest pending trigger is retained.
 Undo and Redo cover source edits and phrase output policy and PB Range. A failed
 Live Edit remains armed; correct the source or use Retry Live Edit. Enabling
 Live Edit arms subsequent edits without writing.
+Label metadata uses ACID's transactional Undo/Redo history. In the recorded
+Renoise 3.5.4 check, a label-only rename persists but creates no native host Undo
+entry (`song:can_undo() == false`). Label editing UI remains planned for Gate 6;
+native metadata Undo/Redo is not established by the passing audition checks.
 Only an explicitly selected **New Phrase** destination can create a phrase.
 Foreign, modified, deleted and colliding phrases block generation; choose New
 explicitly to create separate output.

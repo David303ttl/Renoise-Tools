@@ -43,6 +43,16 @@ function M.new(song,drafts,idle)
   local draft_release_tokens=setmetatable({},{__mode="k"})
   local original_song=setmetatable({song},{__mode="v"})
 
+  function owner:capture_metadata(expected_store)
+    local ok,store=pcall(function() return song.tool_data end)
+    if not ok or (store~=nil and type(store)~="string") or store~=expected_store then
+      return nil,"Cannot capture exact metadata recovery evidence"
+    end
+    local descriptor={}
+    captures[descriptor]={operation="metadata",store=store}
+    return descriptor
+  end
+
   function owner:capture_mutation()
     local ok,capture=pcall(function()
       assert(song.tool_data==nil or type(song.tool_data)=="string","Cannot inspect song store")
@@ -65,7 +75,8 @@ function M.new(song,drafts,idle)
 
   local function committed_delta_matches(instrument,phrase,baseline,pre_evidence,committed_store)
     local before=pre_evidence and captures[pre_evidence]
-    if not before or type(committed_store)~="string" or song.tool_data~=committed_store then
+    if not before or before.operation~="mutation" or
+        type(committed_store)~="string" or song.tool_data~=committed_store then
       return false,"Committed store or pre-commit recovery evidence is unavailable"
     end
     local ok,matches=pcall(function()
@@ -126,7 +137,11 @@ function M.new(song,drafts,idle)
     if song==nil then return false,"No current document is attached" end
     local record={reason="Song integrity requires revalidation",recovery={}}
     if captures[evidence] then
-      record.mutation=captures[evidence]
+      if captures[evidence].operation=="metadata" then
+        record.metadata=captures[evidence]
+      else
+        record.mutation=captures[evidence]
+      end
       record.committed_target=committed_captures[evidence]
       if record.committed_target and type(record.committed_target.reason)=="string" then
         record.reason=record.committed_target.reason
@@ -135,7 +150,7 @@ function M.new(song,drafts,idle)
       committed_captures[evidence]=nil
     end
     local ok,record_error=pcall(function()
-      if record.mutation then return end
+      if record.metadata or record.mutation then return end
       if type(evidence)~="table" or getmetatable(evidence)~=nil then error("Invalid recovery evidence") end
       record.operation=evidence.operation or "regenerate"
       record.committed=evidence.committed==true
@@ -221,7 +236,11 @@ function M.new(song,drafts,idle)
     end
     for _,entry in ipairs(entries) do
       if entry.incomplete then return nil,"Recovery evidence is incomplete; use native undo or a known-good saved song" end
-      if entry.mutation then
+      if entry.metadata then
+        if song.tool_data~=entry.metadata.store then
+          return nil,"Metadata storage has not been restored"
+        end
+      elseif entry.mutation then
         local captured=entry.mutation
         if song.tool_data~=captured.store or #song.instruments~=#captured.instruments then
           return nil,"Mutation state has not been restored"

@@ -407,6 +407,7 @@ local function valid_args_for_operation(current, request)
         args.case == "revision-live-undo-fixture" or args.case == "revision-live-undo-prepare" or args.case == "revision-live-undo" or
         args.case == "persistence-failures" or args.case == "recovery-labels-prepare" or args.case == "recovery-labels-cold" or
         args.case == "metadata-undo-prepare" or args.case == "metadata-undo" or
+        args.case == "metadata-recovery-prepare" or args.case == "metadata-recovery" or args.case == "metadata-recovery-cold" or
         args.case == "cold-reopen-regenerate" or
         args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow" or
         args.case == "selection-feasibility" or args.case == "direct-output-feasibility" or

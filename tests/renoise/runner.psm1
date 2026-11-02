@@ -732,7 +732,7 @@ function Get-AcidInteractiveScenarioSelection {
 }
 
 function Assert-AcidScenarioFixtures {
-    param([Parameter(Mandatory)][string]$Directory, [Parameter(Mandatory)][object[]]$Scenarios)
+    param([Parameter(Mandatory)][string]$Directory, [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Scenarios)
     if (-not (Test-Path -LiteralPath $Directory -PathType Container)) {
         throw "Staged fixture directory is missing: $Directory"
     }

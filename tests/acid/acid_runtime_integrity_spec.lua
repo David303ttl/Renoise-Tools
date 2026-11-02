@@ -384,4 +384,40 @@ do
  assert(status.verified and proof,'same-song recovery evidence could not be revalidated')
  assert(ctx:revalidate(proof) and not ctx:integrity_state().blocked)
 end
+-- Metadata receipts prove exact bytes (including absent storage) without native
+-- inventories; proof consumption still rechecks storage and shared safeguards.
+for _,absent in ipairs({false,true}) do
+ local song=helper.fixture()
+ local before=not absent and 'opaque preimage bytes' or nil
+ song.tool_data=before
+ local idle=true
+ local owner=require('runtime.integrity').new(song,nil,function()return idle end)
+ assert(not owner:capture_metadata('wrong preimage'))
+ local receipt=assert(owner:capture_metadata(before))
+ song.instruments=nil
+ setmetatable(song,{__index=function(_,key)
+  if key=='instruments' then error('Unrelated inventory read') end
+ end})
+ song.tool_data='uncertain outcome'
+ assert(owner:record(receipt))
+ assert(not owner:status().verified and owner:state().blocked)
+ song.tool_data=absent and '' or 'opaque preimage byteS'
+ assert(not owner:status().verified,'nonexact metadata preimage was accepted')
+ song.tool_data=before
+ idle=false
+ assert(not owner:status().verified,'unsettled writer accepted metadata revalidation')
+ idle=true
+ song.is_undo_redoing=function()return true end
+ assert(not owner:status().verified,'native undo bypassed metadata safeguard')
+ song.is_undo_redoing=function()return false end
+ local status,proof=owner:status()
+ assert(status.verified and proof and owner:state().blocked)
+ assert(not owner:clear({}),'forged metadata proof accepted')
+ song.tool_data='changed after inspection'
+ assert(not owner:clear(proof),'metadata proof skipped fresh readback')
+ song.tool_data=before
+ local _,fresh=owner:status()
+ assert(owner:clear(fresh) and not owner:state().blocked)
+ assert(not owner:clear(fresh),'metadata proof was reusable')
+end
 print('ACID runtime integrity blocker and read-only revalidation passed')

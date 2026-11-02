@@ -1568,6 +1568,37 @@ exact cleanup retries, including release during native rendering. Mocked API
 failures do not establish native playback or host failure behavior; the
 acceptance-limit column and targeted T4.8/T4.8a evidence retain that boundary.
 
+## Focused metadata recovery acceptance (2026-11-02)
+
+Renoise 3.5.4 / API 6.2, PowerShell 7, working tree with scoped metadata receipts.
+Report: `tmp/interactive-df4b9b7e770246e3b651e291b5e7efc4/report.json`.
+The runner owns both processes (8580 → 14404), stages fixtures, applies guarded
+Enter input to the prepared dialog, saves the XRNS and checks it in a fresh
+process. Original installation restoration passed; both test processes stopped.
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Suite Native -Scenario transport -AcceptanceCase metadata-recovery -Install -ApproveDisposableSong -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
+```
+
+| Check | Result |
+| --- | --- |
+| Owned and New label persistence | PASS: exact accepted label/custom bit, unchanged musical revision, separate metadata revision, unchanged target identity/source/settings/native content and foreign phrase preimages. |
+| Unrelated native recovery failure | PASS: the injected recovery snapshot seam throws if called; both renames complete with zero recovery reads, generation captures or render calls. This is synthetic failure injection over native objects. |
+| Uncertain metadata setter | PASS for both destinations: changed storage blocks further label writes and generation, without accepting attempted labels or advancing metadata history. Setter faults forward to real song storage; they do not emulate disk failure. |
+| Explicit recovery proof | PASS: changed/nonexact bytes reject; exact preimages permit inspection without clearing the blocker; storage drift after proof rejects clearance; a fresh proof clears only explicitly and cannot be reused. |
+| Unrelated native edits | PASS: an unrelated phrase note changes while blocked; metadata recovery and retry succeed without reverting it. |
+| Save and cold reopen | PASS: exact full persisted baseline comparison; owned label, New draft label/custom bit and both unrelated note edits survive. Restoring both editor destinations makes no persisted changes or generation requests. |
+| Deterministic regressions | PASS: 74/74 ACID-selected Lua specs under Lua 5.1, including execution of the acceptance module and a negative test that restores whole-song capture. Runner and development package suites pass. |
+
+The runner stages fixtures even when `transport` is the only selected catalog
+scenario if a native acceptance case also runs. An empty catalog selection
+remains valid for this acceptance-only path.
+
+This covers the runtime rename seam and metadata receipts. Planned Gate 6 label
+editor and ACID history controls remain separate. Native host metadata Undo/Redo
+still has its recorded no-entry failure; audition sound/timing is unaffected by
+this acceptance result.
+
 ## T4.8 ownership end-to-end (2026-10-31)
 
 Source revision `60fe5a8bca3730c4c1a415116047feac7f81b773` plus the recorded

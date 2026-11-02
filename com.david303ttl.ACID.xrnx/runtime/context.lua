@@ -1076,7 +1076,7 @@ function M.new(options)
     local ok,value=pcall(function()return current_song.tool_data end)
     if not ok then return false,"Cannot read song metadata: "..tostring(value) end
     raw=value
-    local evidence,capture_error=integrity:capture_mutation()
+    local evidence,capture_error=integrity:capture_metadata(raw)
     if not evidence then return false,capture_error end
     local pending_source=(target.kind=="new" or editor_dirty) and editor.source or nil
     local store=require("renoise.pattern_store")

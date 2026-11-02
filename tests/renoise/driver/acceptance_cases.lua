@@ -9223,6 +9223,10 @@ end
 
 function M.run(case_name, done, json, profile_mode, options)
   if type(done) ~= "function" then return false, "completion callback is required" end
+  if case_name=="metadata-recovery-prepare" or case_name=="metadata-recovery" or case_name=="metadata-recovery-cold" then
+    M.metadata_recovery=M.metadata_recovery or dofile(renoise.tool().bundle_path.."/__dev/metadata_recovery_acceptance.lua")
+    return M.metadata_recovery.run(case_name,done,{save=save_independent_fixture,baseline=persisted_baseline})
+  end
   if case_name=="persistence-failures" then
     return dofile(renoise.tool().bundle_path.."/__dev/persistence_acceptance.lua").failures(done)
   end

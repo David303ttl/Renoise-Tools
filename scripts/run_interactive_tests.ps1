@@ -108,12 +108,13 @@ $report = [ordered]@{
     error = $null
 }
 $clock = [Diagnostics.Stopwatch]::StartNew()
-$transportOnly = $Suite -eq 'Keyboard' -or $Scenario -ceq 'transport'
+$transportOnly = $Suite -eq 'Keyboard' -or ($Scenario -ceq 'transport' -and -not $AcceptanceCase)
 $productionSessionAcceptance = $AcceptanceCase -cin @('production-session-8x8','production-stress-16x8')
 $undoCallbackAcceptance = $AcceptanceCase -ceq 'independence-undo'
 $revisionLiveUndoAcceptance = $AcceptanceCase -ceq 'revision-live-undo'
 $revisionUndoAcceptance = $AcceptanceCase -cin @('revision-undo','revision-live-undo')
 $metadataUndoAcceptance = $AcceptanceCase -ceq 'metadata-undo'
+$metadataRecoveryAcceptance = $AcceptanceCase -ceq 'metadata-recovery'
 $recoveryLabelsAcceptance = $AcceptanceCase -ceq 'recovery-labels-prepare'
 
 function Add-Trace {
@@ -293,13 +294,14 @@ function Invoke-ColdProcessAcceptance {
         Add-Trace -Operation "acceptance.$Case.$Stage" -Status 'PASS' -Details $result
         return $result
     }
-    if ($Case -ceq 'recovery-labels-cold') {
-        if ($result.read_only_restore -ne $true -or $result.recovered_generation_verified -ne $true) {
+    if ($Case -cin @('recovery-labels-cold','metadata-recovery-cold')) {
+        $requiredPostcondition = if ($Case -ceq 'metadata-recovery-cold') { $result.owned_and_new_labels_exact } else { $result.recovered_generation_verified }
+        if ($result.read_only_restore -ne $true -or $requiredPostcondition -ne $true) {
             throw [RenoiseRunnerAssertionException]::new('Cold recovery-label acceptance omitted required postconditions.')
         }
         $script:scenarioResults.Add([pscustomobject]@{
             name = "acceptance.$Case"; suite = 'Native'; status = 'PASS'
-            expected = 'Fresh-process restoration preserves exact source, mask, label and draft before explicit recovery generation'
+            expected = 'Fresh-process restoration preserves the exact persisted baseline and case-specific label/draft postconditions'
             actual = ConvertTo-AcidCanonicalJson $result; diff = $null
         })
         Add-Trace -Operation "acceptance.$Case" -Status 'PASS' -Details $result
@@ -438,10 +440,10 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','recovery-labels-prepare','metadata-undo')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('make-independent','draft-recovery','reopen-independent','api-probe','integrity-observers','writer-recovery','editor-responsiveness','ownership-negatives','independence-undo-prepare','independence-undo','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','recovery-labels-prepare','metadata-undo','metadata-recovery')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
-    if ($recoveryLabelsAcceptance -and $RenoiseProcessId -gt 0) {
+    if (($recoveryLabelsAcceptance -or $metadataRecoveryAcceptance) -and $RenoiseProcessId -gt 0) {
         throw 'Recovery-label cold reopen requires a runner-owned process; omit -RenoiseProcessId.'
     }
     $productionLatency = $AcceptanceCase -cin @('production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery')
@@ -466,7 +468,7 @@ try {
     if ($ColdProcessRoundTrip -and $RenoiseProcessId -gt 0) {
         throw '-ColdProcessRoundTrip requires the runner to launch and own the Renoise process; it cannot restart a selected PID.'
     }
-    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not ($undoCallbackAcceptance -or $revisionUndoAcceptance -or $metadataUndoAcceptance -or $productionSessionAcceptance)) {
+    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not ($undoCallbackAcceptance -or $revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance -or $productionSessionAcceptance)) {
         throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites, except Native undo acceptance.'
     }
     if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
@@ -483,9 +485,9 @@ try {
 
     Import-Module (Join-Path $repoRoot 'tests/renoise/host_preflight.psm1') -Force
     $scenarioDirectory = Join-Path $repoRoot 'tests/renoise/acid/scenarios'
-    $selectedCatalogScenarios = if ($Suite -in @('Native','All')) {
-        @(Get-AcidInteractiveScenarioSelection -Scenario $Scenario -Directory $scenarioDirectory)
-    } else { @() }
+    $selectedCatalogScenarios = @(if ($Suite -in @('Native','All')) {
+        Get-AcidInteractiveScenarioSelection -Scenario $Scenario -Directory $scenarioDirectory
+    })
     if ($VerifyScenarioOrder) {
         if ($selectedCatalogScenarios.Count -lt 2) {
             throw "-VerifyScenarioOrder requires at least two distinct catalog scenarios to reverse; found $($selectedCatalogScenarios.Count)."
@@ -553,7 +555,7 @@ try {
         $report.keyboard.negative_cases = @($keyboardNegativeCases)
         $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
     }
-    elseif ($undoCallbackAcceptance -or $revisionUndoAcceptance -or $metadataUndoAcceptance -or $productionSessionAcceptance) {
+    elseif ($undoCallbackAcceptance -or $revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance -or $productionSessionAcceptance) {
         $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment $environment
         $keyboardExecutable = Find-AutoHotkeyV2Executable -ConfiguredPath $keyboardConfiguration.AutoHotkeyPath
         if (-not (Test-Path -LiteralPath $keyboardHelperPath -PathType Leaf)) { throw "AutoHotkey helper does not exist: $keyboardHelperPath" }
@@ -968,13 +970,13 @@ try {
                 $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.new' `
                     -Arguments @{ timeout_ms = $resetTimeoutMs } -TimeoutSeconds $resetResponseTimeout -ProcessCheck $processCheck
             }
-            if ($undoCallbackAcceptance -or $revisionUndoAcceptance -or $metadataUndoAcceptance) {
-                $undoFixtureCase = if ($revisionLiveUndoAcceptance) { 'revision-live-undo-fixture' } elseif ($revisionUndoAcceptance -or $metadataUndoAcceptance) { 'revision-undo-fixture' } else { 'independence-undo-fixture' }
-                $undoPrepareCase = if ($metadataUndoAcceptance) { 'metadata-undo-prepare' } elseif ($revisionLiveUndoAcceptance) { 'revision-live-undo-prepare' } elseif ($revisionUndoAcceptance) { 'revision-undo-prepare' } else { 'independence-undo-prepare' }
-                $undoFixtureName = if ($revisionUndoAcceptance -or $metadataUndoAcceptance) { 'acceptance-revision-undo.xrns' } else { 'acceptance-undo.xrns' }
+            if ($undoCallbackAcceptance -or $revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance) {
+                $undoFixtureCase = if ($revisionLiveUndoAcceptance) { 'revision-live-undo-fixture' } elseif ($revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance) { 'revision-undo-fixture' } else { 'independence-undo-fixture' }
+                $undoPrepareCase = if ($metadataRecoveryAcceptance) { 'metadata-recovery-prepare' } elseif ($metadataUndoAcceptance) { 'metadata-undo-prepare' } elseif ($revisionLiveUndoAcceptance) { 'revision-live-undo-prepare' } elseif ($revisionUndoAcceptance) { 'revision-undo-prepare' } else { 'independence-undo-prepare' }
+                $undoFixtureName = if ($revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance) { 'acceptance-revision-undo.xrns' } else { 'acceptance-undo.xrns' }
                 $undoFixture = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
                     -Arguments @{ case = $undoFixtureCase } -TimeoutSeconds 180 -ProcessCheck $processCheck
-                if ($undoFixture.status -cne 'PASS') { throw 'Native undo fixture could not be saved.' }
+                if ($undoFixture.status -cne 'PASS') { throw "Native undo fixture could not be saved: $(ConvertTo-AcidCanonicalJson $undoFixture)" }
                 $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
                 $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.load_fixture' `
                     -Arguments @{ root = 'fixtures'; name = $undoFixtureName; timeout_ms = 120000 } `
@@ -1106,8 +1108,8 @@ try {
                 diff = $lastDiff
             })
             Add-Trace -Operation "acceptance.$AcceptanceCase" -Status $acceptanceStatus -Details $acceptance
-            if ($recoveryLabelsAcceptance -and $acceptanceStatus -ceq 'PASS') {
-                $recoveryFixtureName = 'acceptance-recovery-labels.xrns'
+            if (($recoveryLabelsAcceptance -or $metadataRecoveryAcceptance) -and $acceptanceStatus -ceq 'PASS') {
+                $recoveryFixtureName = if ($metadataRecoveryAcceptance) { 'acceptance-metadata-recovery.xrns' } else { 'acceptance-recovery-labels.xrns' }
                 if ($acceptance.roundtrip_fixture -cne $recoveryFixtureName) {
                     throw 'Recovery acceptance returned an unexpected fixture filename.'
                 }
@@ -1118,7 +1120,8 @@ try {
                 }
                 $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
                 Copy-Item -LiteralPath $recoverySongPath -Destination (Join-Path $artifactRoot $recoveryFixtureName)
-                $null = Invoke-ColdProcessAcceptance -SongPath $recoverySongPath -Case 'recovery-labels-cold' -ExpectedBaseline $acceptance.saved_baseline
+                $coldRecoveryCase = if ($metadataRecoveryAcceptance) { 'metadata-recovery-cold' } else { 'recovery-labels-cold' }
+                $null = Invoke-ColdProcessAcceptance -SongPath $recoverySongPath -Case $coldRecoveryCase -ExpectedBaseline $acceptance.saved_baseline
                 if ((Get-DirectoryHash -Path $installedFixturesPath) -cne $installedFixturesHash) {
                     throw 'Cold recovery verification changed saved fixture files.'
                 }

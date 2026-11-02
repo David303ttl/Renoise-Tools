@@ -287,6 +287,7 @@ New-Item -ItemType Directory $fixturePreflightRoot | Out-Null
 try {
     [IO.File]::WriteAllText((Join-Path $fixturePreflightRoot 'alpha.xrns'), 'fixture')
     Assert ((Assert-AcidScenarioFixtures -Directory $fixturePreflightRoot -Scenarios @(@{ name='alpha'; fixture='alpha.xrns' })) -eq 1) 'staged fixture preflight did not accept a registered fixture'
+    Assert ((Assert-AcidScenarioFixtures -Directory $fixturePreflightRoot -Scenarios @()) -eq 1) 'acceptance-only fixture preflight rejected an empty catalog selection'
     Reject { Assert-AcidScenarioFixtures -Directory $fixturePreflightRoot -Scenarios @(@{ name='missing'; fixture='missing.xrns' }) } 'requires missing staged fixture'
 } finally {
     Remove-Item -LiteralPath $fixturePreflightRoot -Recurse -Force
@@ -654,6 +655,15 @@ $recoveryPidReport = Get-Content -LiteralPath $recoveryPidReportLine[0].Substrin
 Assert ($recoveryPidReport.error -match 'requires a runner-owned process' -and
     @($recoveryPidReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
     'recovery-label cold reopen did not reject an unowned PID before starting Renoise'
+$metadataPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase metadata-recovery -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'metadata recovery cold reopen accepted a selected Renoise PID'
+$metadataPidReportLine = @($metadataPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($metadataPidReportLine.Count -eq 1) 'metadata recovery PID rejection did not emit a report'
+$metadataPidReport = Get-Content -LiteralPath $metadataPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($metadataPidReport.error -match 'requires a runner-owned process' -and
+    @($metadataPidReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+    'metadata recovery did not reject an unowned PID before starting Renoise'
 $profileRejectedInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
     -Suite Native -AcceptanceCase make-independent -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
 Assert ($LASTEXITCODE -ne 0) 'runner accepted a profile option for an unrelated native case'
@@ -691,6 +701,20 @@ Assert ($runnerAst.Extent.Text -match "'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
 Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
+& {
+    $transportAssignment = $runnerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -eq '$transportOnly'
+    }, $true)
+    $Suite = 'Native'
+    $Scenario = 'transport'
+    $AcceptanceCase = 'metadata-recovery'
+    . ([scriptblock]::Create($transportAssignment.Extent.Text))
+    Assert (-not $transportOnly) 'transport selection omitted fixtures needed by native acceptance'
+    $AcceptanceCase = ''
+    . ([scriptblock]::Create($transportAssignment.Extent.Text))
+    Assert $transportOnly 'transport smoke unnecessarily enabled native fixture deployment'
+}
 foreach ($case in @('production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery')) {
     $rejected = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
         -Suite Native -AcceptanceCase $case -ApproveDisposableSong 2>&1

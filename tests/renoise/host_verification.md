@@ -5,6 +5,7 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 | Check | Result |
 | --- | --- |
 | Interactive persistence (2026-11-02) | PASS: injected setter failures, exact rollback/cache isolation, explicit revalidation and fresh-process recovery-label restoration/generation; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
+| Focused metadata recovery (2026-11-02) | PASS: guarded Enter callback, owned/New label persistence, zero phrase recovery reads or generation, uncertain-write blocking and explicit revalidation with unrelated native edits, exact cold-process readback; [evidence](../acid/runtime_acceptance.md#focused-metadata-recovery-acceptance-2026-11-02) |
 | Native Undo/Redo (2026-11-02) | Musical generation PASS; metadata-only rename FAIL: no native undo entry (`can_undo=false`); exact rename verified; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
 | Full offline runner | PASS: 18 groups; final Lua rerun 67/67; deterministic audio/oracle checks pass |
 | Editor responsiveness | PASS: 30 UI actions below 30 ms; note/octave/command maxima 1.66/1.72/1.92 ms; armed/busy edits 3.89/28.22 ms with latest-note commit; clean edits perform no native cell scans or seal hashes; cold phrase validation 59.48 ms; `interactive-b0e25d94064c43f0a7f4f5f40ae9c6b3` |
@@ -26,6 +27,26 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 Snapshots contain native inventory values and selection indices. Indices describe
 positions at readback time, not persistent object identity. Driver shutdown is
 complete only after its per-run completion file is observed and removed.
+
+## Focused metadata recovery check
+
+Run the automated `metadata-recovery` case in [the interactive harness](README.md#interactive-runner).
+It uses a disposable song with an owned
+phrase, a New destination and unrelated foreign phrases. For both destinations,
+rename through the runtime label seam and verify exact stored label/custom bit,
+unchanged native phrase content and no generation. Save/reopen and verify labels.
+Inject an uncertain metadata setter outcome using the existing persistence
+acceptance driver: writes must block, and Revalidate must remain unavailable
+until exact pre-write `tool_data` bytes are restored. Inspecting recovery must
+not clear the blocker; explicitly revalidate before retrying. Changes to unrelated
+native phrases must not prevent this metadata recovery proof.
+
+Gate 6 label history checks use ACID Undo/Redo, including persistence failure
+during a history move. Keep the recorded native host metadata Undo failure above
+separate: do not manufacture an entry by editing musical data. The focused
+runtime checks and cold reopen passed in the recorded interactive run. The
+planned label editor/history controls and audition sound/timing retain their
+separate acceptance requirements.
 
 ## Runner verification rerun (2026-10-29)
 

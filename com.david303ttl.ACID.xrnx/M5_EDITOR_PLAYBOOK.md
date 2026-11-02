@@ -1830,6 +1830,14 @@ contracts, but implement this gate in suborder 6.1 then 6.2 then 6.3.
    custom-bit handling, history classification, separate attempted field state,
    Retry/Discard Attempt, and distinct label-only versus mixed-edit failure
    behavior. Do not make metadata-only edit a generation request.
+   Capture only exact `song.tool_data` preimages for label recovery, using the
+   existing integrity blocker and explicit revalidation. Unrelated phrase
+   snapshots are not a metadata transaction precondition.
+   ACID's transactional label Undo/Redo is the acceptance contract here.
+   The recorded Renoise 3.5.4 metadata-only rename persists but exposes no native
+   undo entry (`song:can_undo() == false`); native metadata Undo/Redo remains a
+   host limitation, not a passing native check. Do not add dummy musical edits
+   to manufacture native undo entries.
 3. **6.3 Duplicate.** Add explicit duplicate operation to current runtime
    request authorization, sourced from committed verified baseline. Durably
    save and verify an original dirty draft before request creation; abort fully
@@ -2132,7 +2140,7 @@ rollback result is uncertain; do not overwrite evidence to continue.
    together as one local dirty edit/history state, session draft is retained,
    unsaved warning is visible, no durable-success status appears, and target
    switch is blocked. Undo restores the prior accepted pair.
-7. Undo/redo successful label-only rename. Confirm no phrase revision, render,
+7. Use ACID Undo/Redo for successful label-only rename. Confirm no phrase revision, render,
    Live Edit or musical dirty transition. Inject metadata persistence failure
    during label-only undo/redo as well: accepted label and history cursor remain
    unchanged and failed metadata is not accepted. Save/reopen after a successful

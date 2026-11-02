@@ -73,16 +73,21 @@ process, or select an existing instance with a disposable song:
 | `persistence-failures` | Injected setter failures over native song storage, exact rollback/cache isolation, native phrase preimages and explicit integrity revalidation |
 | `recovery-labels-prepare` | Save a custom-labeled recovery draft, restart the runner-owned Renoise process, compare exact persisted state, then recover and generate |
 | `metadata-undo` | Real Enter-driven label rename followed by native Undo/Redo; fails if the host exposes no undo entry or does not restore exact metadata |
+| `metadata-recovery` | Guarded Enter-driven owned/New label renames; zero phrase recovery reads or generation, uncertain setter blocking, exact bytes and stale-proof checks, unrelated native edit preservation, explicit revalidation and automatic cold-process readback |
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures -RenoiseExe <renoise-executable>
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase recovery-labels-prepare -RenoiseExe <renoise-executable>
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase metadata-undo -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -Scenario transport -AcceptanceCase metadata-recovery -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
 ```
 
 `recovery-labels-prepare` requires a runner-owned process and performs its cold
 verification automatically. `metadata-undo` uses the existing guarded AutoHotkey
-Enter action. Fault injection uses a test-only proxy; it does not emulate disk
+Enter action. `metadata-recovery` uses that guarded dialog action and requires a
+runner-owned process for its automatic cold reopen. It exercises the runtime
+rename seam; the planned label editor UI and ACID label history controls retain
+their separate acceptance requirements. Fault injection uses a test-only proxy; it does not emulate disk
 failure. All cases use disposable songs and restore the original tool installation.
 
 Other instances and virtual desktops can stay in use. No dedicated account,
