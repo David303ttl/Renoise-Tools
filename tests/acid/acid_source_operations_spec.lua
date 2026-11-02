@@ -46,10 +46,10 @@ for _,scope in ipairs({"active","all"}) do
   local pitch=assert(seq.operation_candidate(source,"randomize_pitch",scope,{seed=1,min_note=24,max_note=60}))
   local repeat_pitch=assert(seq.operation_candidate(source,"randomize_pitch",scope,{seed=1,min_note=24,max_note=60}))
   assert(seq.same_source(pitch,repeat_pitch))
-  for i=1,5 do assert(pitch.pitch_events[i].note==({25,25,49,37,37})[i]) end
+  for i=1,5 do assert(pitch.pitch_events[i].note==({25,49,37,37,25})[i]) end
   local time=assert(seq.operation_candidate(source,"randomize_time",scope,
     {seed=1,note_weight=2,tie_weight=1,rest_weight=1}))
-  for i=1,5 do assert(time.time_events[i]==({"N","N","R","N","T"})[i]) end
+  for i=1,5 do assert(time.time_events[i]==({"N","R","N","T","N"})[i]) end
   local bound=scope=="all" and 32 or 7
   for i=1,32 do
     assert(time.pitch_events[i].note==source.pitch_events[i].note)
@@ -63,6 +63,15 @@ for _,scope in ipairs({"active","all"}) do
 end
 local chromatic=assert(seq.copy_source(source))
 chromatic.scale_mask_enabled=false
+local first_notes={}
+for seed=1,16 do
+  local sample=assert(seq.operation_candidate(chromatic,"randomize_pitch","active",
+    {seed=seed,min_note=24,max_note=60}))
+  first_notes[sample.pitch_events[1].note]=true
+end
+local distinct=0
+for _ in pairs(first_notes) do distinct=distinct+1 end
+assert(distinct>=12,"consecutive seeds must diversify the first pitch")
 for note=24,60 do
   local candidate=assert(seq.operation_candidate(chromatic,"randomize_pitch","all",
     {seed=2147483646,min_note=note,max_note=note}))
@@ -77,6 +86,14 @@ sparse.scale_mask_enabled=true
 for i=1,12 do sparse.scale_mask[i]=(i==1 or i==6) end -- C and F
 local sparse_result=assert(seq.operation_candidate(sparse,"randomize_pitch","all",
   {seed=17,min_note=36,max_note=48}))
+local first_masked={}
+for seed=1,16 do
+  local sample=assert(seq.operation_candidate(sparse,"randomize_pitch","active",
+    {seed=seed,min_note=36,max_note=48}))
+  first_masked[sample.pitch_events[1].note]=true
+end
+assert(first_masked[36] and first_masked[41] and first_masked[48],
+  "consecutive seeds must diversify sparse-scale first pitches")
 local sparse_replay=assert(seq.operation_candidate(sparse,"randomize_pitch","all",
   {seed=17,min_note=36,max_note=48}))
 assert(seq.same_source(sparse_result,sparse_replay),"masked randomization replays from seed")

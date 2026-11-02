@@ -47,8 +47,8 @@ For save/reopen, record the saved file and a fresh Renoise process identity.
 Use a disposable song and retain a copy before testing. The scale selector,
 root, category, search and Follow controls are session settings; the pitch mask
 and pattern remain project data. Follow constrains Program/Grid note entry only
-when the mask is enabled. A scale selection applies its mask immediately as one
-undoable change. Changing root rotates the current mask by the root interval.
+when the mask is enabled. Root/category/search browse without source edits;
+selecting a scale applies its absolute mask at the chosen root as one undoable edit.
 
 1. Open **Extended / Clear** and confirm the selector includes **Custom**,
    root choices C through B, categories, scale names, search, and an unchecked
@@ -59,9 +59,11 @@ undoable change. Changing root rotates the current mask by the root interval.
 2. Select a bundled scale at C. Verify exactly its pitch classes become checked
    and MASK turns on. Click **Undo** once; verify the prior mask and disabled
    state return. Click **Redo**; verify the selected scale mask returns. Change
-   root and verify the mask transposes by the same number of semitones, with one
-   Undo restoring the prior mask. Verify the browser remains aligned to the
-   current root after Undo.
+   root and confirm source, draft, history, and native phrase are unchanged.
+   Select the same preset at the new root and verify the new absolute mask is
+   one undoable edit. Undo that edit and confirm the previous mask returns
+   independently of the browser root. Return to the old root and confirm its
+   matching preset is detected without a source edit.
 3. Manually toggle one class. Verify the selected scale updates to a matching
    catalog entry when one exists, otherwise to **Custom / current mask**. Select
    **Custom / current mask** and verify it does not modify the current mask.
@@ -80,13 +82,16 @@ undoable change. Changing root rotates the current mask by the root interval.
    custom/imported category, the imported library survives reopening the tool,
    and import itself does not modify the active mask, pattern, draft, or Undo
    history. Import a duplicate pitch-class set under a second name and verify it
-   appears as an alias of the existing entry instead of a second scale.
+   appears as an alias of the existing entry instead of a second scale. Import
+   a conflicting preset or alias name with different notes and verify the entire
+   import is rejected without changing preferences or the editor.
 6. Cancel the file picker and verify all state remains unchanged. Try malformed
    rows, invalid pitch classes, duplicate-only files, and a file with one valid
    and one invalid row. Record whether each import is accepted or rejected;
    verify rejected input leaves the library and editor untouched. Verify the
    documented text format with a small hand-written file and capture any parser
-   diagnostics. The expected format is one scale per line, with semitone
+   diagnostics. Include a comment containing `=`; it must be ignored. The
+   expected format is one scale per line, with semitone
    intervals from the root; `0` is required. Blank lines and `#` comments are
    ignored, and `[Category]` headings are optional:
 
@@ -129,13 +134,13 @@ a 32/32 active fixture. Repeat in Program and Grid.
    MIDI 24, Maximum MIDI 60. Inspect selected scope and parameters. Verify parameter
    edits alone leave source/history/draft unchanged. Click **Apply** and verify
    direct application without a prompt.
-   Verify P01..P05 raw MIDI 24,28,51,40,43, flags preserved and P06..P32 intact.
+   Verify P01..P05 raw MIDI 28,51,40,43,32, flags preserved and P06..P32 intact.
    Verify Seed advances to 2; Apply again and verify a fresh result and Seed 3.
    Undo the second Apply. Set Seed to 1 and Apply: the original result stays
    unchanged and Seed advances to 2. Undo the first edit and Redo it.
    Undo; reset Seed to 1, repeat with All 32 stored and inspect inactive entries as well.
 5. Repeat **Randomize TIME** using Seed 1, NOTE/TIE/REST weights 2/1/1, both
-   scopes and direct Apply. The first five commands are N,N,R,N,T;
+   scopes and direct Apply. The first five commands are N,R,N,T,N;
    Active retains T08..T32. Inspect TIME 01 normalization using the canonical
    13.5 fixture. Scope changes never change LAST STEP or PITCH span.
    Confirm PITCH/TIME retain separate next seeds and Last used values when

@@ -5738,6 +5738,78 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           if not sequence.same_source(before.source,reset.source) or before.output_policy~=reset.output_policy or
               before.pb_range~=reset.pb_range then callbacks.acid_undo();exact(before) end
         end
+        do
+          local library=require("model.scales")
+          local original=state()
+          local raw=song.tool_data
+          suppress_captured_notifiers=true
+          controls.acid_scale_search.text="Major Pentatonic"
+          suppress_captured_notifiers=false
+          callbacks.acid_scale_search("Major Pentatonic")
+          assert(song.tool_data==raw,"Scale search wrote song data")
+          local preset
+          for index,name in ipairs(controls.acid_scale_choice.items) do
+            if name=="Major Pentatonic" then preset=index;break end
+          end
+          assert(preset,"Native scale browser did not find Major Pentatonic")
+          value("acid_scale_choice",preset)
+          local applied=state()
+          local c_mask=library.mask({intervals={0,2,4,7,9}},0)
+          assert(applied.source.scale_mask_enabled,"Native scale selection did not enable MASK")
+          for index=1,12 do
+            assert(applied.source.scale_mask[index]==c_mask[index],"Native C preset class differs")
+          end
+          exact(applied)
+          raw=song.tool_data
+          value("acid_scale_root",3)
+          assert(song.tool_data==raw and
+            sequence.same_source(state().source,applied.source),"Root browsing changed native source")
+          value("acid_scale_choice",preset)
+          local d_mask=library.mask({intervals={0,2,4,7,9}},2)
+          for index=1,12 do
+            assert(state().source.scale_mask[index]==d_mask[index],"Native D preset class differs")
+          end
+          callbacks.acid_undo()
+          exact(applied)
+          value("acid_scale_root",1)
+          assert(sequence.same_source(state().source,applied.source),"Returning root changed source")
+          value("acid_scale_follow",true)
+          value("acid_editor_view",1)
+          callbacks.acid_program_select_pitch_01()
+          local entry_before=state()
+          callbacks.acid_program_key_05()
+          local after_allowed=state()
+          callbacks.acid_program_key_02()
+          local after_constrained=state()
+          assert(after_constrained.source.pitch_events[1].note%12==0,
+            "Follow Scale did not snap disallowed native note")
+          if not sequence.same_source(after_allowed.source,after_constrained.source) then
+            callbacks.acid_undo()
+          end
+          if not sequence.same_source(entry_before.source,after_allowed.source) then
+            callbacks.acid_undo()
+          end
+          exact(applied)
+          value("acid_scale_follow",false)
+          value("acid_operation",9)
+          value("acid_operation_scope",1)
+          value("acid_operation_pitch_seed",1)
+          value("acid_operation_min_note",24)
+          value("acid_operation_max_note",60)
+          callbacks.acid_operation_open()
+          local randomized_one=state()
+          assert(controls.acid_operation_pitch_seed.value==2,"Native first random seed did not advance")
+          callbacks.acid_undo()
+          callbacks.acid_operation_open()
+          local randomized_two=state()
+          assert(randomized_one.source.pitch_events[1].note~=randomized_two.source.pitch_events[1].note,
+            "Consecutive random seeds reused the first masked pitch")
+          callbacks.acid_undo()
+          exact(applied)
+          callbacks.acid_undo()
+          exact(original)
+          assert(controls.acid_scale_root.value==1,"Native browser root did not retain session state")
+        end
         assert(ownership.compare(baseline,assert(ownership.snapshot(phrase))),
           "Extended operations with Live Edit off changed native phrase")
         value("acid_editor_view",original_view)

@@ -4,6 +4,8 @@ local scales = require('model.scales')
 local parsed = assert(scales.parse('\239\187\191# custom scales\r\n[Modes]\r\nDorian = 0, 2, 3, 5, 7, 9, 10\r\n'))
 assert(#parsed == 1 and parsed[1].name == 'Dorian' and parsed[1].category == 'Modes')
 assert(table.concat(parsed[1].intervals, ',') == '0,2,3,5,7,9,10')
+local with_equals_comment = assert(scales.parse('  # This comment = ignored\nExample = 0 3 7\n'))
+assert(#with_equals_comment == 1 and with_equals_comment[1].name == 'Example')
 local malformed = {
   'No equals sign',
   ' = 0 2',
@@ -12,7 +14,6 @@ local malformed = {
   'Out of range = 0 12',
   'Not integer = 0 2.5',
   'Empty =',
-  '#Hidden = 0 2',
   '[Bad]Category',
   '[Bad] = 0 2',
   '[A\tB]\nScale = 0 2',
@@ -108,6 +109,21 @@ assert(merged[1].aliases[1] == 'Ionian' and merged[1].aliases[2] == 'Church mode
 assert(merged[2].name == 'Custom minor')
 local restored = scales.merge({}, assert(scales.parse(scales.encode(merged))))
 assert(#restored == #merged)
+local invalid_name, name_error = scales.merge(builtins, {
+  {name='major', category='Custom', intervals={0,1,3}, aliases={}}
+})
+assert(not invalid_name and name_error:find('major', 1, true), 'case-insensitive preset name conflict')
+local invalid_alias, alias_error = scales.merge(builtins, {
+  {name='New', category='Custom', intervals={0,1,3}, aliases={'Ionian'}}
+})
+assert(not invalid_alias and alias_error:find('Ionian', 1, true), 'aliases must not name different sets')
+local many = {}
+for i = 1, 1500 do
+  many[i] = {name='Variant ' .. i, category='Custom', intervals={0,2,4}, aliases={'Common name'}}
+end
+local collapsed = assert(scales.merge({}, many))
+assert(#collapsed == 1 and #collapsed[1].aliases == 1500,
+  'duplicate-heavy scale imports must keep names without duplicate aliases')
 for index, entry in ipairs(merged) do
   assert(restored[index].name == entry.name and restored[index].category == entry.category)
   assert(signature(restored[index].intervals) == signature(entry.intervals))

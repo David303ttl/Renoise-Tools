@@ -331,7 +331,9 @@ function M.operation_candidate(source,operation,scope,parameters)
     if type(parameters)~="table" or not integer_between(parameters.seed,1,RNG_MAX_SEED) then
       return nil,"seed must be 1..2147483646"
     end
-    state=parameters.seed
+    -- Decorrelate adjacent numeric seeds before the first sampled position.
+    local _,mixed_seed=M.random_choice(parameters.seed,1)
+    state=mixed_seed
     if memory=="pitch" then
       if not integer_between(parameters.min_note,MIN_NOTE,MAX_NOTE) or
           not integer_between(parameters.max_note,MIN_NOTE,MAX_NOTE) or

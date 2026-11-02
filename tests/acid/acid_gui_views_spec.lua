@@ -1537,22 +1537,31 @@ do
 
   writes_before=draft_writes
   root:fire(3)
+  assert(draft_writes==writes_before and root.value==3 and
+    sequencer.same_source(selected,label_context:editor_state().source),
+    "root browsing must not edit source, history or drafts")
+  assert(choice.value==1 or choice.items[choice.value]~="Major Pentatonic",
+    "browser must not label the unchanged mask as Major Pentatonic at a new root")
+  pentatonic_index=assert(find_scale("Major Pentatonic"))
+  choice:fire(pentatonic_index)
   local transposed=assert(sequencer.copy_source(label_context:editor_state().source))
   local d_mask=scales.mask({intervals={0,2,4,7,9}},2)
-  assert(draft_writes==writes_before+1 and root.value==3,
-    "changing root rotates the current mask as one editor change")
+  assert(draft_writes==writes_before+1 and transposed.scale_mask_enabled,
+    "applying a preset at D must be one editor change")
   for index,allowed in ipairs(d_mask) do
-    assert(transposed.scale_mask[index]==allowed,"root change transposes mask class "..index)
+    assert(transposed.scale_mask[index]==allowed,"applied D preset class "..index)
   end
   button("Undo"):fire()
   assert(sequencer.same_source(selected,label_context:editor_state().source) and root.value==3,
-    "Undo restores the mask while the session root remains selected")
-  assert(choice.value==1,"mask mismatch against the current root is shown as Custom/current mask")
-
+    "Undo restores C mask without affecting browser root")
+  assert(choice.value==1 or choice.items[choice.value]~="Major Pentatonic",
+    "Undo must not mislabel the C mask as Major Pentatonic at D")
+  writes_before=draft_writes
   root:fire(1)
-  button("Undo"):fire()
-  assert(sequencer.same_source(selected,label_context:editor_state().source),
-    "returning the root to C and undoing its rotation restores the prior mask")
+  assert(draft_writes==writes_before and
+    sequencer.same_source(selected,label_context:editor_state().source) and
+    choice.items[choice.value]=="Major Pentatonic",
+    "returning browser root to C redetects the mask without source writes")
   control("acid_mask_class_03"):fire(false)
   assert(choice.value==1 or choice.items[choice.value]~="Major Pentatonic",
     "manual mask edits re-detect a matching preset or select Custom/current mask")
@@ -1657,6 +1666,12 @@ do
   assert(tool.preferences.custom_scales.value==preferences_before_bad and
     sequencer.same_source(source_before_import,label_context:editor_state().source),
     "malformed import is atomic and does not alter the saved library or pattern")
+  file_text="[Custom]\nMajor = 0 1 3\n"
+  importer:fire()
+  assert(tool.preferences.custom_scales.value==preferences_before_bad and
+    sequencer.same_source(source_before_import,label_context:editor_state().source) and
+    control("acid_status").text:find("Major",1,true),
+    "a conflicting bundled scale name rejects the entire import")
   app.scale_import_filename=""
   importer:fire()
   assert(tool.preferences.custom_scales.value==preferences_before_bad and

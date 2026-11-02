@@ -24,7 +24,7 @@ local function copy_entry(entry)
 end
 
 function M.builtin()
-  local result = M.merge({}, bundled)
+  local result = assert(M.merge({}, bundled))
   table.sort(result, function(left, right) return left.name < right.name end)
   return result
 end
@@ -41,10 +41,7 @@ function M.parse(text)
   for line in (text .. "\n"):gmatch("(.-)\r?\n") do
     line_number = line_number + 1
     local content = trim(line)
-    if content ~= "" and (content:sub(1, 1) ~= "#" or content:find("=", 1, true)) then
-      if content:sub(1, 1) == "#" then
-        return nil, "line " .. line_number .. ": scale name cannot begin with #"
-      end
+    if content ~= "" and content:sub(1, 1) ~= "#" then
       local section = content:match("^%[([^%]]+)%]$")
       if section then
         section = trim(section)
@@ -64,7 +61,7 @@ function M.parse(text)
         if #name > M.MAX_NAME_BYTES then
           return nil, "line " .. line_number .. ": scale name exceeds " .. M.MAX_NAME_BYTES .. " bytes"
         end
-        if name:sub(1, 1) == "#" or name:find("[%c%[%]]") then
+        if name:find("[%c%[%]]") then
           return nil, "line " .. line_number .. ": scale name contains unsupported characters"
         end
         local intervals, seen = {}, {}
@@ -105,30 +102,45 @@ local function membership_key(entry)
 end
 
 function M.merge(existing, incoming)
-  local result, by_key = {}, {}
+  local result, by_key, by_name = {}, {}, {}
   local function add(entry)
     local key = membership_key(entry)
-    if key == "" then return end
-    local current = by_key[key]
-    if not current then
-      current = copy_entry(entry)
-      by_key[key], result[#result + 1] = current, current
-      return
-    end
+    if key == "" then return true end
     local names = {entry.name}
     for _, alias in ipairs(entry.aliases or {}) do names[#names + 1] = alias end
     for _, name in ipairs(names) do
-      if type(name) == "string" and name ~= "" and name ~= current.name then
-        local found = false
-        for _, alias in ipairs(current.aliases) do
-          if alias == name then found = true; break end
+      if type(name) == "string" and name ~= "" then
+        local owner = by_name[name:lower()]
+        if owner and owner ~= key then
+          return nil, "scale name '" .. name .. "' conflicts with a different note set"
         end
-        if not found then current.aliases[#current.aliases + 1] = name end
       end
     end
+    local current = by_key[key]
+    if not current then
+      current = copy_entry(entry)
+      current.aliases = {}
+      by_key[key], result[#result + 1] = current, current
+    end
+    for _, name in ipairs(names) do
+      if type(name) == "string" and name ~= "" then
+        local normalized = name:lower()
+        if not by_name[normalized] then
+          by_name[normalized] = key
+          if name ~= current.name then current.aliases[#current.aliases + 1] = name end
+        end
+      end
+    end
+    return true
   end
-  for _, entry in ipairs(existing or {}) do add(entry) end
-  for _, entry in ipairs(incoming or {}) do add(entry) end
+  for _, entry in ipairs(existing or {}) do
+    local ok, err = add(entry)
+    if not ok then return nil, err end
+  end
+  for _, entry in ipairs(incoming or {}) do
+    local ok, err = add(entry)
+    if not ok then return nil, err end
+  end
   return result
 end
 

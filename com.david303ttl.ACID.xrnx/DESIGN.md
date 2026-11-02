@@ -160,21 +160,22 @@ in the sequencer owner. Active scope uses the relevant memory bound; All 32
 includes inactive storage without changing bounds. Shared TIME normalization
 retains the leading-NOTE invariant. Pitch randomization retains flags and
 samples uniformly from notes allowed by the enabled mask within its MIDI range.
-An empty intersection rejects the operation. PITCH and TIME retain independent
-next/last seeds for the editor session. Valid Apply records Last used and advances
-only its next seed, wrapping the maximum to 1. Repeat last uses its last seed
-with current parameters/mask without advancing. Undo affects source, not seeds.
-Reset preserves LAST STEP and
-label/custom metadata while resetting the remaining documented editor fields.
+An empty intersection rejects the operation. Each random operation advances
+the Park–Miller state once before the first draw to diversify adjacent seeds.
+PITCH and TIME retain independent next/last session seeds. Valid Apply records
+Last used and increments only its next seed, wrapping the maximum to 1. Repeat
+last reuses its last seed with current parameters/mask without advancing.
+Undo affects source, not seeds. Reset preserves LAST STEP and label/custom
+metadata while resetting the other documented editor fields.
 All changed candidates use one ordinary editor history/draft admission.
 
-The scale library deduplicates root-relative pitch-class membership and retains
-alternate names as searchable aliases. Root, category and scale controls apply
-the existing mask; source persistence keeps that mask rather than scale names.
-Root/browser/Follow scale controls are session UI state. Follow scale constrains
-new Program/Grid note entry using shared nearest-note resolution, preserving
-flags and existing raw notes. Custom text libraries persist in tool preferences;
-imports validate and save atomically before replacing the browser catalog.
+The scale library deduplicates root-relative membership and retains aliases.
+Root/category/search select a browser view without editing source; selecting
+a scale applies its absolute mask at the chosen root. Source persistence stores
+only the mask, not preset names. Root/browser/Follow are session UI state.
+Follow constrains new Program/Grid notes with nearest-note resolution, preserving
+flags and existing raw notes. Imported libraries persist in tool preferences.
+Name collisions across distinct memberships reject import before saving.
 See [the custom scale format](../docs/acid-scales.md).
 
 ## Live Edit and drafts

@@ -1056,18 +1056,18 @@ no-op means no history, draft write, or Live Edit request.
 ### 8.5 Deterministic randomization
 
 1. Use Park–Miller with modulus `2147483647`, multiplier `16807`, zero
-   increment, seed integer 1..2147483646. Do not use global RNG, time seeds,
-   floating nondeterminism, or extra draws.
-2. For each choice, first update
+   increment, seed integer 1..2147483646. Advance the operation state once
+   before sampling; use no global RNG, time seeds or incidental draws.
+2. For each sampled choice, update
    `state = (state * 16807) mod 2147483647`; choose
    `bucket = floor((state - 1) * N / 2147483646)` in 0..N-1.
 3. Draw once for every generated position, even if a pitch range yields one
    possible value. This keeps the state progression independent of range size.
-4. Seed 1 first states are exactly `16807, 282475249, 1622650073,
-   984943658, 1144108930`. Pitch draws over 24..60 yield notes
-   `[24,28,51,40,43]`.
+4. Seed 1 primitive states are `16807, 282475249, 1622650073,
+   984943658, 1144108930`. After the operation's initialization advance,
+   PITCH draws over 24..60 yield `[28,51,40,43,32]`.
 5. TIME weights NOTE/TIE/REST `[2,1,1]` with seed 1 yield
-   `[N,N,R,N,T]`. At TIME 01, generated TIE becomes NOTE without another draw.
+   `[N,R,N,T,N]`. At TIME 01, generated TIE becomes NOTE without another draw.
 6. PITCH Randomize selects inclusive min/max within 24..60, seed and scope.
    An enabled mask filters the candidate notes before uniform sampling; reject
    a range with no allowed notes. With mask disabled, sample the full range.
@@ -2180,11 +2180,11 @@ rollback result is uncertain; do not overwrite evidence to continue.
 3. Select Randomize PITCH and inspect inline parameters and selected scope.
    Change parameters and verify source/history/draft remain unchanged until
    Apply. Apply directly without a prompt.
-   Run fixed seed 1 over pitch range 24..60; verify notes 24,28,51,40,43 for
-   first five generated positions and exact canonical controls. Confirm flags
+   Disable MASK. Run fixed seed 1 over pitch range 24..60; verify notes
+   28,51,40,43,32 for the first five generated positions and exact canonical controls. Confirm flags
    retained and random pitch candidates follow the enabled mask.
 4. Repeat the inline parameter and direct Apply checks for Randomize TIME in
-   both views. Run TIME weights 2/1/1 seed 1; verify N,N,R,N,T vector, with T at TIME 01
+   both views. Run TIME weights 2/1/1 seed 1; verify N,R,N,T,N vector, with T at TIME 01
    normalized only if it lands there and no extra draw behavior via subsequent
    expected positions. Use a testable pattern/scope to expose TIME 01.
 5. Undo/redo each operation and save/reopen source, mask, labels, settings and

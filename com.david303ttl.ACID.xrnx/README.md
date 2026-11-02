@@ -66,22 +66,27 @@ boundary interpretation.
 
 ## Scales and randomization
 
-In **Extended / Clear**, choose a root and scale to enable MASK. Categories and
-search include alternate names; identical note sets appear once. Edit the note
-checkboxes for a custom mask. MASK preserves raw notes and filters audition/output.
+In **Extended / Clear**, choose a root and then a scale to apply its MASK.
+Root, category, and search are browsing controls and never change the stored
+mask by themselves. Selecting a scale applies the absolute note set at that
+root as one undoable edit. Identical note sets appear once with searchable
+aliases. Edit the checkboxes for a custom mask. MASK preserves raw notes and
+filters audition/output.
 
 With MASK enabled, **Randomize PITCH** samples allowed notes in the MIDI range.
 **Follow scale** snaps Program/Grid note entry; green keys mark allowed classes.
 Follow defaults off. Root/browser/Follow are session controls; MASK is saved with
 the pattern and supports Undo/Redo.
 
-PITCH and TIME have separate next seeds and **Last used** values. **Apply**
-advances only that operation's seed, wrapping 2147483646 to 1. **Repeat last**
+PITCH and TIME have separate next seeds and **Last used** values. Random
+operations decorrelate adjacent seeds before sampling. **Apply** increments
+only that operation's seed, wrapping 2147483646 to 1. **Repeat last**
 reuses Last used with current settings/mask without advancing the next seed.
 Undo restores the pattern, not seed controls. Seeds last for the editor session.
 
 **Import .txt** adds scales such as `My scale = 0 2 3 5 7 9 10`, saves them in
-tool preferences and deduplicates them. See [the text format](../docs/acid-scales.md).
+tool preferences and deduplicates them. Conflicting names with different
+intervals are rejected. See [the text format](../docs/acid-scales.md).
 
 ## Generating phrases
 

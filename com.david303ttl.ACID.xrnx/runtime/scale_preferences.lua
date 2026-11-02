@@ -60,10 +60,10 @@ local function ensure_property(tool)
 end
 
 function M.load(tool)
-  local property = ensure_property(tool)
-  if not property then return "" end
+  local property, err = ensure_property(tool)
+  if not property then return nil, err end
   local value = property_value(property)
-  if type(value) ~= "string" then return "" end
+  if type(value) ~= "string" then return nil, "Custom scale preferences must be text" end
   return value
 end
 
@@ -71,9 +71,18 @@ function M.save(tool, text)
   if type(text) ~= "string" then return nil, "Scale library must be text" end
   local property, err = ensure_property(tool)
   if not property then return nil, err end
+  local previous = property_value(property)
+  if type(previous) ~= "string" then return nil, "Custom scale preferences must be text" end
+  if previous == text then return true end
   local assigned = pcall(function() property.value = text end)
-  if not assigned then return nil, "Could not save custom scale preferences" end
-  return true
+  if assigned and property_value(property) == text then return true end
+  if property_value(property) ~= previous then
+    local restored = pcall(function() property.value = previous end)
+    if not restored or property_value(property) ~= previous then
+      return nil, "Custom scale preferences may have changed; reopen the tool", true
+    end
+  end
+  return nil, "Could not verify custom scale preferences"
 end
 
 return M

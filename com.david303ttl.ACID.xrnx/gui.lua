@@ -228,9 +228,13 @@ function M.show()
   local accepted_pitch_baseline
   local updating=false
   local scale_state={root=0,follow=false}
-  scale_state.custom,scale_state.load_error=scales.parse(scale_preferences.load(tool))
-  scale_state.custom=scale_state.custom or {}
-  scale_state.catalog=scales.merge(scales.builtin(),scale_state.custom)
+  local custom_text,load_error=scale_preferences.load(tool)
+  local custom,parse_error=custom_text and scales.parse(custom_text) or nil
+  scale_state.custom=custom or {}
+  local builtin=scales.builtin()
+  local catalog,catalog_error=scales.merge(builtin,scale_state.custom)
+  scale_state.catalog=catalog or builtin
+  scale_state.load_error=load_error or parse_error or catalog_error
   local preview_cycle=1
   local update
   local runtime
@@ -1985,16 +1989,9 @@ function M.show()
     root_choice=vb:popup{id="acid_scale_root",items=keys,width=SCALE_UI.root_width,value=1,
       notifier=function(value)
         if updating then return end
-        if not admit_scale_edit() then return end
-        local root=value-1
-        local bits={}
-        for class=0,scales.PITCH_CLASSES-1 do
-          bits[(class+root-scale_state.root)%scales.PITCH_CLASSES+1]=pattern.scale_mask[class+1]
-        end
-        local candidate,reason=sequencer.mask_candidate(pattern,pattern.scale_mask_enabled,bits)
-        if not candidate then update();status.text=tostring(reason);return end
-        scale_state.root=root
-        apply_candidate(candidate)
+        scale_state.root=value-1
+        release_audition()
+        update()
       end}
     category_choice=vb:popup{id="acid_scale_category",items=category_names,width=SCALE_UI.category_width,value=1,
       notifier=function(value)
@@ -2028,6 +2025,10 @@ function M.show()
     local import_scales=vb:button{id="acid_scale_import",text="Import .txt",width=SCALE_UI.import_width,
       notifier=function()
         if guard_stage() then return end
+        if scale_state.load_error then
+          status.text="Cannot import scales: "..tostring(scale_state.load_error)
+          return
+        end
         local filename=renoise.app():prompt_for_filename_to_read({"txt"},"Import custom scales")
         if filename=="" then return end
         local file,open_error=io.open(filename,"rb")
@@ -2038,15 +2039,22 @@ function M.show()
         local entries,reason=scales.parse(text)
         if not entries then status.text="Cannot import scales: "..tostring(reason);return end
         if #entries==0 then status.text="No scale definitions found.";return end
-        local merged=scales.merge(scale_state.custom,entries)
+        local merged,merge_error=scales.merge(scale_state.custom,entries)
+        if not merged then status.text="Cannot import scales: "..tostring(merge_error);return end
+        local catalog,catalog_error=scales.merge(builtin,merged)
+        if not catalog then status.text="Cannot import scales: "..tostring(catalog_error);return end
         local serialized=scales.encode(merged)
         if #serialized>scales.MAX_TEXT_BYTES then
           status.text="Custom scale library exceeds "..scales.MAX_TEXT_BYTES.." bytes.";return
         end
-        local saved,save_error=scale_preferences.save(tool,serialized)
-        if not saved then status.text="Cannot save scales: "..tostring(save_error);return end
+        local saved,save_error,uncertain=scale_preferences.save(tool,serialized)
+        if not saved then
+          status.text="Cannot save scales: "..tostring(save_error)
+          if uncertain then scale_state.load_error=save_error;update() end
+          return
+        end
         scale_state.custom=merged
-        scale_state.catalog=scales.merge(scales.builtin(),scale_state.custom)
+        scale_state.catalog=catalog
         scale_category,scale_query="All",""
         rebuild_categories()
         updating=true
@@ -2058,9 +2066,9 @@ function M.show()
       end}
     scale_state.refresh=function()
       render(root_choice,"value",scale_state.root+1)
-      render(root_choice,"active",stage==nil)
+      render(root_choice,"active",true)
       render(scale_choice,"active",stage==nil)
-      render(import_scales,"active",stage==nil)
+      render(import_scales,"active",stage==nil and not scale_state.load_error)
       render(follow_choice,"value",scale_state.follow)
       local selected=1
       local matched
@@ -2090,7 +2098,7 @@ function M.show()
       vb:text{text="Follow scale"},ui.scale_controls.follow},
     vb:row{spacing=6,vb:text{text="Search"},ui.scale_controls.search,ui.scale_controls.import},ui.scale_controls.detail,mask_row,
     vb:text{text="Apply advances this operation's seed. Repeat last reuses Last used with current settings."},
-    vb:text{text="MASK restricts output and random notes. Follow scale snaps new note edits; green keys are allowed."}}
+    vb:text{text="Root browses without editing; choose a scale to apply MASK. Follow snaps new notes."}}
   end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,
     vb:text{text="OUTPUT",font="bold"},
@@ -2182,6 +2190,9 @@ function M.show()
       end}},
     details_button,details,audition_status,status}
   select_instrument(selected_instrument)
+  if scale_state.load_error then
+    status.text="Custom scales unavailable: "..tostring(scale_state.load_error).."; import disabled."
+  end
   native_observers:attach(song,runtime,function()
     release_audition()
     native_projection_dirty=true
