@@ -174,7 +174,7 @@ Copy and scope selection do not save or generate. Paste is one ordinary edit;
 an identical paste does nothing. Paste into New Phrase follows the usual
 Live Edit or manual Generate authorization.
 
-**Rename** accepts 1–32 ASCII characters: start with a letter or digit, followed
+**Rename** accepts 1â€“32 ASCII characters: start with a letter or digit, followed
 by letters, digits, spaces, underscores, periods or hyphens. Input is never
 trimmed or truncated. Labels are song metadata, may repeat and do not change
 the sealed native phrase name. A fresh draft is Untitled; first generation
@@ -189,7 +189,7 @@ successful durable save and exact readback; failure aborts the duplicate.
 It never substitutes the dirty draft for committed music.
 
 In **Extended / Clear**, the optional twelve-class mask resolves raw pitches
-to the nearest enabled note within MIDI 24–60, with lower-note ties. Raw values
+to the nearest enabled note within MIDI 24â€“60, with lower-note ties. Raw values
 remain intact. A disabled empty mask is valid; enabling it or removing its
 last enabled class is rejected. Decoded Start/Repeating pages show four TIME
 steps at a time, including consumed PITCH index, raw and resolved note, and
@@ -200,7 +200,7 @@ with confirmation before applying. Clear PITCH resets notes and both flags;
 Clear TIME sets NOTE. Clear TIE changes TIE to NOTE, while TIE-to-REST changes
 it to REST. Clear REST and REST-to-NOTE change REST to NOTE. Clear ACCENT or
 SLIDE changes only that flag. Seeded PITCH randomization uses a selected raw
-24–60 range and retains flags; TIME randomization uses NOTE/TIE/REST weights.
+24â€“60 range and retains flags; TIME randomization uses NOTE/TIE/REST weights.
 TIME 01 normalizes a drawn TIE to NOTE. Scope never changes active bounds;
 All 32 also edits inactive storage. Each changed result is one undoable edit.
 

@@ -12,7 +12,7 @@ ACCENT and outgoing SLIDE belong to PITCH entries. Inactive stored entries are
 preserved. Editor view, output policy and target capabilities are separate from
 musical source and its ownership hash. Source also requires timing mode, a
 mask-enabled boolean and twelve pitch-class booleans. Notes and resolved notes
-are limited to MIDI 24–60. An enabled mask requires at least one selected class;
+are limited to MIDI 24â€“60. An enabled mask requires at least one selected class;
 a disabled all-false mask remains valid. Shared resolution chooses the nearest
 allowed note, breaking ties downward, without rewriting raw controls. One
 prepared source snapshot supplies canonical resolved note/key/octave records
@@ -137,7 +137,7 @@ friendly labels never participate in the seal.
 
 ## Metadata and source operations
 
-Labels are song-local 1–32-byte ASCII metadata with an initial alphanumeric
+Labels are song-local 1â€“32-byte ASCII metadata with an initial alphanumeric
 and subsequent alphanumerics, spaces, underscores, periods or hyphens. A
 label-only transition persists before history acceptance and never renders,
 dirties source or increments phrase revision. Failure retains accepted history
