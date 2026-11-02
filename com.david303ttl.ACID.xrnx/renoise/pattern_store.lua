@@ -428,6 +428,14 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
     return nil,"ACID draft write outcome is uncertain; readback failed: "..verify_error
   end
   if written==next_raw then
+    if not ok then
+      pcall(function()song.tool_data=previous end)
+      local restored,restore_error=raw_data(song)
+      if not restore_error and restored==previous then
+        return nil,"ACID draft setter failed; exact candidate was restored: "..tostring(write_error)
+      end
+      return nil,"ACID draft setter failed; candidate rollback is uncertain"
+    end
     decoded_raw,decoded_entries,decoded_drafts=next_raw,entries,drafts
     return true
   end
@@ -454,7 +462,7 @@ function M.clear_draft(song,instrument,phrase,...)
   return write_draft(song,instrument,phrase,nil,nil,nil,true)
 end
 
-function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,pattern,output_policy,pb_range)
+function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,pattern,output_policy,pb_range,guard,accept)
   if not valid_label(label) or type(label_custom)~="boolean" then
     return nil,"invalid ACID phrase label"
   end
@@ -475,44 +483,52 @@ function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,p
   if not instrument_index then return nil,phrase_id end
   local pending_key,pending_error=draft_key(instrument_index,phrase_id)
   if not pending_key then return nil,pending_error end
+  if pattern then
+    local valid,source_error=interpreter.validate_source(pattern)
+    if not valid then return nil,source_error end
+    if phrase_id==0 then
+      output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+      pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
+    end
+    if not policies.valid_output_policy(output_policy) or not policies.valid_pb_range(pb_range) then
+      return nil,"Invalid pending source settings"
+    end
+  end
+  local pending
   if phrase_id>0 then
     local entry=entries[phrase_id]
     if not entry then return nil,"ACID source missing from song data" end
     entry=copy_map(entry)
     entries[phrase_id]=entry
     entry.label,entry.label_custom=label,label_custom
-    local pending,key,err=saved_phrase_draft(drafts,phrase_id)
+    local key,err
+    pending,key,err=saved_phrase_draft(drafts,phrase_id)
     if err then return nil,err end
     if pending then pending=copy_map(pending);drafts[key]=pending end
     if not pending and pattern then
-      local valid,source_error=interpreter.validate_source(pattern)
-      if not valid then return nil,source_error end
       if not sequencer.same_source(pattern,entry.pattern) or output_policy~=entry.output_policy or pb_range~=entry.pb_range then
-        pending={pattern=assert(sequencer.copy_source(pattern)),output_policy=output_policy,
-          pb_range=pb_range,instrument_name=instrument_name,instrument_index=instrument_index,
+        pending={instrument_name=instrument_name,instrument_index=instrument_index,
           phrase_id=phrase_id}
         drafts[assert(draft_key(instrument_index,phrase_id))]=pending
       end
     end
-    if pending then pending.label,pending.label_custom=label,label_custom end
   else
-    local pending=drafts[pending_key]
+    pending=drafts[pending_key]
     if pending and pending.instrument_name~=instrument_name then
       return nil,"New phrase draft destination changed"
     end
     if pending then pending=copy_map(pending);drafts[pending_key]=pending end
     if not pending then
-      local valid,source_error=interpreter.validate_source(pattern)
-      if not valid then return nil,source_error end
-      output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
-      pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
-      if not policies.valid_output_policy(output_policy) or not policies.valid_pb_range(pb_range) then
-        return nil,"Invalid pending New phrase source settings"
-      end
-      pending={pattern=assert(sequencer.copy_source(pattern)),output_policy=output_policy,
-        pb_range=pb_range,instrument_name=instrument_name,instrument_index=instrument_index,
+      if not pattern then return nil,"Pending New phrase source is unavailable" end
+      pending={instrument_name=instrument_name,instrument_index=instrument_index,
         phrase_id=0}
       drafts[pending_key]=pending
+    end
+  end
+  if pending then
+    if pattern then
+      pending.pattern=assert(sequencer.copy_source(pattern))
+      pending.output_policy,pending.pb_range=output_policy,pb_range
     end
     pending.label,pending.label_custom=label,label_custom
   end
@@ -521,17 +537,37 @@ function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,p
   local current,current_error=raw_data(song)
   if current==nil and current_error then return nil,current_error end
   if current~=previous then return nil,"ACID song data changed before label write" end
+  if guard then
+    local guarded,valid=pcall(guard)
+    if not guarded or valid~=true then return nil,"Label authorization changed before write",M.LABEL_WRITE_UNCHANGED end
+  end
+  current,current_error=raw_data(song)
+  if current_error or current~=previous then return nil,"ACID song data changed before label write",M.LABEL_WRITE_UNCHANGED end
   local ok,write_error=pcall(function()song.tool_data=candidate end)
   local written,verify_error=raw_data(song)
   if verify_error then return nil,"ACID label write outcome is uncertain: "..verify_error,M.LABEL_WRITE_UNCERTAIN end
   if written==candidate then
-    if not ok then
-      pcall(function()song.tool_data=previous end)
-      local after=raw_data(song)
-      if after==previous then
-        return nil,"ACID label setter failed after mutation; exact candidate was restored: "..tostring(write_error),M.LABEL_WRITE_UNCHANGED
+    local authorized,accepted=true,true
+    if ok and guard then
+      local called,valid=pcall(guard)
+      authorized=called and valid==true
+    end
+    if ok and authorized and accept then
+      local called,valid=pcall(accept)
+      accepted=called and valid==true
+    end
+    if not ok or not authorized or not accepted then
+      local reason=not ok and tostring(write_error) or "Label authorization changed before acceptance"
+      local rollback_current,rollback_error=raw_data(song)
+      if rollback_error or rollback_current~=candidate then
+        return nil,reason.."; preserved changed storage",M.LABEL_WRITE_UNCERTAIN
       end
-      return nil,"ACID label setter failed and candidate rollback is uncertain",M.LABEL_WRITE_UNCERTAIN
+      pcall(function()song.tool_data=previous end)
+      local after,after_error=raw_data(song)
+      if not after_error and after==previous then
+        return nil,reason.."; exact candidate was restored",M.LABEL_WRITE_UNCHANGED
+      end
+      return nil,reason.."; candidate rollback is uncertain",M.LABEL_WRITE_UNCERTAIN
     end
     decoded_raw,decoded_entries,decoded_drafts=candidate,entries,drafts
     return true,candidate,M.LABEL_WRITE_COMMITTED
@@ -667,7 +703,8 @@ function M.candidate_status(candidate)
   if not state then return nil,"invalid ACID store candidate" end
   return {write_attempted=state.write_attempted,written_verified=state.written_verified,
     restore_verified=state.restore_verified,integrity_uncertain=state.integrity_uncertain,
-    error=state.error,previous_raw=state.previous_raw,written_raw=state.written_raw}
+    error=state.error,previous_raw=state.previous_raw,written_raw=state.written_raw,
+    draft_removal=state.removal~=nil}
 end
 
 function M.release_candidate(candidate)

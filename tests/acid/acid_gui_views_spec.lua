@@ -102,6 +102,8 @@ local builder=view_builder()
 local dialog
 local app={}
 function app:show_custom_dialog(_,content)
+  assert(not content.dialog_attached,"dialog content cannot be attached twice")
+  content.dialog_attached=true
   dialog={visible=true,content=content,show=function()end,close=function(self)self.visible=false end}
   return dialog
 end
@@ -298,8 +300,10 @@ local runtime_context=require("runtime.context")
 local new_context=runtime_context.new
 local recovery_action_reads=0
 local recovery_reason_fixture
+local label_context
 runtime_context.new=function(options)
   local context=new_context(options)
+  label_context=context
   local recovery_entries=context.recovery_entries
   context.recovery_entries=function(self,...)
     recovery_action_reads=recovery_action_reads+1
@@ -442,9 +446,11 @@ for index,tab in ipairs(workspace_tabs) do
       tab.." selects its workspace panel without leaving other panels visible")
   end
 end
-assert(text_control("Session copy and paste controls are not available in this editor build.") and
-  text_control("Extended transformations and scoped clear controls are not available here."),
-  "Pattern / Copy and Extended / Clear remain explicit deferred-operation placeholders")
+assert(control("acid_clipboard_copy").active~=false and not control("acid_clipboard_paste").active and
+  control("acid_clipboard_status").text=="Clipboard empty",
+  "Pattern / Copy exposes Copy and disables empty Paste")
+assert(text_control("Extended transformations and scoped clear controls are not available here."),
+  "Extended / Clear retains its deferred-operation placeholder")
 assert(control("acid_output_policy").active and control("acid_pb_range").active,
   "Output provides active phrase policy and PB Range controls")
 assert_navigation_neutral(navigation,"workspace tab navigation")
@@ -1159,6 +1165,76 @@ assert(control("acid_program_pitch_summary").text:find("MODIFIED",1,true) and
 
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")
+do
+  local main_dialog=dialog
+  local rename=label_context.rename_label
+  local failing=false
+  local writes=0
+  label_context.rename_label=function(_,label,custom,guard)
+    assert(custom==true and guard(),"label write requires current accepted history")
+    writes=writes+1
+    if failing then return false,"injected label persistence failure" end
+    return true
+  end
+  local function save_label(value)
+    control("acid_label_rename"):fire()
+    control("acid_label_field"):fire(value)
+    control("acid_label_save"):fire()
+    dialog=main_dialog
+  end
+  local renders,draft_count=render_calls,draft_writes
+  save_label("Accepted A")
+  assert(control("acid_label_accepted").text=="Accepted A")
+  control("acid_label_rename"):fire()
+  local closed_label_dialog=dialog
+  closed_label_dialog:close()
+  control("acid_label_rename"):fire()
+  assert(not rawequal(dialog.content,closed_label_dialog.content),
+    "reopening a natively closed label dialog builds fresh content")
+  control("acid_label_discard"):fire()
+  dialog=main_dialog
+  save_label("Accepted B")
+  assert(control("acid_label_accepted").text=="Accepted B")
+  assert(render_calls==renders and draft_writes==draft_count,
+    "label-only rename does not use musical edit or generation paths")
+  failing=true
+  button("Undo"):fire()
+  dialog=main_dialog
+  assert(control("acid_label_field").value=="Accepted A" and not control("acid_label_field").active)
+  assert(control("acid_label_accepted").text=="Accepted B" and
+    control("acid_label_error").text:find("injected",1,true),
+    "failed metadata Undo retains accepted label and proposed history transition")
+  local pending_writes=writes
+  button("Undo"):fire()
+  button("Redo"):fire()
+  control("acid_clipboard_paste"):fire()
+  program_key(3):fire()
+  phrase_popup:fire(2)
+  assert(writes==pending_writes and control("acid_label_accepted").text=="Accepted B" and
+    render_calls==renders and draft_writes==draft_count,
+    "unresolved metadata attempt blocks ambiguous actions and direct source edits")
+  failing=false
+  control("acid_label_retry"):fire()
+  assert(control("acid_label_accepted").text=="Accepted A")
+  button("Redo"):fire()
+  assert(control("acid_label_accepted").text=="Accepted B",
+    "Retry commits original Undo proposal instead of appending a rename")
+  failing=true
+  save_label("Attempted C")
+  assert(control("acid_label_field").value=="Attempted C" and
+    control("acid_label_accepted").text=="Accepted B")
+  control("acid_label_discard"):fire()
+  assert(control("acid_label_field").value=="Accepted B" and
+    control("acid_label_accepted").text=="Accepted B",
+    "Discard Attempt restores accepted field without accepting failed text")
+  failing=false
+  button("Undo"):fire()
+  assert(control("acid_label_accepted").text=="Accepted A",
+    "Undo after discard uses accepted history")
+  assert(render_calls==renders and draft_writes==draft_count)
+  label_context.rename_label=rename
+  dialog=main_dialog
+end
 dialog.visible=false
 tool.app_idle_observable:fire()
 assert(song.selected_phrase_observable:listener_count()==0,

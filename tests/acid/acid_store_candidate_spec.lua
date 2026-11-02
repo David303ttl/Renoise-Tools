@@ -83,6 +83,30 @@ for _,operation in ipairs({"label","draft"}) do
     assert(persisted_label=="Pattern 1" and persisted_custom==false)
   end
 end
+for _,restore_fails in ipairs({false,true}) do
+  local song,ins,owned=fresh()
+  local previous=song.tool_data
+  local stored,attempts=previous,0
+  song.tool_data=nil
+  setmetatable(song,{
+    __index=function(_,key)if key=="tool_data" then return stored end end,
+    __newindex=function(target,key,value)
+      if key~="tool_data" then rawset(target,key,value);return end
+      attempts=attempts+1
+      if attempts==1 then stored=value;error("draft setter failed after assignment") end
+      if restore_fails then error("draft restore failed") end
+      stored=value
+    end})
+  local saved,reason=store.write_draft_metadata(song,ins,owned,seq.new_pattern(7),"repeat",0,"Rejected",true)
+  assert(not saved and type(reason)=="string","throwing draft setter was accepted")
+  assert(attempts==2,"throwing draft setter did not attempt exact rollback")
+  if restore_fails then
+    assert(stored~=previous and reason:find("uncertain",1,true),"failed restore concealed changed storage")
+  else
+    assert(stored==previous and store.read_draft(song,ins,owned)==nil,
+      "failed draft publication did not restore exact store/cache preimage")
+  end
+end
 local byte_song,byte_ins=fresh()
 assert(store.write_draft(byte_song,byte_ins,nil,seq.new_pattern(6),"repeat",0))
 local byte_candidate=prepare(byte_song,3)

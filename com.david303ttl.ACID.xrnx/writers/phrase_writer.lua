@@ -178,6 +178,16 @@ local function checkpoint(request)
   return true
 end
 
+local function origin_checkpoint(request,candidate)
+  if request.operation~="duplicate" then return true end
+  if type(request.validate_origin_checkpoint)~="function" then
+    return false,"Duplicate origin authorization is unavailable"
+  end
+  local ok,valid,reason=pcall(request.validate_origin_checkpoint,request,candidate)
+  if not ok then return false,"Cannot inspect duplicate origin authorization" end
+  return valid==true,reason or "Duplicate origin authorization changed"
+end
+
 local function lpb_timing(song)
   local ok, valid = pcall(function()
     return renoise.Transport.TIMING_MODEL_LPB ~= nil and
@@ -210,6 +220,10 @@ local function prepare(request, done, kind)
   if type(request) ~= "table" then return nil, failure(request, "source.request", "source", "A runtime request is required") end
   if type(done) ~= "function" then return nil, failure(request, "source.callback", "source", "A terminal callback is required") end
   if request.kind ~= kind then return nil, failure(request, "source.request_kind", "source", "Request kind does not match the writer operation") end
+  if request.operation~=nil and request.operation~="duplicate" or
+      request.operation=="duplicate" and kind~="create" then
+    return nil,failure(request,"source.operation","source","Invalid writer operation intent")
+  end
   if request.token == nil then return nil, failure(request, "source.token", "source", "A request token is required") end
   if not policies.valid_output_policy(request.output_policy) then
     return nil, failure(request, "source.output_policy", "source", "Invalid phrase output policy")
@@ -326,6 +340,11 @@ local function prepare(request, done, kind)
   if not valid then
     store.release_candidate(candidate)
     return nil, failure(request, "safety.target_changed", "safety", checkpoint_error)
+  end
+  valid,checkpoint_error=origin_checkpoint(request)
+  if not valid then
+    store.release_candidate(candidate)
+    return nil,failure(request,"safety.duplicate_origin","safety",checkpoint_error)
   end
   return {
     kind = kind, request = request, done = done, token = request.token, epoch = request.epoch,
@@ -526,6 +545,8 @@ local function mutation_body(job)
   if not job.replace then
     local before = inventory(job.instrument)
     if not same_inventory(job.inventory_before, before) then error("Instrument phrase inventory changed before create", 0) end
+    local authorized,origin_error=origin_checkpoint(request)
+    if not authorized then error(origin_error,0) end
     local inserted
     inserted, returned = pcall(function()
       return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
@@ -598,6 +619,8 @@ local function mutation_body(job)
     error("Create inventory no longer contains only the generated phrase addition", 0)
   end
   if job.cancel_requested or not token_current(request) then error("Generation was invalidated before source commit", 0) end
+  local authorized,origin_error=origin_checkpoint(request)
+  if not authorized then error(origin_error,0) end
   local committed, commit_error = store.commit(job.song, job.store_candidate)
   if not committed then error("Source revision commit failed: " .. tostring(commit_error), 0) end
   job.committed = true
@@ -615,6 +638,8 @@ local function mutation_body(job)
   if not sequencer.same_source(classified.source, job.output.source) then
     error("final phrase source snapshot differs from frozen input", 0)
   end
+  authorized,origin_error=origin_checkpoint(request,job.store_candidate)
+  if not authorized then error(origin_error,0) end
   local baseline = { id = job.id, source = classified.source, settings = classified.settings,
     snapshot = classified.baseline, planning_inputs = classified.planning_inputs }
   if job.cancel_requested or not token_current(request) then error("Generation was invalidated during source commit", 0) end

@@ -4232,6 +4232,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   end
   reset_profile()
   local phrase
+  local duplicate_phrase
   local context
   local observer
   local function close_test_gui()
@@ -4291,6 +4292,15 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     ownership.matches_snapshot=original_matches_snapshot
     validator.classify=original_classify
     validator.classify_against=original_classify_against
+    if duplicate_phrase then
+      for index,item in ipairs(instrument.phrases) do
+        if rawequal(item,duplicate_phrase) then
+          pcall(function()instrument:delete_phrase_at(index)end)
+          break
+        end
+      end
+      duplicate_phrase=nil
+    end
     if phrase then
       for index,item in ipairs(instrument.phrases) do
         if rawequal(item,phrase) then
@@ -4954,6 +4964,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       original_view_builder=nil
       return nil,"GUI test view capture could not wrap ViewBuilder: "..tostring(wrap_error)
     end
+    local captured_builder_factory=renoise.ViewBuilder
     original_app_factory=renoise.app
     local app_factory=original_app_factory
     local app_wrapped,app_wrap_error=pcall(function()
@@ -5439,6 +5450,159 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     local entry_ok,entry_error=verify_program_entry()
     if not entry_ok then close_test_gui();return nil,entry_error end
+    local function verify_clipboard()
+      local before=assert(gui_context:editor_state())
+      local raw=song.tool_data
+      local baseline=assert(ownership.snapshot(phrase))
+      local selection=native_selection(song)
+      local revisions=gui_context:revision_state()
+      local function scope(value)
+        suppress_captured_notifiers=true
+        controls.acid_clipboard_scope.value=value
+        suppress_captured_notifiers=false
+        callbacks.acid_clipboard_scope(value)
+      end
+      local ok,reason=pcall(function()
+        for index=1,3 do
+          scope(index)
+          callbacks.acid_clipboard_copy()
+          assert(song.tool_data==raw,"Clipboard Copy changed native song storage")
+          local after=gui_context:revision_state()
+          assert(after.edit_revision==revisions.edit_revision and
+            after.operation_serial==revisions.operation_serial,"Clipboard Copy changed request revisions")
+          callbacks.acid_clipboard_paste()
+          assert(song.tool_data==raw,"Identical clipboard Paste changed native song storage")
+        end
+        callbacks.acid_program_select_pitch_01()
+        local key=(before.source.pitch_events[1].key+1)%12
+        callbacks[string.format("acid_program_key_%02d",key+1)]()
+        local edited=assert(gui_context:editor_state())
+        assert(not sequence.same_source(before.source,edited.source),"Clipboard fixture did not edit pitch")
+        local edited_raw=song.tool_data
+        scope(1)
+        assert(not controls.acid_clipboard_paste.active,"Mismatched clipboard scope enabled Paste")
+        callbacks.acid_clipboard_paste()
+        assert(song.tool_data==edited_raw,"Mismatched clipboard Paste changed native song storage")
+        scope(3)
+        callbacks.acid_clipboard_paste()
+        local pasted=assert(gui_context:editor_state())
+        assert(sequence.same_source(before.source,pasted.source),"Clipboard Paste did not restore all source slots")
+        assert(pasted.label==before.label and pasted.label_custom==before.label_custom and
+          pasted.output_policy==before.output_policy and pasted.pb_range==before.pb_range,
+          "Clipboard Paste changed excluded metadata")
+        callbacks.acid_undo()
+        assert(sequence.same_source(edited.source,assert(gui_context:editor_state()).source),
+          "Clipboard Paste was not one undoable edit")
+        callbacks.acid_undo()
+        assert(sequence.same_source(before.source,assert(gui_context:editor_state()).source),
+          "Clipboard verification did not restore source")
+        assert(ownership.compare(baseline,assert(ownership.snapshot(phrase))),
+          "Clipboard operations with Live Edit off changed native phrase")
+        assert(same_native_selection(selection,native_selection(song)),"Clipboard operations changed native selection")
+      end)
+      suppress_captured_notifiers=false
+      if not ok then return nil,"Clipboard native callbacks: "..tostring(reason) end
+      metrics.gui_clipboard_native_functional_checked=true
+      return true
+    end
+    local clipboard_ok,clipboard_error=verify_clipboard()
+    if not clipboard_ok then close_test_gui();return nil,clipboard_error end
+    local function verify_labels()
+      local builder_factory=renoise.ViewBuilder
+      local before=assert(gui_context:editor_state())
+      local id=assert(ownership.id(phrase))
+      local committed,policy,pb=persisted.read_entry(song,id)
+      assert(committed,policy)
+      local baseline=assert(ownership.snapshot(phrase))
+      local revisions=gui_context:revision_state()
+      local name=phrase.name
+      local label=before.label=="Native label check" and "Native label alternate" or "Native label check"
+      local function exact(expected,custom)
+        local source,current_policy,current_pb,current_label,current_custom=persisted.read_entry(song,id)
+        assert(sequence.same_source(committed,source) and policy==current_policy and pb==current_pb,
+          "Label action changed committed source or output settings")
+        assert(current_label==expected and current_custom==custom,"Label action did not persist exact metadata")
+        local state=assert(gui_context:editor_state())
+        assert(state.label==expected and state.label_custom==custom and
+          sequence.same_source(before.source,state.source),"Label action changed dirty musical draft")
+        assert(gui_context:revision_state().edit_revision==revisions.edit_revision,
+          "Label action changed musical edit revision")
+        assert(phrase.name==name and ownership.compare(baseline,assert(ownership.snapshot(phrase))),
+          "Label action changed native phrase or seal")
+      end
+      local ok,reason=pcall(function()
+        renoise.ViewBuilder=captured_builder_factory
+        callbacks.acid_label_rename()
+        controls.acid_label_field.value=label
+        callbacks.acid_label_save()
+        exact(label,true)
+        callbacks.acid_undo()
+        exact(before.label,before.label_custom)
+        callbacks.acid_redo()
+        exact(label,true)
+        callbacks.acid_label_rename()
+        controls.acid_label_field.value=" invalid"
+        local raw=song.tool_data
+        callbacks.acid_label_save()
+        assert(song.tool_data==raw and controls.acid_label_retry.active,
+          "Invalid native label was persisted or lacked Retry")
+        callbacks.acid_undo()
+        exact(label,true)
+        callbacks.acid_label_discard()
+        callbacks.acid_undo()
+        exact(before.label,before.label_custom)
+      end)
+      renoise.ViewBuilder=builder_factory
+      if not ok then return nil,"Label native callbacks: "..tostring(reason) end
+      metrics.gui_labels_native_functional_checked=true
+      metrics.gui_labels_native_undo_verified=false
+      return true
+    end
+    local labels_ok,labels_error=verify_labels()
+    if not labels_ok then close_test_gui();return nil,labels_error end
+    local function verify_duplicate()
+      local before=assert(gui_context:editor_state())
+      local raw=song.tool_data
+      local baseline=assert(ownership.snapshot(phrase))
+      local id=assert(ownership.id(phrase))
+      local committed,policy,pb,label=persisted.read_entry(song,id)
+      assert(committed,policy)
+      local cache=require("runtime.draft_cache")
+      local descriptor=assert(cache.capture(song,instrument,phrase,gui_context:draft_options()))
+      local count=#instrument.phrases
+      local ok,reason=pcall(function()
+        callbacks.acid_pattern_duplicate()
+        if #instrument.phrases==count+1 then duplicate_phrase=instrument.phrases[#instrument.phrases] end
+        assert(duplicate_phrase,"Duplicate did not append one native phrase: "..tostring(controls.acid_status.text))
+        local target=gui_context:target_state()
+        assert(rawequal(target.phrase,duplicate_phrase),"Verified duplicate was not selected")
+        local copied,copied_policy,copied_pb,copied_label,custom=persisted.read_entry(song,ownership.id(duplicate_phrase))
+        assert(sequence.same_source(committed,copied) and copied_policy==policy and copied_pb==pb,
+          "Native duplicate used dirty source or changed output settings")
+        assert(copied_label==label:sub(1,27):gsub("[ .%-]+$","").." copy" and custom==true,
+          "Native duplicate label differs from captured metadata")
+        assert(ownership.id(duplicate_phrase)~=id and ownership.compare(baseline,assert(ownership.snapshot(phrase))),
+          "Native duplicate changed original phrase or reused its ID")
+        assert(cache.is_current(song,descriptor),"Native duplicate changed original draft revision")
+        assert(sequence.same_source(before.source,assert(persisted.read_draft(song,instrument,phrase))),
+          "Native duplicate consumed original dirty draft")
+        suppress_captured_notifiers=true
+        controls.acid_phrase_choice.value=generated_phrase_index
+        suppress_captured_notifiers=false
+        callbacks.acid_phrase_choice(generated_phrase_index)
+        assert(sequence.same_source(before.source,assert(gui_context:editor_state()).source),
+          "Original dirty source did not restore after duplicate")
+        assert(rawequal(instrument.phrases[#instrument.phrases],duplicate_phrase))
+        instrument:delete_phrase_at(#instrument.phrases)
+        duplicate_phrase=nil
+        song.tool_data=raw
+        assert(song.tool_data==raw,"Duplicate fixture store did not restore exactly")
+      end)
+      suppress_captured_notifiers=false
+      if not ok then return nil,"Duplicate native callbacks: "..tostring(reason) end
+      metrics.gui_duplicate_native_functional_checked=true
+      return true
+    end
     local stored_now,stored_policy,stored_pb=persisted.read_draft(song,instrument,phrase)
     if not stored_now then close_test_gui();return nil,"GUI draft unavailable before settings benchmark: "..tostring(stored_policy) end
     local settings_actions={
@@ -5683,6 +5847,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       return nil,"GUI Live Edit note callback was not captured"
     end
     local function live_probe(finished)
+      local duplicate_ok,duplicate_error=verify_duplicate()
+      if not duplicate_ok then finished(false,duplicate_error);return end
       local native_selection_before=native_selection(song)
       local live_checkbox_dispatches,live_note_dispatches=0,0
       local function set_live_armed(value)

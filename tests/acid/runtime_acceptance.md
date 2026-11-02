@@ -34,6 +34,21 @@ and native acceptance limits.
 | Tested build and package | Native bundle SHA-256 comparison for GUI, audition, store, context and draft cache; `./scripts/package.ps1 -Tool ACID` | PASS; tested runtime matches working tree; 32 runtime files; manifest unchanged |
 | Interactive persistence checks | [Interactive acceptance](#interactive-persistence-acceptance-2026-11-02) | Failure injection, cold recovery and musical Undo/Redo PASS; metadata-only native undo FAIL; human-operated modal checks remain unverified |
 
+## M5 Gate 6 Clipboard, labels and duplicate (2026-11-02)
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Lua regression | `./scripts/run_tests.ps1 -LuaCommand <lua-5.1-executable>`; `tmp/gate-operations-regression.log` | PASS; 79 specs, 0 failed; Lua 5.1.5 |
+| Auxiliary offline checks | `tmp/gate-operations-offline.log`; `tmp/gate-operations-interpreter.log` | PASS; 16 auxiliary groups and isolated interpreter policy; interpreter wrapper uses an ASCII executable path |
+| Clipboard | `acid_clipboard_spec.lua`, `acid_program_staging_spec.lua` | PASS; exact detached 32-slot payloads, exclusions, malformed rejection, no-op, stage guards, session retention and authorized New paste |
+| Labels | `acid_gui_views_spec.lua`, `acid_runtime_editor_spec.lua`, `acid_store_candidate_spec.lua` | PASS; accepted/attempted state, Retry/Discard, transactional history, exact rollback, stale draft/revision guards and owned/New persistence |
+| Duplicate | `acid_duplicate_label_spec.lua`, `acid_runtime_writer_integration_spec.lua` | PASS; committed-source authorization, exact dirty-draft preservation, suffix/custom metadata, four boundary checks, allocation/insertion/materialization/store/verification failures, rollback blockers and stale target/source/label completion |
+| Independent second pass | Rotated clipboard, label, duplicate and final reviewers | PASS; final focused suites and diff check; no remaining blockers |
+| Native functional checks | `./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -TestEnvironment <keyboard-environment.json>`; `tmp/interactive-894d89b53192460a8096aaf9ff50a967/report.json` | PASS; Renoise 3.5.4 Demo / API 6.2; clipboard, repeated label dialog, ACID label Undo/Redo, invalid-label rejection, committed-source duplicate, exact original draft token/revision and reselection |
+| Native cleanup | Same native report | PASS; fixture phrase inventory, exact tool-data bytes, native selection and original installation restored |
+| Package | `./scripts/package.ps1 -Tool ACID` | PASS; 32 runtime files; manifest version unchanged |
+| Remaining native acceptance | Playbook 13.4 and final integrated Gate 11 | UNVERIFIED; human visual/keyboard journey, exhaustive native failure boundaries and native metadata Undo/Redo; acoustic acceptance unchanged |
+
 ## M5 Gate 5 Audition (2026-11-02)
 
 | Check | Evidence | Result |

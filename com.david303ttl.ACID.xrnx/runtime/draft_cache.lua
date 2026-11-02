@@ -447,11 +447,27 @@ function M.restore(song,instrument,phrase,options)
     verified.settings.pb_range,{origin="committed"},stored_label or "Untitled",stored_custom==true
 end
 
-function M.accept_label(song,instrument,phrase,label_value,label_custom)
-  if not valid_target(song,instrument,phrase) then return false end
+function M.capture_label(song,instrument,phrase)
+  if not valid_target(song,instrument,phrase) then return nil,"Invalid label draft target" end
   local records=bucket(song,instrument,false)
   local record=records and records[phrase or NEW]
-  if not record or record.detached then return false end
+  if record and record.detached then return nil,"Label draft is detached" end
+  local token,revision=record and record.token,record and record.revision
+  return function()
+    local current_records=bucket(song,instrument,false)
+    local current=current_records and current_records[phrase or NEW]
+    return current==record and (not current or not current.detached and
+      current.token==token and current.revision==revision)
+  end
+end
+
+function M.accept_label(song,instrument,phrase,label_value,label_custom,guard)
+  if not valid_target(song,instrument,phrase) or type(guard)~="function" or
+      not guard() or not store.valid_label(label_value) or type(label_custom)~="boolean" then return false end
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if not record then return true end
+  if record.detached then return false end
   record.label=label_value
   record.label_custom=label_custom==true
   record.revision=next_token()

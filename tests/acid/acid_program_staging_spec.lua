@@ -121,6 +121,40 @@ local function unchanged(before,revision,save_count,write_count)
   assert(writes==write_count,"candidate generated output")
 end
 gui.show()
+do
+  local original=assert(seq.copy_source(current()))
+  local initial_revision,initial_saves,initial_writes=history.revision,saves,writes
+  local raw_store=song.tool_data
+  assert(not view("acid_clipboard_paste").active)
+  fire("acid_clipboard_copy")
+  unchanged(original,initial_revision,initial_saves,initial_writes)
+  assert(song.tool_data==raw_store,"Copy must not persist")
+  fire("acid_clipboard_paste")
+  unchanged(original,initial_revision,initial_saves,initial_writes)
+  fire("acid_clipboard_scope",2)
+  assert(not view("acid_clipboard_paste").active,"mismatched scope disables Paste")
+  fire("acid_clipboard_paste")
+  unchanged(original,initial_revision,initial_saves,initial_writes)
+  fire("acid_clipboard_scope",1)
+  fire("acid_program_key_05")
+  local edited_revision,edited_saves=history.revision,saves
+  fire("acid_clipboard_paste")
+  assert(seq.same_source(current(),original),"Paste restores all captured pitches")
+  assert(history.revision==edited_revision+1 and saves==edited_saves+1 and writes==initial_writes,
+    "Paste must take exactly one ordinary source edit path")
+  local pasted_revision,pasted_saves=history.revision,saves
+  fire("acid_clipboard_paste")
+  unchanged(original,pasted_revision,pasted_saves,initial_writes)
+  for _,id in ipairs({"acid_clipboard_copy","acid_clipboard_paste"}) do
+    begin("pitch")
+    answer="Stay";fire(id)
+    assert(view("acid_program_enter").active,"clipboard action must preserve stage on Stay")
+    unchanged(original,pasted_revision,pasted_saves,initial_writes)
+    answer="Discard";fire(id)
+    assert(not view("acid_program_enter").active,"clipboard guard must discard on request")
+    unchanged(original,pasted_revision,pasted_saves,initial_writes)
+  end
+end
 assert(not view("acid_program_back").active and not view("acid_program_enter").active)
 local before=seq.copy_source(current())
 local revision,save_count,write_count=history.revision,saves,writes
@@ -321,6 +355,8 @@ tool.app_idle_observable:fire()
 assert(#prompts==prompt_count,"dialog close discards without prompting")
 gui.show()
 assert(not view("acid_program_enter").active,"reopen cannot restore transient stage")
+assert(not view("acid_clipboard_paste").active and view("acid_clipboard_status").text=="Clipboard empty",
+  "reopen cannot restore session clipboard")
 local drafts=require("runtime.draft_cache")
 local function fresh(replacement)
   fail_saves=false
@@ -338,6 +374,49 @@ local function fresh(replacement)
   song.selected_phrase=instrument.phrases[1]
   dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
   gui.show()
+end
+do
+  fresh(source)
+  fire("acid_clipboard_scope",3)
+  fire("acid_clipboard_copy")
+  local captured=assert(seq.copy_source(current()))
+  local destination_choice=control("popup",360)
+  destination_choice:fire(2)
+  assert(view("acid_clipboard_paste").active,"clipboard must survive phrase selection")
+  fire("acid_program_key_05")
+  fire("acid_clipboard_paste")
+  assert(seq.same_source(current(),captured),"cross-target paste must retain captured source")
+  local writer_total=writes
+  local raw_store=song.tool_data
+  destination_choice:fire(#destination_choice.items)
+  assert(runtime:target_state().kind=="new")
+  assert(writes==writer_total and song.tool_data==raw_store,
+    "selecting New with clipboard must not write or create")
+  fire("acid_live_edit",true)
+  assert(writes==writer_total,"arming New must wait for a real edit")
+  fire("acid_clipboard_paste")
+  assert(writes==writer_total+1,"armed New paste must use ordinary generation admission")
+  assert(seq.same_source(current(),captured),"New paste must apply captured values")
+
+  fresh(source)
+  fire("acid_clipboard_copy")
+  begin("pitch")
+  enter_all(PITCH_COUNT)
+  answer="Finish"
+  fire("acid_clipboard_copy")
+  assert(current().pitch_events[1].note==seq.BASE_NOTE)
+  fire("acid_clipboard_paste")
+  assert(current().pitch_events[1].note==source.pitch_events[1].note,
+    "Finish guard must not automatically resume Copy")
+  begin("pitch")
+  enter_all(PITCH_COUNT)
+  answer="Finish"
+  fire("acid_clipboard_copy")
+  fire("acid_clipboard_copy")
+  fire("acid_program_key_05")
+  fire("acid_clipboard_paste")
+  assert(current().pitch_events[1].note==seq.BASE_NOTE,
+    "explicit Copy after Finish must capture canonical post-Finish source")
 end
 local lifecycle_actions={
   selection=function()

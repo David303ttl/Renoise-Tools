@@ -147,11 +147,16 @@ function M.new_history(pattern,output_policy,pb_range,label,label_custom)
     proposals[proposal]={position=position,revision=self.revision}
     return proposal
   end
-  function history:commit(proposal)
+  function history:is_current(proposal)
     local captured=type(proposal)=="table" and proposals[proposal]
     if not captured or proposal.revision~=self.revision or captured.revision~=self.revision or
         proposal.position~=captured.position or captured.position<1 or
         captured.position>#self.states then return false end
+    return type(proposal.state)=="table" and same_state(proposal.state,self.states[captured.position])
+  end
+  function history:commit(proposal)
+    if not self:is_current(proposal) then return false end
+    local captured=proposals[proposal]
     self.position=captured.position
     proposals[proposal]=nil
     self.revision=self.revision+1

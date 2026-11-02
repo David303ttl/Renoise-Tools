@@ -104,6 +104,86 @@ end
 verify_rebase(true)
 verify_rebase(false)
 
+for _,new in ipairs({false,true}) do
+ local ctx,log,song,instrument,phrase,_,source=fixture(new)
+ local target_phrase=not new and phrase or nil
+ assert(ctx:transition("edit",values(copy_edit(source,FIRST_COMMITTED_NOTE))))
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ local write_draft=store.write_draft_metadata
+ store.write_draft_metadata=function()return false,"Injected musical draft failure"end
+ assert(ctx:transition("edit",{source=newer,output_policy="repeat",pb_range=12}))
+ store.write_draft_metadata=write_draft
+ local accepted=ctx:editor_state()
+ local update_label=store.update_label
+ store.update_label=function()return nil,"Injected label failure",store.LABEL_WRITE_UNCHANGED end
+ assert(not ctx:rename_label("Volatile draft",true))
+ store.update_label=update_label
+ local matches,metadata=cache.matches_values(song,instrument,target_phrase,newer,"repeat",12,
+   accepted.label,accepted.label_custom)
+ assert(matches and not metadata.persistent and ctx:editor_state().draft_warning=="Injected musical draft failure",
+   "failed rename accepted or cleared the unsaved musical draft")
+ assert(ctx:rename_label("Volatile draft",true))
+ local durable,policy,pb,label,custom=store.read_draft(song,instrument,target_phrase)
+ assert(seq.same_source(durable,newer) and policy=="repeat" and pb==12 and label=="Volatile draft" and custom,
+   "rename did not persist the current musical draft and label atomically")
+ matches,metadata=cache.matches_values(song,instrument,target_phrase,newer,"repeat",12,label,custom)
+ assert(matches and metadata.persistent and not metadata.warning and log.sinks==0)
+ if not new then assert(seq.same_source(store.read_entry(song,OWNED_PHRASE_ID),source)) end
+end
+
+for _,new in ipairs({false,true}) do
+ local ctx,log,song,instrument,phrase,_,source=fixture(new)
+ local target_phrase=not new and phrase or nil
+ local raw=song.tool_data
+ local absent=assert(cache.capture_label(song,instrument,target_phrase))
+ assert(absent())
+ local accept_label=cache.accept_label
+ cache.accept_label=function()return false end
+ assert(not ctx:rename_label("Rejected acceptance",true))
+ cache.accept_label=accept_label
+ assert(song.tool_data==raw and absent(),"failed session acceptance changed storage or created a draft")
+ assert(ctx:editor_state().label~="Rejected acceptance" and not ctx:integrity_state().blocked)
+ local edited=copy_edit(source,FIRST_COMMITTED_NOTE)
+ assert(ctx:transition("edit",values(edited)))
+ local matches,before=cache.matches_values(song,instrument,target_phrase,edited,"play_once",0)
+ assert(matches and not absent(),"draft addition did not invalidate captured absence")
+ local captured=assert(cache.capture_label(song,instrument,target_phrase))
+ assert(ctx:rename_label("Dirty label",true))
+ local retained,after=cache.matches_values(song,instrument,target_phrase,edited,"play_once",0,"Dirty label",true)
+ assert(retained and before.token==after.token and before.revision~=after.revision and not captured())
+ assert(log.sinks==0 and seq.same_source(ctx:editor_state().source,edited))
+ if not new then assert(seq.same_source(store.read_entry(song,OWNED_PHRASE_ID),source)) end
+ local before_raw=song.tool_data
+ local before_label=ctx:editor_state().label
+ local stored=before_raw
+ local reentered=false
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ song.tool_data=nil
+ setmetatable(song,{__index=function(_,key)if key=="tool_data" then return stored end end,
+  __newindex=function(object,key,value)
+   if key~="tool_data" then rawset(object,key,value);return end
+   stored=value
+   if reentered then return end
+   reentered=true
+   local write_draft=store.write_draft_metadata
+   store.write_draft_metadata=function()return nil,"Injected session-only draft"end
+   cache.put(song,instrument,target_phrase,newer,"play_once",0,ctx:draft_options(),before_label,true)
+   store.write_draft_metadata=write_draft
+  end})
+ assert(not ctx:rename_label("Stale label",true))
+ assert(stored==before_raw and ctx:editor_state().label==before_label)
+ assert(cache.matches_values(song,instrument,target_phrase,newer,"play_once",0,before_label,true),
+  "label rollback overwrote the newer session draft")
+ assert(not ctx:integrity_state().blocked and log.sinks==0)
+end
+
+do
+ local ctx,_,song=fixture(true)
+ local raw=song.tool_data
+ assert(not ctx:rename_label("Stale history",true,function()return false end))
+ assert(song.tool_data==raw and ctx:editor_state().label~="Stale history")
+end
+
 -- Label metadata writes do not advance the musical revision or enqueue renders.
 do
  local ctx,log,song,instrument,_,_,source=fixture(true)

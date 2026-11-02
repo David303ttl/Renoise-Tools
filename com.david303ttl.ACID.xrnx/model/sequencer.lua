@@ -203,6 +203,49 @@ function M.same_source(a,b)
   return true
 end
 
+local CLIPBOARD_FIELDS={
+  pitch={pitch_events=true,pitch_length=true},
+  time={time_events=true,length=true},
+  both={pitch_events=true,pitch_length=true,time_events=true,length=true}}
+
+function M.make_clipboard(source,scope)
+  local fields=CLIPBOARD_FIELDS[scope]
+  if not fields then return nil,"invalid clipboard scope" end
+  local detached,err=M.copy_source(source)
+  if not detached then return nil,err end
+  local payload={}
+  for field in pairs(fields) do payload[field]=detached[field] end
+  return payload
+end
+
+function M.paste_candidate(source,payload,scope)
+  local fields=CLIPBOARD_FIELDS[scope]
+  if not fields then return nil,"invalid clipboard scope" end
+  if type(payload)~="table" or getmetatable(payload)~=nil then
+    return nil,"clipboard payload must be a plain table"
+  end
+  for field in pairs(payload) do
+    if not fields[field] then return nil,"unexpected clipboard field: "..tostring(field) end
+  end
+  local candidate,err=M.copy_source(source)
+  if not candidate then return nil,err end
+  for field in pairs(fields) do
+    if payload[field]==nil then return nil,"missing clipboard field: "..field end
+    if type(payload[field])=="table" and getmetatable(payload[field])~=nil then
+      return nil,"clipboard arrays must be plain tables"
+    end
+    candidate[field]=payload[field]
+  end
+  if fields.pitch_events and type(payload.pitch_events)=="table" then
+    for _,pitch in pairs(payload.pitch_events) do
+      if type(pitch)=="table" and getmetatable(pitch)~=nil then
+        return nil,"clipboard pitches must be plain tables"
+      end
+    end
+  end
+  return M.copy_source(candidate)
+end
+
 local function canonical_pitch(note)
   if note==60 then return {note=60,key=12,octave=1} end
   return {note=note,key=note%12,octave=math.floor((note-M.BASE_NOTE)/12)}

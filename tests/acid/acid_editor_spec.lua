@@ -176,6 +176,23 @@ local reset=seq.new_pattern()
 assert(timing_history:record(reset,"repeat",0))
 assert(timing_history:undo().timing_mode=="triplet")
 assert(timing_history:redo().timing_mode=="straight")
+
+do
+  local labels=editor.new_history(reset,"repeat",0,"First",true)
+  assert(labels:record(reset,"repeat",0,"Second",true))
+  local proposal=assert(labels:propose("undo"))
+  assert(labels:is_current(proposal))
+  proposal.state.label="Changed"
+  assert(not labels:is_current(proposal) and not labels:commit(proposal),
+    "a modified history proposal cannot authorize metadata persistence")
+  proposal=assert(labels:propose("undo"))
+  assert(labels:record(reset,"repeat",0,"Third",true))
+  assert(not labels:is_current(proposal) and not labels:commit(proposal),
+    "a stale proposal cannot authorize metadata persistence")
+  proposal=assert(labels:propose("undo"))
+  assert(labels:is_current(proposal) and labels:commit(proposal))
+  assert(not labels:is_current(proposal) and not labels:commit(proposal))
+end
 timed.timing_mode=nil
 assert(not seq.validate(timed))
 timed.timing_mode="other"

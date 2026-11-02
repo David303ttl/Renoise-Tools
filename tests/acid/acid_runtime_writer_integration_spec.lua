@@ -114,6 +114,8 @@ local sink_calls=0
 local fail_next_adoption=false
 local probe_terminal_reentry=false
 local before_prepare_mutation
+local before_terminal_delivery
+local last_writer_terminal
 local sink=function(request,done)
   sink_calls=sink_calls+1
   if before_prepare_mutation then
@@ -122,6 +124,12 @@ local sink=function(request,done)
     mutate(request)
   end
   local function complete(result)
+    last_writer_terminal=result
+    if before_terminal_delivery then
+      local action=before_terminal_delivery
+      before_terminal_delivery=nil
+      action(result)
+    end
     if probe_terminal_reentry then
       probe_terminal_reentry=false
       local nested_calls=0
@@ -804,6 +812,132 @@ do
   MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS=previous_note_capacity,previous_effect_capacity
   phrase_api_values.MAX_NUMBER_OF_NOTE_COLUMNS=previous_note_capacity
   phrase_api_values.MAX_NUMBER_OF_EFFECT_COLUMNS=previous_effect_capacity
+end
+
+do
+  local previous_song_accessor=renoise.song
+  local function duplicate_fixture()
+    local target={}
+    for key,value in pairs(instrument)do target[key]=value end
+    target.name,target.phrases="Duplicate transaction",{}
+    local target_song={instruments={target},tool_data="",transport={timing_model=2,groove_enabled=false}}
+    function target_song:is_undo_redoing()return false end
+    renoise.song=function()return target_song end
+    local owner=new_context()
+    local completions,delivery=delivered()
+    owner:attach_document(target_song);owner:open_dialog(delivery);owner:bind_new(target)
+    edit(owner,source(48));dispatch(owner)
+    local original=assert(completions[1].phrase)
+    assert_success(completions[1],original,"duplicate origin create")
+    assert(owner:rename_label("Acid Pattern",true))
+    edit(owner,source(51))
+    local descriptor=assert(drafts.capture(target_song,target,original,owner:draft_options()))
+    return owner,target_song,target,original,completions,descriptor
+  end
+  local owner,target_song,target,original,completions,descriptor=duplicate_fixture()
+  local baseline=assert(ownership.snapshot(original))
+  local committed=assert(store.load(target_song,target,original))
+  assert(owner:request_duplicate())
+  local result=assert(completions[2],"duplicate completion missing: "..tostring(owner:generation_state().last_result and owner:generation_state().last_result.reason))
+  assert_success(result,result.phrase,"committed-source duplicate")
+  assert(not rawequal(result.phrase,original) and #target.phrases==2)
+  assert(ownership.id(result.phrase)~=ownership.id(original))
+  assert(ownership.compare(baseline,assert(ownership.snapshot(original))))
+  assert(sequencer.same_source(committed,assert(store.load(target_song,target,result.phrase))))
+  local _,_,_,label,custom=store.read_entry(target_song,ownership.id(result.phrase))
+  assert(label=="Acid Pattern copy" and custom==true)
+  assert(sequencer.same_source(owner:editor_state().source,committed) and
+    rawequal(owner:target_state().phrase,result.phrase),"duplicate completion accepted dirty origin source")
+  assert(drafts.is_current(target_song,descriptor) and
+    sequencer.same_source(source(51),assert(drafts.get(target_song,target,original))) and
+    sequencer.same_source(source(51),assert(store.read_draft(target_song,target,original))),
+    "duplicate success consumed or changed original draft")
+  owner:release_document()
+
+  for _,change in ipairs({"target","source","label"}) do
+    local owner,target_song,target,original,completions,descriptor=duplicate_fixture()
+    local changed_editor,changed_revision,changed_draft
+    before_terminal_delivery=function(result)
+      assert(result.kind=="success" and result.verified,"stale duplicate fixture did not commit")
+      if change=="target" then assert(owner:restore_editor_target(target,nil))
+      elseif change=="source" then edit(owner,source(54))
+      else assert(owner:rename_label("Later label",true))end
+      changed_editor=assert(owner:editor_state())
+      changed_revision=owner:revision_state()
+      changed_draft=assert(drafts.capture(target_song,target,original,owner:draft_options()))
+    end
+    assert(owner:request_duplicate())
+    assert(#target.phrases==2 and ownership.id(target.phrases[2])~=ownership.id(original),
+      "late binding change removed verified duplicate")
+    local selected=owner:target_projection()
+    assert((change=="target" and selected.kind=="new" or
+      change~="target" and rawequal(selected.phrase,original)) and
+      sequencer.same_source(changed_editor.source,owner:editor_state().source) and
+      owner:editor_state().label==changed_editor.label and
+      owner:revision_state().target_revision==changed_revision.target_revision and
+      owner:revision_state().edit_revision==changed_revision.edit_revision and
+      owner:revision_state().metadata_revision==changed_revision.metadata_revision,
+      "stale duplicate completion replaced current editor or selection")
+    assert((not completions[2] or completions[2].stale==true and completions[2].destination_current==false) and
+      drafts.is_current(target_song,changed_draft),
+      "stale duplicate completion delivered to replaced editor or consumed origin draft")
+    if change=="target" then assert(drafts.is_current(target_song,descriptor))end
+    owner:release_document()
+  end
+
+  for _,phase in ipairs({"allocation","insertion","materialization","store","verification",
+      "origin-materialized","origin-committed","rollback"}) do
+    local owner,target_song,target,original,completions,descriptor=duplicate_fixture()
+    local raw=target_song.tool_data
+    local baseline=assert(ownership.snapshot(original))
+    local allocate,insert,apply,commit,restore,classify=store.allocate,target.insert_phrase_at,
+      materializer.apply,store.commit,store.restore,require("writers.phrase_validator").classify_verified_postimage
+    local validator=require("writers.phrase_validator")
+    if phase=="allocation" then store.allocate=function()return nil,"injected allocation"end
+    elseif phase=="insertion" then target.insert_phrase_at=function()error("injected insertion")end
+    elseif phase=="materialization" then materializer.apply=function()return nil,"injected materialization",false end
+    elseif phase=="store" then store.commit=function()return nil,"injected store"end
+    elseif phase=="verification" then validator.classify_verified_postimage=function()return nil,"injected verification"end
+    elseif phase=="origin-materialized" then
+      after_materializer_apply=function()original.cells[1].note_value=47 end
+    elseif phase=="origin-committed" then
+      store.commit=function(...)
+        local saved,reason=commit(...)
+        if saved then original.cells[1].note_value=47 end
+        return saved,reason
+      end
+    else
+      store.commit=function(...)assert(commit(...));error("injected committed store")end
+      store.restore=function()return nil,"injected rollback failure"end
+    end
+    local called,accepted,reason=pcall(owner.request_duplicate,owner)
+    store.allocate,target.insert_phrase_at,materializer.apply,store.commit,store.restore,
+      validator.classify_verified_postimage=allocate,insert,apply,commit,restore,classify
+    after_materializer_apply=nil
+    assert(called,phase..": duplicate escaped transaction: "..tostring(accepted))
+    local result=completions[2] or last_writer_terminal
+    assert(not accepted or result and result.kind=="failure",phase..": failure was reported as success")
+    assert(drafts.is_current(target_song,descriptor),phase..": original draft revision changed")
+    assert(drafts.matches_values(target_song,target,original,source(51),"play_once",0),
+      phase..": original session draft changed")
+    assert(sequencer.same_source(source(51),assert(store.read_draft(target_song,target,original))))
+    if phase=="rollback" then
+      assert(result and result.status=="integrity_blocked" and owner:integrity_state().blocked,
+        "uncertain duplicate rollback did not retain recovery blocker")
+      assert(sequencer.same_source(source(51),owner:editor_state().source),
+        "uncertain duplicate rollback replaced original editor source")
+    else
+      assert(rawequal(owner:target_projection().phrase,original),phase..": failed duplicate changed target")
+      assert(target_song.tool_data==raw and #target.phrases==1 and rawequal(target.phrases[1],original),
+        phase..": duplicate did not restore exact store and phrase inventory")
+      if phase=="origin-materialized" or phase=="origin-committed" then
+        assert(original.cells[1].note_value==47,phase..": rollback overwrote external origin edit")
+      else assert(ownership.compare(baseline,assert(ownership.snapshot(original))),phase..": origin phrase changed")end
+    end
+    owner:release_document()
+    writer.clear_integrity_blocker(target_song)
+  end
+  renoise.song=previous_song_accessor
 end
 
 print("ACID runtime writer integration checks passed (native playback unverified)")

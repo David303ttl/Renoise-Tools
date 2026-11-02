@@ -68,7 +68,7 @@ end
 -- closures and cannot be replaced or cleared from outside.
 do
   local ctx = new_context{}
-  local allowed = {request_generation = true, revoke = true, state = true,
+  local allowed = {request_generation = true, request_duplicate = true, revoke = true, state = true,
     set_observer_error = true,
     attach_document = true, open_dialog = true, close_dialog = true,
     release_document = true, lifetime_state = true, bind_new = true, bind_phrase = true,

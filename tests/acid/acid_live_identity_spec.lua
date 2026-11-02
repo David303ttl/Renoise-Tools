@@ -208,8 +208,9 @@ local partial_song,partial_instrument,partial_data=draft_write_fixture("mutate_t
 current=partial_song
 assert(rawequal(renoise.song(),partial_song))
 local persisted,partial_error=store.write_draft(partial_song,partial_instrument,nil,write_source,"repeat",0)
-assert(persisted,partial_error or "a setter error with exact requested readback is verified success")
-assert(type(partial_data())=="string" and partial_data():find("DRAFT|",1,true))
+assert(not persisted and partial_error:find("restored",1,true),
+  "a throwing draft setter must abort after exact rollback")
+assert(partial_data()==nil,"failed draft publication did not restore absent storage")
 local unchanged_song,unchanged_instrument,unchanged_data=draft_write_fixture("unchanged")
 current=unchanged_song
 local unchanged,unchanged_error=store.write_draft(unchanged_song,unchanged_instrument,nil,write_source,"repeat",0)

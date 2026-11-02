@@ -240,6 +240,7 @@ function M.new(options)
   local editor_dirty=false
   local editor_draft=false
   local preserve_editor
+  local install_editor
   local editor_target=nil
   local editor_recovery={}
   local observed_target=nil
@@ -437,6 +438,14 @@ function M.new(options)
     end
     -- A closed dialog may retain committed evidence without changing its editor or target.
     if not destination_current then return true end
+    if request.operation=="duplicate" then
+      inventory:bind_phrase(request.instrument,phrase)
+      transitions:transition("target",{instrument=request.instrument,phrase=phrase,kind="owned"})
+      local installed,install_error=install_editor({source=result.baseline.source,
+        output_policy=result.baseline.settings.output_policy,pb_range=result.baseline.settings.pb_range,
+        label=request.label,label_custom=request.label_custom},inventory:editor_target_state(),false,true)
+      return installed~=nil,install_error
+    end
     if request.kind=="create" and not rawequal(request.phrase,phrase) then
       inventory:bind_phrase(request.instrument,phrase)
       transitions:transition("target",{instrument=request.instrument,phrase=phrase,kind="owned"})
@@ -594,7 +603,62 @@ function M.new(options)
     return accepted,detail
   end
 
-  function context:request_generation(trigger)
+  function context:request_duplicate()
+    return self:request_generation("manual","duplicate")
+  end
+
+  local function preserve_duplicate_draft(destination)
+    local baseline=destination.baseline
+    if sequencer.same_source(editor.source,baseline.source) and
+        editor.output_policy==baseline.settings.output_policy and editor.pb_range==baseline.settings.pb_range then
+      return true
+    end
+    local matches,metadata=drafts.matches_values(current_song,destination.instrument,destination.phrase,
+      editor.source,editor.output_policy,editor.pb_range,editor.label,editor.label_custom)
+    if not matches then return false,"Duplicate requires the current session draft" end
+    local descriptor,reason=drafts.capture(current_song,destination.instrument,destination.phrase,
+      draft_options_for_target(destination))
+    if not descriptor then return false,reason end
+    local read,raw=pcall(function()return current_song.tool_data end)
+    if not read then return false,"Cannot read the duplicate draft preimage" end
+    local evidence,capture_error=integrity:capture_metadata(raw)
+    if not evidence then return false,capture_error end
+    local saved,result,save_error=pcall(drafts.put,current_song,destination.instrument,destination.phrase,
+      editor.source,editor.output_policy,editor.pb_range,draft_options_for_target(destination),
+      editor.label,editor.label_custom)
+    local verified,valid=pcall(function()
+      if not saved or result~=true or not drafts.is_current(current_song,descriptor) then return false end
+      local matches,current=drafts.matches_values(current_song,destination.instrument,destination.phrase,
+        editor.source,editor.output_policy,editor.pb_range,editor.label,editor.label_custom)
+      if not matches or current.token~=metadata.token or current.revision~=metadata.revision or
+          not current.persistent then return false end
+      local captured_raw=current_song.tool_data
+      local source,policy,pb,label,custom=require("renoise.pattern_store").read_draft(
+        current_song,destination.instrument,destination.phrase)
+      return source~=nil and sequencer.same_source(source,editor.source) and policy==editor.output_policy and
+        pb==editor.pb_range and label==editor.label and custom==editor.label_custom and
+        current_song.tool_data==captured_raw and drafts.is_current(current_song,descriptor)
+    end)
+    if not verified or not valid then
+      local readable,current=pcall(function()return current_song.tool_data end)
+      if not readable or current~=raw then
+        local recorded,value=pcall(integrity.record,integrity,evidence)
+        if not recorded or value~=true then
+          mutation_recording_failed_reason="Duplicate draft recovery evidence could not be recorded"
+          mutation_recording_failed_song=current_song
+        end
+        transitions:transition("blocker")
+        invalidate("Song integrity requires revalidation")
+      end
+      return false,saved and save_error or "Duplicate draft could not be durably verified"
+    end
+    editor.draft_warning=nil
+    return true
+  end
+
+  function context:request_generation(trigger,operation)
+    if operation~=nil and operation~="duplicate" then return false,"Invalid request operation" end
+    if operation and (not editor or trigger~="manual") then return false,"Invalid duplicate admission" end
     local destination
     if observer_error then return false,observer_error end
     if mutation_depth>0 or mutation_failed then
@@ -612,6 +676,9 @@ function M.new(options)
       if trigger=="live" and not transitions:revision_state().armed then return false,"Live Edit is not armed" end
       if not editor.valid then return false,editor.reason or "Invalid editor source or settings" end
       destination=inventory:edit_target_state()
+      if operation=="duplicate" and destination.kind~="owned" then
+        return false,"Duplicate requires a committed owned phrase"
+      end
       if not editor_target or not rawequal(destination.instrument,editor_target.instrument) or
           not rawequal(destination.phrase,editor_target.phrase) or destination.kind~=editor_target.kind then
         return false,"Editor source has not been loaded for this target"
@@ -626,10 +693,15 @@ function M.new(options)
         return false,blocked_reason
       end
       if active and not active.settled or occupied.status~="idle" then
+        if operation=="duplicate" then return false,"The writer has not settled" end
         if blocked then return false,blocked_reason or "Generation dispatch is blocked" end
         pending_trigger=trigger
         preserve_editor(destination.kind=="new",destination)
         return true,"Generation queued for the current writer job"
+      end
+      if operation=="duplicate" then
+        local preserved,preserve_error=preserve_duplicate_draft(destination)
+        if not preserved then return false,preserve_error end
       end
       self:transition("request",{trigger=trigger})
     end
@@ -667,7 +739,7 @@ function M.new(options)
     end
 
     if trigger=="manual" and pending_trigger=="live" then pending_trigger=nil end
-    if editor then preserve_editor(editor_target and editor_target.kind=="new",destination) end
+    if editor and operation~="duplicate" then preserve_editor(editor_target and editor_target.kind=="new",destination) end
 
     dispatching = true
     invalidate_target_projection()
@@ -700,7 +772,7 @@ function M.new(options)
     record.token = token
 
     local capture_action=capture
-    if editor then capture_action=function(kind,operation_token) return requests:capture(kind,operation_token) end end
+    if editor then capture_action=function(kind,operation_token) return requests:capture(kind,operation_token,operation) end end
     local captured, request, capture_reason = pcall(capture_action, trigger, token)
     if not captured then
       dispatching = false
@@ -784,6 +856,11 @@ function M.new(options)
           edit_revision=record.revisions.edit_revision})
       end
       local apply_success=effects and effects.apply_success==true or false
+      if record.request and record.request.operation=="duplicate" and
+          (not apply_success or revisions.metadata_revision~=record.revisions.metadata_revision) then
+        destination_current=false
+        terminal.stale=true
+      end
       if success and baseline_current then
         local adopted,adopt_reason=adopt_success(record,terminal,destination_current,apply_success)
         if not adopted then
@@ -1051,15 +1128,16 @@ function M.new(options)
     return result
   end
 
-  function context:rename_label(label,label_custom)
+  function context:rename_label(label,label_custom,history_guard)
+    local store=require("renoise.pattern_store")
+    if type(label_custom)~="boolean" or not store.valid_label(label) then
+      return false,"Phrase label must be 1..32 valid ASCII bytes"
+    end
     if not current_song or not opened or not editor or not editor.valid then
       return false,"No valid editor source is installed"
     end
     local integrity_state=self:integrity_state()
     if integrity_state.blocked then return false,integrity_state.reason end
-    if type(label_custom)~="boolean" or not require("renoise.pattern_store").valid_label(label) then
-      return false,"Phrase label must be 1..32 valid ASCII bytes"
-    end
     if editor.label==label and editor.label_custom==label_custom then return true end
     local target=inventory and inventory:edit_target_state()
     if not target or not editor_target or not rawequal(target.instrument,editor_target.instrument) or
@@ -1072,6 +1150,22 @@ function M.new(options)
         return false,"Committed source association is unavailable"
       end
     elseif target.kind~="new" then return false,"Current destination is not writable" end
+    local song,action_epoch,action_session,accepted_editor=current_song,epoch,session,editor
+    local revisions=transitions:revision_state()
+    local draft_guard,draft_error=drafts.capture_label(song,target.instrument,target.phrase)
+    if not draft_guard then return false,draft_error end
+    local function guard()
+      if not rawequal(current_song,song) or not opened or epoch~=action_epoch or session~=action_session or
+          not rawequal(editor,accepted_editor) or mutation_depth>0 or mutation_failed then return false end
+      local current=transitions:revision_state()
+      if current.target_revision~=revisions.target_revision or current.edit_revision~=revisions.edit_revision or
+          current.metadata_revision~=revisions.metadata_revision or current.operation_serial~=revisions.operation_serial or
+          current.armed~=revisions.armed or self:integrity_state().blocked then return false end
+      if history_guard and history_guard()~=true then return false end
+      local live=inventory and inventory:edit_target_state()
+      return live~=nil and live.kind==target.kind and rawequal(live.instrument,target.instrument) and
+        rawequal(live.phrase,target.phrase) and draft_guard()
+    end
     local raw
     local ok,value=pcall(function()return current_song.tool_data end)
     if not ok then return false,"Cannot read song metadata: "..tostring(value) end
@@ -1079,10 +1173,11 @@ function M.new(options)
     local evidence,capture_error=integrity:capture_metadata(raw)
     if not evidence then return false,capture_error end
     local pending_source=(target.kind=="new" or editor_dirty) and editor.source or nil
-    local store=require("renoise.pattern_store")
     local stored,write_result,detail,outcome=pcall(store.update_label,
       current_song,target.instrument,target.phrase,label,label_custom,raw,
-      pending_source,editor.output_policy,editor.pb_range)
+      pending_source,editor.output_policy,editor.pb_range,guard,function()
+        return drafts.accept_label(song,target.instrument,target.phrase,label,label_custom,guard)
+      end)
     if not stored or write_result~=true then
       if not stored or outcome==store.LABEL_WRITE_UNCERTAIN then
         local recorded,result=pcall(integrity.record,integrity,evidence)
@@ -1095,10 +1190,8 @@ function M.new(options)
       end
       return false,stored and detail or write_result or "Phrase label was not saved"
     end
-    if drafts and type(drafts.accept_label)=="function" then
-      drafts.accept_label(current_song,target.instrument,target.phrase,label,label_custom)
-    end
     editor.label,editor.label_custom=label,label_custom
+    editor.draft_warning=nil
     transitions:transition("metadata",{changed=true})
     return true
   end
@@ -1517,7 +1610,7 @@ function M.new(options)
       return target,effects
   end
 
-  local function install_editor(values,destination,is_draft)
+  install_editor=function(values,destination,is_draft,completion)
       local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
       if not buffer then return nil,copy_error end
       buffer.label=values.label or (editor and editor.label) or "Untitled"
@@ -1539,7 +1632,7 @@ function M.new(options)
       buffer.reason=not buffer.valid and (source_error or "Invalid source settings") or nil
       local eligible=compute_musical_eligibility(context,active and active.token,destination)
       local effects=transitions:transition("programmatic",{changed=changed,valid=buffer.valid,eligible=eligible~=nil})
-      apply_effects(effects,"Editor source or settings changed")
+      if not completion then apply_effects(effects,"Editor source or settings changed") end
       if changed then retain_invalid_editor() end
       editor=buffer
       editor_dirty=false
@@ -2155,8 +2248,10 @@ function M.new(options)
         return active~=nil and not active.current and not active.settled and not active.rejected and not active.released
           and active.epoch==epoch and rawequal(active.token,token)
       end,
-      blocked=function()
-        if mutation_depth>0 or mutation_failed then return true,"Synchronous mutation is active or requires recovery" end
+      blocked=function(token)
+        if mutation_failed or (mutation_depth>0 and not rawequal(mutation_token,token)) then
+          return true,"Synchronous mutation is active or requires recovery"
+        end
         local state=context:integrity_state()
         return state.blocked,state.reason
       end,

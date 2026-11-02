@@ -11,6 +11,7 @@ local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
 local audition=require("runtime.audition")
 local active_audition
+local active_label_dialog
 local dialog
 local runtime_context=require("runtime.context")
 local native_observers=require("runtime.observers").new()
@@ -78,6 +79,10 @@ local function detach_dialog_watch()
   return true
 end
 local function stop_live_context()
+  if active_label_dialog then
+    pcall(function() active_label_dialog:close() end)
+    active_label_dialog=nil
+  end
   if active_audition then
     local preview=active_audition
     active_audition=nil
@@ -215,6 +220,8 @@ function M.show()
   local runtime
   local session
   local stage
+  local label_ui={}
+  local clipboard={scopes={"pitch","time","both"},names={pitch="PITCH",time="TIME",both="Both"}}
   local guard_stage,finish_stage
   local stage_status,stage_actions
   local refresh_stage
@@ -482,6 +489,7 @@ function M.show()
     end
   end
   refresh_stage=function()
+    if label_ui.display then render(label_ui.display,"text",phrase_label) end
     if audition_button then render(audition_button,"active",current_session() and
       (not stage or (stage.memory=="pitch" and valid_stage()))) end
     if stage_status then
@@ -514,6 +522,15 @@ function M.show()
     updating=true
     local projection=project()
     refresh_stage()
+    if clipboard.choice then
+      local scope=clipboard.scopes[clipboard.choice.value]
+      render(clipboard.paste_button,"active",clipboard.payload~=nil and clipboard.scope==scope)
+      render(clipboard.status,"text",clipboard.payload and string.format("Captured %s | %s%s%s",
+        clipboard.names[clipboard.scope],
+        clipboard.payload.pitch_length and ("PITCH span "..clipboard.payload.pitch_length) or "",
+        clipboard.payload.pitch_length and clipboard.payload.length and " | " or "",
+        clipboard.payload.length and ("LAST STEP "..clipboard.payload.length) or "") or "Clipboard empty")
+    end
     render(view_heading,"text",editor_view==1 and "PROGRAM VIEW" or "GRID VIEW")
     render(view_hint,"text",editor_view==1 and
       "Select one PITCH entry and TIME step; the source and preview are shared with Grid." or
@@ -756,6 +773,12 @@ function M.show()
   end
   guard_stage=function()
     release_audition()
+    if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
+      status.text="Resolve the label editor with Save, Retry or Discard Attempt, then invoke the action again."
+      if label_ui.dialog and label_ui.dialog.visible then label_ui.dialog:show()
+      elseif label_ui.attempt then label_ui.show(label_ui.attempt) end
+      return true
+    end
     if not stage then return false end
     if not valid_stage() then
       stage=nil;update();status.text="Uncommitted entry discarded: origin changed.";return true
@@ -796,6 +819,10 @@ function M.show()
     update()
   end
   local function candidate_edit(memory,position)
+    if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
+      status.text="Resolve the label editor before editing the source."
+      return false
+    end
     if not stage then return true end
     if not valid_stage() then status.text="Entry origin changed; candidate is unavailable.";return false end
     return editor_view==1 and stage.memory==memory and position<=#stage.target_positions
@@ -1037,6 +1064,7 @@ function M.show()
   end
   local function load_target(index,native_selection)
     release_audition()
+    if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then return end
     if stage then
       if not native_selection then if guard_stage() then update();return end
       else stage=nil end
@@ -1177,6 +1205,7 @@ function M.show()
   end
   local function reconcile_selected_phrase_selection()
     if not current_session() then return false end
+    if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then return false end
     if native_projection_dirty then native_observers:refresh() end
     local before=destination()
     local target,effects=runtime:reconcile()
@@ -1303,8 +1332,20 @@ function M.show()
   deliver=function(request,result)
     if type(request)~="table" or not current_session() then return end
     local success=result.kind=="success" and result.verified==true
-    local prefix=request.trigger=="manual" and "GENERATION " or "LIVE EDIT "
+    local prefix=request.operation=="duplicate" and "DUPLICATE " or
+      (request.trigger=="manual" and "GENERATION " or "LIVE EDIT ")
     if success then
+      if request.operation=="duplicate" then
+        if result.stale==true or result.destination_current~=true then return end
+        local accepted=runtime:editor_state()
+        if not accepted or not rawequal(result.phrase,bound_phrase()) then return end
+        pattern=assert(sequencer.copy_source(accepted.source))
+        output_policy,pb_range=accepted.output_policy,accepted.pb_range
+        phrase_label,phrase_label_custom=accepted.label,accepted.label_custom
+        history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
+        selected_pitch,selected_step,pitch_page,time_page=1,1,1,1
+        invalidate_projection()
+      end
       local accepted=runtime:editor_state()
       if accepted and sequencer.same_source(accepted.source,pattern) and
           (phrase_label~=accepted.label or phrase_label_custom~=accepted.label_custom) then
@@ -1347,6 +1388,78 @@ function M.show()
     end
   end}
   active_live_checkbox=live_checkbox
+  label_ui.close=function()
+    if label_ui.dialog then label_ui.dialog:close() end
+    label_ui.dialog=nil
+    active_label_dialog=nil
+  end
+  label_ui.show=function(attempt)
+    release_audition()
+    label_ui.attempt=attempt
+    local visible=label_ui.dialog and label_ui.dialog.visible
+    if not visible then
+      local label_vb=renoise.ViewBuilder()
+      label_ui.field=label_vb:textfield{id="acid_label_field",width=330,value=phrase_label}
+      label_ui.error=label_vb:text{id="acid_label_error",width=580,text=""}
+      label_ui.save=label_vb:button{id="acid_label_save",text="Save",notifier=function()
+        if not current_session() then return end
+        label_ui.field.edit_mode=false
+        label_ui.apply({label=label_ui.field.value,label_custom=true,revision=history.revision})
+      end}
+      label_ui.retry=label_vb:button{id="acid_label_retry",text="Retry",notifier=function()
+        local pending=label_ui.attempt
+        if not pending then return end
+        label_ui.field.edit_mode=false
+        if not pending.proposal then pending.label=label_ui.field.value end
+        label_ui.apply(pending)
+      end}
+      label_ui.discard=label_vb:button{id="acid_label_discard",text="Discard Attempt",notifier=function()
+        label_ui.attempt=nil
+        label_ui.field.value=phrase_label
+        label_ui.close()
+        update()
+        status.text="Label attempt discarded."
+      end}
+      label_ui.content=label_vb:column{margin=12,spacing=8,
+        label_vb:text{text="Phrase label: 1–32 ASCII letters, digits, spaces, _, . or -; start with a letter or digit."},
+        label_ui.field,label_ui.error,label_vb:row{spacing=6,label_ui.save,label_ui.retry,label_ui.discard}}
+    end
+    label_ui.field.value=attempt and attempt.label or phrase_label
+    label_ui.field.active=not (attempt and attempt.proposal)
+    label_ui.error.text=attempt and ("SAVE ERROR: "..tostring(attempt.error)) or ""
+    label_ui.save.active=attempt==nil
+    label_ui.retry.active=attempt~=nil
+    if visible then label_ui.dialog:show()
+    else label_ui.dialog=renoise.app():show_custom_dialog("ACID - Phrase label",label_ui.content) end
+    label_ui.field.edit_mode=label_ui.field.active
+    active_label_dialog=label_ui.dialog
+  end
+  label_ui.apply=function(attempt)
+    local function current()
+      return current_session() and history.revision==attempt.revision and
+        (not attempt.proposal or history:is_current(attempt.proposal))
+    end
+    if not current() then
+      attempt.error="Editor history changed; discard this attempt."
+      label_ui.show(attempt)
+      return
+    end
+    label_ui.attempt=attempt
+    local saved,reason=runtime:rename_label(attempt.label,attempt.label_custom,current)
+    if not saved then
+      attempt.error=reason
+      label_ui.show(attempt)
+      status.text="Label was not saved: "..tostring(reason)
+      return
+    end
+    if attempt.proposal then assert(history:commit(attempt.proposal),"Label history proposal changed during persistence")
+    else history:record(pattern,output_policy,pb_range,attempt.label,attempt.label_custom) end
+    phrase_label,phrase_label_custom=attempt.label,attempt.label_custom
+    label_ui.attempt=nil
+    label_ui.close()
+    update();update_live_state()
+    status.text="Label saved."
+  end
   local function move_history(direction)
     if guard_stage() then return end
     local proposal=history:propose(direction)
@@ -1355,12 +1468,8 @@ function M.show()
     local difference=editor.classify_difference({pattern=pattern,output_policy=output_policy,
       pb_range=pb_range,label=phrase_label,label_custom=phrase_label_custom},next_state)
     if difference=="label_only" then
-      local saved,reason=runtime:rename_label(next_state.label,next_state.label_custom)
-      if not saved then status.text="Label history change was not saved: "..tostring(reason);return end
-      if not history:commit(proposal) then return end
-      phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
-      status.text=direction=="undo" and "Label change undone and saved." or "Label change redone and saved."
-      update();update_live_state()
+      label_ui.apply({label=next_state.label,label_custom=next_state.label_custom,
+        revision=history.revision,proposal=proposal})
       return
     end
     pattern=next_state.pattern
@@ -1627,9 +1736,50 @@ function M.show()
   local decoded_panel=vb:column{id="acid_decoded_panel",spacing=4,
     vb:row{spacing=6,vb:text{text="Decoded view"},preview_popup,decoded_previous_button,
       ui.decoded.page_label,decoded_next_button},ui.decoded.text}
+  clipboard.choice=vb:popup{id="acid_clipboard_scope",items={"PITCH","TIME","Both"},value=1,
+    notifier=function() if not updating then release_audition();update() end end}
+  clipboard.status=vb:text{id="acid_clipboard_status",text="Clipboard empty"}
+  local copy_button=vb:button{id="acid_clipboard_copy",text="Copy",notifier=function()
+    if guard_stage() then return end
+    clipboard.scope=clipboard.scopes[clipboard.choice.value]
+    local reason
+    clipboard.payload,reason=sequencer.make_clipboard(pattern,clipboard.scope)
+    update()
+    if not clipboard.payload then status.text=tostring(reason) end
+  end}
+  clipboard.paste_button=vb:button{id="acid_clipboard_paste",text="Paste",active=false,notifier=function()
+    if guard_stage() then return end
+    local scope=clipboard.scopes[clipboard.choice.value]
+    if not clipboard.payload or clipboard.scope~=scope then
+      status.text=clipboard.payload and ("Clipboard contains "..clipboard.names[clipboard.scope]..
+        "; select that scope to paste.") or "Clipboard empty."
+      return
+    end
+    local eligible,reason=runtime:musical_eligibility()
+    if not eligible then status.text="Cannot paste: "..tostring(reason);return end
+    local candidate,err=sequencer.paste_candidate(pattern,clipboard.payload,scope)
+    if not candidate then status.text=tostring(err);return end
+    if sequencer.same_source(candidate,pattern) then return end
+    pattern=candidate
+    changed()
+  end}
+  label_ui.display=vb:text{id="acid_label_accepted",width=300,text=phrase_label}
   local pattern_copy_panel=vb:column{id="acid_pattern_copy_panel",spacing=4,
     vb:text{text="PATTERN / COPY",font="bold"},
-    vb:text{text="Session copy and paste controls are not available in this editor build."}}
+    vb:row{spacing=6,vb:text{text="Label"},label_ui.display,
+      vb:button{id="acid_label_rename",text="Rename",notifier=function()
+        if guard_stage() then return end
+        label_ui.show()
+      end}},
+    vb:row{spacing=6,clipboard.choice,copy_button,clipboard.paste_button,
+      vb:button{id="acid_pattern_duplicate",text="Duplicate",notifier=function()
+        if guard_stage() then return end
+        if not current_session() then status.text="Song changed. Close and reopen ACID.";return end
+        apply_pending_selected_phrase_selection()
+        local accepted,reason=runtime:request_duplicate()
+        if not accepted then status.text="Cannot duplicate: "..tostring(reason)
+        elseif reason then status.text=tostring(reason) end
+      end}},clipboard.status}
   local extended_panel=vb:column{id="acid_extended_panel",spacing=4,
     vb:text{text="EXTENDED / CLEAR",font="bold"},
     vb:text{text="Extended transformations and scoped clear controls are not available here."}}
@@ -1753,6 +1903,8 @@ function M.show()
       return
     end
     detach_this_watch()
+    label_ui.attempt=nil
+    label_ui.close()
     preview:close()
     if rawequal(active_audition,preview) then active_audition=nil end
     stage=nil
