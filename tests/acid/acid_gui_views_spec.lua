@@ -950,6 +950,35 @@ assert(render_calls==live_render_base+2 and generation_request.target_index==4,
   "the idle callback does not duplicate the same in-place Live Edit write")
 assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
 
+do
+  local before_policy=output_popup.value
+  local changed_policy=before_policy==1 and 2 or 1
+  local policies={"play_once","repeat"}
+  local writes=render_calls
+  live_checkbox:fire(true)
+  synchronous_writes=true
+  output_popup:fire(changed_policy)
+  assert(render_calls==writes+1 and active_request==nil and
+    generation_request.request.output_policy==policies[changed_policy],
+    "armed output edit commits synchronously: "..control("acid_status").text.." writes "..render_calls.."/"..writes)
+  local edited_source=assert(sequencer.copy_source(generation_request.source))
+  synchronous_writes=true
+  button("Undo"):fire()
+  assert(render_calls==writes+2 and active_request==nil and
+    generation_request.request.output_policy==policies[before_policy] and
+    sequencer.same_source(edited_source,generation_request.source),
+    "armed Undo synchronously restores output policy with exact musical source")
+  synchronous_writes=true
+  button("Redo"):fire()
+  assert(render_calls==writes+3 and active_request==nil and
+    generation_request.request.output_policy==policies[changed_policy] and
+    sequencer.same_source(edited_source,generation_request.source),
+    "armed Redo synchronously restores output policy with exact musical source")
+  synchronous_writes=true
+  button("Undo"):fire()
+  live_render_base=live_render_base+4
+end
+
 instrument.phrase_program=2
 instrument.phrase_program_observable:fire()
 instrument.phrase_program=1
@@ -1278,6 +1307,35 @@ do
   control("acid_operation").value=1
   control("acid_operation_open"):fire()
   assert(confirmations==1 and render_calls==renders,"cancelled operation performs no generation")
+  local before_modal=navigation_snapshot()
+  app.show_prompt=function(_,title)
+    if title=="Re-enter PITCH" then return "Proceed" end
+    control("acid_program_reenter_pitch"):fire()
+    return "Apply"
+  end
+  control("acid_operation_open"):fire()
+  assert(control("acid_status").text:find("resolve entry or the label editor",1,true),
+    "confirmation rejects a newly staged entry")
+  assert(draft_writes==before_modal.drafts and render_calls==before_modal.writes,
+    "entry staged during confirmation preserves source")
+  assert(control("acid_program_discard").active,"blocked operation preserves the staged entry")
+  app.show_prompt=function() return "Discard" end
+  control("acid_program_discard"):fire()
+  assert(button("Undo").active==before_modal.undo and button("Redo").active==before_modal.redo,
+    "entry staged during confirmation preserves history")
+  before_modal=navigation_snapshot()
+  local main_dialog=dialog
+  app.show_prompt=function()
+    control("acid_label_rename"):fire()
+    return "Apply"
+  end
+  control("acid_operation_open"):fire()
+  assert(control("acid_status").text:find("resolve entry or the label editor",1,true) and
+    draft_writes==before_modal.drafts and render_calls==before_modal.writes and
+    button("Undo").active==before_modal.undo and button("Redo").active==before_modal.redo,
+    "label editor opened during confirmation preserves source and history")
+  control("acid_label_discard"):fire()
+  dialog=main_dialog
   local writes=draft_writes
   local mask_bit=control("acid_mask_class_02").value
   app.show_prompt=function()

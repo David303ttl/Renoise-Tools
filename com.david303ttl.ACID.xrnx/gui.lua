@@ -1490,12 +1490,13 @@ function M.show()
     phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
     if not history:commit(proposal) then return end
     invalidate_projection()
-    local saved,save_error=save_draft()
+    local saved,save_error,effects=save_draft()
     status.text=saved and (direction=="undo" and "Edit undone and saved with the song." or
       "Edit redone and saved with the song.") or
       (direction=="undo" and "Edit undone; session recovery only: " or
       "Edit redone; session recovery only: ")..tostring(save_error)
     update();update_live_state()
+    if effects and effects.live_intent and current_session() then runtime:flush_pending() end
   end
   undo_button=vb:button{text="Undo",active=false,notifier=function()
     move_history("undo")
@@ -1803,6 +1804,10 @@ function M.show()
     return true
   end
   local function admit_operation(origin)
+    if stage or label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
+      status.text="Operation cancelled: resolve entry or the label editor before editing the source."
+      return false
+    end
     apply_pending_selected_phrase_selection()
     if not origin_current(origin) then status.text="Operation cancelled: editor or target changed.";return false end
     local eligible,reason=runtime:musical_eligibility()

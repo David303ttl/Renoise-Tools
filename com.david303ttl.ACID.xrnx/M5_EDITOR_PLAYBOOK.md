@@ -22,7 +22,9 @@ records Gate 5 native limits and the later operator-reported acoustic acceptance
 Gates 6–7 implementation, deterministic second-pass verification and native
 functional checks passed. [Gate 7 evidence](../tests/acid/runtime_acceptance.md#m5-gate-7-extended-operations-and-decoded-2026-11-02)
 records the reported manual pass; final integrated acceptance remains unverified.
-Gates 8–12 remain pending.
+Gate 8 user documentation and native procedure readiness passed; see
+[evidence](../tests/acid/runtime_acceptance.md#m5-gate-8-documentation-readiness-2026-11-02).
+Gates 9–12 remain pending.
 This is not a claim of complete M5 implementation or guaranteed Renoise behavior.
 Tests and evidence must report actual results.
 
@@ -2290,7 +2292,7 @@ not pass. Duplicate rows as needed; do not put planned outcomes in Result.
 | Gate 5 audition | Lifecycle/GUI specs; independent second pass; native functional harness | Full ACID suite with Lua 5.1; native `editor-responsiveness`; ACID package | 73 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-5-audition-2026-11-02); native sound, timing and manual acceptance unverified | PASS (implementation, deterministic verification, second pass) |
 | Gate 6 operations | Clipboard/label/duplicate specs; independent second pass; native functional harness | Full Lua 5.1 suite; native `editor-responsiveness`; ACID package | 79 specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-6-clipboard-labels-and-duplicate-2026-11-02); manual/final integrated acceptance unverified | PASS (implementation, deterministic verification, second pass) |
 | Gate 7 transforms | Source/RNG, GUI admission, Decoded specs; rotated second pass; native functional harness | Full Lua 5.1 suite; native `editor-responsiveness`; ACID package | 80 repository specs passed, 0 failed; native functional checks and package passed | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-7-extended-operations-and-decoded-2026-11-02); operator reports manual visual, keyboard and acoustic acceptance passed; final integrated acceptance remains | PASS (implementation, deterministic verification, second pass) |
-| Gate 8 documentation readiness | User docs/native procedures; suite/diff/package as required |  |  |  | Unexecuted |
+| Gate 8 documentation readiness | User docs/native procedures; independent second pass | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `git diff --check` | 77 specs passed, 0 failed; docs and procedure readiness checked | [Evidence](../tests/acid/runtime_acceptance.md#m5-gate-8-documentation-readiness-2026-11-02); no native checks performed; packaging not required | PASS (documentation readiness) |
 | Gate 9 final verification | Full suite/diff/package as required |  |  |  | Unexecuted |
 | Gate 10 native preparation | Host/build identity; disposable fixture and recovery preimages |  |  |  | Unexecuted |
 | Gate 11 native source/GUI | Procedures 13.1–13.2 |  |  |  | Unexecuted |

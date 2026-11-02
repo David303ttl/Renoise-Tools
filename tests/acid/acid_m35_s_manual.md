@@ -1,6 +1,8 @@
 # ACID — Renoise functional acceptance
 
-**Current acceptance:** M4/Gate 8 is closed under the scoped decision recorded in [runtime acceptance](runtime_acceptance.md#production-session-native-evidence). The separate max-32 timing/layout checklist and receiver-dependent audio remain unverified accepted limitations.
+**Current editor procedures:** [integrated editor acceptance](acid_regeneration_manual.md).
+
+**Prior production-session acceptance:** M4/Gate 8 is closed under the scoped decision recorded in [runtime acceptance](runtime_acceptance.md#production-session-native-evidence). The separate max-32 timing/layout checklist and receiver-dependent audio remain unverified accepted limitations.
 
 ## Program/Grid and source
 
@@ -13,9 +15,10 @@
    With Live Edit enabled, confirm switching views does not queue a render.
 3. Edit TIME 17, reduce LAST STEP 16, then restore 17. Confirm TIME 17 remains
    unchanged. Save and reopen the XRNS and repeat the check.
-4. Enter TIE at TIME 01. Confirm it is stored as NOTE. Click Reset Source once
-   and confirm the source resets immediately. Use Undo and Redo and confirm
-   the source and output policy follow each edit.
+4. Enter TIE at TIME 01. Confirm it is stored as NOTE. Click Reset Pattern
+   beside the Editor selector, then Reset in the confirmation. Verify
+   the reset preserves LAST STEP and label/custom state. Use Undo and Redo
+   and confirm the complete source/settings edit follows each action.
 
 ## Output policy and destination safety
 
@@ -299,7 +302,11 @@ part in its existing owner). Paths below are relative to
 | Persistence: `model/pattern_store.lua` `prepare`, `commit`, `restore`, draft helpers; `model/draft_cache.lua` `put`, `get`, `clear`; GUI completion handlers | **Correct/verify:** keep these owners. Store commit rebases current drafts; GUI clears the committed draft afterward in a separate write. Make target-draft clearing atomic with musical commit and require unique live ID holders before durable draft access. Preserve the guarded newer-data rollback check. |
 | Undo: GUI editor history buttons versus native phrase/source mutations | **Complete:** editor `history:undo` / `redo` changes source/drafts only. No `describe_undo`, `describe_batch_undo` or `is_undo_redoing` call exists in the current runtime. Native consistency and meaningful grouping remain prerequisite observations and later implementation work. |
 
-#### Current storage contract
+#### Storage contract at the recorded M4.7 baseline
+
+This recorded schema-1 inventory is not the active storage contract. Current
+editor stores use schema 2 and reject schema 1 read-only; see the
+[integrated procedures](acid_regeneration_manual.md).
 
 `renoise/phrase_ownership.lua` recognizes the exact name shape
 `ACID 0.1 #<id> [v3:<eight hex digits>]`, bounds IDs to 1–2147483647 and

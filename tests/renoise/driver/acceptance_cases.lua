@@ -5568,6 +5568,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local parameters={seed=17,min_note=24,max_note=60,note_weight=2,tie_weight=1,rest_weight=1}
       local operations={"clear_pitch","clear_time","clear_tie","clear_rest","clear_slide",
         "clear_accent","rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
+      local scope_time_length,scope_pitch_length=7,5
+      local scope_random_seed=1
+      local pitch_record_fields={"note","key","octave","accent","slide"}
       local function state() return assert(gui_context:editor_state()) end
       local function exact(expected)
         local actual=state()
@@ -5575,6 +5578,29 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         assert(actual.label==expected.label and actual.label_custom==expected.label_custom and
           actual.output_policy==expected.output_policy and actual.pb_range==expected.pb_range,
           "Extended operation changed excluded metadata")
+        local source,policy,pb,label,custom=persisted.read_draft(song,instrument,phrase)
+        assert(source and sequence.same_source(expected.source,source),
+          "Extended operation durable draft source differs")
+        assert(policy==expected.output_policy and pb==expected.pb_range and
+          label==expected.label and custom==expected.label_custom,
+          "Extended operation durable draft metadata differs")
+      end
+      local function scope_preserved(before,after,operation,scope)
+        assert(after.length==before.length and after.pitch_length==before.pitch_length,
+          "Extended operation changed active bounds")
+        local edits_pitch=operation:find("pitch",1,true) or operation=="clear_slide" or operation=="clear_accent"
+        for position=1,sequence.MAX_STEPS do
+          if not edits_pitch or (scope=="active" and position>before.pitch_length) then
+            for _,field in ipairs(pitch_record_fields) do
+              assert(after.pitch_events[position][field]==before.pitch_events[position][field],
+                "Extended operation changed excluded PITCH storage")
+            end
+          end
+          if edits_pitch or (scope=="active" and position>before.length) then
+            assert(after.time_events[position]==before.time_events[position],
+              "Extended operation changed excluded TIME storage")
+          end
+        end
       end
       local function value(id,next_value)
         suppress_captured_notifiers=true
@@ -5603,6 +5629,30 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             return member
           end})
         end
+        local fixture_before=state()
+        local fixture_edits=0
+        local function prepare_fixture(action)
+          local previous=state().source
+          action()
+          if not sequence.same_source(previous,state().source) then fixture_edits=fixture_edits+1 end
+        end
+        value("acid_operation_scope",2)
+        for _,operation_index in ipairs({9,10}) do
+          value("acid_operation",operation_index)
+          prepare_fixture(callbacks.acid_operation_open)
+        end
+        prepare_fixture(function() value("acid_last_step",scope_time_length) end)
+        prepare_fixture(function() value("acid_pitch_length",scope_pitch_length) end)
+        local scope_source=state().source
+        parameters.seed=scope_random_seed
+        assert(scope_source.length==scope_time_length and scope_source.pitch_length==scope_pitch_length,
+          "Operation scope fixture did not retain independent active bounds")
+        for _,operation in ipairs({"clear_pitch","clear_time","randomize_pitch","randomize_time"}) do
+          assert(not sequence.same_source(
+            assert(sequence.operation_candidate(scope_source,operation,"active",parameters)),
+            assert(sequence.operation_candidate(scope_source,operation,"all",parameters))),
+            "Operation scope fixture does not distinguish inactive storage: "..operation)
+        end
         for operation_index,operation in ipairs(operations) do
           for scope_index,scope in ipairs({"active","all"}) do
             local before=state()
@@ -5616,18 +5666,23 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             exact(before)
             confirmation="Apply"
             callbacks.acid_operation_open()
-            exact({source=candidate,label=before.label,label_custom=before.label_custom,
-              output_policy=before.output_policy,pb_range=before.pb_range})
+            local expected={source=candidate,label=before.label,label_custom=before.label_custom,
+              output_policy=before.output_policy,pb_range=before.pb_range}
+            exact(expected)
+            scope_preserved(before.source,state().source,operation,scope)
             if sequence.same_source(before.source,candidate) then
               assert(song.tool_data==raw,"No-op operation persisted data")
             else
               callbacks.acid_undo();exact(before)
               callbacks.acid_redo()
-              assert(sequence.same_source(candidate,state().source),"Operation redo differs")
+              exact(expected)
+              scope_preserved(before.source,state().source,operation,scope)
               callbacks.acid_undo();exact(before)
             end
           end
         end
+        for index=1,fixture_edits do callbacks.acid_undo() end
+        exact(fixture_before)
         local before=state()
         local edits=0
         local function mask(id,next_value)
@@ -5685,6 +5740,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       metrics.gui_mask_native_functional_checked=true
       metrics.gui_reset_native_functional_checked=true
       metrics.gui_extended_prompt_responses_simulated=true
+      metrics.gui_extended_inactive_memory_scope_checked=true
+      metrics.gui_extended_scope_time_length=scope_time_length
+      metrics.gui_extended_scope_pitch_length=scope_pitch_length
       return true
     end
     local extended_ok,extended_error=verify_extended_operations()
@@ -6026,7 +6084,15 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       metrics.gui_live_checkbox_callback_found=live_notifier~=nil
       metrics.gui_live_checkbox_value_before=live_control.value==true
       gui_live_trace_enabled=detailed_profile
+      local before_arm_data=song.tool_data
+      local before_arm_phrase=assert(ownership.snapshot(phrase))
+      local before_arm_inventory=#instrument.phrases
       set_live_armed(true)
+      if song.tool_data~=before_arm_data or #instrument.phrases~=before_arm_inventory or
+          not ownership.compare(before_arm_phrase,assert(ownership.snapshot(phrase))) then
+        finished(false,"Arming Live Edit changed persisted source or phrase")
+        return
+      end
       local live_context=gui_transition_context or gui_context
       metrics.gui_context_created_count=gui_context_created_count
       metrics.gui_live_transition_context_matches_latest=rawequal(live_context,gui_context)
@@ -6132,6 +6198,139 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           " draft="..tostring(draft~=nil).." requests="..tostring(request_count)..
           " revision_advanced="..tostring(metrics.gui_live_revision_id_advanced)..
           " prior_source_retained="..tostring(metrics.gui_live_prior_source_retained))
+        return
+      end
+      local controls_ok,controls_error=pcall(function()
+        local peers={}
+        for _,peer_instrument in ipairs(song.instruments) do
+          for _,candidate in ipairs(peer_instrument.phrases) do
+            if not rawequal(candidate,phrase) then
+              peers[#peers+1]={phrase=candidate,snapshot=assert(ownership.snapshot(candidate))}
+            end
+          end
+        end
+        local function value(id,next_value)
+          suppress_captured_notifiers=true
+          controls[id].value=next_value
+          suppress_captured_notifiers=false
+          callbacks[id](next_value)
+        end
+        local function committed(name,action,check)
+          local previous_id=assert(ownership.id(phrase))
+          local previous=assert(live_context:editor_state())
+          local inventory_count=#instrument.phrases
+          action()
+          local id=assert(ownership.id(phrase))
+          local source,policy,pb=store.read_entry(song,id)
+          local actual=assert(live_context:editor_state())
+          if check then assert(check(actual,previous),"Live "..name.." did not apply its requested value") end
+          local generation=live_context:generation_state()
+          assert(id~=previous_id and source and sequence.same_source(source,actual.source) and
+            policy==actual.output_policy and pb==actual.pb_range,
+            "Live "..name.." did not commit exact source/settings: prior="..previous_id..
+            " current="..id.." source="..tostring(source and sequence.same_source(source,actual.source))..
+            " policy="..tostring(policy).."/"..tostring(actual.output_policy)..
+            " pb="..tostring(pb).."/"..tostring(actual.pb_range)..
+            " armed="..tostring(generation.armed).." status="..tostring(generation.status)..
+            " reason="..tostring(generation.reason or (generation.last_result and generation.last_result.reason)))
+          assert(generation.armed and not generation.busy and not generation.pending and
+            generation.last_result and generation.last_result.kind=="success" and writer.state()=="idle",
+            "Live control did not finish synchronously")
+          assert(not persisted.read_draft(song,instrument,phrase) and #instrument.phrases==inventory_count,
+            "Live control retained its committed draft or changed phrase inventory")
+          for _,peer in ipairs(peers) do
+            assert(ownership.compare(peer.snapshot,assert(ownership.snapshot(peer.phrase))),
+              "Live control changed a peer phrase")
+          end
+          metrics.gui_live_control_last_passed=name
+        end
+        local navigation_data=song.tool_data
+        local navigation_phrase=assert(ownership.snapshot(phrase))
+        for _,id in ipairs({"acid_pitch_page_2","acid_pitch_page_1","acid_time_page_2",
+            "acid_time_page_1","acid_workspace_tab_3","acid_workspace_tab_4",
+            "acid_workspace_tab_1"}) do callbacks[id]() end
+        value("acid_editor_view",2);value("acid_editor_view",1)
+        value("acid_preview",2);value("acid_preview",1)
+        value("acid_phrase_choice",new_phrase_choice_index)
+        value("acid_phrase_choice",phrase_index)
+        live_context=gui_transition_context or gui_context
+        metrics.gui_live_armed_after_navigation=live_context:generation_state().armed==true
+        metrics.gui_live_checkbox_after_navigation=live_control.value==true
+        assert(song.tool_data==navigation_data and
+          ownership.compare(navigation_phrase,assert(ownership.snapshot(phrase))),
+          "Armed navigation changed persisted source or phrase")
+        callbacks.acid_grid_pitch_01()
+        local pitch=assert(live_context:editor_state()).source.pitch_events[live_index]
+        local octave_id=pitch.octave==1 and "acid_program_octave_normal" or "acid_program_octave_up"
+        committed("octave",callbacks[octave_id],function(actual)
+          return actual.source.pitch_events[live_index].octave==(pitch.octave==1 and 0 or 1)
+        end)
+        committed("accent",function() value("acid_program_accent",not controls.acid_program_accent.value) end,
+          function(actual,previous)
+            return actual.source.pitch_events[live_index].accent~=previous.source.pitch_events[live_index].accent
+          end)
+        committed("slide",function() value("acid_program_slide",not controls.acid_program_slide.value) end,
+          function(actual,previous)
+            return actual.source.pitch_events[live_index].slide~=previous.source.pitch_events[live_index].slide
+          end)
+        callbacks.acid_grid_select_time_01()
+        local command=assert(live_context:editor_state()).source.time_events[live_index]
+        committed("time",callbacks[command=="R" and "acid_time_command_note" or "acid_time_command_rest"],function(actual)
+          return actual.source.time_events[live_index]==(command=="R" and "N" or "R")
+        end)
+        committed("output",function() value("acid_output_policy",controls.acid_output_policy.value==1 and 2 or 1) end,
+          function(actual,previous) return actual.output_policy~=previous.output_policy end)
+        committed("undo",callbacks.acid_undo)
+        committed("redo",callbacks.acid_redo)
+        local metadata_id=assert(ownership.id(phrase))
+        local metadata_phrase=assert(ownership.snapshot(phrase))
+        local metadata_source=assert(live_context:editor_state()).source
+        local metadata_label="Live metadata check"
+        local builder_factory=renoise.ViewBuilder
+        renoise.ViewBuilder=captured_builder_factory
+        local renamed,rename_error=pcall(function()
+          callbacks.acid_label_rename()
+          controls.acid_label_field.value=metadata_label
+          callbacks.acid_label_save()
+          callbacks.acid_undo();callbacks.acid_redo()
+        end)
+        renoise.ViewBuilder=builder_factory
+        assert(renamed,rename_error)
+        local _,_,_,saved_label,saved_custom=store.read_entry(song,metadata_id)
+        assert(saved_label==metadata_label and saved_custom==true,
+          "Armed label-only history did not persist the accepted label")
+        assert(ownership.id(phrase)==metadata_id and
+          ownership.compare(metadata_phrase,assert(ownership.snapshot(phrase))) and
+          sequence.same_source(metadata_source,assert(live_context:editor_state()).source),
+          "Armed label-only history rendered or changed musical source")
+        local disabled_phrase=assert(ownership.snapshot(phrase))
+        set_live_armed(false)
+        callbacks.acid_grid_pitch_01()
+        local disabled_source=assert(live_context:editor_state()).source
+        local key_value=(disabled_source.pitch_events[live_index].key+1)%12+1
+        callbacks[string.format("acid_program_key_%02d",key_value)]()
+        local draft,policy,pb=persisted.read_draft(song,instrument,phrase)
+        assert(draft and not sequence.same_source(disabled_source,draft) and
+          ownership.compare(disabled_phrase,assert(ownership.snapshot(phrase))),
+          "Disarmed source edit did not preserve output and durable draft")
+        callbacks.acid_undo();callbacks.acid_redo()
+        assert(ownership.compare(disabled_phrase,assert(ownership.snapshot(phrase))),
+          "Disarmed Undo/Redo rendered output")
+        callbacks.acid_generate()
+        local manual_source,manual_policy,manual_pb=store.read_entry(song,assert(ownership.id(phrase)))
+        assert(manual_source and sequence.same_source(draft,manual_source) and
+          policy==manual_policy and pb==manual_pb and not persisted.read_draft(song,instrument,phrase),
+          "Manual Regenerate did not apply the disarmed draft")
+        metrics.gui_live_individual_controls_checked="pitch,octave,accent,slide,time,output"
+        metrics.gui_live_arming_navigation_no_write_checked=true
+        metrics.gui_live_label_history_no_render_checked=true
+        metrics.gui_live_undo_redo_checked=true
+        metrics.gui_disarmed_edit_manual_regenerate_checked=true
+      end)
+      suppress_captured_notifiers=false
+      if not controls_ok then
+        set_live_armed(false)
+        finished(false,"Live Edit control coverage: "..tostring(controls_error))
         return
       end
       local disarm_count=callback_counts.acid_live_edit or 0

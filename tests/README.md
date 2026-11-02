@@ -77,7 +77,14 @@ For other manual checks, use a disposable song and follow the relevant guides:
 - [ACID sampler and control signals](acid/acid_sampler_control_manual.md)
 - [ACID Repeat acceptance and deferred audio checks](acid/acid_loop_manual.md)
 - [ACID Live Edit](acid/acid_live_edit_manual.md)
-- [ACID regeneration, ownership and persistence](acid/acid_regeneration_manual.md)
+- [ACID integrated editor procedures and evidence](acid/acid_regeneration_manual.md)
+
+The [ACID editor playbook, section 13](../com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md#13-native-renoise-click-procedures-and-evidence-ledger)
+defines the final integrated native checks. The integrated editor guide routes
+all 13.1–13.8 procedures to evidence fields and includes the actual operation
+dialogs with inactive memory. Scripted modal answers do not establish that
+human journey or distinguish Active from All-32 at 32/32 bounds. Procedure
+readiness is not a native pass.
 
 Keep the existing DigitaktSampleChain tool installed and confirm it still opens
 after reloading tools. Real Renoise integration, playback, undo and save/reload behavior require

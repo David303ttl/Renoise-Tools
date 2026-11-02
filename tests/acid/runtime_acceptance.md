@@ -2,8 +2,44 @@
 
 M5 sections below are dated checkpoint records. Earlier statements that later
 gates were pending describe those checkpoints, not the current implementation.
-See [Gate 5 verification](#m5-gate-5-audition-2026-11-02) for audition results
-and native acceptance limits.
+See [Gate 8 verification](#m5-gate-8-documentation-readiness-2026-11-02)
+for current documentation readiness and remaining native acceptance.
+
+## Integrated editor and Live Edit verification (2026-11-02)
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Host/build | Renoise 3.5.4 Demo / API 6.2; `3062241` plus working-tree changes | Disposable runner-owned processes; tested GUI SHA-256 `a90b9aca372ba9be029b351e4ff4b1736e0c25e7fbfe2f892ae821135669d333` matches working tree |
+| Editor/Live Edit | `./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-41232a9c5dee44c78f63a2a355befa9b/report.json` | PASS; arming and armed navigation without writes, individual PITCH/octave/ACCENT/SLIDE/TIME/output commits, peer preservation, ACID musical Undo/Redo, label-only history without rendering, disarmed edit/manual regeneration |
+| Musical history regression | `acid_gui_views_spec.lua`; native editor report above; failing diagnostic `tmp/interactive-6d3c7f8ffc1e48ceb6962224aa5105bc/report.json` | PASS after correction; musical Undo/Redo flushes its pending Live Edit request synchronously; each action dispatches once. Label-only path remains separate |
+| Inactive scope storage | Same editor report; TIME 7 / PITCH 5; all ten operations in both scopes | PASS; Apply/Undo/Redo compare editor and durable drafts; independent bounds, unrelated-memory and inactive-slot checks; fixture restored |
+| Cold owned/New drafts | `-AcceptanceCase recovery-labels-prepare`; `tmp/interactive-f558a46093e242b7a6fbd887583a6798/report.json` | PASS; fresh-process exact committed source/settings, owned and New dirty PITCH/TIME/mask/settings/labels; restore without generation; explicit New recovery generation preserves owned draft |
+| Multi-instrument workflow | `-AcceptanceCase multi-instrument-workflow`; `tmp/interactive-99cd9e22422b40e4b28cfd110b2dc058/report.json` | PASS; scoped native multi-target workflow and fixture preservation |
+| Persistence faults | `-AcceptanceCase persistence-failures`; `tmp/interactive-a67b2a9819334e4c91121103b3292311/report.json` | PASS; synthetic setter failures over native storage, exact bytes/cache/phrase preimages, independent integrity blocker and explicit revalidation |
+| Writer recovery | `-AcceptanceCase writer-recovery`; `tmp/interactive-4948ba5e59dc43c78a11c69e84679e95/report.json` | PASS; native transactional recovery assertions |
+| Ownership rejection | `-AcceptanceCase ownership-negatives`; `tmp/interactive-8b03ebea50b544308051aca46afb9c5b/report.json` | PASS; scoped incompatible/foreign/colliding/source-less target protection |
+| Independent identity/cold reopen | `-AcceptanceCase make-independent -ColdProcessRoundTrip`; `tmp/interactive-2d454e2e152c4ccc9a6e02f42a0bd04d/report.json` | PASS; fresh-process identity/source/output checks |
+| Lifecycle/observers | `-AcceptanceCase integrity-observers`; `tmp/interactive-22390fd846c14025b8357edd7438d813/report.json` | PASS; scoped native close/reopen/document and observer cleanup checks |
+| Native musical Undo/Redo | `-AcceptanceCase revision-undo` and `revision-live-undo` with keyboard environment/focus activation; `tmp/interactive-6c3b085e4cbd4eae928a795c6626d29c/report.json`, `tmp/interactive-d3df2950dc404938ac91b9fe0aada384/report.json` | PASS on final GUI; real user-action callbacks and native Undo/Redo with Live Edit off/on |
+| Native + Keyboard suite | `./scripts/run_interactive_tests.ps1 -Suite All -Install -ApproveDisposableSong -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation`; `tmp/interactive-710cb720a48c493abd6aa262d4c10e23/report.json` | PASS; transport, phrase inventory/expected diff, actual ACID shortcut/open/close and native instrument navigation. This keyboard journey does not cover every editor/modal key |
+| Metadata recovery | `-AcceptanceCase metadata-recovery -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation`; `tmp/interactive-2d6bbc5c82e04cd095b5b22b8632074f/report.json` | PASS; guarded real Enter action, exact metadata/recovery checks and automatic cold reopen |
+| Native metadata Undo diagnostic | `-AcceptanceCase metadata-undo`; `tmp/interactive-0437668c94704c87b2bf22f5d9399889/report.json`; real-action `describe_undo` probe `tmp/interactive-49a13aebbe15490ba7474d814ac58aba/report.json` | FAIL; rename persists exactly but Renoise exposes no native Undo state. Explicit description did not create one. Temporary probe removed; no dummy musical mutation or weakened assertion |
+| Independent second pass | Separate reviewers of live history dispatch, native scope invariants, cold source/label contracts and regression assertions | PASS; focused Lua specs and native reruns support corrected behavior |
+| Final repository regression | `./scripts/run_tests.ps1 -Tool All -LuaCommand <lua-5.1-executable>`; `tmp/gate8-final-all-regression.log` | PASS; 80 specs, 0 failed; Lua 5.1.5 |
+| Packages/diff/isolation | `./tests/renoise/test_package_dev.ps1 -LuaCommand <lua-5.1-executable>`; `./scripts/package.ps1 -Tool ACID`; `git diff --check`; `tmp/gate8-final-dev-package.log`, `tmp/gate8-final-release-package.log` | PASS; 32 release files, root entrypoints/private modules present, exact GUI hash, SDK/tests/development files excluded. All 12 functional interactive reports verify installation restoration; pre-existing Renoise process remains running |
+| Remaining manual acceptance | Playbook 13.1–13.8 and `acid_live_edit_manual.md` | UNVERIFIED for human-operated modal journeys, visual/acoustic judgment, full live GUI negative-target and fault/Retry matrix, exhaustive phrase-cell/receiver inspection and native arrangement/transposition/resizing. Functional passes above do not establish all seven manual steps or Gate 11 complete |
+
+## M5 Gate 8 Documentation readiness (2026-11-02)
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Documentation | Root/tool README, DESIGN, ROADMAP, tests README and existing ACID manual procedures; Playbook section 13 | Updated delivered editor, schema-2, operations and persistence descriptions; native procedure routing and evidence fields prepared |
+| Modal admission | `acid_gui_views_spec.lua`; `gui.lua` operation admission | PASS; staging or opening the label editor during confirmation rejects the operation without source writes, rendering or history changes |
+| Lua regression | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `tmp/gate8-acid-regression.log` | PASS; 77 specs, 0 failed; Lua 5.1.5 |
+| SDK | `./scripts/setup_sdk.ps1` | PASS; pinned API 6.2 installation verified; no API calls changed |
+| Independent second pass | Rotated runtime and documentation reviewers; focused GUI spec rerun; `git diff --check` | PASS; modal guard reviewed independently; procedure anchors, control names and observable Active-scope fixture corrected |
+| Native acceptance | [Integrated editor verification](#integrated-editor-and-live-edit-verification-2026-11-02) | Targeted native functional checks executed separately; complete final integrated manual acceptance remains UNVERIFIED |
+| Packaging | Runtime layout unchanged | Documentation readiness did not require packaging; subsequent native verification builds release/development packages separately |
 
 ## Interactive persistence acceptance (2026-11-02)
 

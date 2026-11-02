@@ -1,59 +1,38 @@
 # ACID Live Edit manual verification
 
-The Renoise result below is an M2-era UI receipt. Current cutover acceptance is
-tracked in [acid_m35_s_manual.md](acid_m35_s_manual.md); this procedure covers
-the remaining Live Edit lifecycle checks.
+Use the [integrated setup and evidence fields](acid_regeneration_manual.md)
+and [canonical persistence/Live Edit checks](../../com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md#137-persistence-ownership-undo-and-live-edit).
+These procedures do not claim an executed native result.
+Executed checks and remaining limits are recorded in
+[integrated native verification](runtime_acceptance.md#integrated-editor-and-live-edit-verification-2026-11-02).
 
-Run `pwsh -NoProfile -File ./scripts/run_tests.ps1 -Tool ACID`
-locally in VS Code. No GitHub workflows.
-
-1. Load a Renoise instrument with an existing ACID-owned phrase and its
-   saved source. Open ACID. Ensure Live Edit is OFF by default.
-2. Enable Live Edit. Verify phrase content and phrase count stay unchanged.
-   Switch Program/Grid, pages, preview cycle and phrase/instrument targets;
-   verify navigation does not generate. Reset Source and verify only the editor
-   and its recoverable draft change. Generate explicitly to apply the reset.
-3. Change a PITCH key, octave, ACCENT and SLIDE, then change a TIME action.
-   Allow Renoise's event loop to process the edits. Check the *same phrase*
-   changes and no additional phrase remains in the instrument.
-4. Rapidly modify several controls. Expect coalesced writes, not a write
-   for every UI callback. Change again while a render is pending; the final
-   phrase must match the last displayed editor state.
-5. Turn Live Edit OFF, change a note and verify the phrase does not update.
-   Use the existing manual Generate/Regenerate button and verify it works.
-6. Select New Phrase or a foreign/modified phrase. Live Edit remains armed and
-   creates a separate owned phrase, leaving foreign or modified phrases intact.
-7. Change songs with the dialog open. No pending live write may touch the new
-   song. Close and reopen the editor; no stale listener may keep writing.
-8. Edit a generated phrase manually in Renoise while Live Edit is on.
-   The ownership seal should prevent destructive replacement; subsequent
-   edits should target a separate owned phrase.
-9. Verify the saved source survives closing ACID and saving/reopening the
-   XRNS after the last completed live render.
-
-## Renoise result (2026-10-27)
-
-On Renoise 3.5.4 Demo with a disposable song, Live Edit was enabled for an
-Extended Repeat phrase and LAST STEP plus active PITCH span were changed through
-64→17→1→64. The same phrase changed from 257 to 69 to 5 and back to 257 lines.
-The span changes did not append phrases. With Live Edit disabled, changing
-LAST STEP and span left the previous phrase unchanged until manual Generate;
-manual generation then resized it from 257 to 69 lines. No stale lines or
-additional phrase were observed in these cases.
-
-Changing songs while ACID was open produced `Song changed. Close and reopen
-ACID.` on the stale editor. Reopening ACID restored the correct song context.
-An Original-mode phrase source also survived saving and reopening the XRNS and
-was accepted for regeneration.
-
-Rapid edits, edits while a render is in flight, disabling Live Edit mid-job,
-dialog close, notifier/song-close races, and undo/redo remain untested. Renoise
-Demo disabled WAV rendering, so this result covers phrase mutation and context
-guards only; it does not establish audio behavior. The M2 implementation was
-closed on 2026-10-27 with registered-build audio checks deferred; see the
-[Repeat acceptance record](acid_loop_manual.md).
-
-Limitations: Live Edit is an opt-in *phrase regeneration* feature, not
-per-sample real-time DSP. The renderer still relies on Renoise's asynchronous
-script compilation, and phrase playback behavior must be checked in Renoise.
-Rendering is asynchronous and serialized; rapid edits may be coalesced.
+1. Open **Tools > ACID...** with an unchanged owned phrase selected. With
+   **Live Edit** off, change a PITCH note and a TIME command. Verify a dirty
+   recoverable draft and unchanged native phrase cells. Save/cold-reopen the
+   song and compare draft and committed source separately.
+2. Return to the clean fixture. Enable **Live Edit** without editing. Compare
+   phrase cells, inventory and persisted source: arming alone must not write.
+   Switch Program/Grid, pages, preview cycle, workspace and targets. Navigation
+   must not generate; returning to a dirty target restores its own draft.
+3. Edit PITCH, octave, ACCENT, SLIDE, TIME and output settings individually.
+   Each accepted musical edit uses the guarded synchronous writer and updates
+   the same owned destination. Inspect actual cells, source association and
+   unchanged peers after each callback. Label-only edits and mask inspection
+   must not render. Do not describe a background render or asynchronous job.
+4. Make several successive edits and switch targets between settled callbacks.
+   Verify each target's source/output association and no stale write to another
+   target. Disable Live Edit, edit again and verify unchanged output until
+   **Regenerate**. Check ACID Undo/Redo with Live Edit both off and on; record
+   native host Undo separately, including metadata-only limitations.
+5. Select **New Phrase**, edit with Live Edit off, then explicitly **Generate**.
+   Only the selected New destination permits creation. Select a foreign,
+   manually modified, deleted or colliding target; generation must block and
+   retain the draft. Live Edit never silently creates a replacement phrase.
+6. Change songs or close ACID between edits. Reopen and inspect song context,
+   observers and destination identity. A stale editor must not write to the
+   replacement song. Save/cold-reopen and compare all source/settings/draft
+   values without automatic generation.
+7. Execute the safe failure cases in canonical 13.4/13.7 on disposable copies.
+   Preserve byte/preimage evidence, unsaved draft and independent blockers;
+   record Retry and recovery behavior without inferring durable success from
+   status text alone.

@@ -10,7 +10,13 @@ Canonical source contains 32 valid PITCH entries, 32 stored TIME commands, an
 active TIME length of 1â€“32 and an independent active PITCH span of 1â€“32.
 ACCENT and outgoing SLIDE belong to PITCH entries. Inactive stored entries are
 preserved. Editor view, output policy and target capabilities are separate from
-musical source and its ownership hash.
+musical source and its ownership hash. Source also requires timing mode, a
+mask-enabled boolean and twelve pitch-class booleans. Notes and resolved notes
+are limited to MIDI 24–60. An enabled mask requires at least one selected class;
+a disabled all-false mask remains valid. Shared resolution chooses the nearest
+allowed note, breaking ties downward, without rewriting raw controls. One
+prepared source snapshot supplies canonical resolved note/key/octave records
+to projection, interpretation, planning and writing.
 
 NOTE consumes the next active PITCH entry. TIE holds the semantic voice without
 consuming pitch. REST releases it. PITCH consumption restarts at P01 on each
@@ -29,7 +35,19 @@ Program and Grid edit the same source. Both reach all 32 positions. Selection,
 view changes and Start/Repeating preview never edit source or queue regeneration.
 Fresh drafts have C pitches, NOTE commands, TIME length 16 and PITCH span 16.
 Reducing active length preserves hidden entries. Reset is explicit and undoable.
-Source edits and phrase output policy support editor Undo and Redo.
+Source, phrase output/PB settings and label/custom metadata share one linear
+Undo/Redo history. Program Re-enter holds a detached candidate and entered
+markers until Finish applies one real edit. Every staged position must be
+entered; navigation and Check never mark or commit it. Incomplete stages offer
+Discard/Stay only. Guard resolution never resumes the blocked action.
+
+PITCH and TIME cursors/pages are independent. Grid shows canonical source;
+inactive TIME slots are inspectable but direct editing is blocked. Stored,
+referenced and modified indicators distinguish retained slots, actual NOTE
+consumption and differences from the accepted session baseline. Audition uses
+the resolved selected or PITCH-stage note without source/draft/history writes.
+A captured song/instrument/track lifecycle releases before replacement onset
+and context changes; removed objects make cleanup best effort.
 
 Repeat is the default phrase-specific output policy. It renders a cold
 introduction followed by a steady body and an exclusive-end sentinel. Play Once
@@ -98,52 +116,71 @@ claiming playback support. No routing devices or automation are inserted.
 `model/output_planner.lua` merges gates and glide operations; the gate writer
 preflights the planned operations before applying them to phrase cells.
 `writers/phrase_validator.lua` checks the final note, OFF, effect and metadata
-layout. Rendering uses a temporary phrase, identity and ownership checks, then
-a guarded phrase/source commit. Failed writes preserve the last-good destination
+layout. Creation inserts its final destination; regeneration updates the exact existing
+phrase without a staging/backup phrase. Identity and ownership checks protect
+the guarded phrase/source commit. Failed writes preserve the last-good destination
 or retain identified recovery material if rollback cannot finish. Foreign,
 manually modified and duplicate-ID destinations cannot be overwritten.
 
-Generation requires LPB transport timing. Legacy speed timing is rejected before
-phrase insertion or source-store mutation. The script runner starts native
-rendering from `committed_observable`, after the new source is committed. This
-notification does not establish compilation success; the native render callback
-and phrase validation determine the outcome. A 500-idle-callback limit bounds
-waiting for commitment. During rendering it only reports a pending-render
-diagnostic and keeps the writer occupied.
+Generation requires LPB transport timing. Unsupported speed timing is rejected
+before phrase insertion or source-store mutation. Production phrase writes are
+synchronous and serialized through `writers/phrase_writer.lua`; no separate
+render engine or asynchronous render callback owns commits.
 
-Renoise exposes no render-cancel operation. Cancellation invalidates commit
-authorization; an in-flight render retains the writer slot and the exact script
-wrapper used to start it until its callback arrives. Other job host references
-are released when the document closes. A missing callback therefore blocks new
-writes and requires restarting Renoise. Document release and tool unload detach
-observers without treating an unfinished render as complete.
+`renoise/pattern_store.lua` accepts empty song tool data or strict
+`ACID-PITCH-TIME-2` data only. It serializes committed sources, output settings,
+labels/custom bits and separate drafts. Unsupported/corrupt data remains
+unchanged and blocks writes; there is no migration or reset fallback.
+Candidates compare exact captured store bytes and verify publication.
+`renoise/phrase_ownership.lua` seals generated contents and loop properties;
+friendly labels never participate in the seal.
 
-`renoise/pattern_store.lua` stores the current WIP `ACID-PITCH-TIME-1` source
-records and separate phrase output policy and PB Range in song-scoped tool data.
-`renoise/phrase_ownership.lua` seals generated contents and loop properties.
+## Metadata and source operations
+
+Labels are song-local 1–32-byte ASCII metadata with an initial alphanumeric
+and subsequent alphanumerics, spaces, underscores, periods or hyphens. A
+label-only transition persists before history acceptance and never renders,
+dirties source or increments phrase revision. Failure retains accepted history
+and an explicit Retry/Discard Attempt field state. Mixed source/label failure
+retains the pair as one dirty local edit. Storage uncertainty blocks writes.
+
+Session clipboard payloads carry exactly 32 PITCH records and PITCH span,
+32 TIME commands and LAST STEP, or both. Paste preserves all other source,
+metadata, output and target fields; identical results are no-ops. Duplicate is
+an explicit authorized create from verified committed source/settings/metadata,
+with a fresh ID and seal through the existing writer. A dirty original draft
+must first pass durable save/readback and remains unchanged by duplication.
+
+Clear, transform and seeded randomization construct validated source candidates
+in the sequencer owner. Active scope uses the relevant memory bound; All 32
+includes inactive storage without changing bounds. Shared TIME normalization
+retains the leading-NOTE invariant. Pitch randomization retains flags and
+samples raw notes before mask resolution. Reset preserves LAST STEP and
+label/custom metadata while resetting the remaining documented editor fields.
+All changed candidates use one ordinary editor history/draft admission.
 
 ## Live Edit and drafts
 
-Live Edit starts rendering immediately for each source change and coalesces pending
-edits. Jobs validate their token and song/target identity before mutation and
+Live Edit writes synchronously for admitted source/settings changes and
+coalesces pending edits. Jobs validate their token and song/target identity before mutation and
 commit. Manual generation and Live Edit use structured render outcomes.
 
 CLEAN, RENDERING, COMMITTED, APPROXIMATE and ERROR
 separate pending edits, successful output, sonic limitations and write safety.
 Recoverable failures keep Live Edit armed and preserve the draft. Retry or a
 relevant edit schedules another attempt without an automatic retry loop.
-Live Edit creates and binds its own phrase automatically for new, foreign,
-modified or deleted phrase targets, preserving unrelated content. A hard API or
+Normal generation requires an explicitly armed New Phrase destination for
+creation; Duplicate uses its captured committed-source authorization. Foreign,
+modified, deleted and colliding destinations block generation. A hard API or
 persistence failure reports an error while keeping the editor armed.
 Dialog close and song changes invalidate outstanding work.
 
 For the selected Renoise instrument, native selection of an owned phrase loads
 its ACID source; foreign selections do not redirect the destination. Choosing
 an ACID destination leaves Renoise's Phrase Editor selection unchanged.
-Selecting a saved phrase alone does not schedule regeneration, while recovered
-drafts do. Synchronous temporary phrase insertions and removals suppress their
-own selection notifications; user selections between those operations remain
-observable. Structural operations may change native selection. ACID never
+Selecting a saved phrase or restoring a draft never schedules regeneration.
+Writer-owned structural notifications are suppressed during the transaction;
+user selection changes remain observable. Structural operations may change native selection. ACID never
 assigns native selection properties or restores selection after generation.
 The playback program is independent of the editor selection.
 
@@ -161,5 +198,5 @@ MIDI delivery, sample continuity or GUI scaling. The manual checklist in
 required host checks and their results. Unrun checks remain unverified.
 
 The pinned API SDK is a development reference, never a runtime dependency.
-[ROADMAP.md](ROADMAP.md) tracks implementation and acceptance gates. Triplet
-timing and the full sequential Program workflow are separate planned work.
+[ROADMAP.md](ROADMAP.md) tracks implementation and acceptance gates. The [editor playbook](M5_EDITOR_PLAYBOOK.md) is the normative editor and native
+acceptance contract. Final integrated native acceptance remains unverified.
