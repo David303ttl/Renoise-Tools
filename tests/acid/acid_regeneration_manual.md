@@ -37,15 +37,15 @@ For save/reopen, record the saved file and a fresh Renoise process identity.
 | 13.2 Sequential entry | PITCH/TIME entry, Check/Finish/Discard and navigation admission; distinguish staged values from canonical Grid/draft |
 | 13.3 Mask and output | Extended / Clear mask controls, raw/resolved Decoded rows, tie-breaking and Generate/save/reopen |
 | 13.4 Clipboard, labels, duplicate and failures | Pattern / Copy controls, all 32 values, metadata-only history, duplicate pre-save/readback and rollback evidence |
-| 13.5 Clear and randomization | Execute the human-dialog scope fixture below, then every remaining canonical check |
+| 13.5 Clear and randomization | Execute the inline-parameter scope fixture below, then every remaining canonical check |
 | 13.6 Audition and lifecycle | Actual sound/release, busy-host timing, modal/context cleanup and captured-object identity |
 | 13.7 Persistence, ownership, undo and Live Edit | [Live Edit](acid_live_edit_manual.md), exact source/output association, corrupt/unsupported store byte preservation |
 | 13.8 Retained workflow | [Native phrase workflow](acid_phrase_manual.md), stored/referenced/modified indicator cases and populated-song responsiveness |
 
-## Actual operation dialogs and inactive memory
+## Direct operations and inactive memory
 
 This fixture distinguishes scopes through the real controls. Do not substitute
-scripted modal callbacks or a 32/32 active fixture. Repeat in Program and Grid.
+a 32/32 active fixture. Repeat in Program and Grid.
 
 1. In **Grid**, set LAST STEP and Active PITCH span to 32. Across both pages,
    enter REST/TIE at T02..T07 and non-C flagged notes at P01..P05 so each
@@ -64,14 +64,14 @@ scripted modal callbacks or a 32/32 active fixture. Repeat in Program and Grid.
    **Clear PITCH** with both scopes: Active affects P01..P05, All affects P01..P32;
    inspect retained notes and flags on both Grid pages after temporarily raising
    the span. Undo inspection edits before comparing the operation baseline.
-4. Select **Randomize PITCH > Active memory > Apply**. In the
-   actual parameter dialog set Seed 1, Minimum raw MIDI 24, Maximum raw MIDI 60.
-   Inspect scope, bounds and rules in the same dialog. Cancel once and verify
-   no change. Reopen and click **Apply**; verify no second prompt appears.
+4. Select **Randomize PITCH > Active memory**. Set inline Seed 1, Minimum raw
+   MIDI 24, Maximum raw MIDI 60. Inspect selected scope and parameters. Verify parameter
+   edits alone leave source/history/draft unchanged. Click **Apply** and verify
+   direct application without a prompt.
    Verify P01..P05 raw MIDI 24,28,51,40,43, flags preserved and P06..P32 intact.
    Undo; repeat with All 32 stored and inspect inactive entries as well.
 5. Repeat **Randomize TIME** using Seed 1, NOTE/TIE/REST weights 2/1/1, both
-   scopes and the single Cancel/Apply dialog. The first five commands are N,N,R,N,T;
+   scopes and direct Apply. The first five commands are N,N,R,N,T;
    Active retains T08..T32. Inspect TIME 01 normalization using the canonical
    13.5 fixture. Scope changes never change LAST STEP or PITCH span.
 6. After each applied scope case, save the dirty draft, close Renoise, reopen
@@ -80,5 +80,4 @@ scripted modal callbacks or a 32/32 active fixture. Repeat in Program and Grid.
    cells remain the baseline until Generate. Use separate saved fixture copies
    for Active and All so neither comparison depends on a prior operation.
 7. Execute the remaining 13.5 operations, immediate Reset Pattern, no-op and
-   single Undo/Redo checks. Record parameter-dialog legibility and button reachability. Keep each
-   result separate from automated modal-response coverage.
+   single Undo/Redo checks. Record inline-control legibility and button reachability.

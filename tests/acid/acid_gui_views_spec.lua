@@ -777,8 +777,7 @@ assert(display_snapshot()==shared_view_snapshot,"Program and Grid project the sa
 assert(render_calls==0)
 view:fire(1)
 
-local last_step
-for _,node in ipairs(builder.nodes) do if node.kind=="valuebox" then last_step=node end end
+local last_step=control("acid_last_step")
 assert(last_step and last_step.min==1 and last_step.max==32)
 last_step:fire("20")
 control("acid_time_page_2"):fire()
@@ -800,12 +799,10 @@ assert(saved_draft().time_events[17]==inactive_time and
   draft_writes==inactive_history.drafts,
   "inactive TIME17 cannot be edited or persisted after shrink")
 
-local last_step
 local output_popup
 local pb_range_popup
 local phrase_popup
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="valuebox" then last_step=node end
   if node.kind=="popup" and node.items and node.items[1]=="Play Once" then
     output_popup=node
   end
@@ -1289,7 +1286,8 @@ do
   assert(not mask.value and control("acid_mask_class_02").value)
   button("Undo"):fire();button("Undo"):fire()
   assert(control("acid_mask_class_02").value and not mask.value)
-  local confirmations,parameter_dialogs=0,0
+  local CLEAR_PITCH,RANDOM_PITCH,RANDOM_TIME=1,9,10
+  local confirmations=0
   app.show_prompt=function() confirmations=confirmations+1;return "Cancel" end
   local function valid_random_parameters()
     control("acid_operation_seed").value=17
@@ -1300,7 +1298,7 @@ do
   program_key(5):fire()
   local before_clear=assert(sequencer.copy_source(label_context:editor_state().source))
   local clear_writes=draft_writes
-  control("acid_operation").value=1
+  control("acid_operation").value=CLEAR_PITCH
   control("acid_operation_open"):fire()
   assert(draft_writes==clear_writes+1,"Clear immediately creates one edit")
   button("Undo"):fire()
@@ -1310,7 +1308,7 @@ do
     view:fire(mode)
     for _,live in ipairs({false,true}) do
       control("acid_live_edit"):fire(live)
-      control("acid_operation").value=1
+      control("acid_operation").value=CLEAR_PITCH
       control("acid_operation_open"):fire()
       local writes=draft_writes
       control("acid_operation_open"):fire()
@@ -1319,7 +1317,7 @@ do
       writes=draft_writes
       button("Reset Pattern"):fire()
       assert(draft_writes==writes,"identical Reset is inert")
-      for operation=1,8 do
+      for operation=CLEAR_PITCH,RANDOM_PITCH-1 do
         control("acid_operation").value=operation
         control("acid_operation_open"):fire()
       end
@@ -1327,87 +1325,77 @@ do
       control("acid_live_edit"):fire(false)
     end
   end
-  local function parameters(action)
-    app.show_custom_prompt=function(_,title,content,buttons)
-      parameter_dialogs=parameter_dialogs+1
-      assert(buttons[1]=="Cancel" and buttons[2]=="Apply" and #buttons==2)
-      valid_random_parameters()
-      return action()
-    end
-  end
-  control("acid_operation").value=9
+  app.show_custom_prompt=function()error("randomization must not open a dialog")end
+  control("acid_operation"):fire(RANDOM_PITCH)
   local before=navigation_snapshot()
-  parameters(function()return "Cancel"end)
-  control("acid_operation_open"):fire()
-  assert_navigation_neutral(before,"cancelled random parameters")
-  local dialogs=parameter_dialogs
-  parameters(function()return "Apply"end)
+  valid_random_parameters()
+  control("acid_operation_min_note").value=36
+  control("acid_operation_max_note").value=48
+  control("acid_operation_seed").value=1
+  for _,choice in ipairs({RANDOM_TIME,CLEAR_PITCH,RANDOM_PITCH}) do
+    control("acid_operation"):fire(choice)
+    assert(control("acid_random_parameters").visible==(choice~=CLEAR_PITCH) and
+      control("acid_random_pitch_parameters").visible==(choice==RANDOM_PITCH) and
+      control("acid_random_time_parameters").visible==(choice==RANDOM_TIME),
+      "operation selection exposes only its inline parameters")
+    assert(control("acid_operation_min_note").value==36 and
+      control("acid_operation_max_note").value==48 and control("acid_operation_seed").value==1,
+      "operation navigation preserves typed parameters")
+  end
+  assert_navigation_neutral(before,"inline random parameter editing")
   local previous=assert(sequencer.copy_source(label_context:editor_state().source))
   local writes=draft_writes
   control("acid_operation_open"):fire()
-  assert(parameter_dialogs==dialogs+1 and confirmations==0 and draft_writes==writes+1,
-    "random Apply uses one parameter dialog and one edit")
+  assert(confirmations==0 and draft_writes==writes+1,"random Apply immediately creates one edit")
+  local randomized=assert(sequencer.copy_source(label_context:editor_state().source))
+  writes=draft_writes
+  control("acid_operation_open"):fire()
+  assert(draft_writes==writes,"same random seed and parameters produce a no-op")
   button("Undo"):fire()
   assert(sequencer.same_source(previous,label_context:editor_state().source),"one Undo restores random edit")
+  button("Redo"):fire()
+  assert(sequencer.same_source(randomized,label_context:editor_state().source),"Redo restores random edit")
   for _,invalid in ipairs({
       function()control("acid_operation_min_note").value=60;control("acid_operation_max_note").value=24 end,
       function()control("acid_operation_seed").value=1.5 end}) do
-    parameters(function()invalid();return "Apply"end)
+    valid_random_parameters()
+    invalid()
     writes=draft_writes
     control("acid_operation_open"):fire()
     assert(draft_writes==writes and confirmations==0,"invalid random parameters never edit")
   end
-  control("acid_operation").value=10
-  parameters(function()
-    control("acid_operation_note_weight").value=0
-    control("acid_operation_tie_weight").value=0
-    control("acid_operation_rest_weight").value=0
-    return "Apply"
-  end)
+  control("acid_operation"):fire(RANDOM_TIME)
+  before=navigation_snapshot()
+  control("acid_operation_note_weight").value=0
+  control("acid_operation_tie_weight").value=0
+  control("acid_operation_rest_weight").value=0
+  assert_navigation_neutral(before,"inline TIME weight editing")
   writes=draft_writes
   control("acid_operation_open"):fire()
   assert(draft_writes==writes and confirmations==0,"zero random weights never edit")
-  control("acid_operation").value=9
+  control("acid_operation"):fire(RANDOM_PITCH)
+  valid_random_parameters()
   app.show_prompt=function(_,title)
     if title=="Re-enter PITCH" then return "Proceed" end
-    return "Discard"
+    return "Stay"
   end
-  parameters(function()control("acid_program_reenter_pitch"):fire();return "Apply"end)
+  control("acid_program_reenter_pitch"):fire()
+  for _,name in ipairs({"seed","min_note","max_note","note_weight","tie_weight","rest_weight"}) do
+    assert(not control("acid_operation_"..name).active,"staging disables inline parameter: "..name)
+  end
   before=navigation_snapshot()
   control("acid_operation_open"):fire()
-  assert(control("acid_status").text:find("resolve entry or the label editor",1,true) and
-    draft_writes==before.drafts and render_calls==before.writes,
-    "parameter dialog cannot overwrite newly staged entry")
-  assert(control("acid_program_discard").active)
+  assert(draft_writes==before.drafts and render_calls==before.writes and
+    control("acid_program_discard").active,"random Apply respects pending stage guard")
+  app.show_prompt=function()return "Discard"end
   control("acid_program_discard"):fire()
   local main_dialog=dialog
-  parameters(function()control("acid_label_rename"):fire();return "Apply"end)
+  control("acid_label_rename"):fire()
   writes=draft_writes
   control("acid_operation_open"):fire()
-  assert(control("acid_status").text:find("resolve entry or the label editor",1,true) and draft_writes==writes,
-    "parameter dialog cannot overwrite open label editor")
+  assert(draft_writes==writes,"random Apply cannot overwrite open label editor")
   control("acid_label_discard"):fire()
   dialog=main_dialog
-  for _,restore in ipairs({false,true}) do
-    local mask_bit=control("acid_mask_class_02").value
-    parameters(function()
-      control("acid_mask_class_02"):fire(not mask_bit)
-      if restore then button("Undo"):fire() end
-      return "Apply"
-    end)
-    writes=draft_writes
-    control("acid_operation_open"):fire()
-    assert(draft_writes==writes+(restore and 2 or 1) and
-      control("acid_status").text:find("editor or target changed",1,true),
-      "parameter dialog rejects intervening edit even when Undo restores source")
-    if not restore then button("Undo"):fire() end
-    assert(control("acid_mask_class_02").value==mask_bit)
-  end
-  parameters(function()phrase_popup:fire(1);return "Apply"end)
-  writes=draft_writes
-  control("acid_operation_open"):fire()
-  assert(draft_writes==writes and control("acid_status").text:find("editor or target changed",1,true),
-    "parameter dialog cannot apply to replacement target")
   app.show_prompt=function()return "Cancel"end
 end
 

@@ -201,8 +201,8 @@ Clear TIME sets NOTE. Clear TIE changes TIE to NOTE, while TIE-to-REST changes
 it to REST. Clear REST and REST-to-NOTE change REST to NOTE. Clear ACCENT or
 SLIDE changes only that flag. Seeded PITCH randomization uses a selected raw
 24–60 range and retains flags; TIME randomization uses NOTE/TIE/REST weights.
-Randomization uses one parameter dialog with visible scope and rules, Cancel
-and Apply; Apply performs the edit without another confirmation.
+Set randomization seed, range or weights inline in Extended / Clear, select
+scope, then Apply for one direct edit in either view.
 TIME 01 normalizes a drawn TIE to NOTE. Scope never changes active bounds;
 All 32 also edits inactive storage. Each changed result is one undoable edit.
 

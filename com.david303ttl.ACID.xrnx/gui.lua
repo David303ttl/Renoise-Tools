@@ -171,6 +171,7 @@ local DECODED_PAGES=sequencer.MAX_STEPS/DECODED_ROWS
 local RANDOM_SEED_MAX=2147483646
 local RANDOM_WEIGHT_MAX=1000
 local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
+local RANDOM_FIELD_WIDTH=90
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
 local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
@@ -285,7 +286,7 @@ function M.show()
   local map_text=vb:text{id="acid_preview_summary",size={width=820,height=18},font="bold",text=""}
   local length_items={}
   for n=1,sequencer.MAX_STEPS do length_items[n]=tostring(n) end
-  local last_step_box=vb:valuebox{width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=sequencer.PAGE_SIZE,
+  local last_step_box=vb:valuebox{id="acid_last_step",width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=sequencer.PAGE_SIZE,
     tostring=function(value)return string.format("%d",math.floor(value+0.5))end,
     tonumber=function(value)return tonumber(value)end}
   local view_popup=vb:popup{id="acid_editor_view",items={"Program","Grid"},width=105,value=1,
@@ -1796,21 +1797,13 @@ function M.show()
       end}},clipboard.status}
   local extended_panel
   do
-  local function origin_current(origin)
-    if not current_session() then return false end
-    local current=stage_origin()
-    for _,key in ipairs(STAGE_ORIGIN_FIELDS) do
-      if not rawequal(current[key],origin[key]) then return false end
-    end
-    return true
-  end
-  local function admit_operation(origin)
+  local function admit_operation()
     if stage or label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
       status.text="Operation cancelled: resolve entry or the label editor before editing the source."
       return false
     end
     apply_pending_selected_phrase_selection()
-    if not origin_current(origin) then status.text="Operation cancelled: editor or target changed.";return false end
+    if not current_session() then return false end
     local eligible,reason=runtime:musical_eligibility()
     if not eligible then status.text="Cannot edit: "..tostring(reason);return false end
     return true
@@ -1825,47 +1818,47 @@ function M.show()
     "rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
   local operation_names={"Clear PITCH","Clear TIME","Clear TIE","Clear REST","Clear SLIDE","Clear ACCENT",
     "REST to NOTE","TIE to REST","Randomize PITCH","Randomize TIME"}
-  local operation_choice=vb:popup{id="acid_operation",items=operation_names,width=180,value=1}
+  local random_fields={}
+  local function random_field(name,min,max,value)
+    local control=vb:valuebox{id="acid_operation_"..name,min=min,max=max,value=value,
+      width=RANDOM_FIELD_WIDTH,steps={1,10},
+      tostring=function(number) return string.format("%.0f",number) end,tonumber=tonumber}
+    random_fields[name]=control
+    return control
+  end
+  local seed=random_field("seed",1,RANDOM_SEED_MAX,1)
+  local pitch_parameters=vb:row{id="acid_random_pitch_parameters",spacing=4,visible=false,
+    vb:text{text="Raw MIDI"},random_field("min_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN),
+    vb:text{text="to"},random_field("max_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MAX)}
+  local time_parameters=vb:row{id="acid_random_time_parameters",spacing=4,visible=false,
+    vb:text{text="NOTE"},random_field("note_weight",0,RANDOM_WEIGHT_MAX,2),
+    vb:text{text="TIE"},random_field("tie_weight",0,RANDOM_WEIGHT_MAX,1),
+    vb:text{text="REST"},random_field("rest_weight",0,RANDOM_WEIGHT_MAX,1)}
+  local parameter_row=vb:row{id="acid_random_parameters",spacing=8,visible=false,
+    vb:text{text="Seed"},seed,pitch_parameters,time_parameters}
+  local operation_choice=vb:popup{id="acid_operation",items=operation_names,width=180,value=1,
+    notifier=function(value)
+      local operation=operation_ids[value]
+      local pitch=operation=="randomize_pitch"
+      local time=operation=="randomize_time"
+      pitch_parameters.visible=pitch
+      time_parameters.visible=time
+      parameter_row.visible=pitch or time
+    end}
   local operation_scope=vb:popup{id="acid_operation_scope",items={"Active memory","All 32 stored"},width=150,value=1}
   local function run_operation()
     if guard_stage() then return end
-    apply_pending_selected_phrase_selection()
-    local origin=stage_origin()
-    if not admit_operation(origin) then return end
+    if not admit_operation() then return end
     local choice=operation_choice.value
     local operation=operation_ids[choice]
     local scope=operation_scope.value==1 and "active" or "all"
     local parameters={}
-    if operation=="randomize_pitch" or operation=="randomize_time" then
-      local inputs=renoise.ViewBuilder()
-      local fields={}
-      local memory=operation=="randomize_pitch" and "PITCH" or "TIME"
-      local count=scope=="all" and sequencer.MAX_STEPS or
-        (memory=="PITCH" and pattern.pitch_length or pattern.length)
-      local content=inputs:column{margin=12,spacing=6,
-        inputs:text{text=string.format("%s: %s 01..%02d. LAST STEP %d; PITCH span %d.",
-          scope=="active" and "Active memory" or "All stored",memory,count,pattern.length,pattern.pitch_length)},
-        inputs:text{text=memory=="PITCH" and "Raw PITCH only; preserve TIME and ACCENT/SLIDE." or
-          "TIME only; normalize leading TIE to NOTE; preserve PITCH."},
-        inputs:text{text="Preserve bounds, mask, output, PB Range and label. Undo restores the previous state."}}
-      local function field(name,label,min,max,value)
-        fields[name]=inputs:valuebox{id="acid_operation_"..name,min=min,max=max,value=value,width=160,steps={1,10},
-          tostring=function(number) return string.format("%.0f",number) end,tonumber=tonumber}
-        content:add_child(inputs:row{spacing=8,inputs:text{text=label,width=160},fields[name]})
-      end
-      field("seed","Seed",1,RANDOM_SEED_MAX,1)
-      if operation=="randomize_pitch" then
-        field("min_note","Minimum raw MIDI",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN)
-        field("max_note","Maximum raw MIDI",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MAX)
-      else
-        field("note_weight","NOTE weight",0,RANDOM_WEIGHT_MAX,2)
-        field("tie_weight","TIE weight",0,RANDOM_WEIGHT_MAX,1)
-        field("rest_weight","REST weight",0,RANDOM_WEIGHT_MAX,1)
-      end
-      if renoise.app():show_custom_prompt(operation_names[choice],content,{"Cancel","Apply"})~="Apply" then return end
-      for name,control in pairs(fields) do parameters[name]=control.value end
+    if operation=="randomize_pitch" then
+      parameters={seed=random_fields.seed.value,min_note=random_fields.min_note.value,max_note=random_fields.max_note.value}
+    elseif operation=="randomize_time" then
+      parameters={seed=random_fields.seed.value,note_weight=random_fields.note_weight.value,
+        tie_weight=random_fields.tie_weight.value,rest_weight=random_fields.rest_weight.value}
     end
-    if not admit_operation(origin) then return end
     local candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
     if not candidate then status.text=tostring(reason);return end
     apply_candidate(candidate)
@@ -1873,8 +1866,7 @@ function M.show()
   local function edit_mask(index,value)
     if updating then return end
     if guard_stage() then update();return end
-    local origin=stage_origin()
-    if not admit_operation(origin) then update();return end
+    if not admit_operation() then update();return end
     local bits={}
     for class,enabled in ipairs(pattern.scale_mask) do bits[class]=enabled end
     if index then bits[index]=value end
@@ -1895,10 +1887,11 @@ function M.show()
   end
   local operation_button=vb:button{id="acid_operation_open",text="Apply",notifier=run_operation}
   ui.operation_controls={operation_choice,operation_scope,operation_button}
+  for _,control in pairs(random_fields) do ui.operation_controls[#ui.operation_controls+1]=control end
   extended_panel=vb:column{id="acid_extended_panel",spacing=4,
     vb:text{text="EXTENDED / CLEAR",font="bold"},
     vb:row{spacing=6,operation_choice,operation_scope,
-      operation_button},mask_row,
+      operation_button},parameter_row,mask_row,
     vb:text{text="Mask classes remain editable while disabled. Enabled mask requires at least one class."}}
   end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,
@@ -1941,9 +1934,7 @@ function M.show()
       vb:text{text="Editor"},view_popup,
       vb:button{id="acid_pattern_reset",text="Reset Pattern",notifier=function()
         if guard_stage() then return end
-        apply_pending_selected_phrase_selection()
-        local origin=stage_origin()
-        if not ui.admit_operation(origin) then return end
+        if not ui.admit_operation() then return end
         reset_source(pattern.length)
         changed()
       end},

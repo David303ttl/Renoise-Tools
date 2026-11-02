@@ -9,13 +9,13 @@ for current deterministic verification and remaining native acceptance.
 
 | Check | Command / evidence | Result |
 | --- | --- | --- |
-| Routine edits | `acid_gui_views_spec.lua`, `acid_gui_admission_spec.lua` | PASS; Clear/transforms/Reset have no confirmation; one Undo restores changed edits; repeated no-ops add no write; Program/Grid and Live Edit on/off checked |
-| Randomization | `acid_gui_views_spec.lua` | PASS; one Cancel/Apply parameter dialog; cancellation and invalid inputs are inert; stage/label/source/revision/target drift rejects |
-| Regression | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `tmp/editor-immediate-final-acid.log` | PASS; 77 specs, 0 failed; Lua 5.1.5 |
-| Native functional | `./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-4223d1fdfb78458a9937c9ac0b11d5a1/report.json` | PASS; Renoise 3.5.4 Demo / API 6.2; both views, ten operations in both scopes, Reset, exact draft/source preservation and Undo/Redo; routine prompts reject; random parameter responses scripted |
+| Routine edits | `acid_gui_views_spec.lua`, `acid_gui_admission_spec.lua` | PASS; direct Clear/transforms/Reset, one Undo for changed edits, inert repeated no-ops; Program/Grid and Live Edit on/off |
+| Inline parameters | `acid_gui_views_spec.lua` | PASS; seed/range/weights are source-neutral; operation selection toggles relevant fields and retains values; stage disables fields; invalid inputs reject; Apply is one edit |
+| Regression | `./scripts/run_tests.ps1 -Tool ACID -LuaCommand <lua-5.1-executable>`; `tmp/editor-inline-final-acid.log` | PASS; 77 specs, 0 failed; Lua 5.1.5 |
+| Native functional | `./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>`; `tmp/interactive-64d0ea2282d142f39ac0a1f75007b465/report.json` | PASS; Renoise 3.5.4 Demo / API 6.2; both views, ten operations in both scopes, inline parameters, Reset, exact draft/source preservation and Undo/Redo; operation prompts reject |
 | Native isolation | Same report | PASS; fixture inventory/store/selection restored; runner-owned process stopped; original installation restored |
-| Second pass/package | Rotated independent reviewer; focused GUI/model/harness specs; `./scripts/package.ps1 -Tool ACID`; `git diff --check` | PASS; admission/history/no-op checks retained; 32 runtime files; no compatibility aliases or extra mutation path |
-| Manual acceptance | Playbook 13.1–13.8 | UNVERIFIED for human-operated modal, visual and acoustic checks; final integrated native acceptance remains pending |
+| Second pass/package | Rotated independent reviewer; focused GUI/model/harness specs; `./scripts/package.ps1 -Tool ACID`; `git diff --check` | PASS; synchronous admission/history/no-op checks retained; 32 runtime files; popup implementation and modal race scaffolding removed |
+| Manual acceptance | Playbook 13.1–13.8 | UNVERIFIED for human-operated controls, visual and acoustic checks; final integrated native acceptance remains pending |
 
 ## M5 Gate 9 Regression and packaging (2026-11-02)
 

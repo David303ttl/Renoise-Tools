@@ -546,7 +546,7 @@ Keep this order in both Program and Grid:
    use it for bounded textual detail, not structured cell grids.
 4. Decoded shows at most four TIME rows at once with explicit previous/next
    page controls. Recovery text shows at most 16 visible lines with explicit
-   paging. Parameter-heavy operations use focused dialogs.
+   paging. Randomization parameters remain inline in Extended / Clear.
 5. Release any active audition before opening a focused dialog, confirmation,
    navigation that changes audition context, or closing the editor.
 
@@ -1094,13 +1094,12 @@ no-op means no history, draft write, or Live Edit request.
    scope. Per position one bucket in `[0,sum-1]`; NOTE interval `[0,N)`, TIE
    `[N,N+T)`, REST remainder. Preserve all non-TIME data and normalize T01
    without additional draw.
-8. Use one parameter dialog with Cancel and Apply. Show exact scope/bounds,
-   seed, range or weights, affected values rule and mask behavior in that dialog.
-   Validate all fields before Apply; Cancel has no effect. Apply performs the
-   edit without a second confirmation in Program and Grid.
-9. Capture focused operation parameters and editor revision. Revalidate both
-   immediately before applying candidate. If target/source changes while dialog
-   is open, abort without touching current source. One result is one history/edit.
+8. Show seed, range or weights inline in Extended / Clear with the scope
+   selector. Validate all fields
+   before Apply. Apply edits directly in Program and Grid without a modal.
+9. Apply uses the current inline parameters and selected scope through ordinary
+   synchronous edit admission. Parameter changes alone never edit source.
+   One result is one history/edit.
 10. If resulting source equals current source, no-op has no history, draft write,
     or Live Edit request. Raw random notes are not quantized by mask.
 
@@ -1517,8 +1516,9 @@ binding drift suppresses only UI selection.
     inclusive note limits, note 60 encoding, every octave boundary, flags
     retained, one draw even singleton, zero-weight boundaries, weight maximum,
     invalid zero sum, T01 normalize without extra draw, and out-of-scope values.
-    Assert one parameter dialog with visible scope/rules and Cancel/Apply in
-    both views: Cancel is inert, Apply creates one edit without a second prompt.
+    Assert inline parameters and the scope selector in both views: parameter
+    edits are inert, invalid inputs reject, and Apply creates one edit without
+    a modal.
 12. With LAST STEP 7 and distinctive TIME values at 8..32, compare Active and
     All-32 Clear/transform/Randomize. Only All-32 can change inactive storage;
     neither changes the bound. Direct TIME 17 editing still rejects. Verify
@@ -1884,10 +1884,9 @@ and duplicate never proceeds if original dirty draft cannot be durably saved.
    TIME candidate path without changing direct `set_time` bounds.
 2. Implement Park–Miller with exact integer state transitions, one draw per
    position, explicit seed/range/weights and TIME 01 normalization.
-3. Apply Clear, transforms and Reset immediately in both views. Randomization
-   uses one Cancel/Apply parameter dialog showing scope and rules. Capture
-   parameter values and editor revision; revalidate before applying a detached
-   candidate, without a second confirmation.
+3. Apply Clear, transforms and Reset immediately in both views. Keep randomization
+   parameters inline with the scope selector. Apply the detached candidate
+   through ordinary synchronous edit admission without a modal.
 4. Wire mask enable/class controls through source operations. Reject empty
    enabled mask atomically. Do not make raw randomization mask-aware.
 5. Bound Decoded to four rows with paging; display TIME command, consumed PITCH
@@ -2190,13 +2189,14 @@ rollback result is uncertain; do not overwrite evidence to continue.
 2. Verify Clear PITCH retains mask and clears flags only in scope; Clear TIME
    retains PITCH; Clear TIE differs from TIE-to-REST; Clear REST and REST-to-NOTE
    affect only R; Clear ACCENT/SLIDE preserve other flag.
-3. Open Randomize PITCH and inspect scope/rules in its parameter dialog. Cancel
-   once and verify no change, then reopen and Apply without a second prompt.
+3. Select Randomize PITCH and inspect inline parameters and selected scope.
+   Change parameters and verify source/history/draft remain unchanged until
+   Apply. Apply directly without a prompt.
    Run fixed seed 1 over pitch range 24..60; verify notes 24,28,51,40,43 for
    first five generated positions and exact canonical controls. Confirm flags
    retained and raw mask not applied.
-4. Repeat the single-dialog Cancel/Apply checks for Randomize TIME in both
-   views. Run TIME weights 2/1/1 seed 1; verify N,N,R,N,T vector, with T at TIME 01
+4. Repeat the inline parameter and direct Apply checks for Randomize TIME in
+   both views. Run TIME weights 2/1/1 seed 1; verify N,N,R,N,T vector, with T at TIME 01
    normalized only if it lands there and no extra draw behavior via subsequent
    expected positions. Use a testable pattern/scope to expose TIME 01.
 5. Undo/redo each operation and save/reopen source, mask, labels, settings and

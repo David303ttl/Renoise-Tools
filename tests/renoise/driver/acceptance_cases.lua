@@ -5564,8 +5564,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local native_app=app_factory()
       local baseline=assert(ownership.snapshot(phrase))
       local selection=native_selection(song)
-      local parameter_action="Apply"
-      local parameter_prompts=0
       local original_view=controls.acid_editor_view.value
       local parameters={seed=17,min_note=24,max_note=60,note_weight=2,tie_weight=1,rest_weight=1}
       local operations={"clear_pitch","clear_time","clear_tie","clear_rest","clear_slide",
@@ -5610,22 +5608,17 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         suppress_captured_notifiers=false
         if callbacks[id] then callbacks[id](next_value) end
       end
+      local function set_parameters()
+        for parameter,next_value in pairs(parameters) do
+          value("acid_operation_"..parameter,next_value)
+        end
+      end
       local ok,reason=pcall(function()
         renoise.ViewBuilder=captured_builder_factory
         renoise.app=function()
           return setmetatable({}, {__index=function(_,name)
-            if name=="show_custom_prompt" then return function(_,title,content,buttons)
-              assert(buttons[1]=="Cancel" and buttons[2]=="Apply" and #buttons==2,
-                "Unexpected operation parameter buttons")
-              parameter_prompts=parameter_prompts+1
-              for parameter,next_value in pairs(parameters) do
-                local control=controls["acid_operation_"..parameter]
-                if control then control.value=next_value end
-              end
-              return parameter_action
-            end end
-            if name=="show_prompt" then return function()
-              error("Routine source operation requested confirmation")
+            if name=="show_prompt" or name=="show_custom_prompt" then return function()
+              error("Routine source operation opened a prompt")
             end end
             local member=native_app[name]
             if type(member)=="function" then return function(_,...) return member(native_app,...) end end
@@ -5640,6 +5633,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           if not sequence.same_source(previous,state().source) then fixture_edits=fixture_edits+1 end
         end
         value("acid_operation_scope",2)
+        set_parameters()
         for _,operation_index in ipairs({9,10}) do
           value("acid_operation",operation_index)
           prepare_fixture(callbacks.acid_operation_open)
@@ -5648,6 +5642,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         prepare_fixture(function() value("acid_pitch_length",scope_pitch_length) end)
         local scope_source=state().source
         parameters.seed=scope_random_seed
+        set_parameters()
         assert(scope_source.length==scope_time_length and scope_source.pitch_length==scope_pitch_length,
           "Operation scope fixture did not retain independent active bounds")
         for _,operation in ipairs({"clear_pitch","clear_time","randomize_pitch","randomize_time"}) do
@@ -5665,20 +5660,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
               value("acid_operation",operation_index)
               value("acid_operation_scope",scope_index)
               local raw=song.tool_data
-              local randomizes=operation=="randomize_pitch" or operation=="randomize_time"
-              local prompts_before=parameter_prompts
-              if randomizes then
-                parameter_action="Cancel"
-                callbacks.acid_operation_open()
-                assert(parameter_prompts==prompts_before+1,"Randomization did not open one parameter dialog")
-                assert(song.tool_data==raw,"Canceled operation persisted data")
-                exact(before)
-              end
-              parameter_action="Apply"
-              prompts_before=parameter_prompts
               callbacks.acid_operation_open()
-              assert(parameter_prompts==prompts_before+(randomizes and 1 or 0),
-                "Operation opened an unexpected parameter dialog")
               local expected={source=candidate,label=before.label,label_custom=before.label_custom,
                 output_policy=before.output_policy,pb_range=before.pb_range}
               exact(expected)
@@ -5757,7 +5739,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       metrics.gui_extended_operations_native_functional_checked=true
       metrics.gui_mask_native_functional_checked=true
       metrics.gui_reset_native_functional_checked=true
-      metrics.gui_extended_prompt_responses_simulated=true
       metrics.gui_extended_inactive_memory_scope_checked=true
       metrics.gui_extended_scope_time_length=scope_time_length
       metrics.gui_extended_scope_pitch_length=scope_pitch_length
