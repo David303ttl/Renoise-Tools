@@ -109,6 +109,11 @@ function app:show_custom_dialog(_,content)
 end
 function app:show_warning(message) error(message) end
 function app:show_prompt() return "Cancel" end
+function app:prompt_for_filename_to_read(extensions,title)
+  self.last_file_extensions=extensions
+  self.last_file_title=title
+  return self.scale_import_filename or ""
+end
 
 local render_calls=0
 local writer_releases=0
@@ -274,7 +279,14 @@ end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
 package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
 package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
-renoise={
+renoise={Document={create=function()
+  return function(properties)
+    local document={}
+    for name,value in pairs(properties or {}) do document[name]={value=value} end
+    function document:add_property(name,value) self[name]={value=value} end
+    return document
+  end
+end},
   song=function()return song end,
   tool=function()return tool end,
   ViewBuilder=function()return builder end,
@@ -1317,7 +1329,7 @@ do
   local confirmations=0
   app.show_prompt=function() confirmations=confirmations+1;return "Cancel" end
   local function valid_random_parameters()
-    control("acid_operation_seed").value=17
+    control("acid_operation_pitch_seed").value=17
     control("acid_operation_min_note").value=24
     control("acid_operation_max_note").value=60
   end
@@ -1358,7 +1370,7 @@ do
   valid_random_parameters()
   control("acid_operation_min_note").value=36
   control("acid_operation_max_note").value=48
-  control("acid_operation_seed").value=1
+  control("acid_operation_pitch_seed").value=1
   for _,choice in ipairs({RANDOM_TIME,CLEAR_PITCH,RANDOM_PITCH}) do
     control("acid_operation"):fire(choice)
     assert(control("acid_random_parameters").visible==(choice~=CLEAR_PITCH) and
@@ -1366,7 +1378,7 @@ do
       control("acid_random_time_parameters").visible==(choice==RANDOM_TIME),
       "operation selection exposes only its inline parameters")
     assert(control("acid_operation_min_note").value==36 and
-      control("acid_operation_max_note").value==48 and control("acid_operation_seed").value==1,
+      control("acid_operation_max_note").value==48 and control("acid_operation_pitch_seed").value==1,
       "operation navigation preserves typed parameters")
   end
   assert_navigation_neutral(before,"inline random parameter editing")
@@ -1375,29 +1387,68 @@ do
   control("acid_operation_open"):fire()
   assert(confirmations==0 and draft_writes==writes+1,"random Apply immediately creates one edit")
   local randomized=assert(sequencer.copy_source(label_context:editor_state().source))
-  assert(control("acid_operation_seed").value==2,"successful random Apply advances seed")
+  assert(control("acid_operation_pitch_seed").value==2,"successful random Apply advances seed")
   writes=draft_writes
   control("acid_operation_open"):fire()
   assert(draft_writes==writes+1,"repeated Apply creates a fresh random edit")
   assert(not sequencer.same_source(randomized,label_context:editor_state().source),"next seed changes pitches")
   button("Undo"):fire()
-  control("acid_operation_seed").value=1
+  control("acid_operation_pitch_seed").value=1
   writes=draft_writes
   control("acid_operation_open"):fire()
   assert(draft_writes==writes,"same random seed and parameters produce a no-op")
-  assert(control("acid_operation_seed").value==2,"valid no-op randomization also advances seed")
+  assert(control("acid_operation_pitch_seed").value==2,"valid no-op randomization also advances seed")
   button("Undo"):fire()
   assert(sequencer.same_source(previous,label_context:editor_state().source),"one Undo restores random edit")
   button("Redo"):fire()
   assert(sequencer.same_source(randomized,label_context:editor_state().source),"Redo restores random edit")
+  do
+    local pitch_seed=control("acid_operation_pitch_seed")
+    local time_seed=control("acid_operation_time_seed")
+    local repeat_last=control("acid_random_repeat")
+    local last_used=control("acid_random_last_seed")
+    assert(last_used.text=="Last used: 1" and repeat_last.active)
+    pitch_seed.value=25
+    writes=draft_writes
+    repeat_last:fire()
+    assert(draft_writes==writes and pitch_seed.value==25,
+      "Repeat last reuses the previous seed without consuming the next seed")
+    control("acid_operation"):fire(RANDOM_TIME)
+    assert(time_seed.value==1 and not repeat_last.active and last_used.text=="Last used: —",
+      "TIME starts with its own seed and no previous result")
+    time_seed.value=7
+    control("acid_operation_open"):fire()
+    assert(time_seed.value==8 and pitch_seed.value==25 and last_used.text=="Last used: 7",
+      "TIME Apply advances only TIME and records its used seed")
+    local time_result=assert(sequencer.copy_source(label_context:editor_state().source))
+    button("Undo"):fire()
+    repeat_last:fire()
+    assert(sequencer.same_source(time_result,label_context:editor_state().source) and time_seed.value==8,
+      "Repeat last reproduces TIME after Undo without advancing its seed")
+    button("Undo"):fire()
+    control("acid_operation"):fire(RANDOM_PITCH)
+    assert(last_used.text=="Last used: 1" and pitch_seed.value==25,
+      "operation navigation restores the operation's next and last seed")
+    pitch_seed.value=pitch_seed.max
+    control("acid_operation_open"):fire()
+    assert(pitch_seed.value==pitch_seed.min and time_seed.value==8,
+      "maximum PITCH seed wraps without changing TIME seed")
+    assert(last_used.text=="Last used: "..tostring(pitch_seed.max))
+    button("Undo"):fire()
+  end
   for _,invalid in ipairs({
       function()control("acid_operation_min_note").value=60;control("acid_operation_max_note").value=24 end,
-      function()control("acid_operation_seed").value=1.5 end}) do
+      function()control("acid_operation_pitch_seed").value=1.5 end}) do
     valid_random_parameters()
     invalid()
     writes=draft_writes
+    local last_used=control("acid_random_last_seed").text
+    local next_seed=control("acid_operation_pitch_seed").value
     control("acid_operation_open"):fire()
     assert(draft_writes==writes and confirmations==0,"invalid random parameters never edit")
+    assert(control("acid_random_last_seed").text==last_used and
+      control("acid_operation_pitch_seed").value==next_seed,
+      "invalid random parameters preserve next and last seeds")
   end
   control("acid_operation"):fire(RANDOM_TIME)
   before=navigation_snapshot()
@@ -1415,9 +1466,10 @@ do
     return "Stay"
   end
   control("acid_program_reenter_pitch"):fire()
-  for _,name in ipairs({"seed","min_note","max_note","note_weight","tie_weight","rest_weight"}) do
+  for _,name in ipairs({"pitch_seed","time_seed","min_note","max_note","note_weight","tie_weight","rest_weight"}) do
     assert(not control("acid_operation_"..name).active,"staging disables inline parameter: "..name)
   end
+  assert(not control("acid_random_repeat").active,"staging disables Repeat last")
   before=navigation_snapshot()
   control("acid_operation_open"):fire()
   assert(draft_writes==before.drafts and render_calls==before.writes and
@@ -1432,6 +1484,194 @@ do
   control("acid_label_discard"):fire()
   dialog=main_dialog
   app.show_prompt=function()return "Cancel"end
+end
+
+do
+  local scales=require("model.scales")
+  local function current_source() return label_context:editor_state().source end
+  local root=control("acid_scale_root")
+  local category=control("acid_scale_category")
+  local choice=control("acid_scale_choice")
+  local search=control("acid_scale_search")
+  local follow=control("acid_scale_follow")
+  local importer=control("acid_scale_import")
+  local source_before=assert(sequencer.copy_source(label_context:editor_state().source))
+  local writes_before=draft_writes
+  local history_before=button("Undo").active
+  local function find_scale(name)
+    for index,item in ipairs(choice.items) do
+      if item==name then return index end
+    end
+  end
+  assert(root.value==1 and not follow.value and category.items[1]=="All" and
+    choice.items[1]=="Custom / current mask",
+    "scale controls start at C, Custom/current mask and Follow off")
+  search:fire("Major Pentatonic")
+  local pentatonic_index=find_scale("Major Pentatonic")
+  assert(pentatonic_index and choice.items[pentatonic_index]=="Major Pentatonic",
+    "scale search finds a bundled scale by name")
+  local neutral=navigation_snapshot()
+  category:fire(1)
+  search:fire("")
+  assert_navigation_neutral(neutral,"scale browser category and search")
+
+  source_before=assert(sequencer.copy_source(label_context:editor_state().source))
+  writes_before=draft_writes
+  search:fire("Major Pentatonic")
+  pentatonic_index=assert(find_scale("Major Pentatonic"),"Major Pentatonic is searchable")
+  choice:fire(pentatonic_index)
+  local major_mask=scales.mask({intervals={0,2,4,7,9}},0)
+  local selected=assert(sequencer.copy_source(label_context:editor_state().source))
+  assert(selected.scale_mask_enabled and draft_writes==writes_before+1,
+    "choosing a scale enables MASK as one immediate editor change")
+  for index,allowed in ipairs(major_mask) do
+    assert(selected.scale_mask[index]==allowed and control(string.format("acid_mask_class_%02d",index)).value==allowed,
+      "the selected scale writes each pitch class into MASK")
+  end
+  button("Undo"):fire()
+  assert(sequencer.same_source(source_before,label_context:editor_state().source),
+    "one Undo restores the source before scale selection")
+  button("Redo"):fire()
+  assert(sequencer.same_source(selected,label_context:editor_state().source),
+    "one Redo restores the selected scale mask")
+
+  writes_before=draft_writes
+  root:fire(3)
+  local transposed=assert(sequencer.copy_source(label_context:editor_state().source))
+  local d_mask=scales.mask({intervals={0,2,4,7,9}},2)
+  assert(draft_writes==writes_before+1 and root.value==3,
+    "changing root rotates the current mask as one editor change")
+  for index,allowed in ipairs(d_mask) do
+    assert(transposed.scale_mask[index]==allowed,"root change transposes mask class "..index)
+  end
+  button("Undo"):fire()
+  assert(sequencer.same_source(selected,label_context:editor_state().source) and root.value==3,
+    "Undo restores the mask while the session root remains selected")
+  assert(choice.value==1,"mask mismatch against the current root is shown as Custom/current mask")
+
+  root:fire(1)
+  button("Undo"):fire()
+  assert(sequencer.same_source(selected,label_context:editor_state().source),
+    "returning the root to C and undoing its rotation restores the prior mask")
+  control("acid_mask_class_03"):fire(false)
+  assert(choice.value==1 or choice.items[choice.value]~="Major Pentatonic",
+    "manual mask edits re-detect a matching preset or select Custom/current mask")
+  button("Undo"):fire()
+  assert(sequencer.same_source(selected,label_context:editor_state().source),
+    "one Undo restores a manual scale mask edit")
+
+  view:fire(1)
+  control("acid_program_select_pitch_01"):fire()
+  assert(control("acid_program_key_02").color~=control("acid_program_key_03").color,
+    "Program keyboard highlights allowed notes with a distinct color")
+  follow:fire(true)
+  control("acid_program_select_pitch_05"):fire()
+  control("acid_program_octave_normal"):fire()
+  program_key(5):fire()
+  local before_program=assert(sequencer.copy_source(label_context:editor_state().source))
+  program_key(2):fire()
+  local program_pitch=current_source().pitch_events[5]
+  assert(program_pitch.key==0 and program_pitch.octave==0,
+    "Follow snaps an equidistant chromatic Program entry down to the lower allowed pitch")
+  button("Undo"):fire()
+  assert(sequencer.same_source(before_program,label_context:editor_state().source),
+    "Undo restores Program input constrained by Follow")
+  button("Undo"):fire()
+
+  view:fire(2)
+  control("acid_grid_pitch_06"):fire()
+  control("acid_grid_key_05"):fire()
+  local before_grid=assert(sequencer.copy_source(label_context:editor_state().source))
+  control("acid_grid_key_02"):fire()
+  local grid_pitch=current_source().pitch_events[6]
+  assert(grid_pitch.key==0 and grid_pitch.octave==0,
+    "Follow constrains Grid pitch entry using the same nearest-note rule")
+  assert(control("acid_grid_key_02").color~=control("acid_grid_key_03").color,
+    "Grid keyboard highlights allowed notes with a distinct color")
+  button("Undo"):fire()
+  assert(sequencer.same_source(before_grid,label_context:editor_state().source),
+    "Undo restores the Grid pitch before Follow-constrained entry")
+  button("Undo"):fire()
+  follow:fire(false)
+  assert(not follow.value and control("acid_scale_detail").text:find("Follow scale off",1,true),
+    "Follow toggle updates session state before chromatic entry")
+  view:fire(1)
+  control("acid_program_select_pitch_05"):fire()
+  assert(control("acid_program_pitch_summary").text:find("P05",1,true),
+    "Program selects P05 before editing: "..control("acid_program_pitch_summary").text)
+  assert(program_key(5).active,
+    "Program key is active before Follow-off entry: "..control("acid_status").text)
+  program_key(5):fire()
+  assert(current_source().pitch_events[5].key==4,
+    "Program can set E before chromatic input: "..tostring(current_source().pitch_events[5].key).." / "..control("acid_status").text)
+  program_key(2):fire()
+  assert(current_source().pitch_events[5].key==1,
+    "Program accepts chromatic input when Follow is off")
+  button("Undo"):fire()
+  button("Undo"):fire()
+  follow:fire(true)
+  control("acid_mask_enabled"):fire(false)
+  program_key(5):fire()
+  program_key(2):fire()
+  assert(current_source().pitch_events[5].key==1,
+    "Follow leaves chromatic input unconstrained while MASK is disabled")
+  button("Undo"):fire()
+  button("Undo"):fire()
+  button("Undo"):fire()
+  follow:fire(false)
+
+  local source_before_import=assert(sequencer.copy_source(label_context:editor_state().source))
+  writes_before=draft_writes
+  local undo_before_import=button("Undo").active
+  app.scale_import_filename="mock-scales.txt"
+  local old_open=io.open
+  local file_text
+  io.open=function(path,mode)
+    assert(path=="mock-scales.txt" and mode=="rb")
+    local read=false
+    return {read=function(_,limit)
+      assert(limit==scales.MAX_TEXT_BYTES+1)
+      if read then return nil end
+      read=true
+      return file_text
+    end,close=function()end}
+  end
+  file_text="[Custom]\nIntegration Unique = 0 1 3 6 8 10\nIntegration Alias = 0, 1, 3, 6, 8, 10\n"
+  importer:fire()
+  assert(app.last_file_extensions[1]=="txt" and app.last_file_title=="Import custom scales",
+    "custom scale import uses Renoise's TXT file picker")
+  assert(tool.preferences and tool.preferences.custom_scales and
+    tool.preferences.custom_scales.value:find("Integration Unique",1,true) and
+    tool.preferences.custom_scales.value:find("Integration Alias",1,true),
+    "valid custom scales persist in the tool preferences with aliases")
+  assert(sequencer.same_source(source_before_import,label_context:editor_state().source) and
+    draft_writes==writes_before and button("Undo").active==undo_before_import,
+    "import changes neither the pattern, draft nor Undo history")
+  search:fire("Integration Alias")
+  assert(#choice.items==2 and choice.items[2]=="Integration Unique",
+    "duplicate pitch-class definitions are deduplicated and searchable as aliases")
+  local preferences_before_bad=tool.preferences.custom_scales.value
+  app.scale_import_filename="mock-scales.txt"
+  file_text="Invalid = 0 12\n"
+  importer:fire()
+  assert(tool.preferences.custom_scales.value==preferences_before_bad and
+    sequencer.same_source(source_before_import,label_context:editor_state().source),
+    "malformed import is atomic and does not alter the saved library or pattern")
+  app.scale_import_filename=""
+  importer:fire()
+  assert(tool.preferences.custom_scales.value==preferences_before_bad and
+    sequencer.same_source(source_before_import,label_context:editor_state().source),
+    "canceling the Renoise file picker leaves the library and pattern unchanged")
+  io.open=old_open
+  app.scale_import_filename=nil
+
+  assert(history_before==button("Undo").active,
+    "scale browser and import actions do not alter the existing Undo history")
+  assert(control("acid_status").text:find("Cannot import scales",1,true),
+    "invalid text import reports a parser error: "..control("acid_status").text)
+  assert(control("acid_scale_follow").value==false)
+  assert(sequencer.same_source(source_before_import,label_context:editor_state().source),
+    "scale browser and import checks leave the final pattern source unchanged")
 end
 
 dialog.visible=false

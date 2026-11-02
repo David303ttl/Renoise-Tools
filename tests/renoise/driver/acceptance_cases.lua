@@ -5610,7 +5610,10 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end
       local function set_parameters()
         for parameter,next_value in pairs(parameters) do
-          value("acid_operation_"..parameter,next_value)
+          if parameter=="seed" then
+            value("acid_operation_pitch_seed",next_value)
+            value("acid_operation_time_seed",next_value)
+          else value("acid_operation_"..parameter,next_value) end
         end
       end
       local ok,reason=pcall(function()
@@ -5655,12 +5658,19 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           value("acid_editor_view",view_index)
           for operation_index,operation in ipairs(operations) do
             for scope_index,scope in ipairs({"active","all"}) do
+              set_parameters()
               local before=state()
               local candidate=assert(sequence.operation_candidate(before.source,operation,scope,parameters))
               value("acid_operation",operation_index)
               value("acid_operation_scope",scope_index)
               local raw=song.tool_data
               callbacks.acid_operation_open()
+              if operation=="randomize_pitch" or operation=="randomize_time" then
+                local seed_control=operation=="randomize_pitch" and controls.acid_operation_pitch_seed
+                  or controls.acid_operation_time_seed
+                assert(seed_control.value==parameters.seed%seed_control.max+1,
+                  "Random Apply did not advance the displayed seed")
+              end
               local expected={source=candidate,label=before.label,label_custom=before.label_custom,
                 output_policy=before.output_policy,pb_range=before.pb_range}
               exact(expected)

@@ -2,6 +2,8 @@
 -- Native ViewBuilder PITCH/TIME editor.
 local M = {}
 local sequencer=require("model.sequencer")
+local scales=require("model.scales")
+local scale_preferences=require("runtime.scale_preferences")
 local policies=require("model.policies")
 local editor=require("model.editor_state")
 local drafts=require("runtime.draft_cache")
@@ -172,6 +174,10 @@ local RANDOM_SEED_MAX=2147483646
 local RANDOM_WEIGHT_MAX=1000
 local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local RANDOM_FIELD_WIDTH=90
+local RANDOM_LAST_SEED_WIDTH=200
+local WORKSPACE_HEIGHT=248
+local SCALE_UI={root_width=65,category_width=155,choice_width=255,
+  search_width=165,detail_width=800,import_width=95}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
 local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
@@ -221,6 +227,10 @@ function M.show()
   local workspace_tab=1
   local accepted_pitch_baseline
   local updating=false
+  local scale_state={root=0,follow=false}
+  scale_state.custom,scale_state.load_error=scales.parse(scale_preferences.load(tool))
+  scale_state.custom=scale_state.custom or {}
+  scale_state.catalog=scales.merge(scales.builtin(),scale_state.custom)
   local preview_cycle=1
   local update
   local runtime
@@ -262,6 +272,7 @@ function M.show()
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
   local status=vb:multiline_textfield{id="acid_status",size={width=820,height=40},active=true,
     font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
+  if scale_state.load_error then status.text="Custom scale library could not be loaded: "..tostring(scale_state.load_error) end
   local audition_status=vb:multiline_text{id="acid_audition_status",size={width=820,height=32},visible=false,text=""}
   local preview=audition.new({song=function() return renoise.song() end,tool=tool,
     on_outcome=function(outcome)
@@ -613,7 +624,8 @@ function M.show()
     key=records and records[selected_pitch] and records[selected_pitch].note%12
     if editor_view==2 then
       for key_index,button in ipairs(ui.grid.key_buttons) do
-        render(button,"color",key==key_index-1 and colors.selected or colors.idle)
+        render(button,"color",key==key_index-1 and colors.selected or
+          (pattern.scale_mask_enabled and pattern.scale_mask[key_index] and colors.used or colors.idle))
       end
       for octave_index,button in ipairs(ui.grid.octave_buttons) do
         render(button,"color",octave==octave_index-2 and colors.selected or colors.idle)
@@ -653,7 +665,8 @@ function M.show()
         selected_step,ui.time_names[(stage and stage.candidate or pattern).time_events[selected_step]],
         selected_step>pattern.length and " (inactive)" or ""))
       for key_index,button in ipairs(ui.program.key_buttons) do
-        render(button,"color",key==key_index-1 and colors.selected or colors.idle)
+        render(button,"color",key==key_index-1 and colors.selected or
+          (pattern.scale_mask_enabled and pattern.scale_mask[key_index] and colors.used or colors.idle))
       end
       for octave_index,button in ipairs(ui.program.octave_buttons) do
         render(button,"color",octave==octave_index-2 and colors.selected or colors.idle)
@@ -703,6 +716,8 @@ function M.show()
       end
       for _,control in ipairs(ui.operation_controls) do render(control,"active",stage==nil) end
     end
+    if scale_state.refresh then scale_state.refresh() end
+    if ui.refresh_random then ui.refresh_random() end
     local count=0
     for _ in pairs(projection.used) do count=count+1 end
     render(summary,"text",string.format(
@@ -873,23 +888,26 @@ function M.show()
       string.format("PB Range ±%d assumed; set the receiver to match.",pb_range)
     changed()
   end)
-  local function write_pitch(key,octave,is_accent,is_slide)
+  local function write_pitch(key,octave,is_accent,is_slide,note_entry)
     if updating then return end
     release_audition()
     if not candidate_edit("pitch",selected_pitch) then update();return end
     local current=pitch_at(selected_pitch)
     local candidate=sequencer.new_pitch(key,octave,is_accent,is_slide)
+    if scale_state.follow and note_entry then
+      candidate=assert(sequencer.constrain_pitch(edit_source(),candidate))
+    end
     if same_pitch(current,candidate) then return end
     edit_source().pitch_events[selected_pitch]=candidate
     if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
   end
   local function choose_key(key)
     local pitch=pitch_at(selected_pitch)
-    write_pitch(key,pitch.octave,pitch.accent,pitch.slide)
+    write_pitch(key,pitch.octave,pitch.accent,pitch.slide,true)
   end
   local function choose_octave(octave)
     local pitch=pitch_at(selected_pitch)
-    write_pitch(pitch.note%12,octave,pitch.accent,pitch.slide)
+    write_pitch(pitch.note%12,octave,pitch.accent,pitch.slide,true)
   end
   local function choose_c_plus()
     release_audition()
@@ -897,6 +915,7 @@ function M.show()
     local pitch=pitch_at(selected_pitch)
     if pitch.octave~=1 then return end
     local candidate=sequencer.new_pitch(12,1,pitch.accent,pitch.slide)
+    if scale_state.follow then candidate=assert(sequencer.constrain_pitch(edit_source(),candidate)) end
     if same_pitch(pitch,candidate) then return end
     edit_source().pitch_events[selected_pitch]=candidate
     if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
@@ -1835,16 +1854,22 @@ function M.show()
     random_fields[name]=control
     return control
   end
-  local seed=random_field("seed",1,RANDOM_SEED_MAX,1)
+  local random_state={last={}}
   local pitch_parameters=vb:row{id="acid_random_pitch_parameters",spacing=4,visible=false,
-    vb:text{text="Raw MIDI"},random_field("min_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN),
+    vb:text{text="Next seed"},random_field("pitch_seed",1,RANDOM_SEED_MAX,1),
+    vb:text{text="MIDI range"},random_field("min_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN),
     vb:text{text="to"},random_field("max_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MAX)}
   local time_parameters=vb:row{id="acid_random_time_parameters",spacing=4,visible=false,
+    vb:text{text="Next seed"},random_field("time_seed",1,RANDOM_SEED_MAX,1),
     vb:text{text="NOTE"},random_field("note_weight",0,RANDOM_WEIGHT_MAX,2),
     vb:text{text="TIE"},random_field("tie_weight",0,RANDOM_WEIGHT_MAX,1),
     vb:text{text="REST"},random_field("rest_weight",0,RANDOM_WEIGHT_MAX,1)}
-  local parameter_row=vb:row{id="acid_random_parameters",spacing=8,visible=false,
-    vb:text{text="Seed"},seed,pitch_parameters,time_parameters}
+  random_state.display=vb:text{id="acid_random_last_seed",text="",width=RANDOM_LAST_SEED_WIDTH}
+  random_state.repeat_button=vb:button{id="acid_random_repeat",text="Repeat last",active=false,
+    notifier=function() random_state.run(true) end}
+  local parameter_row=vb:column{id="acid_random_parameters",spacing=4,visible=false,
+    pitch_parameters,time_parameters,
+    vb:row{spacing=8,random_state.display,random_state.repeat_button}}
   local operation_choice=vb:popup{id="acid_operation",items=operation_names,width=180,value=1,
     notifier=function(value)
       local operation=operation_ids[value]
@@ -1853,26 +1878,40 @@ function M.show()
       pitch_parameters.visible=pitch
       time_parameters.visible=time
       parameter_row.visible=pitch or time
+      random_state.refresh()
     end}
   local operation_scope=vb:popup{id="acid_operation_scope",items={"Active memory","All 32 stored"},width=150,value=1}
-  local function run_operation()
+  random_state.refresh=function()
+    local last=random_state.last[operation_ids[operation_choice.value]]
+    render(random_state.display,"text","Last used: "..(last and tostring(last) or "—"))
+    render(random_state.repeat_button,"active",last~=nil and stage==nil)
+  end
+  ui.refresh_random=random_state.refresh
+  random_state.run=function(repeat_last)
     if guard_stage() then return end
     if not admit_operation() then return end
     local choice=operation_choice.value
     local operation=operation_ids[choice]
     local scope=operation_scope.value==1 and "active" or "all"
     local parameters={}
+    local seed_control
     if operation=="randomize_pitch" then
-      parameters={seed=random_fields.seed.value,min_note=random_fields.min_note.value,max_note=random_fields.max_note.value}
+      seed_control=random_fields.pitch_seed
+      parameters={min_note=random_fields.min_note.value,max_note=random_fields.max_note.value}
     elseif operation=="randomize_time" then
-      parameters={seed=random_fields.seed.value,note_weight=random_fields.note_weight.value,
+      seed_control=random_fields.time_seed
+      parameters={note_weight=random_fields.note_weight.value,
         tie_weight=random_fields.tie_weight.value,rest_weight=random_fields.rest_weight.value}
     end
+    if repeat_last and (not seed_control or not random_state.last[operation]) then return end
+    if seed_control then parameters.seed=repeat_last and random_state.last[operation] or seed_control.value end
     local candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
     if not candidate then status.text=tostring(reason);return end
     apply_candidate(candidate)
-    if operation=="randomize_pitch" or operation=="randomize_time" then
-      seed.value=parameters.seed%RANDOM_SEED_MAX+1
+    if seed_control then
+      random_state.last[operation]=parameters.seed
+      if not repeat_last then seed_control.value=parameters.seed%RANDOM_SEED_MAX+1 end
+      random_state.refresh()
     end
   end
   local function edit_mask(index,value)
@@ -1897,15 +1936,161 @@ function M.show()
     ui.mask.classes[index]=control
     mask_row:add_child(vb:text{text=name});mask_row:add_child(control)
   end
-  local operation_button=vb:button{id="acid_operation_open",text="Apply",notifier=run_operation}
+  local operation_button=vb:button{id="acid_operation_open",text="Apply",notifier=function() random_state.run(false) end}
+  ui.scale_controls=(function()
+    local scale_category="All"
+    local scale_query=""
+    local visible_scales={}
+    local category_names={"All"}
+    local root_choice,category_choice,scale_choice,scale_search,scale_detail
+    local function rebuild_categories()
+      local seen={}
+      category_names={"All"}
+      for _,entry in ipairs(scale_state.catalog) do seen[entry.category]=true end
+      local sorted={}
+      for name in pairs(seen) do if name~="All" then sorted[#sorted+1]=name end end
+      table.sort(sorted)
+      for _,name in ipairs(sorted) do category_names[#category_names+1]=name end
+    end
+    local function matching_mask(entry)
+      local bits=scales.mask(entry,scale_state.root)
+      for index=1,scales.PITCH_CLASSES do
+        if bits[index]~=pattern.scale_mask[index] then return false end
+      end
+      return true
+    end
+    local function rebuild_scale_choices()
+      visible_scales={}
+      local names={"Custom / current mask"}
+      for _,entry in ipairs(scale_state.catalog) do
+        local searchable=entry.name.." "..table.concat(entry.aliases or {}," ")
+        if (scale_category=="All" or entry.category==scale_category) and
+            searchable:lower():find(scale_query:lower(),1,true) then
+          visible_scales[#visible_scales+1]=entry
+          names[#names+1]=entry.name
+        end
+      end
+      local was_updating=updating
+      updating=true
+      scale_choice.value=1
+      scale_choice.items=names
+      updating=was_updating
+    end
+    local function admit_scale_edit()
+      if guard_stage() then update();return false end
+      if not admit_operation() then update();return false end
+      return true
+    end
+    rebuild_categories()
+    root_choice=vb:popup{id="acid_scale_root",items=keys,width=SCALE_UI.root_width,value=1,
+      notifier=function(value)
+        if updating then return end
+        if not admit_scale_edit() then return end
+        local root=value-1
+        local bits={}
+        for class=0,scales.PITCH_CLASSES-1 do
+          bits[(class+root-scale_state.root)%scales.PITCH_CLASSES+1]=pattern.scale_mask[class+1]
+        end
+        local candidate,reason=sequencer.mask_candidate(pattern,pattern.scale_mask_enabled,bits)
+        if not candidate then update();status.text=tostring(reason);return end
+        scale_state.root=root
+        apply_candidate(candidate)
+      end}
+    category_choice=vb:popup{id="acid_scale_category",items=category_names,width=SCALE_UI.category_width,value=1,
+      notifier=function(value)
+        if updating then return end
+        scale_category=category_names[value] or "All"
+        rebuild_scale_choices();update()
+      end}
+    scale_choice=vb:popup{id="acid_scale_choice",items={"Custom / current mask"},width=SCALE_UI.choice_width,value=1,
+      notifier=function(value)
+        if updating then return end
+        local entry=visible_scales[value-1]
+        if not entry then update();return end
+        if not admit_scale_edit() then return end
+        local candidate,reason=sequencer.mask_candidate(pattern,true,scales.mask(entry,scale_state.root))
+        if not candidate then update();status.text=tostring(reason);return end
+        apply_candidate(candidate)
+      end}
+    scale_search=vb:textfield{id="acid_scale_search",text="",width=SCALE_UI.search_width,
+      notifier=function(value)
+        if updating then return end
+        scale_query=value
+        rebuild_scale_choices();update()
+      end}
+    local follow_choice=vb:checkbox{id="acid_scale_follow",value=false,
+      notifier=function(value)
+        if updating then return end
+        scale_state.follow=value
+        release_audition();update()
+      end}
+    scale_detail=vb:text{id="acid_scale_detail",text="",width=SCALE_UI.detail_width}
+    local import_scales=vb:button{id="acid_scale_import",text="Import .txt",width=SCALE_UI.import_width,
+      notifier=function()
+        if guard_stage() then return end
+        local filename=renoise.app():prompt_for_filename_to_read({"txt"},"Import custom scales")
+        if filename=="" then return end
+        local file,open_error=io.open(filename,"rb")
+        if not file then status.text="Cannot read scales: "..tostring(open_error);return end
+        local read_ok,text=pcall(function() return file:read(scales.MAX_TEXT_BYTES+1) end)
+        file:close()
+        if not read_ok or type(text)~="string" then status.text="Cannot read scale file.";return end
+        local entries,reason=scales.parse(text)
+        if not entries then status.text="Cannot import scales: "..tostring(reason);return end
+        if #entries==0 then status.text="No scale definitions found.";return end
+        local merged=scales.merge(scale_state.custom,entries)
+        local serialized=scales.encode(merged)
+        if #serialized>scales.MAX_TEXT_BYTES then
+          status.text="Custom scale library exceeds "..scales.MAX_TEXT_BYTES.." bytes.";return
+        end
+        local saved,save_error=scale_preferences.save(tool,serialized)
+        if not saved then status.text="Cannot save scales: "..tostring(save_error);return end
+        scale_state.custom=merged
+        scale_state.catalog=scales.merge(scales.builtin(),scale_state.custom)
+        scale_category,scale_query="All",""
+        rebuild_categories()
+        updating=true
+        category_choice.value=1;category_choice.items=category_names;scale_search.text=""
+        updating=false
+        rebuild_scale_choices();update()
+        status.text=string.format("Imported %d definitions; %d unique scales available.",
+          #entries,#scale_state.catalog)
+      end}
+    scale_state.refresh=function()
+      render(root_choice,"value",scale_state.root+1)
+      render(root_choice,"active",stage==nil)
+      render(scale_choice,"active",stage==nil)
+      render(import_scales,"active",stage==nil)
+      render(follow_choice,"value",scale_state.follow)
+      local selected=1
+      local matched
+      if pattern.scale_mask_enabled then
+        for index,entry in ipairs(visible_scales) do
+          if matching_mask(entry) then selected=index+1;matched=entry;break end
+        end
+      end
+      render(scale_choice,"value",selected)
+      local detail=string.format("%d unique scales | %d shown | MASK %s | Follow scale %s",
+        #scale_state.catalog,#visible_scales,pattern.scale_mask_enabled and "on" or "off",scale_state.follow and "on" or "off")
+      render(scale_detail,"text",detail)
+      render(scale_choice,"tooltip",matched and
+        (matched.category.." | "..table.concat(matched.aliases or {},", ")) or "Choose a scale to enable MASK.")
+    end
+    rebuild_scale_choices()
+    return {root=root_choice,category=category_choice,choice=scale_choice,
+      search=scale_search,follow=follow_choice,import=import_scales,detail=scale_detail}
+  end)()
   ui.operation_controls={operation_choice,operation_scope,operation_button}
   for _,control in pairs(random_fields) do ui.operation_controls[#ui.operation_controls+1]=control end
   extended_panel=vb:column{id="acid_extended_panel",spacing=4,
     vb:text{text="EXTENDED / CLEAR",font="bold"},
     vb:row{spacing=6,operation_choice,operation_scope,
-      operation_button},parameter_row,mask_row,
-    vb:text{text="Seed advances after Apply; enter a seed to repeat a result."},
-    vb:text{text="Enable MASK to allow only checked note classes in output; not every class is guaranteed."}}
+      operation_button},parameter_row,
+    vb:row{spacing=6,vb:text{text="Root"},ui.scale_controls.root,ui.scale_controls.category,ui.scale_controls.choice,
+      vb:text{text="Follow scale"},ui.scale_controls.follow},
+    vb:row{spacing=6,vb:text{text="Search"},ui.scale_controls.search,ui.scale_controls.import},ui.scale_controls.detail,mask_row,
+    vb:text{text="Apply advances this operation's seed. Repeat last reuses Last used with current settings."},
+    vb:text{text="MASK restricts output and random notes. Follow scale snaps new note edits; green keys are allowed."}}
   end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,
     vb:text{text="OUTPUT",font="bold"},
@@ -1929,12 +2114,12 @@ function M.show()
   end
   ui.workspace.panels={decoded_panel,pattern_copy_panel,extended_panel,output_panel,recovery_panel}
   local workspace=vb:column{spacing=4,tab_row,
-    vb:stack{autosize=false,size={width=820,height=132},views={
+    vb:stack{autosize=false,size={width=820,height=WORKSPACE_HEIGHT},views={
       decoded_panel,pattern_copy_panel,extended_panel,output_panel,recovery_panel}}
   }
   for _,panel in ipairs(ui.workspace.panels) do
     panel.origin={0,0}
-    panel.size={width=820,height=132}
+    panel.size={width=820,height=WORKSPACE_HEIGHT}
   end
   local details=vb:column{id="acid_details_panel",spacing=4,visible=false,
     summary,map_text,source_state,live_state_view,inspect}

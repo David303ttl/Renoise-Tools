@@ -246,9 +246,55 @@ function M.paste_candidate(source,payload,scope)
   return M.copy_source(candidate)
 end
 
+local MIN_NOTE,MAX_NOTE=24,60
+
 local function canonical_pitch(note)
   if note==60 then return {note=60,key=12,octave=1} end
   return {note=note,key=note%12,octave=math.floor((note-M.BASE_NOTE)/12)}
+end
+
+local function allowed_notes(source,min_note,max_note)
+  local notes={}
+  for note=min_note,max_note do
+    if not source.scale_mask_enabled or source.scale_mask[note%12+1] then
+      notes[#notes+1]=note
+    end
+  end
+  return notes
+end
+
+local function nearest_allowed_note(source,note)
+  local notes=allowed_notes(source,MIN_NOTE,MAX_NOTE)
+  local best,best_distance
+  for _,candidate in ipairs(notes) do
+    local distance=math.abs(candidate-note)
+    if not best_distance or distance<best_distance then
+      best,best_distance=candidate,distance
+    end
+  end
+  return best
+end
+
+function M.constrain_pitch(source,pitch)
+  local valid,err=M.validate(source)
+  if not valid then return nil,err end
+  if type(pitch)~="table" or not integer_between(pitch.note,MIN_NOTE,MAX_NOTE) then
+    return nil,"invalid pitch"
+  end
+  local key,pitch_error=M.pitch_controls(pitch)
+  if key==nil then return nil,pitch_error end
+  if type(pitch.accent)~="boolean" or type(pitch.slide)~="boolean" then
+    return nil,"invalid pitch flags"
+  end
+  if not source.scale_mask_enabled then
+    return {note=pitch.note,key=pitch.key,octave=pitch.octave,
+      accent=pitch.accent,slide=pitch.slide}
+  end
+  local note=pitch.note
+  note=nearest_allowed_note(source,note)
+  local constrained=canonical_pitch(note)
+  constrained.accent,constrained.slide=pitch.accent,pitch.slide
+  return constrained
 end
 
 function M.mask_candidate(source,enabled,bits)
@@ -261,7 +307,6 @@ end
 local RNG_MODULUS=2147483647
 local RNG_MULTIPLIER=16807
 local RNG_MAX_SEED=RNG_MODULUS-1
-local MIN_NOTE,MAX_NOTE=24,60
 local MAX_WEIGHT=1000
 local OPERATIONS={clear_pitch="pitch",clear_time="time",clear_tie="time",
   clear_rest="time",clear_slide="pitch",clear_accent="pitch",
@@ -281,7 +326,7 @@ function M.operation_candidate(source,operation,scope,parameters)
   local candidate,err=M.copy_source(source)
   if not candidate then return nil,err end
   local randomize=operation=="randomize_pitch" or operation=="randomize_time"
-  local state,count
+  local state,count,pitch_options
   if randomize then
     if type(parameters)~="table" or not integer_between(parameters.seed,1,RNG_MAX_SEED) then
       return nil,"seed must be 1..2147483646"
@@ -291,7 +336,9 @@ function M.operation_candidate(source,operation,scope,parameters)
       if not integer_between(parameters.min_note,MIN_NOTE,MAX_NOTE) or
           not integer_between(parameters.max_note,MIN_NOTE,MAX_NOTE) or
           parameters.min_note>parameters.max_note then return nil,"invalid pitch range" end
-      count=parameters.max_note-parameters.min_note+1
+      pitch_options=allowed_notes(candidate,parameters.min_note,parameters.max_note)
+      count=#pitch_options
+      if count==0 then return nil,"enabled scale mask has no allowed notes in pitch range" end
     else
       for _,field in ipairs({"note_weight","tie_weight","rest_weight"}) do
         if not integer_between(parameters[field],0,MAX_WEIGHT) then return nil,"invalid TIME weight" end
@@ -316,7 +363,7 @@ function M.operation_candidate(source,operation,scope,parameters)
       local bucket
       bucket,state=M.random_choice(state,count)
       if memory=="pitch" then
-        local sampled=canonical_pitch(parameters.min_note+bucket)
+        local sampled=canonical_pitch(pitch_options[bucket+1])
         sampled.accent,sampled.slide=pitch.accent,pitch.slide
         candidate.pitch_events[index]=sampled
       elseif bucket<parameters.note_weight then command="N"
@@ -337,17 +384,7 @@ function M.resolve_pitches(source)
   local resolved={}
   for i=1,M.MAX_STEPS do
     local raw=source.pitch_events[i]
-    local note=raw.note
-    if source.scale_mask_enabled then
-      local best_distance=math.huge
-      for candidate=24,60 do
-        local pitch_class=candidate%12+1
-        if source.scale_mask[pitch_class] then
-          local distance=math.abs(candidate-raw.note)
-          if distance<best_distance then note,best_distance=candidate,distance end
-        end
-      end
-    end
+    local note=source.scale_mask_enabled and nearest_allowed_note(source,raw.note) or raw.note
     resolved[i]=canonical_pitch(note)
   end
   return resolved

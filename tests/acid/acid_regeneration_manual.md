@@ -42,6 +42,66 @@ For save/reopen, record the saved file and a fresh Renoise process identity.
 | 13.7 Persistence, ownership, undo and Live Edit | [Live Edit](acid_live_edit_manual.md), exact source/output association, corrupt/unsupported store byte preservation |
 | 13.8 Retained workflow | [Native phrase workflow](acid_phrase_manual.md), stored/referenced/modified indicator cases and populated-song responsiveness |
 
+## Scale library and scale-aware editing
+
+Use a disposable song and retain a copy before testing. The scale selector,
+root, category, search and Follow controls are session settings; the pitch mask
+and pattern remain project data. Follow constrains Program/Grid note entry only
+when the mask is enabled. A scale selection applies its mask immediately as one
+undoable change. Changing root rotates the current mask by the root interval.
+
+1. Open **Extended / Clear** and confirm the selector includes **Custom**,
+   root choices C through B, categories, scale names, search, and an unchecked
+   **Follow scale** control. Search a distinctive bundled scale name and verify
+   the result list narrows by name or alias. Clear search and verify the list
+   returns. Check that scales with identical pitch classes are represented once
+   with their alternate names discoverable as aliases.
+2. Select a bundled scale at C. Verify exactly its pitch classes become checked
+   and MASK turns on. Click **Undo** once; verify the prior mask and disabled
+   state return. Click **Redo**; verify the selected scale mask returns. Change
+   root and verify the mask transposes by the same number of semitones, with one
+   Undo restoring the prior mask. Verify the browser remains aligned to the
+   current root after Undo.
+3. Manually toggle one class. Verify the selected scale updates to a matching
+   catalog entry when one exists, otherwise to **Custom / current mask**. Select
+   **Custom / current mask** and verify it does not modify the current mask.
+   Confirm changing category or search does not create pattern edits or history
+   entries.
+4. Turn **Follow scale** on with MASK enabled. In Program, enter allowed and
+   disallowed note classes through the key controls. Verify disallowed entry
+   snaps to the nearest allowed pitch class, with equal-distance ties snapping
+   downward. Repeat through Grid pitch entry and inspect allowed-note key
+   highlighting. Turn Follow off and verify both editors accept chromatic notes
+   again. With Follow on but MASK disabled, verify note entry remains
+   chromatic. Confirm existing notes are not rewritten by selecting a scale or
+   toggling Follow.
+5. Import a valid custom `.txt` file using the Renoise file picker. Record the
+   exact file and fixture contents. Verify new scales are available under the
+   custom/imported category, the imported library survives reopening the tool,
+   and import itself does not modify the active mask, pattern, draft, or Undo
+   history. Import a duplicate pitch-class set under a second name and verify it
+   appears as an alias of the existing entry instead of a second scale.
+6. Cancel the file picker and verify all state remains unchanged. Try malformed
+   rows, invalid pitch classes, duplicate-only files, and a file with one valid
+   and one invalid row. Record whether each import is accepted or rejected;
+   verify rejected input leaves the library and editor untouched. Verify the
+   documented text format with a small hand-written file and capture any parser
+   diagnostics. The expected format is one scale per line, with semitone
+   intervals from the root; `0` is required. Blank lines and `#` comments are
+   ignored, and `[Category]` headings are optional:
+
+   ```text
+   # Semitone offsets from the root
+   [Custom]
+   My bright scale = 0 2 4 7 9
+   My dark scale = 0, 3, 5, 7, 10
+   ```
+7. Save and reopen the song in a fresh Renoise process. Verify mask and pattern
+   are restored while root, browser selection, search, and Follow return to their
+   documented defaults. Confirm the imported scale remains in the library.
+   Verify Recovery and stale-draft guards prevent scale or Follow control edits
+   from admitting an unrelated pattern edit.
+
 ## Direct operations and inactive memory
 
 This fixture distinguishes scopes through the real controls. Do not substitute
@@ -64,8 +124,9 @@ a 32/32 active fixture. Repeat in Program and Grid.
    **Clear PITCH** with both scopes: Active affects P01..P05, All affects P01..P32;
    inspect retained notes and flags on both Grid pages after temporarily raising
    the span. Undo inspection edits before comparing the operation baseline.
-4. Select **Randomize PITCH > Active memory**. Set inline Seed 1, Minimum raw
-   MIDI 24, Maximum raw MIDI 60. Inspect selected scope and parameters. Verify parameter
+4. Disable **MASK** for the fixed chromatic vector below. Select
+   **Randomize PITCH > Active memory**. Set inline Seed 1, Minimum
+   MIDI 24, Maximum MIDI 60. Inspect selected scope and parameters. Verify parameter
    edits alone leave source/history/draft unchanged. Click **Apply** and verify
    direct application without a prompt.
    Verify P01..P05 raw MIDI 24,28,51,40,43, flags preserved and P06..P32 intact.
@@ -77,6 +138,12 @@ a 32/32 active fixture. Repeat in Program and Grid.
    scopes and direct Apply. The first five commands are N,N,R,N,T;
    Active retains T08..T32. Inspect TIME 01 normalization using the canonical
    13.5 fixture. Scope changes never change LAST STEP or PITCH span.
+   Confirm PITCH/TIME retain separate next seeds and Last used values when
+   switching operations. Undo a random edit, then **Repeat last** with unchanged
+   settings/mask: verify the result returns and the next seed stays unchanged.
+   Before an operation's first valid Apply, Repeat last is disabled. Set a seed
+   to 2147483646 and Apply: verify Last used shows it and next seed wraps to 1.
+   Invalid parameters and staged entry leave next/last seeds unchanged.
 6. After each applied scope case, save the dirty draft, close Renoise, reopen
    the exact XRNS in a fresh process and open ACID. Compare all 32 stored values,
    bounds, mask, settings and label with the captured draft; committed phrase

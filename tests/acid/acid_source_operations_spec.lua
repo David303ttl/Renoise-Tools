@@ -46,7 +46,7 @@ for _,scope in ipairs({"active","all"}) do
   local pitch=assert(seq.operation_candidate(source,"randomize_pitch",scope,{seed=1,min_note=24,max_note=60}))
   local repeat_pitch=assert(seq.operation_candidate(source,"randomize_pitch",scope,{seed=1,min_note=24,max_note=60}))
   assert(seq.same_source(pitch,repeat_pitch))
-  for i=1,5 do assert(pitch.pitch_events[i].note==({24,28,51,40,43})[i]) end
+  for i=1,5 do assert(pitch.pitch_events[i].note==({25,25,49,37,37})[i]) end
   local time=assert(seq.operation_candidate(source,"randomize_time",scope,
     {seed=1,note_weight=2,tie_weight=1,rest_weight=1}))
   for i=1,5 do assert(time.time_events[i]==({"N","N","R","N","T"})[i]) end
@@ -61,8 +61,10 @@ for _,scope in ipairs({"active","all"}) do
   assert(time.length==7 and pitch.pitch_length==5 and time.timing_mode=="triplet")
   assert(time.scale_mask_enabled and pitch.scale_mask[2] and not pitch.scale_mask[1])
 end
+local chromatic=assert(seq.copy_source(source))
+chromatic.scale_mask_enabled=false
 for note=24,60 do
-  local candidate=assert(seq.operation_candidate(source,"randomize_pitch","all",
+  local candidate=assert(seq.operation_candidate(chromatic,"randomize_pitch","all",
     {seed=2147483646,min_note=note,max_note=note}))
   for i=1,32 do
     local pitch=candidate.pitch_events[i]
@@ -70,6 +72,35 @@ for note=24,60 do
     assert(pitch.key==(note==60 and 12 or note%12))
   end
 end
+local sparse=assert(seq.copy_source(source))
+sparse.scale_mask_enabled=true
+for i=1,12 do sparse.scale_mask[i]=(i==1 or i==6) end -- C and F
+local sparse_result=assert(seq.operation_candidate(sparse,"randomize_pitch","all",
+  {seed=17,min_note=36,max_note=48}))
+local sparse_replay=assert(seq.operation_candidate(sparse,"randomize_pitch","all",
+  {seed=17,min_note=36,max_note=48}))
+assert(seq.same_source(sparse_result,sparse_replay),"masked randomization replays from seed")
+for i=1,32 do
+  local note=sparse_result.pitch_events[i].note
+  assert(note>=36 and note<=48 and (note%12==0 or note%12==5),"randomized pitch respects sparse mask")
+end
+local no_candidates=assert(seq.copy_source(sparse))
+for i=1,12 do no_candidates.scale_mask[i]=i==2 end
+local absent,absent_error=seq.operation_candidate(no_candidates,"randomize_pitch","active",
+  {seed=1,min_note=36,max_note=36})
+assert(not absent and absent_error:find("no allowed notes",1,true))
+local constrained=assert(seq.constrain_pitch(sparse,seq.new_pitch(0,0,true,true)))
+assert(constrained.note==36 and constrained.accent and constrained.slide,"scale snap preserves flags")
+local tie_pitch=seq.new_pitch(0,0,false,false)
+tie_pitch.note,tie_pitch.key,tie_pitch.octave=38,2,0
+local tie_constrained=assert(seq.constrain_pitch(sparse,tie_pitch))
+assert(tie_constrained.note==36,"equal-distance scale snap chooses lower note")
+local unchanged=assert(seq.constrain_pitch(chromatic,seq.new_pitch(2,0,true,false)))
+assert(unchanged.note==38 and unchanged.accent and not unchanged.slide,"disabled scale returns unchanged pitch")
+local alternate_c=seq.new_pitch(12,0,true,true)
+local copied_c=assert(seq.constrain_pitch(chromatic,alternate_c))
+assert(copied_c~=alternate_c and copied_c.note==48 and copied_c.key==12 and copied_c.octave==0 and
+  copied_c.accent and copied_c.slide,"disabled scale preserves detached alternate C+ encoding and flags")
 local _,singleton_state=seq.random_choice(1,1)
 assert(singleton_state==16807)
 local normalized=assert(seq.operation_candidate(source,"randomize_time","all",

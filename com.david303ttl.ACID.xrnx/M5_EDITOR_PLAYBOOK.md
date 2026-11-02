@@ -312,8 +312,9 @@ Canonical source has exactly these top-level fields:
 6. Mask resolution, mask edits and mask enable/disable never rewrite raw pitch
    values. Save/load and Copy preserve them exactly. Explicit pitch edits,
    Clear, Randomize, Paste, Reset and undo/redo may change raw values according
-   to their own contracts. Randomization generates raw notes without applying
-   the mask; resolution is applied only to the resulting output view.
+   to their own contracts. Pitch randomization samples directly from allowed
+   notes within the selected MIDI range when the mask is enabled. Existing raw
+   notes remain unchanged when the mask changes.
 7. Required nearest-note vector for C-only mask, lower-tie rule:
    input `[30,35,37,42,59,60]` resolves to `[24,36,36,36,60,60]`.
    This includes ties 30 -> 24 and 42 -> 36.
@@ -1068,6 +1069,8 @@ no-op means no history, draft write, or Live Edit request.
 5. TIME weights NOTE/TIE/REST `[2,1,1]` with seed 1 yield
    `[N,N,R,N,T]`. At TIME 01, generated TIE becomes NOTE without another draw.
 6. PITCH Randomize selects inclusive min/max within 24..60, seed and scope.
+   An enabled mask filters the candidate notes before uniform sampling; reject
+   a range with no allowed notes. With mask disabled, sample the full range.
    It preserves each position's ACCENT/SLIDE, every TIME value, both bounds,
    timing, mask, settings, label/custom and data outside scope. Encode each
    sampled raw note canonically, including note 60 as key12/octave+1.
@@ -1082,7 +1085,11 @@ no-op means no history, draft write, or Live Edit request.
    synchronous edit admission. Parameter changes alone never edit source.
    One result is one history/edit.
 10. If resulting source equals current source, no-op has no history, draft write,
-    or Live Edit request. Raw random notes are not quantized by mask.
+    or Live Edit request. After every valid random Apply, advance the displayed
+    operation's next seed by one, wrapping the maximum to 1, including no-ops.
+    PITCH/TIME next seeds and Last used are independent session controls.
+    Repeat last uses Last used with current parameters/mask without advancing.
+    Invalid or blocked operations preserve both seeds and Last used.
 
 ## 9. Request, Draft, and Transaction Threading
 
@@ -1869,7 +1876,7 @@ and duplicate never proceeds if original dirty draft cannot be durably saved.
    parameters inline with the scope selector. Apply the detached candidate
    through ordinary synchronous edit admission without a modal.
 4. Wire mask enable/class controls through source operations. Reject empty
-   enabled mask atomically. Do not make raw randomization mask-aware.
+   enabled mask atomically. Filter random pitch candidates through enabled mask.
 5. Bound Decoded to four rows with paging; display TIME command, consumed PITCH
    index, raw and resolved note, flags and transition. Use the same projection
    as compiler/planner. Error stays outside tabs; Jump moves only named coords.
@@ -2175,7 +2182,7 @@ rollback result is uncertain; do not overwrite evidence to continue.
    Apply. Apply directly without a prompt.
    Run fixed seed 1 over pitch range 24..60; verify notes 24,28,51,40,43 for
    first five generated positions and exact canonical controls. Confirm flags
-   retained and raw mask not applied.
+   retained and random pitch candidates follow the enabled mask.
 4. Repeat the inline parameter and direct Apply checks for Randomize TIME in
    both views. Run TIME weights 2/1/1 seed 1; verify N,N,R,N,T vector, with T at TIME 01
    normalized only if it lands there and no extra draw behavior via subsequent
