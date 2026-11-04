@@ -8,6 +8,7 @@ local policies=require("model.policies")
 local editor=require("model.editor_state")
 local drafts=require("runtime.draft_cache")
 local ownership=require("renoise.phrase_ownership")
+local pattern_store=require("renoise.pattern_store")
 local phrase_writer=require("writers.phrase_writer")
 local inspector=require("renoise.selection_context")
 local sampler=require("renoise.sampler_audit")
@@ -19,6 +20,7 @@ local runtime_context=require("runtime.context")
 local native_observers=require("runtime.observers").new()
 local active_runtime
 local active_live_checkbox
+local feedback_request_contexts=setmetatable({},{__mode="k"})
 local attached_song
 local dialog_session
 local idle_observable
@@ -176,6 +178,10 @@ local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local RANDOM_FIELD_WIDTH=90
 local RANDOM_LAST_SEED_WIDTH=200
 local WORKSPACE_HEIGHT=248
+local FEEDBACK_WIDTH,FEEDBACK_SPACING=820,2
+local FEEDBACK_LINE_HEIGHT,FEEDBACK_PADDING=20,8
+local FEEDBACK_EMPTY_HEIGHT=1
+local FEEDBACK_ISSUE_ORDER={"save","destination","scale","audition","input","generation"}
 local SCALE_UI={root_width=65,category_width=155,choice_width=255,
   search_width=165,detail_width=800,import_width=95}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
@@ -228,6 +234,7 @@ function M.show()
   local accepted_pitch_baseline
   local updating=false
   local scale_state={root=0,follow=false}
+  local feedback={issues={},confirmation=nil,previous_save_warning=false,previous_save_context=nil}
   local builtin=scales.builtin()
   do
     local custom_text,load_error=scale_preferences.load(tool)
@@ -276,19 +283,184 @@ function M.show()
     labels[i]=string.format("%02X: %s",i-1,name)
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
-  local status=vb:multiline_textfield{id="acid_status",size={width=820,height=40},active=true,
-    font="bold",text="Draft ready: edit PITCH and TIME memories or generate a phrase."}
-  if scale_state.load_error then status.text="Custom scale library could not be loaded: "..tostring(scale_state.load_error) end
-  local audition_status=vb:multiline_text{id="acid_audition_status",size={width=820,height=32},visible=false,text=""}
+  feedback.status=vb:multiline_text{id="acid_status",width=FEEDBACK_WIDTH,
+    height=FEEDBACK_EMPTY_HEIGHT,font="bold",visible=false,text=""}
+  feedback.holder=vb:column{id="acid_feedback",spacing=FEEDBACK_SPACING,visible=false,feedback.status}
+  feedback.message=function(issue)
+    local args=issue.args or {}
+    if issue.key=="save_failed" then return "Your latest edits could not be saved with the song." end
+    if issue.key=="previous_save_failed" then return "Edits to the previous phrase could not be saved with the song." end
+    if issue.key=="draft_load_failed" then return "Saved edits could not be loaded. Check the sequence before generating." end
+    if issue.key=="destination_unavailable" then return "This phrase is unavailable for editing. Select another phrase." end
+    if issue.key=="integrity_blocked" then return "ACID cannot safely update this song." end
+    if issue.key=="document_changed" then return "The song changed. Reopen ACID." end
+    if issue.key=="generation_failed" then return "Couldn't update the phrase. Try again." end
+    if issue.key=="duplicate_failed" then return "Couldn't duplicate the phrase. Try again." end
+    if issue.key=="missing_pitch" then return string.format("Cannot generate: choose a pitch for step %d.",args.position) end
+    if issue.key=="missing_timing" then return string.format("Cannot generate: enter timing for step %d.",args.position) end
+    if issue.key=="entry_unavailable" then return "This entry is no longer available." end
+    if issue.key=="entry_destination_changed" then return "Entry was discarded because the destination changed." end
+    if issue.key=="clipboard_scope_mismatch" then return "Select the copied scope before pasting." end
+    if issue.key=="clipboard_empty" then return "Copy a scope before pasting." end
+    if issue.key=="input_failed" then return "The edit could not be applied." end
+    if issue.key=="operation_failed" then return "The operation could not be applied. Check its parameters." end
+    if issue.key=="label_save_failed" then return "Phrase label could not be saved. Retry or discard the attempt." end
+    if issue.key=="label_attempt_stale" then return "The editor changed. Discard this label attempt." end
+    if issue.key=="label_editor_open" then return "Resolve the phrase label attempt before editing the source." end
+    if issue.key=="audition_start_failed" then return "Could not start the audition." end
+    if issue.key=="audition_release_failed" then return "Could not release the auditioned note. It may still be sounding." end
+    if issue.key=="scale_load_failed" then return "Custom scales could not be loaded; import is disabled." end
+    if issue.key=="scale_read_failed" then return "Could not read the scale file. Select a readable .txt file." end
+    if issue.key=="scale_invalid" then return "Invalid scale file. Use Name = intervals with pitch classes 0 to 11, including 0." end
+    if issue.key=="scale_empty" then return "The scale file is empty. Add a scale definition before importing." end
+    if issue.key=="scale_merge_failed" then return "Scale names conflict. Rename conflicting definitions before importing." end
+    if issue.key=="scale_too_large" then return "Use a smaller scale file." end
+    if issue.key=="scale_save_failed" then return "Custom scales could not be saved. Import the file again to retry." end
+    if issue.key=="scale_save_uncertain" then return "Custom scales could not be verified; import is disabled. Reopen ACID to reload them." end
+    if issue.key=="scale_imported" then return string.format("Imported %d scale definitions.",args.count) end
+    if issue.key=="phrase_duplicated" then return "Phrase duplicated." end
+    if issue.key=="label_saved" then return "Phrase label saved." end
+    if issue.key=="phrase_updated" then return "Phrase updated." end
+    if issue.key=="phrase_approximate" then return "Phrase updated with a musical approximation." end
+    return "The action could not be completed."
+  end
+  feedback.render=function()
+    local messages,seen={},{}
+    local function append(issue)
+      if not issue then return end
+      local message=feedback.message(issue)
+      if not seen[message] then
+        seen[message]=true
+        messages[#messages+1]=message
+      end
+    end
+    if feedback.previous_save_warning then append({key="previous_save_failed"}) end
+    for _,slot in ipairs(FEEDBACK_ISSUE_ORDER) do append(feedback.issues[slot]) end
+    if #messages==0 and feedback.confirmation then append(feedback.confirmation) end
+    feedback.status.text=table.concat(messages,"\n")
+    feedback.status.height=#messages>0 and #messages*FEEDBACK_LINE_HEIGHT+FEEDBACK_PADDING or FEEDBACK_EMPTY_HEIGHT
+    feedback.status.visible=#messages>0
+    feedback.holder.visible=#messages>0
+  end
+  feedback.set_issue=function(slot,key,args,context)
+    local safe_args={}
+    if type(args)=="table" then
+      for name,value in pairs(args) do
+        if type(name)=="string" and type(value)=="number" then safe_args[name]=value end
+      end
+    end
+    local issue_context
+    if context~=false then issue_context=context or feedback.context() end
+    feedback.issues[slot]={key=key,args=safe_args,context=issue_context}
+    feedback.confirmation=nil
+    feedback.render()
+  end
+  feedback.clear_issue=function(slot,context)
+    local issue=feedback.issues[slot]
+    if not issue then return false end
+    if context==false then
+      if issue.context~=nil then return false end
+    elseif context~=nil and not feedback.same_context(issue.context,context) then
+      return false
+    end
+    feedback.issues[slot]=nil
+    feedback.render()
+    return true
+  end
+  feedback.clear_input=function(...)
+    local issue=feedback.issues.input
+    if not issue then return end
+    for _,key in ipairs({...}) do
+      if issue.key==key then return feedback.clear_issue("input",feedback.context()) end
+    end
+  end
+  feedback.confirm=function(key,args,context)
+    local safe_args={}
+    if type(args)=="table" then
+      for name,value in pairs(args) do
+        if type(name)=="string" and type(value)=="number" then safe_args[name]=value end
+      end
+    end
+    local confirmation_context
+    if context~=false then confirmation_context=context or feedback.context() end
+    feedback.confirmation={key=key,args=safe_args,context=confirmation_context}
+    feedback.render()
+  end
+  feedback.target_changed=function(before,after)
+    if feedback.same_context(before,after) then return false end
+    for _,slot in ipairs({"destination","input","generation"}) do
+      local issue=feedback.issues[slot]
+      if issue and feedback.same_context(issue.context,before) then feedback.issues[slot]=nil end
+    end
+    local save_issue=feedback.issues.save
+    if save_issue and feedback.same_context(save_issue.context,before) then
+      feedback.issues.save=nil
+      if not feedback.previous_save_warning then
+        feedback.previous_save_warning=true
+        feedback.previous_save_context=before
+      elseif not feedback.same_context(feedback.previous_save_context,before) then
+        feedback.previous_save_context=nil
+      end
+    end
+    feedback.confirmation=nil
+    feedback.render()
+    return true
+  end
+  feedback.clear_previous_save=function(context)
+    if feedback.previous_save_warning and feedback.previous_save_context and
+        feedback.same_context(feedback.previous_save_context,context) then
+      feedback.previous_save_warning=false
+      feedback.previous_save_context=nil
+      feedback.render()
+    end
+  end
+  feedback.request_failure=function(slot,is_duplicate)
+    if not current_session() then
+      feedback.set_issue("destination","document_changed",nil,feedback.song_context())
+      return
+    end
+    local integrity=runtime:integrity_state()
+    local generation=runtime:generation_state()
+    if integrity.blocked or generation.blocked then
+      feedback.set_issue("destination","integrity_blocked",nil,feedback.song_context())
+      return
+    end
+    local target=runtime:target_projection()
+    if target.kind~="owned" and target.kind~="new" then
+      feedback.set_issue("destination","destination_unavailable")
+      return
+    end
+    local key=is_duplicate and "duplicate_failed" or
+      (slot=="input" and "input_failed" or "generation_failed")
+    feedback.set_issue(slot,key)
+  end
+  feedback.destination_unavailable=function()
+    if not current_session() then
+      feedback.set_issue("destination","document_changed",nil,feedback.song_context())
+      return
+    end
+    local integrity=runtime:integrity_state()
+    local generation=runtime:generation_state()
+    if integrity.blocked or generation.blocked then
+      feedback.set_issue("destination","integrity_blocked",nil,feedback.song_context())
+    else
+      feedback.set_issue("destination","destination_unavailable")
+    end
+  end
+  feedback.audition_failed=function(key)
+    local issue=feedback.issues.audition
+    if not issue or issue.key~="audition_release_failed" then
+      feedback.set_issue("audition",key,nil,false)
+    end
+  end
   local preview=audition.new({song=function() return renoise.song() end,tool=tool,
     on_outcome=function(outcome)
-      local errors={}
-      if outcome.onset_error then errors[#errors+1]="Cannot audition: "..tostring(outcome.onset_error) end
-      if outcome.release_error then errors[#errors+1]=tostring(outcome.release_error) end
-      for _,reason in ipairs(outcome.cleanup_errors or {}) do errors[#errors+1]=tostring(reason) end
-      if #errors>0 then
-        audition_status.text="Audition cleanup is best effort: "..table.concat(errors,"; ")
-        audition_status.visible=true
+      if outcome.release_error or #(outcome.cleanup_errors or {})>0 then
+        feedback.audition_failed("audition_release_failed")
+      elseif outcome.onset_error then
+        feedback.audition_failed("audition_start_failed")
+      elseif not feedback.issues.audition or feedback.issues.audition.key~="audition_release_failed" then
+        feedback.clear_issue("audition",false)
       end
     end})
   active_audition=preview
@@ -321,8 +493,6 @@ function M.show()
           selected_step=stage.cursor;time_page=editor.page_for(stage.cursor)
         end
       end
-      status.text=value==1 and "Program view: edit selected PITCH and TIME positions."
-        or "Grid view: edit PITCH and TIME memory pages directly."
       update()
     end}
   local view_heading=vb:text{text="PROGRAM VIEW",font="bold"}
@@ -361,6 +531,28 @@ function M.show()
   local function destination() return runtime:target_projection() end
   local function bound_instrument() return destination().instrument end
   local function bound_phrase() return destination().phrase end
+  feedback.context=function()
+    local target=runtime and runtime:target_projection() or {}
+    local life=runtime and runtime:lifetime_state() or {}
+    return {scope="target",song=song,session=life.session,instrument=target.instrument,
+      phrase=target.phrase,kind=target.kind,id=target.baseline and target.baseline.id}
+  end
+  feedback.song_context=function()
+    local life=runtime and runtime:lifetime_state() or {}
+    return {scope="song",song=song,session=life.session}
+  end
+  feedback.same_context=function(left,right)
+    if not left or not right or left.scope~=right.scope or not rawequal(left.song,right.song) or
+        not rawequal(left.session,right.session) then return false end
+    if left.scope=="song" then return true end
+    local same_object=rawequal(left.phrase,right.phrase)
+    local same_phrase=same_object
+    if not same_phrase and (left.phrase==nil or right.phrase==nil) then
+      same_phrase=left.id~=nil and right.id~=nil and left.id==right.id
+    end
+    local same_target_kind=(same_object and left.phrase~=nil) or left.kind==right.kind
+    return rawequal(left.instrument,right.instrument) and same_phrase and same_target_kind
+  end
   local function revision() return runtime:revision_state().edit_revision end
   local function stage_origin()
     local life=runtime:lifetime_state()
@@ -389,6 +581,31 @@ function M.show()
     end end
     return missing
   end
+  local function first_missing_position()
+    if stage then
+      for _,position in ipairs(stage.target_positions) do
+        if not stage.entered[position] then return position end
+      end
+    end
+  end
+  local function refresh_entry_issue()
+    local issue=feedback.issues.input
+    if not stage or not issue then return end
+    local key=stage.memory=="pitch" and "missing_pitch" or "missing_timing"
+    if issue.key~=key then return end
+    local position=first_missing_position()
+    if position then feedback.set_issue("input",key,{position=position})
+    else feedback.clear_input(key) end
+  end
+  local function set_projection_issue(error_info)
+    if type(error_info.pitch_index)=="number" then
+      feedback.set_issue("input","missing_pitch",{position=error_info.pitch_index})
+    elseif type(error_info.step)=="number" then
+      feedback.set_issue("input","missing_timing",{position=error_info.step})
+    else
+      feedback.set_issue("input","input_failed")
+    end
+  end
   local projected_revision,cached_projection,projected_instrument,projected_phrase
   local function invalidate_projection()
     cached_projection=nil
@@ -405,6 +622,11 @@ function M.show()
       projected_instrument,projected_phrase=bound_instrument(),bound_phrase()
     end
     return cached_projection
+  end
+  local function clear_resolved_input()
+    if not stage and not project().error then
+      feedback.clear_input("missing_pitch","missing_timing","entry_unavailable","entry_destination_changed")
+    end
   end
   local function stage_resolution()
     if not stage.prepared_resolution then
@@ -440,15 +662,24 @@ function M.show()
     return copy
   end
   local function save_draft(kind)
+    local context=feedback.context()
     local state,effects=runtime:transition(kind or "edit",{
       source=pattern,output_policy=output_policy,pb_range=pb_range,
       label=phrase_label,label_custom=phrase_label_custom})
     if not state then
+      feedback.set_issue("save","save_failed",nil,context)
       return false,effects or "Editor state transition failed"
     end
     render(source_state,"text","SOURCE DIRTY: Generate to apply this draft.")
     if not bound_instrument() then return true,nil,effects end
-    return not state.draft_warning,state.draft_warning,effects
+    local saved=not state.draft_warning
+    if saved then
+      feedback.clear_issue("save",context)
+      feedback.clear_previous_save(context)
+    else
+      feedback.set_issue("save","save_failed",nil,context)
+    end
+    return saved,state.draft_warning,effects
   end
   local loading=false
   local function default_pitch()
@@ -490,7 +721,7 @@ function M.show()
       p.accent and " ACC" or "",p.slide and " SLD" or "")
   end
   render=function(view,property,value)
-    if property~="value" and not (rawequal(view,status) and property=="text") then
+    if property~="value" and not (rawequal(view,feedback.status) and property=="text") then
       local cache=rendered[view]
       if cache then
         local previous=cache[property]
@@ -507,7 +738,7 @@ function M.show()
     local current=view[property]
     local equal=same_render_value(current,value)
     if not equal then view[property]=value end
-    if property~="value" and not (rawequal(view,status) and property=="text") then
+    if property~="value" and not (rawequal(view,feedback.status) and property=="text") then
       local cache=rendered[view]
       if not cache then cache={};rendered[view]=cache end
       cache[property]=retain_render_value(value)
@@ -761,7 +992,7 @@ function M.show()
   end
   navigate_diagnostic=function()
     release_audition()
-    if stage and not valid_stage() then status.text="Entry origin changed; diagnostic navigation unavailable.";return end
+    if stage and not valid_stage() then feedback.set_issue("input","entry_unavailable");return end
     local error_info=(stage and editor.project(stage.candidate,stage_resolution()) or project()).error
     if not error_info then return end
     if error_info.pitch_index and (not stage or (stage.memory=="pitch" and
@@ -779,21 +1010,11 @@ function M.show()
   end
   local function changed(request_live)
     if not history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom) then update();return end
-    local saved,save_error,effects=save_draft(request_live==false and "reset" or "edit")
+    local saved,_,effects=save_draft(request_live==false and "reset" or "edit")
     invalidate_projection()
     update()
+    clear_resolved_input()
     update_live_state(saved==true)
-    local state=runtime:generation_state()
-    if state.armed and request_live~=false then
-      if state.pending or state.busy then
-        render(status,"text",state.pending and "LIVE EDIT RENDERING: applying the latest edit next."
-          or "LIVE EDIT RENDERING: applying edits.")
-      end
-      if not saved then render(status,"text",status.text.."\nDRAFT WARNING: "..tostring(save_error)) end
-    else
-      render(status,"text",saved and "Draft saved; Generate applies it, or enable Live Edit for subsequent edits."
-        or ("DRAFT SAVE ERROR: session recovery only: "..tostring(save_error)))
-    end
     if effects and effects.live_intent and current_session() then
       runtime:flush_pending()
     end
@@ -801,46 +1022,58 @@ function M.show()
   finish_stage=function()
     release_audition()
     if not stage then return false end
-    if not valid_stage() then status.text="Entry origin changed; Finish unavailable.";return false end
-    local eligible,eligibility_error=runtime:musical_eligibility()
-    if not eligible then status.text="Cannot finish: "..tostring(eligibility_error);return false end
+    if not valid_stage() then feedback.set_issue("input","entry_unavailable");return false end
+    local eligible=runtime:musical_eligibility()
+    if not eligible then feedback.request_failure("input",false);return false end
     local missing=missing_positions()
-    if #missing>0 then status.text="Missing entered positions: "..table.concat(missing,", ");return false end
-    local valid,reason=sequencer.validate(stage.candidate)
-    if not valid then status.text=tostring(reason);return false end
+    if #missing>0 then
+      feedback.set_issue("input",stage.memory=="pitch" and "missing_pitch" or "missing_timing",
+        {position=first_missing_position()})
+      return false
+    end
+    local valid=sequencer.validate(stage.candidate)
+    if not valid then feedback.set_issue("input","input_failed");return false end
     local candidate=stage.candidate
-    if sequencer.same_source(candidate,pattern) then stage=nil;update();return true end
+    if sequencer.same_source(candidate,pattern) then
+      stage=nil;clear_resolved_input();update();return true
+    end
     pattern=assert(sequencer.copy_source(candidate))
     stage=nil
+    feedback.clear_input("input_failed")
     changed()
     return true
   end
   guard_stage=function()
     release_audition()
     if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
-      status.text="Resolve the label editor with Save, Retry or Discard Attempt, then invoke the action again."
+      feedback.set_issue("input","label_editor_open")
       if label_ui.dialog and label_ui.dialog.visible then label_ui.dialog:show()
       elseif label_ui.attempt then label_ui.show(label_ui.attempt) end
       return true
     end
     if not stage then return false end
     if not valid_stage() then
-      stage=nil;update();status.text="Uncommitted entry discarded: origin changed.";return true
+      stage=nil;update();feedback.set_issue("input","entry_unavailable");return true
     end
     local missing=missing_positions()
+    if #missing>0 then
+      feedback.set_issue("input",stage.memory=="pitch" and "missing_pitch" or "missing_timing",
+        {position=first_missing_position()})
+    end
     local buttons=#missing==0 and {"Stay","Discard","Finish"} or {"Stay","Discard"}
     local answer=renoise.app():show_prompt("Program entry staged",
       #missing==0 and "Resolve entry, then invoke the requested action again." or
-        "Missing entered positions: "..table.concat(missing,", "),buttons)
+        string.format("Complete %s step %d before continuing.",stage.memory=="pitch" and "pitch" or "timing",
+          first_missing_position()),buttons)
     if answer=="Finish" and #missing==0 then finish_stage()
-    elseif answer=="Discard" then stage=nil;update() end
+    elseif answer=="Discard" then stage=nil;clear_resolved_input();update() end
     update()
     return true
   end
   local function begin_stage(memory)
     if guard_stage() then return end
-    local eligible,reason=runtime:musical_eligibility()
-    if not eligible then status.text="Cannot re-enter: "..tostring(reason);return end
+    local eligible=runtime:musical_eligibility()
+    if not eligible then feedback.request_failure("input",false);return end
     local origin=stage_origin()
     local count=memory=="pitch" and pattern.pitch_length or pattern.length
     local positions={}
@@ -852,7 +1085,7 @@ function M.show()
     if answer~="Proceed" then return end
     stage={memory=memory,candidate=assert(sequencer.copy_source(pattern)),
       target_positions={},entered={},cursor=1,origin=origin}
-    if not valid_stage() then stage=nil;status.text="Entry origin changed during confirmation.";return end
+    if not valid_stage() then stage=nil;feedback.set_issue("input","entry_unavailable");return end
     for index=1,count do
       stage.target_positions[index]=index
       stage.entered[index]=false
@@ -864,11 +1097,11 @@ function M.show()
   end
   local function candidate_edit(memory,position)
     if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
-      status.text="Resolve the label editor before editing the source."
+      feedback.set_issue("input","label_editor_open")
       return false
     end
     if not stage then return true end
-    if not valid_stage() then status.text="Entry origin changed; candidate is unavailable.";return false end
+    if not valid_stage() then feedback.set_issue("input","entry_unavailable");return false end
     return editor_view==1 and stage.memory==memory and position<=#stage.target_positions
   end
   timing_popup:add_notifier(function(value)
@@ -881,17 +1114,12 @@ function M.show()
     if updating then return end
     if guard_stage() then update();return end
     output_policy=value==2 and "repeat" or "play_once"
-    status.text=output_policy=="repeat" and "Repeat output selected for this phrase."
-      or "Play Once output selected for this phrase."
     changed()
   end)
   pb_range_popup:add_notifier(function(value)
     if updating then return end
     if guard_stage() then update();return end
     pb_range=pb_range_values[value] or policies.DEFAULT_PB_RANGE
-    status.text=pb_range==0 and
-      "Pitch bend off; connected plugin/MIDI SLIDE uses overlapping notes." or
-      string.format("PB Range ±%d assumed; set the receiver to match.",pb_range)
     changed()
   end)
   local function write_pitch(key,octave,is_accent,is_slide,note_entry)
@@ -905,7 +1133,7 @@ function M.show()
     end
     if same_pitch(current,candidate) then return end
     edit_source().pitch_events[selected_pitch]=candidate
-    if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
+    if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;refresh_entry_issue();update() else changed() end
   end
   local function choose_key(key)
     local pitch=pitch_at(selected_pitch)
@@ -924,7 +1152,7 @@ function M.show()
     if scale_state.follow then candidate=assert(sequencer.constrain_pitch(edit_source(),candidate)) end
     if same_pitch(pitch,candidate) then return end
     edit_source().pitch_events[selected_pitch]=candidate
-    if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;update() else changed() end
+    if stage then stage.prepared_resolution=nil;stage.entered[selected_pitch]=false;refresh_entry_issue();update() else changed() end
   end
   local function set_time_command(command)
     release_audition()
@@ -932,12 +1160,11 @@ function M.show()
     if selected_step>pattern.length then return end
     local source=edit_source()
     local previous=source.time_events[selected_step]
-    local result,reason=sequencer.set_time(source,selected_step,command)
-    if not result then status.text=reason;return end
+    local result=sequencer.set_time(source,selected_step,command)
+    if not result then feedback.set_issue("input","input_failed");return end
     if previous~=result then
-      if stage then stage.prepared_resolution=nil;stage.entered[selected_step]=false;update() else changed() end
+      if stage then stage.prepared_resolution=nil;stage.entered[selected_step]=false;refresh_entry_issue();update() else changed() end
     else update() end
-    if selected_step==1 and command=="T" then status.text="TIME 01 TIE normalized to NOTE." end
   end
   for index,key_name in ipairs(keys) do
     local key=index-1
@@ -1060,19 +1287,25 @@ function M.show()
   pitch_length_popup:add_notifier(function(value)
     if updating then return end
     if guard_stage() then update();return end
-    local ok,reason=sequencer.set_pitch_length(pattern,tonumber(value))
-    if not ok then status.text=reason end
+    local ok=sequencer.set_pitch_length(pattern,tonumber(value))
+    if not ok then feedback.set_issue("input","input_failed") end
     if ok then changed() else update() end
   end)
   local inspect=vb:button{text="Inspect selected Renoise pattern (read only)",
     notifier=function()
       local message,err=inspector.inspect_selection()
-      status.text=message or err
+      feedback.status.text=message or err
     end}
   local deliver
   if not active_runtime then
     active_runtime=runtime_context.new({writer=phrase_writer,capture=function() return nil,"No editor source" end,
       sink=function(request,done)
+        local origin=request.origin or {}
+        local baseline=origin.baseline or {}
+        feedback_request_contexts[request]={scope="target",song=request.song,session=request.session,
+          instrument=request.instrument,phrase=request.operation=="duplicate" and nil or request.phrase,
+          kind=request.operation=="duplicate" and "owned" or request.target_kind,
+          id=request.operation=="duplicate" and baseline.id or request.id}
         if request.kind=="create" then
           if type(phrase_writer.create)~="function" then return false,"Explicit writer create is unavailable" end
           return phrase_writer.create(request,done)
@@ -1123,10 +1356,10 @@ function M.show()
     local is_new=target==false
     local requested_phrase
     if not is_new then requested_phrase=target end
-    local restored,restore_error=runtime:restore_editor_target(instrument,requested_phrase,
+    local previous_context=feedback.context()
+    local restored=runtime:restore_editor_target(instrument,requested_phrase,
       native_selection==true)
-    local target_state=restored and restored.target or nil
-    local target_index=target_state and target_state.phrase_index
+    feedback.target_changed(previous_context,feedback.context())
     local source_available=false
     if restored and type(restored.source)=="table" then
       pattern=restored.source
@@ -1138,18 +1371,16 @@ function M.show()
       accepted_pitch_baseline=assert(sequencer.copy_source(pattern))
       selected_pitch=1;selected_step=1
       pitch_page=1;time_page=1
-      if restored.draft then
-        status.text="Recovered saved draft. Generate or edit the source to apply it."
-      elseif restored.draft_error then
-        status.text="DRAFT RECOVERY ERROR: "..tostring(restored.draft_error)..
-          "; existing phrase output is protected."
-      elseif is_new then
-        status.text="New phrase draft ready: all stored PITCH entries are C and TIME steps are NOTE."
-      elseif source_available and target_index then
-        status.text=string.format("Restored ACID source for phrase %02d.",target_index)
-      else
-        status.text="Source unavailable: "..tostring(restored.reason or "No verified source")..
-          " | choose a new phrase; existing audio is protected."
+      if restored.draft_error then
+        if runtime:integrity_state().blocked or runtime:generation_state().blocked then
+          feedback.destination_unavailable()
+        else
+          feedback.set_issue("destination","draft_load_failed")
+        end
+      elseif not source_available and not is_new then
+        feedback.destination_unavailable()
+      elseif source_available then
+        feedback.clear_issue("destination",feedback.context())
       end
       render(source_state,"text",(restored.draft or is_new) and
         "SOURCE DIRTY: Generate to apply this draft." or
@@ -1157,8 +1388,7 @@ function M.show()
     else
       reset_source()
       accepted_pitch_baseline=assert(sequencer.copy_source(pattern))
-      status.text="Source unavailable: "..tostring(restore_error or "Cannot restore editor target")..
-        " | choose a new phrase; existing audio is protected."
+      feedback.destination_unavailable()
       render(source_state,"text",is_new and "SOURCE DIRTY: Generate to apply this draft." or
         "SOURCE UNAVAILABLE")
     end
@@ -1256,7 +1486,9 @@ function M.show()
     if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then return false end
     if native_projection_dirty then native_observers:refresh() end
     local before=destination()
+    local before_feedback=feedback.context()
     local target,effects=runtime:reconcile()
+    feedback.target_changed(before_feedback,feedback.context())
     if stage and not valid_stage() then
       stage=nil
       update()
@@ -1290,14 +1522,14 @@ function M.show()
           if phrase==false then load_target(choice,true);return true end
         end
       end
-      status.text=target.reason or "Native destination is unavailable; select the destination again."
+      feedback.destination_unavailable()
       return false
     end
     if not target or (rawequal(before.instrument,target.instrument) and
         rawequal(before.phrase,target.phrase) and before.kind==target.kind) then return false end
     if target.kind~="owned" then
       if target.phrase then refresh_phrase_choices(target.phrase) end
-      status.text=target.reason or "Native destination is unavailable; select the destination again."
+      feedback.destination_unavailable()
       return false
     end
     if not rawequal(instrument_targets[selected_instrument],target.instrument) then
@@ -1312,7 +1544,7 @@ function M.show()
         end
       end
       if not rawequal(instrument_targets[selected_instrument],target.instrument) then
-        status.text="Native destination is unavailable; select the destination again."
+        feedback.destination_unavailable()
         return false
       end
     end
@@ -1322,16 +1554,20 @@ function M.show()
         if rawequal(phrase,target.phrase) then load_target(choice,true);return true end
       end
     end
-    status.text="Native destination is unavailable; select the destination again."
+    feedback.destination_unavailable()
     return false
   end
   apply_pending_selected_phrase_selection=function()
     local staged=stage~=nil
     local changed=reconcile_selected_phrase_selection()
     if staged and not stage then
-      status.text="Uncommitted entry discarded: native destination changed.\n"..status.text
+      feedback.set_issue("input","entry_destination_changed")
       if drafts.has_volatile(song) then
-        status.text=status.text.."\nDRAFT WARNING: unsaved canonical draft retained in session recovery."
+        if not feedback.previous_save_warning then
+          feedback.previous_save_warning=true
+          feedback.previous_save_context=nil
+        end
+        feedback.render()
       end
     end
     return changed
@@ -1339,28 +1575,6 @@ function M.show()
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)if not loading then select_instrument(n) end end}
   instrument_choice=target
-  local function result_status(result)
-    if result.kind=="success" then
-      return (result.status=="approximate" or result.approximate==true) and "APPROXIMATE" or "COMMITTED"
-    end
-    local status=tostring(result.status or "error")
-    if status=="failed" or status=="error" then return "ERROR" end
-    return string.upper(status)
-  end
-  local function describe_result(result,prefix)
-    local message=prefix..result_status(result)..": "..
-      tostring(result.reason or result.message or result.code or "Phrase generation ended")
-    if type(result.diagnostics)=="table" and #result.diagnostics>0 then
-      local details={}
-      for _,detail in ipairs(result.diagnostics) do
-        if not message:find(tostring(detail),1,true) then
-          details[#details+1]=tostring(detail)
-        end
-      end
-      if #details>0 then message=message.."\n"..table.concat(details,"\n") end
-    end
-    return message
-  end
   update_live_state=function(skip_actions)
     if update_actions and not skip_actions then update_actions() end
     local state=runtime:generation_state()
@@ -1380,43 +1594,82 @@ function M.show()
   deliver=function(request,result)
     if type(request)~="table" or not current_session() then return end
     local success=result.kind=="success" and result.verified==true
-    local prefix=request.operation=="duplicate" and "DUPLICATE " or
-      (request.trigger=="manual" and "GENERATION " or "LIVE EDIT ")
+    local request_context=feedback_request_contexts[request] or feedback.context()
+    feedback_request_contexts[request]=nil
+    local context=feedback.context()
+    local result_current=result.stale~=true and result.destination_current==true
     if success then
       if request.operation=="duplicate" then
-        if result.stale==true or result.destination_current~=true then return end
-        local accepted=runtime:editor_state()
-        if not accepted or not rawequal(result.phrase,bound_phrase()) then return end
-        pattern=assert(sequencer.copy_source(accepted.source))
-        output_policy,pb_range=accepted.output_policy,accepted.pb_range
-        phrase_label,phrase_label_custom=accepted.label,accepted.label_custom
-        history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
-        selected_pitch,selected_step,pitch_page,time_page=1,1,1,1
-        invalidate_projection()
+        if result_current and rawequal(result.phrase,bound_phrase()) then
+          local accepted=runtime:editor_state()
+          if accepted then
+            pattern=assert(sequencer.copy_source(accepted.source))
+            output_policy,pb_range=accepted.output_policy,accepted.pb_range
+            phrase_label,phrase_label_custom=accepted.label,accepted.label_custom
+            history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
+            selected_pitch,selected_step,pitch_page,time_page=1,1,1,1
+            invalidate_projection()
+          end
+        else
+          result_current=false
+        end
       end
       local accepted=runtime:editor_state()
-      if accepted and sequencer.same_source(accepted.source,pattern) and
+      if result_current and accepted and sequencer.same_source(accepted.source,pattern) and
           (phrase_label~=accepted.label or phrase_label_custom~=accepted.label_custom) then
         phrase_label=accepted.label or "Untitled"
         phrase_label_custom=accepted.label_custom==true
         history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
       end
-      if result.stale==true or result.destination_current~=true or not result.phrase or
-          not rawequal(result.phrase,bound_phrase()) then
-        render(source_state,"text","SOURCE UNAVAILABLE")
-        status.text=prefix.."ERROR: destination identity could not be verified; select the destination again."
-        update_live_state()
-        return
+      if result_current and (not result.phrase or not rawequal(result.phrase,bound_phrase())) then
+        result_current=false
       end
-      refresh_phrase_choices(result.phrase)
-      local committed=runtime:editor_state()
-      if committed and sequencer.same_source(committed.source,pattern) then
-        accepted_pitch_baseline=assert(sequencer.copy_source(committed.source))
-        update()
+      if result_current then
+        refresh_phrase_choices(result.phrase)
+        local committed=runtime:editor_state()
+        if committed and sequencer.same_source(committed.source,pattern) then
+          accepted_pitch_baseline=assert(sequencer.copy_source(committed.source))
+          update()
+        end
+        render(source_state,"text","SOURCE COMMITTED")
       end
-      render(source_state,"text","SOURCE COMMITTED")
     end
-    status.text=describe_result(result,prefix)
+    if not result_current then
+      local eligible=runtime:musical_eligibility()
+      local integrity=runtime:integrity_state()
+      local generation=runtime:generation_state()
+      local target=runtime:target_projection()
+      if not eligible and (integrity.blocked or generation.blocked) then
+        feedback.set_issue("destination","integrity_blocked",nil,feedback.song_context())
+      elseif not eligible and target.kind~="owned" and target.kind~="new" then
+        feedback.set_issue("destination","destination_unavailable",nil,feedback.context())
+      end
+    elseif success then
+      if feedback.same_context(request_context,context) then
+        local issue=feedback.issues.generation
+        local failure_key=request.operation=="duplicate" and "duplicate_failed" or "generation_failed"
+        if issue and issue.key==failure_key then feedback.clear_issue("generation",context) end
+        local destination_issue=feedback.issues.destination
+        if not destination_issue or destination_issue.key~="draft_load_failed" then
+          feedback.clear_issue("destination",context)
+        end
+      else
+        feedback.target_changed(request_context,context)
+      end
+      if request.operation=="duplicate" then
+        feedback.confirm("phrase_duplicated",nil,context)
+      elseif result.status=="approximate" or result.approximate==true or
+          result.code=="capability.approximate" then
+        feedback.confirm("phrase_approximate",nil,context)
+      else
+        feedback.confirm("phrase_updated",nil,context)
+      end
+    elseif result.status=="integrity_blocked" or result.integrity_blocked==true or
+        result.category=="integrity" then
+      feedback.set_issue("destination","integrity_blocked",nil,feedback.song_context())
+    else
+      feedback.request_failure("generation",request.operation=="duplicate")
+    end
     update_live_state()
   end
   live_checkbox=vb:checkbox{id="acid_live_edit",value=false,notifier=function(value)
@@ -1427,12 +1680,10 @@ function M.show()
     if value then
       apply_pending_selected_phrase_selection()
       runtime:transition("arm")
-      status.text="Live Edit enabled; the next source edit will be applied."
       update_live_state()
     else
       runtime:transition("disarm")
       update_live_state()
-      status.text="Live Edit disabled; manual Generate/Regenerate is available."
     end
   end}
   active_live_checkbox=live_checkbox
@@ -1466,7 +1717,7 @@ function M.show()
         label_ui.field.value=phrase_label
         label_ui.close()
         update()
-        status.text="Label attempt discarded."
+        feedback.clear_input("label_save_failed","label_attempt_stale","label_editor_open")
       end}
       label_ui.content=label_vb:column{margin=12,spacing=8,
         label_vb:text{text="Phrase label: 1–32 ASCII letters, digits, spaces, _, . or -; start with a letter or digit."},
@@ -1474,7 +1725,10 @@ function M.show()
     end
     label_ui.field.value=attempt and attempt.label or phrase_label
     label_ui.field.active=not (attempt and attempt.proposal)
-    label_ui.error.text=attempt and ("SAVE ERROR: "..tostring(attempt.error)) or ""
+    local error_key=attempt and attempt.error_key
+    label_ui.error.text=error_key=="invalid_label" and "Use the label format shown above." or
+      error_key=="history_changed" and "The editor changed. Discard this attempt." or
+      error_key and "Label could not be saved. Retry or discard this attempt." or ""
     label_ui.save.active=attempt==nil
     label_ui.retry.active=attempt~=nil
     if visible then label_ui.dialog:show()
@@ -1488,16 +1742,27 @@ function M.show()
         (not attempt.proposal or history:is_current(attempt.proposal))
     end
     if not current() then
-      attempt.error="Editor history changed; discard this attempt."
+      attempt.error_key="history_changed"
+      feedback.set_issue("input","label_attempt_stale")
+      label_ui.show(attempt)
+      return
+    end
+    if not pattern_store.valid_label(attempt.label) then
+      attempt.error_key="invalid_label"
+      feedback.set_issue("input","label_save_failed")
       label_ui.show(attempt)
       return
     end
     label_ui.attempt=attempt
-    local saved,reason=runtime:rename_label(attempt.label,attempt.label_custom,current)
+    local saved=runtime:rename_label(attempt.label,attempt.label_custom,current)
     if not saved then
-      attempt.error=reason
+      attempt.error_key="save_failed"
+      if runtime:integrity_state().blocked then
+        feedback.set_issue("destination","integrity_blocked",nil,feedback.song_context())
+      else
+        feedback.set_issue("input","label_save_failed")
+      end
       label_ui.show(attempt)
-      status.text="Label was not saved: "..tostring(reason)
       return
     end
     if attempt.proposal then assert(history:commit(attempt.proposal),"Label history proposal changed during persistence")
@@ -1505,8 +1770,9 @@ function M.show()
     phrase_label,phrase_label_custom=attempt.label,attempt.label_custom
     label_ui.attempt=nil
     label_ui.close()
+    feedback.clear_input("label_save_failed","label_attempt_stale","label_editor_open")
     update();update_live_state()
-    status.text="Label saved."
+    feedback.confirm("label_saved")
   end
   local function move_history(direction)
     if guard_stage() then return end
@@ -1526,12 +1792,9 @@ function M.show()
     phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
     if not history:commit(proposal) then return end
     invalidate_projection()
-    local saved,save_error,effects=save_draft()
-    status.text=saved and (direction=="undo" and "Edit undone and saved with the song." or
-      "Edit redone and saved with the song.") or
-      (direction=="undo" and "Edit undone; session recovery only: " or
-      "Edit redone; session recovery only: ")..tostring(save_error)
+    local _,_,effects=save_draft()
     update();update_live_state()
+    clear_resolved_input()
     if effects and effects.live_intent and current_session() then runtime:flush_pending() end
   end
   undo_button=vb:button{text="Undo",active=false,notifier=function()
@@ -1596,11 +1859,11 @@ function M.show()
       refresh_phrase_choices()
       project_runtime_editor()
       render(source_state,"text","SOURCE DIRTY: Generate to apply this recovered draft.")
-      status.text="Draft copied to New. The original recovery entry stays until this revision is generated or discarded."
+      feedback.status.text="Draft copied to New. The original recovery entry stays until this revision is generated or discarded."
       if type(reason)=="table" and reason.warning then
-        status.text=status.text.."\nDRAFT WARNING: "..tostring(reason.warning)
+        feedback.status.text=feedback.status.text.."\nDRAFT WARNING: "..tostring(reason.warning)
       end
-    else status.text="Cannot recover draft: "..tostring(reason) end
+    else feedback.status.text="Cannot recover draft: "..tostring(reason) end
     update_live_state()
   end}
   discard_recovery=vb:button{id="acid_recovery_discard",text="Discard",active=false,notifier=function()
@@ -1609,7 +1872,7 @@ function M.show()
     local entry=selected_recovery()
     if not entry then return end
     local discarded,reason=runtime:discard_recovery(entry.token,entry.revision)
-    status.text=discarded and "Selected recovery entry discarded." or ("Cannot discard draft: "..tostring(reason))
+    feedback.status.text=discarded and "Selected recovery entry discarded." or ("Cannot discard draft: "..tostring(reason))
     update_live_state()
   end}
   independent=vb:button{id="acid_make_independent",text="Make Independent",active=false,notifier=function()
@@ -1623,22 +1886,22 @@ function M.show()
       local dirty=state and (not sequencer.same_source(state.source,result.source) or
         state.output_policy~=result.output_policy or state.pb_range~=result.pb_range)
       render(source_state,"text",dirty and "SOURCE DIRTY: Generate to apply this draft." or "SOURCE COMMITTED")
-      status.text="Selected phrase is independent. Its musical content is unchanged."
-      if result.warning then status.text=status.text.."\n"..tostring(result.warning) end
+      feedback.status.text="Selected phrase is independent. Its musical content is unchanged."
+      if result.warning then feedback.status.text=feedback.status.text.."\n"..tostring(result.warning) end
       if state and state.draft_warning then
-        status.text=status.text.."\nDRAFT WARNING: "..tostring(state.draft_warning)
+        feedback.status.text=feedback.status.text.."\nDRAFT WARNING: "..tostring(state.draft_warning)
       end
-    else status.text="Cannot make independent: "..tostring(result) end
+    else feedback.status.text="Cannot make independent: "..tostring(result) end
     update_live_state()
   end}
   revalidate=vb:button{id="acid_revalidate",text="Revalidate",active=false,notifier=function()
     if guard_stage() then return end
     if not current_session() then return end
     local state,proof=runtime:revalidation_status()
-    if not state.verified then status.text=state.reason or "Recovery consistency could not be verified."
+    if not state.verified then feedback.status.text=state.reason or "Recovery consistency could not be verified."
     else
       local cleared,reason=runtime:revalidate(proof)
-      status.text=cleared and "Recovery verified. Generate or edit explicitly to continue." or tostring(reason)
+      feedback.status.text=cleared and "Recovery verified. Generate or edit explicitly to continue." or tostring(reason)
     end
     update_live_state()
   end}
@@ -1709,6 +1972,7 @@ function M.show()
     if action=="enter" then
       stage.entered[stage.cursor]=true
       stage.cursor=math.min(#stage.target_positions,stage.cursor+1)
+      refresh_entry_issue()
     elseif action=="back" then stage.cursor=math.max(1,stage.cursor-1)
     else stage.cursor=1 end
     if stage.memory=="pitch" then choose_pitch(stage.cursor) else choose_time(stage.cursor) end
@@ -1721,7 +1985,7 @@ function M.show()
     discard=vb:button{id="acid_program_discard",text="Discard",notifier=function()
       release_audition()
       if stage and renoise.app():show_prompt("Discard entry","Discard the detached candidate?",{"Stay","Discard"})=="Discard" then
-        stage=nil;update()
+        stage=nil;clear_resolved_input();update()
       end
     end}}
   local entry_controls=vb:row{spacing=4,
@@ -1730,12 +1994,15 @@ function M.show()
     vb:button{id="acid_program_reenter_time",text="Re-enter TIME",notifier=function() begin_stage("time") end},
     vb:button{id="acid_program_check",text="Check",notifier=function()
       release_audition()
-      if stage and not valid_stage() then status.text="Entry origin changed; Check unavailable.";return end
+      if stage and not valid_stage() then feedback.set_issue("input","entry_unavailable");return end
       local projection=stage and editor.project(stage.candidate,stage_resolution()) or project()
       show_diagnostic(projection)
-      status.text=projection.error and ("SOURCE ERROR: "..projection.error.message) or "Source valid."
       local missing=missing_positions()
-      if #missing>0 then status.text=status.text.." Missing entered positions: "..table.concat(missing,", ") end
+      if projection.error then set_projection_issue(projection.error)
+      elseif #missing>0 then
+        feedback.set_issue("input",stage.memory=="pitch" and "missing_pitch" or "missing_timing",
+          {position=first_missing_position()})
+      end
     end}}
   entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
     stage_actions.restart,stage_actions.finish,stage_actions.discard}
@@ -1743,16 +2010,14 @@ function M.show()
     if not current_session() or (stage and (stage.memory~="pitch" or not valid_stage())) then return end
     local records=stage and stage_resolution().resolved_records or project().resolved_records
     local record=records and records[selected_pitch]
-    if not record then status.text="Cannot audition: selected pitch is unavailable.";return end
-    local started,reason=preview:start(record.note)
+    if not record then feedback.audition_failed("audition_start_failed");return end
+    local started=preview:start(record.note)
     if not started then
       local outcome=preview:last_outcome()
-      status.text="Cannot audition: "..tostring(reason)
-      if outcome and outcome.release_error then
-        status.text=status.text.." Cleanup is best effort: "..tostring(outcome.release_error)
-      end
-      if outcome and outcome.cleanup_errors and #outcome.cleanup_errors>0 then
-        status.text=status.text.." Cleanup is best effort: "..table.concat(outcome.cleanup_errors,"; ")
+      if outcome and (outcome.release_error or #(outcome.cleanup_errors or {})>0) then
+        feedback.audition_failed("audition_release_failed")
+      else
+        feedback.audition_failed("audition_start_failed")
       end
     end
   end}
@@ -1791,23 +2056,23 @@ function M.show()
   local copy_button=vb:button{id="acid_clipboard_copy",text="Copy",notifier=function()
     if guard_stage() then return end
     clipboard.scope=clipboard.scopes[clipboard.choice.value]
-    local reason
-    clipboard.payload,reason=sequencer.make_clipboard(pattern,clipboard.scope)
+    clipboard.payload=sequencer.make_clipboard(pattern,clipboard.scope)
     update()
-    if not clipboard.payload then status.text=tostring(reason) end
+    if not clipboard.payload then feedback.set_issue("input","input_failed")
+    else feedback.clear_input("clipboard_empty","clipboard_scope_mismatch","input_failed") end
   end}
   clipboard.paste_button=vb:button{id="acid_clipboard_paste",text="Paste",active=false,notifier=function()
     if guard_stage() then return end
     local scope=clipboard.scopes[clipboard.choice.value]
     if not clipboard.payload or clipboard.scope~=scope then
-      status.text=clipboard.payload and ("Clipboard contains "..clipboard.names[clipboard.scope]..
-        "; select that scope to paste.") or "Clipboard empty."
+      feedback.set_issue("input",clipboard.payload and "clipboard_scope_mismatch" or "clipboard_empty")
       return
     end
-    local eligible,reason=runtime:musical_eligibility()
-    if not eligible then status.text="Cannot paste: "..tostring(reason);return end
-    local candidate,err=sequencer.paste_candidate(pattern,clipboard.payload,scope)
-    if not candidate then status.text=tostring(err);return end
+    local eligible=runtime:musical_eligibility()
+    if not eligible then feedback.request_failure("input",false);return end
+    local candidate=sequencer.paste_candidate(pattern,clipboard.payload,scope)
+    if not candidate then feedback.set_issue("input","input_failed");return end
+    feedback.clear_input("clipboard_empty","clipboard_scope_mismatch","input_failed")
     if sequencer.same_source(candidate,pattern) then return end
     pattern=candidate
     changed()
@@ -1823,23 +2088,26 @@ function M.show()
     vb:row{spacing=6,clipboard.choice,copy_button,clipboard.paste_button,
       vb:button{id="acid_pattern_duplicate",text="Duplicate",notifier=function()
         if guard_stage() then return end
-        if not current_session() then status.text="Song changed. Close and reopen ACID.";return end
+        if not current_session() then feedback.request_failure("generation",true);return end
         apply_pending_selected_phrase_selection()
-        local accepted,reason=runtime:request_duplicate()
-        if not accepted then status.text="Cannot duplicate: "..tostring(reason)
-        elseif reason then status.text=tostring(reason) end
+        local accepted=runtime:request_duplicate()
+        if not accepted then feedback.request_failure("generation",true) end
       end}},clipboard.status}
   local extended_panel
   do
   local function admit_operation()
     if stage or label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
-      status.text="Operation cancelled: resolve entry or the label editor before editing the source."
+      if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
+        feedback.set_issue("input","label_editor_open")
+      else
+        feedback.set_issue("input","entry_unavailable")
+      end
       return false
     end
     apply_pending_selected_phrase_selection()
     if not current_session() then return false end
-    local eligible,reason=runtime:musical_eligibility()
-    if not eligible then status.text="Cannot edit: "..tostring(reason);return false end
+    local eligible=runtime:musical_eligibility()
+    if not eligible then feedback.request_failure("input",false);return false end
     return true
   end
   ui.admit_operation=admit_operation
@@ -1911,8 +2179,12 @@ function M.show()
     end
     if repeat_last and (not seed_control or not random_state.last[operation]) then return end
     if seed_control then parameters.seed=repeat_last and random_state.last[operation] or seed_control.value end
-    local candidate,reason=sequencer.operation_candidate(pattern,operation,scope,parameters)
-    if not candidate then status.text=tostring(reason);return end
+    local candidate=sequencer.operation_candidate(pattern,operation,scope,parameters)
+    if not candidate then feedback.set_issue("input","operation_failed",{operation=choice});return end
+    local issue=feedback.issues.input
+    if issue and issue.key=="operation_failed" and issue.args.operation==choice then
+      feedback.clear_input("operation_failed")
+    end
     apply_candidate(candidate)
     if seed_control then
       random_state.last[operation]=parameters.seed
@@ -1928,8 +2200,8 @@ function M.show()
     if index then bits[index]=value end
     local enabled=pattern.scale_mask_enabled
     if not index then enabled=value end
-    local candidate,reason=sequencer.mask_candidate(pattern,enabled,bits)
-    if not candidate then update();status.text=tostring(reason);return end
+    local candidate=sequencer.mask_candidate(pattern,enabled,bits)
+    if not candidate then update();feedback.set_issue("input","input_failed");return end
     apply_candidate(candidate)
   end
   ui.mask.enabled=vb:checkbox{id="acid_mask_enabled",value=false,notifier=function(value) edit_mask(nil,value) end}
@@ -2006,8 +2278,8 @@ function M.show()
         local entry=visible_scales[value-1]
         if not entry then update();return end
         if not admit_scale_edit() then return end
-        local candidate,reason=sequencer.mask_candidate(pattern,true,scales.mask(entry,scale_state.root))
-        if not candidate then update();status.text=tostring(reason);return end
+        local candidate=sequencer.mask_candidate(pattern,true,scales.mask(entry,scale_state.root))
+        if not candidate then update();feedback.set_issue("input","input_failed");return end
         apply_candidate(candidate)
       end}
     scale_search=vb:textfield{id="acid_scale_search",text="",width=SCALE_UI.search_width,
@@ -2027,31 +2299,32 @@ function M.show()
       notifier=function()
         if guard_stage() then return end
         if scale_state.load_error then
-          status.text="Cannot import scales: "..tostring(scale_state.load_error)
+          feedback.set_issue("scale","scale_load_failed",nil,false)
           return
         end
         local filename=renoise.app():prompt_for_filename_to_read({"txt"},"Import custom scales")
         if filename=="" then return end
-        local file,open_error=io.open(filename,"rb")
-        if not file then status.text="Cannot read scales: "..tostring(open_error);return end
+        local file=io.open(filename,"rb")
+        if not file then feedback.set_issue("scale","scale_read_failed",nil,false);return end
         local read_ok,text=pcall(function() return file:read(scales.MAX_TEXT_BYTES+1) end)
         file:close()
-        if not read_ok or type(text)~="string" then status.text="Cannot read scale file.";return end
-        local entries,reason=scales.parse(text)
-        if not entries then status.text="Cannot import scales: "..tostring(reason);return end
-        if #entries==0 then status.text="No scale definitions found.";return end
-        local merged,merge_error=scales.merge(scale_state.custom,entries)
-        if not merged then status.text="Cannot import scales: "..tostring(merge_error);return end
-        local catalog,catalog_error=scales.merge(builtin,merged)
-        if not catalog then status.text="Cannot import scales: "..tostring(catalog_error);return end
+        if not read_ok or type(text)~="string" then feedback.set_issue("scale","scale_read_failed",nil,false);return end
+        if #text>scales.MAX_TEXT_BYTES then feedback.set_issue("scale","scale_too_large",nil,false);return end
+        local entries=scales.parse(text)
+        if not entries then feedback.set_issue("scale","scale_invalid",nil,false);return end
+        if #entries==0 then feedback.set_issue("scale","scale_empty",nil,false);return end
+        local merged=scales.merge(scale_state.custom,entries)
+        if not merged then feedback.set_issue("scale","scale_merge_failed",nil,false);return end
+        local catalog=scales.merge(builtin,merged)
+        if not catalog then feedback.set_issue("scale","scale_merge_failed",nil,false);return end
         local serialized=scales.encode(merged)
         if #serialized>scales.MAX_TEXT_BYTES then
-          status.text="Custom scale library exceeds "..scales.MAX_TEXT_BYTES.." bytes.";return
+          feedback.set_issue("scale","scale_too_large",nil,false);return
         end
         local saved,save_error,uncertain=scale_preferences.save(tool,serialized)
         if not saved then
-          status.text="Cannot save scales: "..tostring(save_error)
-          if uncertain then scale_state.load_error=save_error;update() end
+          feedback.set_issue("scale",uncertain and "scale_save_uncertain" or "scale_save_failed",nil,false)
+          if uncertain then scale_state.load_error=save_error or true;update() end
           return
         end
         scale_state.custom=merged
@@ -2062,8 +2335,8 @@ function M.show()
         category_choice.value=1;category_choice.items=category_names;scale_search.text=""
         updating=false
         rebuild_scale_choices();update()
-        status.text=string.format("Imported %d definitions; %d unique scales available.",
-          #entries,#scale_state.catalog)
+        feedback.clear_issue("scale",false)
+        feedback.confirm("scale_imported",{count=#entries},false)
       end}
     scale_state.refresh=function()
       render(root_choice,"value",scale_state.root+1)
@@ -2162,8 +2435,8 @@ function M.show()
       vb:button{text="Retry Live Edit",notifier=function()
         if guard_stage() then return end
         if runtime:revision_state().armed then
-          local accepted,reason=runtime:request_generation("live")
-          if not accepted then status.text=describe_result({kind="failure",status="error",reason=reason},"LIVE EDIT ") end
+          local accepted=runtime:request_generation("live")
+          if not accepted then feedback.request_failure("generation",false) end
         end
         update_live_state()
       end}},
@@ -2171,7 +2444,7 @@ function M.show()
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
         if guard_stage() then return end
         if not current_session() then
-          status.text="Song changed. Close and reopen ACID.";return
+          feedback.set_issue("destination","document_changed",nil,feedback.song_context());return
         end
         apply_pending_selected_phrase_selection()
         local projection=project()
@@ -2179,21 +2452,20 @@ function M.show()
           local e=projection.error
           if e.step then choose_time(e.step) end
           if e.pitch_index then choose_pitch(e.pitch_index) end
-          status.text="Cannot generate: "..e.message
+          set_projection_issue(e)
           return
         end
-        local accepted,reason=runtime:request_generation("manual")
-        if not accepted then status.text="Cannot generate: "..tostring(reason)
-        elseif reason then status.text=tostring(reason) end
+        clear_resolved_input()
+        local accepted=runtime:request_generation("manual")
+        if not accepted then feedback.request_failure("generation",false) end
       end},
       vb:button{text="Sampler audit",notifier=function()
-        status.text=sampler.describe(instrument_targets[selected_instrument])
+        feedback.status.text=sampler.describe(instrument_targets[selected_instrument])
       end}},
-    details_button,details,audition_status,status}
+    details_button,details,feedback.holder}
   select_instrument(selected_instrument)
   if scale_state.load_error then
-    status.text=(status.text~="" and (status.text.."\n") or "")..
-      "Custom scales unavailable: "..tostring(scale_state.load_error).."; import disabled."
+    feedback.set_issue("scale","scale_load_failed",nil,false)
   end
   native_observers:attach(song,runtime,function()
     release_audition()

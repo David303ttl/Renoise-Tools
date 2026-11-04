@@ -1,6 +1,8 @@
 # M5 Followup GUI Redesign Playbook
 
-**Status:** Planned; implementation and acceptance have not started.
+**Status:** Task 2 feedback ownership is implemented. Verification and remaining
+native limits are recorded in [the acceptance record](../tests/acid/acid_gui_redesign_acceptance.md).
+Final redesign acceptance remains open.
 
 **Dependency:** Closed M5 editor implementation. This follow-up replaces the
 presentation requirements of [M5_EDITOR_PLAYBOOK.md](M5_EDITOR_PLAYBOOK.md)

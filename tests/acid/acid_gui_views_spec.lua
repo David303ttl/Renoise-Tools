@@ -236,7 +236,8 @@ package.loaded["renoise.phrase_ownership"]={
 }
 local persisted_drafts={}
 local draft_writes=0
-package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+local valid_label=require("renoise.pattern_store").valid_label
+package.loaded["renoise.pattern_store"]={valid_label=valid_label,load=function(_,instrument,phrase)
   local entry=committed_entries[phrase.id]
   if not entry then
     local source=sequencer.new_pattern(16)
@@ -639,7 +640,6 @@ local bounded_views={
   {control("acid_source_summary"),820},
   {control("acid_preview_summary"),820},
   {control("acid_source_diagnostic"),820},
-  {control("acid_status"),820},
   {control("acid_decoded_rows"),820}
 }
 local widths={}
@@ -649,6 +649,8 @@ for index,entry in ipairs(bounded_views) do
     "Grid pitch and readout views have explicit bounded widths")
   widths[index]=view.size.width
 end
+assert(control("acid_status").width==820,
+  "shared feedback has a bounded width and content-sized height")
 local pitch_cell=control("acid_grid_pitch_01")
 local pitch_header=control("acid_grid_pitch_header_01")
 local old_grid_label=pitch_cell.text
@@ -733,7 +735,7 @@ assert(alternate_draft.pitch_events[2].note==25 and
 local decoded_rows
 local decoded_page_label
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_text" and node.size.height==76 then decoded_rows=node end
+  if node.kind=="multiline_text" and node.size and node.size.height==76 then decoded_rows=node end
   if node.kind=="text" and node.text=="TIME 01-04 / 32" then decoded_page_label=node end
 end
 assert(decoded_rows and decoded_page_label,"decoded paging controls were not built")
@@ -1281,7 +1283,9 @@ do
   dialog=main_dialog
   assert(control("acid_label_field").value=="Accepted A" and not control("acid_label_field").active)
   assert(control("acid_label_accepted").text=="Accepted B" and
-    control("acid_label_error").text:find("injected",1,true),
+    control("acid_label_error").text=="Label could not be saved. Retry or discard this attempt." and
+    control("acid_status").text:find("Phrase label could not be saved. Retry or discard the attempt.",1,true) and
+    not control("acid_status").text:find("injected",1,true),
     "failed metadata Undo retains accepted label and proposed history transition")
   local pending_writes=writes
   button("Undo"):fire()
@@ -1686,11 +1690,15 @@ do
   assert(tool.preferences.custom_scales.value==preferences_before_bad and
     sequencer.same_source(source_before_import,label_context:editor_state().source),
     "malformed import is atomic and does not alter the saved library or pattern")
+  assert(control("acid_status").text==
+    "Invalid scale file. Use Name = intervals with pitch classes 0 to 11, including 0.",
+    "format failure gives accepted-format guidance without parser diagnostics")
   file_text="[Custom]\nMajor = 0 1 3\n"
   importer:fire()
   assert(tool.preferences.custom_scales.value==preferences_before_bad and
     sequencer.same_source(source_before_import,label_context:editor_state().source) and
-    control("acid_status").text:find("Major",1,true),
+    control("acid_status").text=="Scale names conflict. Rename conflicting definitions before importing." and
+    not control("acid_status").text:find("Major",1,true),
     "a conflicting bundled scale name rejects the entire import")
   app.scale_import_filename=""
   importer:fire()
@@ -1702,13 +1710,83 @@ do
 
   assert(history_before==button("Undo").active,
     "scale browser and import actions do not alter the existing Undo history")
-  assert(control("acid_status").text:find("Cannot import scales",1,true),
-    "invalid text import reports a parser error: "..control("acid_status").text)
+  assert(control("acid_status").text=="Scale names conflict. Rename conflicting definitions before importing.",
+    "scale feedback maps the import branch without exposing parser details")
   assert(control("acid_scale_follow").value==false)
   assert(sequencer.same_source(source_before_import,label_context:editor_state().source),
     "scale browser and import checks leave the final pattern source unchanged")
+
+  app.scale_import_filename="mock-scales.txt"
+  io.open=function()
+    return {read=function()return file_text end,close=function()end}
+  end
+  local saves,writes=draft_writes,render_calls
+  file_text=nil
+  importer:fire()
+  assert(control("acid_status").text=="Could not read the scale file. Select a readable .txt file.")
+  file_text=""
+  importer:fire()
+  assert(control("acid_status").text=="The scale file is empty. Add a scale definition before importing.")
+  file_text=string.rep(" ",scales.MAX_TEXT_BYTES+1)
+  importer:fire()
+  assert(control("acid_status").text=="Use a smaller scale file.","oversized input is a size failure, not a format failure")
+  local preferences=require("runtime.scale_preferences")
+  local save=preferences.save
+  local uncertain=false
+  local attempts=0
+  preferences.save=function()
+    attempts=attempts+1
+    return nil,"injected scale save detail",uncertain
+  end
+  file_text="Feedback Test = 0 2 5 7\n"
+  importer:fire()
+  assert(attempts==1 and importer.active and tool.preferences.custom_scales.value==preferences_before_bad and
+    control("acid_status").text=="Custom scales could not be saved. Import the file again to retry.",
+    "verified failed import retains the library and offers its available retry")
+  preferences.save=save
+  importer:fire()
+  assert(tool.preferences.custom_scales.value:find("Feedback Test",1,true) and
+    control("acid_status").text=="Imported 1 scale definitions.",
+    "successful import retries and clears only its scale failure")
+  local accepted_preferences=tool.preferences.custom_scales.value
+  uncertain=true
+  preferences.save=function()
+    attempts=attempts+1
+    return nil,"injected uncertain scale save detail",uncertain
+  end
+  file_text="Uncertain Test = 0 3 5 7\n"
+  importer:fire()
+  preferences.save=save
+  io.open=old_open
+  app.scale_import_filename=nil
+  assert(attempts==2 and not importer.active and tool.preferences.custom_scales.value==accepted_preferences and
+    control("acid_status").text=="Custom scales could not be verified; import is disabled. Reopen ACID to reload them.",
+    "uncertain preference storage disables import without advertising an unavailable retry")
+  assert(draft_writes==saves and render_calls==writes and
+    sequencer.same_source(source_before_import,label_context:editor_state().source),
+    "import failures and retry never save source drafts, generate or alter the source")
 end
 
+local scale_preferences=require("runtime.scale_preferences")
+local original_scale_load=scale_preferences.load
+scale_preferences.load=function()return nil,"injected scale preference load detail"end
+dialog.visible=false
+tool.app_idle_observable:fire()
+require("gui").show()
+assert(builder.views.acid_status.text=="Custom scales could not be loaded; import is disabled." and
+  not builder.views.acid_status.text:find("injected scale preference load detail",1,true) and
+  builder.views.acid_scale_import.active==false,
+  "startup scale-load failure uses dialog feedback and disables import")
+local startup_phrase
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="popup" and node.width==360 then startup_phrase=node;break end
+end
+assert(startup_phrase,"startup phrase chooser was not created")
+startup_phrase:fire(startup_phrase.value==1 and 2 or 1)
+assert(builder.views.acid_status.text=="Custom scales could not be loaded; import is disabled." and
+  builder.views.acid_source_state.text~="SOURCE UNAVAILABLE",
+  "successful phrase restoration and target switching preserve startup scale feedback")
+scale_preferences.load=original_scale_load
 dialog.visible=false
 tool.app_idle_observable:fire()
 assert(song.selected_phrase_observable:listener_count()==0,

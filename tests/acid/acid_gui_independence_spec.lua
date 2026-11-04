@@ -164,10 +164,7 @@ instrument.phrases_observable:fire()
 tool.app_idle_observable:fire()
 assert(independent.active,"a new copied-ID collision offers resolution")
 independent:fire()
-local status
-for _,node in ipairs(builder.nodes)do
-  if node.kind=="multiline_textfield" then status=node end
-end
+local status=builder.views.acid_status
 assert(status and status.text:find("Selected phrase is independent.",1,true) and
     status.text:find("injected post-commit reconciliation failure",1,true),
   "GUI distinguishes a committed identity from its visible recovery warning")

@@ -40,7 +40,8 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={},
+  preferences={custom_scales={value=""}}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="ACID 0.1 #12 [v3:00000000]",invalid_seal=true}
@@ -85,7 +86,8 @@ local function read_entry(_,id)
   if not entry then return nil,"test source revision is missing" end
   return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end
-package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+local valid_label=require("renoise.pattern_store").valid_label
+package.loaded["renoise.pattern_store"]={valid_label=valid_label,load=function(_,instrument,phrase)
   local entry=committed_entries[phrase.id]
   if not entry then
     local source=sequencer.new_pattern(16)
@@ -311,12 +313,9 @@ assert(saved_pitch(11,1).key==1,
   "closing and reopening the editor recovers the phrase one draft")
 assert(builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
   "reopening establishes the accepted PITCH baseline for the restored source")
-local recovered_status
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_textfield" then recovered_status=node end
-end
-assert(recovered_status.text:find("Recovered saved draft",1,true),
-  "draft recovery reports song persistence")
+local recovered_status=builder.views.acid_status
+assert(recovered_status.text=="",
+  "successful draft restoration leaves shared feedback empty: "..tostring(recovered_status.text))
 pitch_key(builder,3):fire()
 assert(builder.views.acid_program_pitch_summary.tooltip:find("MODIFIED",1,true) and
   not builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
@@ -331,9 +330,7 @@ assert(#warnings==0,"song-persistent drafts do not show a loss warning")
 dialog.visible=false
 builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_textfield" then recovered_status=node end
-end
+recovered_status=builder.views.acid_status
 pb_range_popup(builder):fire(1)
 button(builder,"Undo"):fire()
 assert(pb_range_popup(builder).value==2,"Undo restores the previous PB Range")
@@ -354,8 +351,9 @@ force_diagnostic=false
 song.selected_phrase_observable:fire()
 builder.views.acid_editor_view:fire(1)
 fail_draft_persistence=true
-pitch_key(builder,6):fire()
-assert(recovered_status.text=="DRAFT SAVE ERROR: session recovery only: test persistence failure",
+local timing=builder.views.acid_timing
+timing:fire(timing.value==1 and 2 or 1)
+assert(recovered_status.text:find("Your latest edits could not be saved with the song.",1,true),
   recovered_status.text)
 tool.app_release_document_observable:fire()
 assert(#warnings==1 and warnings[1]:find("could not be saved",1,true),
@@ -390,11 +388,8 @@ render_callbacks[1](first_failure)
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
 assert(builder.views.acid_live_edit_state.text:find("ERROR",1,true),
   "last Live Edit failure remains visible")
-local status
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_textfield" then status=node end
-end
-assert(status.text=="LIVE EDIT ERROR: temporary render failure",status.text)
+local status=builder.views.acid_status
+assert(status.text=="Couldn't update the phrase. Try again.",status.text)
 pitch_key(builder,6):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key==5,
@@ -419,7 +414,7 @@ local approximate_result=terminal_result(tool.writer_calls[3],"approximate","rec
 approximate_result.diagnostics={"slide approximated"}
 render_callbacks[3](approximate_result)
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
-assert(status.text:find("LIVE EDIT APPROXIMATE: recovered with approximation",1,true),status.text)
+assert(status.text=="Phrase updated with a musical approximation.",status.text)
 assert(builder.views.acid_live_edit_state.text:find("APPROXIMATE",1,true),
   "draft cleanup failure does not change a successful render status")
 
@@ -487,7 +482,9 @@ assert(#render_callbacks==9 and tool.writer_calls[9].target==4,
 render_callbacks[9](terminal_result(tool.writer_calls[9],"committed","separate phrase updated"))
 assert(#other_instrument.phrases==4 and other_instrument.phrases[2]==other_foreign,
   "foreign phrase stays in place and repeated edits do not append duplicates")
-assert(live_checkbox.value and status.text=="LIVE EDIT COMMITTED: separate phrase updated",status.text)
+assert(live_checkbox.value and
+  status.text:find("Edits to the previous phrase could not be saved with the song.",1,true) and
+  not status.text:find("Phrase updated.",1,true),status.text)
 pitch_key(builder,8):fire()
 assert(#render_callbacks==9,"an unchanged PITCH value does not render")
 pitch_key(builder,9):fire()
@@ -518,8 +515,9 @@ render_callbacks[12](terminal_result(tool.writer_calls[12],"committed","safety p
 pitch_key(builder,8):fire()
 tool.app_idle_observable:fire()
 render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnostic))
-assert(status.text:find(long_diagnostic,1,true),
-  "the bounded details field retains a current request complete diagnostic")
+assert(status.text:find("Couldn't update the phrase. Try again.",1,true) and
+  not status.text:find(long_diagnostic,1,true),
+  "current generation failure uses a safe message instead of request diagnostics")
 local live_state=builder.views.acid_live_edit_state.text
 local live_state_view=builder.views.acid_live_edit_state
 assert(live_state_view.kind=="multiline_text" and live_state_view.size.width==820 and

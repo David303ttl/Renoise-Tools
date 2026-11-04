@@ -29,7 +29,8 @@ end
 song.selected_phrase_observable=observable()
 dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),tool_will_unload_observable=observable()}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),
+  preferences={custom_scales={value=""}}}
 local builder,dialog,answer
 local prompts={}
 local app={show_warning=function()end}
@@ -192,14 +193,15 @@ local prompt_count=#prompts
 fire("acid_program_check")
 unchanged(before,revision,save_count,write_count)
 assert(not view("acid_program_finish").active,"Check must not mark missing targets")
-assert(view("acid_status").text:find("Missing entered positions: P01",1,true),
-  "Check must report missing markers separately")
+assert(view("acid_status").text:find("Cannot generate: choose a pitch for step 1.",1,true),
+  "Check must identify the first missing pitch position")
 local project=editor.project
 editor.project=function()return {error={message="coordinate free diagnostic"}}end
 fire("acid_program_check")
 editor.project=project
-assert(view("acid_status").text:find("coordinate free diagnostic",1,true),
-  "Check must retain diagnostics without coordinates")
+assert(view("acid_status").text:find("The edit could not be applied.",1,true) and
+  not view("acid_status").text:find("coordinate free diagnostic",1,true),
+  "Check maps coordinate-free projection failures without rendering diagnostic prose")
 unchanged(before,revision,save_count,write_count)
 fire("acid_editor_view",2)
 assert(#prompts==prompt_count,"view navigation must not prompt")
@@ -376,6 +378,80 @@ local function fresh(replacement)
   gui.show()
 end
 do
+  local project=editor.project
+  for _,memory in ipairs({"pitch","time"}) do
+    fresh(source)
+    begin(memory)
+    local before=assert(seq.copy_source(current()))
+    local revision,save_count,write_count=history.revision,saves,writes
+    fire("acid_program_finish")
+    local count=memory=="pitch" and PITCH_COUNT or TIME_COUNT
+    for position=1,count do
+      local message=memory=="pitch" and "Cannot generate: choose a pitch for step %d." or
+        "Cannot generate: enter timing for step %d."
+      assert(view("acid_status").text==string.format(message,position),
+        "entry feedback must identify the current first missing position")
+      fire("acid_program_enter")
+    end
+    assert(view("acid_status").text=="" and view("acid_program_finish").active,
+      "completing entry clears its missing-position issue before Finish")
+    unchanged(before,revision,save_count,write_count)
+  end
+  editor.project=function(pattern,...)
+    local projection=project(pattern,...)
+    if pattern.pitch_events[1].key==source.pitch_events[1].key then
+      projection.error={pitch_index=1,message="injected missing pitch detail"}
+    end
+    return projection
+  end
+  fresh(source)
+  local write_count,save_count,revision=writes,saves,history.revision
+  button("Generate / Regenerate ACID Phrase"):fire()
+  local missing="Cannot generate: choose a pitch for step 1."
+  assert(view("acid_status").text==missing and writes==write_count and saves==save_count,
+    "projection failure blocks generation before a writer or save")
+  fire("acid_clipboard_copy")
+  fire("acid_editor_view",2)
+  fire("acid_editor_view",1)
+  assert(view("acid_status").text==missing and history.revision==revision,
+    "Copy and navigation cannot clear unresolved pitch feedback")
+  fire("acid_operation",2)
+  fire("acid_operation_open")
+  assert(view("acid_status").text==missing,"unrelated TIME operation cannot clear missing pitch feedback")
+  local correction_saves,correction_revision=saves,history.revision
+  fire("acid_program_key_05")
+  assert(view("acid_status").text=="" and saves==correction_saves+1 and
+    history.revision==correction_revision+1 and writes==write_count,
+    "correcting the missing pitch clears its issue with one source edit and save")
+  editor.project=project
+end
+
+do
+  fresh(source)
+  local revision,save_count,write_count=history.revision,saves,writes
+  fire("acid_operation",9)
+  fire("acid_operation_min_note",60)
+  fire("acid_operation_max_note",24)
+  fire("acid_operation_open")
+  local failure="The operation could not be applied. Check its parameters."
+  assert(view("acid_status").text==failure and saves==save_count and writes==write_count,
+    "invalid random parameters report failure without saving or writing")
+  fire("acid_operation",2)
+  fire("acid_operation_open")
+  assert(view("acid_status").text==failure,"an unrelated operation cannot clear random-pitch failure")
+  fire("acid_operation",9)
+  fire("acid_operation_max_note",60)
+  local operation=seq.operation_candidate
+  seq.operation_candidate=function(pattern,...)return assert(seq.copy_source(pattern))end
+  local retry_saves,retry_revision=saves,history.revision
+  fire("acid_operation_open")
+  seq.operation_candidate=operation
+  assert(view("acid_status").text=="" and saves==retry_saves and
+    history.revision==retry_revision and writes==write_count,
+    "successful same-result random retry clears its own error without history, save or write")
+end
+
+do
   fresh(source)
   fire("acid_clipboard_scope",3)
   fire("acid_clipboard_copy")
@@ -461,8 +537,10 @@ for _,complete in ipairs({false,true})do
       assert(seq.same_source(restored,canonical),name.." must preserve canonical draft")
     else
       assert(not view("acid_program_enter").active,name.." must invalidate staged candidate")
-      assert(view("acid_status").text:find("Uncommitted entry discarded",1,true),
-        name.." must report transient entry discard after restoring canonical editor")
+      local message=view("acid_status").text
+      assert(message:find("This entry is no longer available.",1,true) or
+        message:find("Entry was discarded because the destination changed.",1,true),
+        name.." must report transient entry discard after restoring canonical editor: "..message)
     end
   end
 end
@@ -480,7 +558,7 @@ for _,complete in ipairs({false,true})do
   tool.app_idle_observable:fire()
   assert(not view("acid_program_enter").active,"failed canonical save cannot authorize stale stage")
   assert(drafts.has_volatile(song),"native switch must retain failed origin draft")
-  assert(view("acid_status").text:find("DRAFT WARNING",1,true),
+  assert(view("acid_status").text:find("Edits to the previous phrase could not be saved with the song.",1,true),
     "discard notice must retain canonical draft save warning")
   local recovered=assert(drafts.get(song,instrument,origin,runtime:draft_options()))
   assert(seq.same_source(recovered,canonical),"recoverable draft must be canonical, never candidate")
@@ -576,7 +654,7 @@ diagnostic_position=1
 jump:fire()
 assert(view("acid_program_pitch_summary").text==selected_summary,
   "stale diagnostic navigation must preserve staged cursor")
-assert(view("acid_status").text:find("origin changed",1,true),
+assert(view("acid_status").text:find("This entry is no longer available.",1,true),
   "stale diagnostic navigation must report invalid origin")
 editor.project=project
 local HIGHLIGHT=0xF0
@@ -663,7 +741,7 @@ end
 for _,id in ipairs({"acid_program_select_pitch_01","acid_program_select_time_01",
     "acid_pitch_page_1","acid_time_page_1","acid_program_time_page_1",
     "acid_decoded_next","acid_decoded_previous","acid_recovery_previous","acid_recovery_next",
-    "acid_recovery_choice","acid_program_check"}) do
+    "acid_recovery_choice"}) do
   releases(function()fire(id)end,id)
 end
 releases(function()song.selected_track_observable:fire()end,"native track selection")
@@ -683,14 +761,46 @@ releases(function()answer="Stay";button("Undo"):fire()end,"pending-stage guard")
 releases(function()answer="Discard";fire("acid_program_discard")end,"Discard prompt")
 app.show_prompt=prompt_impl
 local note_off=song.trigger_instrument_note_off
-function song:trigger_instrument_note_off(...)error("injected note-off failure")end
+local failed_releases=0
+function song:trigger_instrument_note_off(...)
+  failed_releases=failed_releases+1
+  error("injected note-off failure")
+end
+local cleanup_saves,cleanup_writes=saves,writes
 fire("acid_audition")
-fire("acid_program_check")
-assert(view("acid_audition_status").text:find("injected note-off failure",1,true),
-  "Check status cannot overwrite cleanup failure")
+fire("acid_editor_view",2)
+local release_warning="Could not release the auditioned note. It may still be sounding."
+assert(failed_releases==1 and next(timers)==nil and saves==cleanup_saves and writes==cleanup_writes,
+  "failed navigation release attempts note-off once, detaches its timer and does not save or write")
+assert(view("acid_status").text:find(release_warning,1,true) and
+  not view("acid_status").text:find("injected note-off failure",1,true),
+  "navigation reports audition cleanup failure without technical details")
+fire("acid_editor_view",1)
+assert(failed_releases==1 and view("acid_status").text:find(release_warning,1,true),
+  "routine view navigation preserves audition cleanup failure")
 song.trigger_instrument_note_off=note_off
+local later_note_calls=#note_calls
+fire("acid_audition")
+assert(#note_calls==later_note_calls+1 and next(timers)~=nil,"another audition starts its own note")
+fire("acid_editor_view",2)
+assert(#note_calls==later_note_calls+2 and next(timers)==nil and
+  view("acid_status").text:find(release_warning,1,true) and
+  saves==cleanup_saves and writes==cleanup_writes,
+  "a clean release of a new note cannot clear an unresolved release failure")
+fire("acid_editor_view",1)
+local note_on=song.trigger_instrument_note_on
+function song:trigger_instrument_note_on(...)error("injected onset failure")end
+fire("acid_audition")
+song.trigger_instrument_note_on=note_on
+assert(view("acid_status").text:find(release_warning,1,true),
+  "a later onset failure cannot replace unresolved release evidence")
+control("popup",360):fire(2)
+assert(view("acid_status").text:find(release_warning,1,true) and
+  saves==cleanup_saves and writes==cleanup_writes,
+  "target switching preserves unresolved audition cleanup without saving or writing")
 releases(function()dialog.visible=false;tool.app_idle_observable:fire()end,"dialog close")
 gui.show()
+assert(not view("acid_status").text:find(release_warning,1,true),"audition feedback has dialog lifetime")
 releases(function()tool.app_release_document_observable:fire()end,"document release")
 gui.show()
 releases(function()tool.app_new_document_observable:fire()end,"new document")

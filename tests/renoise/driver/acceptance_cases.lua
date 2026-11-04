@@ -5082,6 +5082,36 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       close_test_gui()
       return nil,"GUI callback target did not load the representative 32-step phrase"
     end
+    do
+      local status=controls.acid_status
+      if not status or not controls.acid_feedback then
+        close_test_gui();return nil,"GUI shared feedback views were not captured"
+      end
+      local before_data=song.tool_data
+      local before_revision=gui_context:revision_state().edit_revision
+      local duplicate=gui_context.request_duplicate
+      local checked,check_error=pcall(function()
+        assert(status.text=="" and not status.visible,"ready feedback must be empty")
+        metrics.gui_feedback_empty_height=controls.acid_feedback.height
+        gui_context.request_duplicate=function()return false,"injected duplicate rejection"end
+        callbacks.acid_pattern_duplicate()
+        local duplicate_message="Couldn't duplicate the phrase. Try again."
+        assert(status.text==duplicate_message and status.visible,"duplicate failure must use shared feedback")
+        local one_issue_height=status.height
+        callbacks.acid_clipboard_paste()
+        assert(status.text=="Copy a scope before pasting.\n"..duplicate_message and status.height>one_issue_height,
+          "native feedback must retain both failures and expand for both lines")
+        metrics.gui_feedback_multiple_height=status.height
+        callbacks.acid_clipboard_copy()
+        assert(status.text==duplicate_message and status.height==one_issue_height,
+          "Copy must clear only the clipboard failure and restore feedback height")
+        assert(song.tool_data==before_data and gui_context:revision_state().edit_revision==before_revision,
+          "feedback failure/navigation probes must not save or edit source")
+        metrics.gui_feedback_issue_ownership_verified=true
+      end)
+      gui_context.request_duplicate=duplicate
+      if not checked then close_test_gui();return nil,tostring(check_error) end
+    end
     local original_note=phrase:line(1):note_column(1).note_value
     local samples={note={},octave={},command={}}
     local select_first_pitch_page=callbacks.acid_pitch_page_1
@@ -5257,7 +5287,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         if updated.pitch_events[note_pitch_index].key~=current_key then
           return false,"GUI note callback did not update the source pitch"
         end
-        if not controls.acid_program_pitch_summary.text:find("/"..tostring(current_key),1,true) then
+        if not controls.acid_program_pitch_summary.tooltip:find("/"..tostring(current_key),1,true) then
           return false,"GUI note callback did not refresh the selected PITCH readout"
         end
         return true
@@ -5273,7 +5303,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         if updated.pitch_events[note_pitch_index].octave~=current_octave then
           return false,"GUI octave callback did not update the source pitch"
         end
-        if not controls.acid_program_pitch_summary.text:find(string.format("%+d",current_octave),1,true) then
+        if not controls.acid_program_pitch_summary.tooltip:find(string.format("%+d",current_octave),1,true) then
           return false,"GUI octave callback did not refresh the selected PITCH readout"
         end
         return true
@@ -5294,7 +5324,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         if updated.time_events[2]~=current_command then
           return false,"GUI command callback did not update the source timing"
         end
-        if not controls.acid_program_time_summary.text:find("= "..current_command,1,true) then
+        local command_name=({N="Note",T="Tie",R="Rest"})[current_command]
+        if not controls.acid_program_time_summary.text:find(command_name,1,true) then
           return false,"GUI command callback did not refresh the selected TIME readout"
         end
         return true

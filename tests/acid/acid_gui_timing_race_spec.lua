@@ -40,7 +40,8 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={},
+  preferences={custom_scales={value=""}}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="Owned two"}
@@ -79,7 +80,8 @@ local function read_entry(_,id)
   if not entry then return nil,"test source revision is missing" end
   return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end
-package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+local valid_label=require("renoise.pattern_store").valid_label
+package.loaded["renoise.pattern_store"]={valid_label=valid_label,load=function(_,instrument,phrase)
   local entry=committed_entries[phrase.id]
   if not entry then
     local source=sequencer.new_pattern(16)
