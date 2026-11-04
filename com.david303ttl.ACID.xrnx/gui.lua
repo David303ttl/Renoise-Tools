@@ -725,9 +725,9 @@ function M.show()
       render(stage_status,"text",stage and ((stage.memory=="pitch" and "Pitch" or "Timing").." "..
         tostring(stage.cursor).." of "..tostring(#stage.target_positions)..(editor_view==2 and
         "; return to Program to edit or reveal a missing position" or "")) or "")
-      render(stage_actions.back,"active",stage~=nil)
-      render(stage_actions.enter,"active",stage~=nil)
-      render(stage_actions.restart,"active",stage~=nil)
+      render(stage_actions.back,"active",stage~=nil and editor_view==1)
+      render(stage_actions.enter,"active",stage~=nil and editor_view==1)
+      render(stage_actions.restart,"active",stage~=nil and editor_view==1)
       render(stage_actions.finish,"active",stage~=nil and first_missing_position()==nil)
       render(stage_actions.cancel,"active",stage~=nil)
     end
@@ -1715,7 +1715,7 @@ function M.show()
   end
   stage_status=vb:text{id="acid_program_stage_status",text="",font="bold"}
   local function stage_navigation(action)
-    if not stage then return end
+    if not stage or editor_view~=1 then return end
     if not valid_stage() then report_stale_stage();return end
     if action=="enter" then
       stage.entered[stage.cursor]=true
@@ -1743,7 +1743,7 @@ function M.show()
     stage_actions.restart,stage_actions.finish,stage_actions.cancel}
   local function audition_pitch()
     if not current_session() or (stage and (stage.memory~="pitch" or not valid_stage())) then return end
-    local records=stage and stage_resolution().resolved_records or project().resolved_records
+    local records=stage and editor_view==1 and stage_resolution().resolved_records or project().resolved_records
     local record=records and records[selected_pitch]
     if not record then feedback.audition_failed("audition_start_failed");return end
     local started=preview:start(record.note)

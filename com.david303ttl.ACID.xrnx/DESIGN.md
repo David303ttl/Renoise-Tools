@@ -47,10 +47,10 @@ interface. PITCH and TIME cursors/pages are independent. Grid shows canonical
 source; inactive TIME slots are inspectable but direct editing is blocked.
 TIME labels show Note/Tie/Rest; assignment controls highlight the selected
 command. Grid pitches show resolved Renoise note names and enabled ACC/SLD
-flags. Tooltips retain raw values and stored/referenced/modified markers.
+flags. Tooltips describe raw and resolved pitches, octave, ACCENT and SLIDE.
 Shared feedback shows unresolved issues. Entry navigation is shown only during
 sequential entry. Audition uses
-the resolved selected or PITCH-stage note without source/draft/history writes.
+the resolved accepted note in Grid or the PITCH-stage note in Program without source/draft/history writes.
 A captured song/instrument/track lifecycle releases before replacement onset
 and context changes; removed objects make cleanup best effort.
 

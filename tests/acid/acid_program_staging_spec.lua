@@ -757,8 +757,19 @@ end
 for _,memory in ipairs({"pitch","time"})do
   fresh()
   begin(memory)
+  fire("acid_program_enter")
   fire("acid_program_select_"..memory.."_02")
+  local markers={}
+  for cell=1,PAGE_SIZE do
+    markers[cell]=view(string.format("acid_program_select_%s_%02d",memory,cell)).text
+  end
   fire("acid_editor_view",2)
+  for _,action in ipairs({"back","enter","restart"}) do
+    assert(not view("acid_program_"..action).active,"Grid disables entry navigation")
+    fire("acid_program_"..action)
+  end
+  for _=1,seq.MAX_STEPS do fire("acid_program_enter") end
+  assert(not view("acid_program_finish").active,"Grid callbacks cannot complete entry")
   if memory=="pitch" then
     fire("acid_pitch_page_2")
     fire("acid_grid_pitch_03")
@@ -767,12 +778,19 @@ for _,memory in ipairs({"pitch","time"})do
     fire("acid_grid_select_time_03")
   end
   fire("acid_editor_view",1)
+  for cell=1,PAGE_SIZE do
+    assert(view(string.format("acid_program_select_%s_%02d",memory,cell)).text==markers[cell],
+      "Grid callbacks preserve entered markers")
+  end
   local selector=view("acid_program_select_"..memory.."_02")
   assert(selector.color[1]==SELECTED_COLOR,
     "returning to Program must restore the staged cursor and page")
   fire("acid_program_enter")
   assert(view("acid_program_select_"..memory.."_03").color[1]==SELECTED_COLOR,
     "Enter after Grid navigation must advance the staged cursor")
+  local count=memory=="pitch" and current().pitch_length or current().length
+  for _=3,count do fire("acid_program_enter") end
+  assert(view("acid_program_finish").active,"Grid callbacks preserve previously entered positions")
 end
 fresh()
 begin("pitch")
@@ -876,6 +894,15 @@ local before_audition=assert(seq.copy_source(current()))
 local audition_writes,audition_saves=writes,saves
 fire("acid_audition")
 assert(note_calls[#note_calls].note==48,"PITCH audition resolves detached candidate")
+fire("acid_editor_view",2)
+assert(note_calls[#note_calls].kind=="off" and next(timers)==nil,"Grid switch releases candidate")
+fire("acid_grid_audition")
+assert(note_calls[#note_calls].kind=="on" and note_calls[#note_calls].note==38,
+  "Grid auditions its accepted pitch during PITCH entry")
+fire("acid_editor_view",1)
+assert(note_calls[#note_calls].kind=="off" and next(timers)==nil,"Program switch releases accepted pitch")
+fire("acid_audition")
+assert(note_calls[#note_calls].note==48,"Program retains candidate audition after Grid")
 assert(seq.same_source(before_audition,current()) and writes==audition_writes and saves==audition_saves)
 cancel_stage("Cancel")
 assert(note_calls[#note_calls].kind=="off","Cancel releases before its prompt")
