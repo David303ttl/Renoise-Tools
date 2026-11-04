@@ -1,8 +1,8 @@
 # M5 Followup GUI Redesign Playbook
 
 **Status:** Tasks 1–3 are verified within the recorded native and automated
-scope. Tasks 4–7 header, sequence settings, toolbar, editor simplification and
-sequential entry are implemented; native checks remain open. Results and remaining limits are
+scope. Tasks 4–8 header, sequence settings, toolbar, editor simplification,
+sequential entry, Scale and Operations are implemented; native checks remain open. Results and remaining limits are
 recorded in
 [the acceptance record](../tests/acid/acid_gui_redesign_acceptance.md).
 Final redesign acceptance remains open.

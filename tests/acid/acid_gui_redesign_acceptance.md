@@ -280,6 +280,32 @@ Native entry, layout and lifecycle checks in
 Runtime file layout and package inputs are unchanged; no package rebuild is
 required.
 
+## Task 8 Scale and Operations
+
+SCALE and OPERATIONS follow the editor without workspace navigation. SCALE
+contains Root/Scale/Follow, Category/Search/Import and the mask controls.
+The scale detail report, seed report and permanent instructions are removed.
+Aliases/categories remain in the scale selector tooltip; import errors retain
+shared feedback and uncertain-save import blocking.
+
+Only the selected random operation's parameter row is attached. Nonrandom
+operations detach parameter content; empty holders reset to 1 × 1. Repeat last
+retains independent remembered PITCH/TIME seeds and uses current parameters,
+mask and scope without changing editable seeds. All ten operations retain
+`sequencer.operation_candidate()` and existing admission/no-op behavior.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1; 61.59 s |
+| Focused GUI fixtures | Both scopes for all ten operations, selected parameter membership, remembered versus editable seeds, scale browsing and import feedback passed |
+| Second-pass review | Callback scope, panel ownership, native view identity, empty-holder sizing, scale failures and executable probe references checked |
+| Lua 5.1 compilation and `git diff --check` | Passed |
+
+Native Scale/Operations layout, import and musical checks in
+`acid_editor_presentation_manual.md` and `acid_regeneration_manual.md` remain
+unverified for this change. Runtime file layout and package inputs are unchanged;
+no package rebuild is required.
+
 ## Baseline
 
 | Item | Evidence |

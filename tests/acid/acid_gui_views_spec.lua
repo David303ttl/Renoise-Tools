@@ -409,6 +409,10 @@ local view=builder.views.acid_editor_view
 assert(program.visible and not grid.visible)
 assert(builder.views.acid_program_pitch_summary==nil and builder.views.acid_program_time_summary==nil,
   "selected-position summary rows are not constructed")
+assert(builder.views.acid_scale_detail==nil,
+  "scale counts and permanent scale reports are not constructed")
+assert(builder.views.acid_random_last_seed==nil,
+  "remembered seeds do not construct a permanent report")
 for _,id in ipairs({"acid_program_pitch_position","acid_program_time_position",
     "acid_program_key_popup","acid_program_octave_popup"}) do
   assert(builder.views[id]==nil,"removed memory dropdown remains: "..id)
@@ -515,17 +519,11 @@ assert(control("acid_clipboard_copy").active~=false and not control("acid_clipbo
 for _,node in ipairs(builder.nodes) do
   assert(node.text~="Pattern / Copy","retired Pattern / Copy tab is not constructed")
 end
-local workspace_tabs={"Extended / Clear","Output"}
-local workspace_panels={"acid_extended_panel","acid_output_panel"}
-for index,tab in ipairs(workspace_tabs) do
-  text_control(tab):fire()
-  for panel_index,id in ipairs(workspace_panels) do
-    assert(control(id).visible==(panel_index==index),
-      tab.." selects its retained panel without showing the other")
-  end
-end
+text_control("Output"):fire()
+assert(control("acid_output_panel").visible and builder.views.acid_extended_panel==nil,
+  "the remaining workspace tab selects Output")
 assert(control("acid_operation_open") and control("acid_mask_enabled"),
-  "Extended / Clear exposes scoped operations and mask controls")
+  "operations and MASK are available outside the workspace tabs")
 assert(control("acid_output_policy").active and control("acid_pb_range").active,
   "Output provides active phrase policy and PB Range controls")
 assert_navigation_neutral(navigation,"retained workspace tab navigation")
@@ -1507,10 +1505,19 @@ do
   control("acid_operation_pitch_seed").value=1
   for _,choice in ipairs({RANDOM_TIME,CLEAR_PITCH,RANDOM_PITCH}) do
     control("acid_operation"):fire(choice)
-    assert(control("acid_random_parameters").visible==(choice~=CLEAR_PITCH) and
-      control("acid_random_pitch_parameters").visible==(choice==RANDOM_PITCH) and
-      control("acid_random_time_parameters").visible==(choice==RANDOM_TIME),
-      "operation selection exposes only its inline parameters")
+    local parameter_holder=control("acid_random_parameters")
+    local parameter_content=control("acid_random_parameter_content")
+    local parameter_fields=control("acid_random_parameter_fields")
+    local selected_parameters=choice==RANDOM_PITCH and control("acid_random_pitch_parameters") or
+      (choice==RANDOM_TIME and control("acid_random_time_parameters") or nil)
+    if selected_parameters then
+      assert(#parameter_holder.views==1 and rawequal(parameter_holder.views[1],parameter_content) and
+        #parameter_fields.views==1 and rawequal(parameter_fields.views[1],selected_parameters),
+        "operation selection attaches only its inline parameters")
+    else
+      assert(#parameter_holder.views==0 and builder.parent_of(parameter_content)==nil,
+        "non-random operation detaches inline parameters")
+    end
     assert(control("acid_operation_min_note").value==36 and
       control("acid_operation_max_note").value==48 and control("acid_operation_pitch_seed").value==1,
       "operation navigation preserves typed parameters")
@@ -1552,19 +1559,24 @@ do
     local pitch_seed=control("acid_operation_pitch_seed")
     local time_seed=control("acid_operation_time_seed")
     local repeat_last=control("acid_random_repeat")
-    local last_used=control("acid_random_last_seed")
-    assert(last_used.text=="Last used: 1" and repeat_last.active)
+    assert(repeat_last.active)
     pitch_seed.value=25
     writes=draft_writes
     repeat_last:fire()
-    assert(draft_writes==writes and pitch_seed.value==25,
-      "Repeat last reuses the previous seed without changing the entered seed")
+    assert(draft_writes==writes and pitch_seed.value==25 and
+      sequencer.same_source(randomized,label_context:editor_state().source),
+      "Repeat last uses the previous seed while leaving the edited seed untouched")
+    control("acid_operation_open"):fire()
+    assert(draft_writes==writes+1 and
+      not sequencer.same_source(randomized,label_context:editor_state().source),
+      "Apply uses the edited seed after Repeat last")
+    button("Undo"):fire()
     control("acid_operation"):fire(RANDOM_TIME)
-    assert(time_seed.value==1 and not repeat_last.active and last_used.text=="Last used: —",
+    assert(time_seed.value==1 and not repeat_last.active,
       "TIME starts with its own seed and no previous result")
     time_seed.value=7
     control("acid_operation_open"):fire()
-    assert(time_seed.value==7 and pitch_seed.value==25 and last_used.text=="Last used: 7",
+    assert(time_seed.value==7 and pitch_seed.value==25 and repeat_last.active,
       "TIME Apply retains its seed and records its used seed independently of PITCH")
     local time_result=assert(sequencer.copy_source(label_context:editor_state().source))
     time_seed.value=8
@@ -1581,13 +1593,13 @@ do
       "Repeat last reproduces TIME after Undo without advancing its seed")
     button("Undo"):fire()
     control("acid_operation"):fire(RANDOM_PITCH)
-    assert(last_used.text=="Last used: 1" and pitch_seed.value==25,
+    assert(repeat_last.active and pitch_seed.value==25,
       "operation navigation restores the operation's entered and last seed")
     pitch_seed.value=pitch_seed.max
     control("acid_operation_open"):fire()
     assert(pitch_seed.value==pitch_seed.max and time_seed.value==7,
       "maximum PITCH seed remains repeatable without changing TIME seed")
-    assert(last_used.text=="Last used: "..tostring(pitch_seed.max))
+    assert(repeat_last.active)
     button("Undo"):fire()
   end
   for _,invalid in ipairs({
@@ -1596,11 +1608,11 @@ do
     valid_random_parameters()
     invalid()
     writes=draft_writes
-    local last_used=control("acid_random_last_seed").text
+    local repeat_was_active=control("acid_random_repeat").active
     local entered_seed=control("acid_operation_pitch_seed").value
     control("acid_operation_open"):fire()
     assert(draft_writes==writes and confirmations==0,"invalid random parameters never edit")
-    assert(control("acid_random_last_seed").text==last_used and
+    assert(control("acid_random_repeat").active==repeat_was_active and
       control("acid_operation_pitch_seed").value==entered_seed,
       "invalid random parameters preserve entered and last seeds")
   end
@@ -1642,6 +1654,107 @@ do
 end
 
 do
+  local function contains(root,target)
+    if rawequal(root,target) then return true end
+    for _,child in ipairs(root.views or {}) do
+      if contains(child,target) then return true end
+    end
+    return false
+  end
+  local scale_panel=control("acid_scale_panel")
+  local operations_panel=control("acid_operations_panel")
+  local operation_ids={"clear_pitch","clear_time","clear_tie","clear_rest","clear_slide",
+    "clear_accent","rest_to_note","tie_to_rest","randomize_pitch","randomize_time"}
+  local operation_names={"Clear PITCH","Clear TIME","Clear TIE","Clear REST","Clear SLIDE",
+    "Clear ACCENT","REST to NOTE","TIE to REST","Randomize PITCH","Randomize TIME"}
+  local scope=control("acid_operation_scope")
+  local operation=control("acid_operation")
+  local parameters=control("acid_random_parameters")
+  local parameter_content=control("acid_random_parameter_content")
+  local parameter_fields=control("acid_random_parameter_fields")
+  local pitch_parameters=control("acid_random_pitch_parameters")
+  local time_parameters=control("acid_random_time_parameters")
+  local repeat_last=control("acid_random_repeat")
+  assert(#operation.items==#operation_ids and #scope.items==2 and
+    scope.items[1]=="Active memory" and scope.items[2]=="All 32 stored",
+    "operation selector exposes the retained operations and both memory scopes")
+  for index,name in ipairs(operation_names) do
+    assert(operation.items[index]==name,"operation selector order matches its operation ID")
+  end
+  local output_tab_count=0
+  for _,node in ipairs(builder.nodes) do
+    if node.kind=="button" then
+      assert(node.text~="Extended / Clear","retired operations tab remains")
+      if node.text=="Output" then output_tab_count=output_tab_count+1 end
+    end
+  end
+  assert(builder.views.acid_extended_panel==nil and output_tab_count==1,
+    "only Output remains in the temporary workspace tab")
+  assert(contains(scale_panel,control("acid_scale_root")) and
+    contains(scale_panel,control("acid_scale_category")) and
+    contains(scale_panel,control("acid_scale_choice")) and
+    contains(scale_panel,control("acid_scale_search")) and
+    contains(scale_panel,control("acid_scale_import")) and
+    contains(scale_panel,control("acid_scale_follow")) and
+    contains(scale_panel,control("acid_mask_enabled")),
+    "scale browsing, Follow, import and MASK controls stay inside SCALE")
+  assert(contains(operations_panel,operation) and contains(operations_panel,scope) and
+    contains(operations_panel,control("acid_operation_open")) and
+    contains(operations_panel,parameters),
+    "operation selector, scope, Apply and parameter holder stay in OPERATIONS")
+
+  local parameter_sets={
+    {},{},{},{},{},{},{},{},
+    {min_note=24,max_note=60,seed=11},
+    {note_weight=2,tie_weight=1,rest_weight=1,seed=13}
+  }
+  for operation_index,operation_id in ipairs(operation_ids) do
+    for scope_index,scope_name in ipairs({"active","all"}) do
+      operation:fire(operation_index)
+      scope:fire(scope_index)
+      local selected_parameters=operation_id=="randomize_pitch" and pitch_parameters or
+        (operation_id=="randomize_time" and time_parameters or nil)
+      if selected_parameters then
+        assert(#parameters.views==1 and rawequal(parameters.views[1],parameter_content) and
+          rawequal(builder.parent_of(parameter_content),parameters) and
+          #parameter_fields.views==1 and rawequal(parameter_fields.views[1],selected_parameters) and
+          rawequal(builder.parent_of(selected_parameters),parameter_fields) and
+          contains(parameter_content,repeat_last),
+          operation_id.." attaches only its fields and shared Repeat last control")
+      else
+        assert(#parameters.views==0 and builder.parent_of(parameter_content)==nil,
+          operation_id.." detaches the random parameter content")
+      end
+      local values=parameter_sets[operation_index]
+      if operation_id=="randomize_pitch" then
+        control("acid_operation_pitch_seed").value=values.seed
+        control("acid_operation_min_note").value=values.min_note
+        control("acid_operation_max_note").value=values.max_note
+      elseif operation_id=="randomize_time" then
+        control("acid_operation_time_seed").value=values.seed
+        control("acid_operation_note_weight").value=values.note_weight
+        control("acid_operation_tie_weight").value=values.tie_weight
+        control("acid_operation_rest_weight").value=values.rest_weight
+      end
+      local before=assert(sequencer.copy_source(label_context:editor_state().source))
+      local expected=assert(sequencer.operation_candidate(before,operation_id,scope_name,values))
+      local writes=draft_writes
+      control("acid_operation_open"):fire()
+      assert(sequencer.same_source(expected,label_context:editor_state().source),
+        operation_id.." uses the selected "..scope_name.." scope")
+      if not sequencer.same_source(before,expected) then
+        assert(draft_writes==writes+1,operation_id.." creates one edit")
+        button("Undo"):fire()
+        assert(sequencer.same_source(before,label_context:editor_state().source),
+          operation_id.." Undo restores source after "..scope_name.." scope")
+      else
+        assert(draft_writes==writes,operation_id.." no-op does not create a draft")
+      end
+    end
+  end
+end
+
+do
   local scales=require("model.scales")
   local function current_source() return label_context:editor_state().source end
   local root=control("acid_scale_root")
@@ -1679,6 +1792,8 @@ do
   local selected=assert(sequencer.copy_source(label_context:editor_state().source))
   assert(selected.scale_mask_enabled and draft_writes==writes_before+1,
     "choosing a scale enables MASK as one immediate editor change")
+  assert(choice.tooltip=="Pentatonic | Chinese Pentatonic",
+    "scale selector retains category and alias context in its tooltip")
   for index,allowed in ipairs(major_mask) do
     assert(selected.scale_mask[index]==allowed and control(string.format("acid_mask_class_%02d",index)).value==allowed,
       "the selected scale writes each pitch class into MASK")
@@ -1757,7 +1872,7 @@ do
     "Undo restores the Grid pitch before Follow-constrained entry")
   button("Undo"):fire()
   follow:fire(false)
-  assert(not follow.value and control("acid_scale_detail").text:find("Follow scale off",1,true),
+  assert(not follow.value,
     "Follow toggle updates session state before chromatic entry")
   view:fire(1)
   control("acid_program_select_pitch_05"):fire()
@@ -1877,7 +1992,7 @@ do
   preferences.save=save
   importer:fire()
   assert(tool.preferences.custom_scales.value:find("Feedback Test",1,true) and
-    control("acid_status").text=="Imported 1 scale definitions.",
+    control("acid_status").text=="Scales imported.",
     "successful import retries and clears only its scale failure")
   local accepted_preferences=tool.preferences.custom_scales.value
   uncertain=true

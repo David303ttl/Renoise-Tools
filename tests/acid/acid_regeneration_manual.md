@@ -35,7 +35,7 @@ For save/reopen, record the saved file and a fresh Renoise process identity.
 | --- | --- |
 | 13.1 Fresh source and shared views | Program/Grid, independent selectors/pages, all 32 stored slots and baseline-relative indicators; capture both views at normal display scale |
 | 13.2 Sequential entry | PITCH/TIME entry, Check/Finish/Discard and navigation admission; distinguish staged values from canonical Grid/draft |
-| 13.3 Mask and output | Extended / Clear mask controls, raw/resolved Decoded rows, tie-breaking and Generate/save/reopen |
+| 13.3 Mask and output | SCALE mask controls, audition/output resolution, tie-breaking and Generate/save/reopen |
 | 13.4 Clipboard, labels, duplicate and failures | Editor toolbar clipboard scopes, all 32 values, metadata-only history, duplicate pre-save/readback and rollback evidence |
 | 13.5 Clear and randomization | Execute the inline-parameter scope fixture below, then every remaining canonical check |
 | 13.6 Audition and lifecycle | Actual sound/release, busy-host timing, modal/context cleanup and captured-object identity |
@@ -50,7 +50,7 @@ and pattern remain project data. Follow constrains Program/Grid note entry only
 when the mask is enabled. Root/category/search browse without source edits;
 selecting a scale applies its absolute mask at the chosen root as one undoable edit.
 
-1. Open **Extended / Clear** and confirm the selector includes **Custom**,
+1. Use **SCALE** and confirm the selector includes **Custom**,
    root choices C through B, categories, scale names, search, and an unchecked
    **Follow scale** control. Search a distinctive bundled scale name and verify
    the result list narrows by name or alias. Clear search and verify the list
@@ -119,7 +119,7 @@ a 32/32 active fixture. Repeat in Program and Grid.
    Record every stored value. Generate a clean
    baseline, then set LAST STEP to 7 and Active PITCH span to 5 with Live Edit
    off. Record this dirty draft and the unchanged committed phrase.
-2. Select workspace **Extended / Clear**, operation **Clear TIME**, scope
+2. In **OPERATIONS**, select operation **Clear TIME**, scope
    **Active memory**, then **Apply**. Verify immediate application without a
    prompt, retaining LAST STEP 7 and PITCH span 5. Confirm
    T01..T07 are NOTE and T08..T32 are unchanged. Raise LAST STEP to 32 for Grid
@@ -149,12 +149,13 @@ a 32/32 active fixture. Repeat in Program and Grid.
    13.5 fixture. Scope changes never change LAST STEP or PITCH span.
    Apply Seed 7, then Seed 8, then Seed 7 again without Undo: verify the first
    timing result returns with unchanged weights and scope.
-   Confirm PITCH/TIME retain separate seeds and Last used values when
+   Confirm PITCH/TIME retain separate editable and remembered seeds when
    switching operations. Undo a random edit, then **Repeat last** with unchanged
    settings/mask: verify the result returns and the seed field stays unchanged.
    Before an operation's first valid Apply, Repeat last is disabled. Set a seed
-   to 2147483646 and Apply: verify Last used and the seed field both show it.
-   Invalid parameters and staged entry leave seed fields and Last used unchanged.
+   to 2147483646 and Apply: verify the seed field retains it and Repeat last
+   reproduces its result.
+   Invalid parameters and staged entry leave editable and remembered seeds unchanged.
 6. After each applied scope case, save the dirty draft, close Renoise, reopen
    the exact XRNS in a fresh process and open ACID. Compare all 32 stored values,
    bounds, mask, settings and label with the captured draft; committed phrase

@@ -70,7 +70,7 @@ boundary interpretation.
 
 ## Scales and randomization
 
-In **Extended / Clear**, choose a root and then a scale to apply its MASK.
+In **SCALE**, choose a root and then a scale to apply its MASK.
 Root, category, and search are browsing controls and never change the stored
 mask by themselves. Selecting a scale applies the absolute note set at that
 root as one undoable edit. Identical note sets appear once with searchable
@@ -82,11 +82,12 @@ With MASK enabled, **Randomize PITCH** samples allowed notes in the MIDI range.
 Follow defaults off. Root/browser/Follow are session controls; MASK is saved with
 the pattern and supports Undo/Redo.
 
-PITCH and TIME have separate seeds and **Last used** values. Random
+PITCH and TIME have separate editable seeds and remembered seeds. Random
 operations decorrelate adjacent seeds before sampling. **Apply** keeps the
 entered seed. Change the seed for another result; return to an earlier seed
 and Apply with the same range/weights, mask and scope to recall its result.
-**Repeat last** reuses Last used with current settings/mask without changing the seed field.
+**Repeat last** reuses the operation's remembered seed with current settings/mask
+without changing the seed field.
 Undo restores the pattern, not seed controls. Seeds last for the editor session.
 
 **Import .txt** adds scales such as `My scale = 0 2 3 5 7 9 10`, saves them in
@@ -212,12 +213,10 @@ mask and output settings. It preserves a dirty original draft only after a
 successful durable save and exact readback; failure aborts the duplicate.
 It never substitutes the dirty draft for committed music.
 
-In **Extended / Clear**, the optional twelve-class mask resolves raw pitches
+In **SCALE**, the optional twelve-class mask resolves raw pitches
 to the nearest enabled note within MIDI 24–60, with lower-note ties. Raw values
 remain intact. A disabled empty mask is valid; enabling it or removing its
-last enabled class is rejected. Decoded Start/Repeating pages show four TIME
-steps at a time, including consumed PITCH index, raw and resolved note, and
-articulation. The renderer uses the same resolution.
+last enabled class is rejected. Audition and output use the same resolution.
 
 Clear and transform operations offer Active memory or All 32 stored scope
 and apply immediately in Program and Grid. Clear PITCH resets notes and both flags;
@@ -225,7 +224,7 @@ Clear TIME sets NOTE. Clear TIE changes TIE to NOTE, while TIE-to-REST changes
 it to REST. Clear REST and REST-to-NOTE change REST to NOTE. Clear ACCENT or
 SLIDE changes only that flag. Seeded PITCH randomization uses a selected raw
 24–60 range and retains flags; TIME randomization uses NOTE/TIE/REST weights.
-Set randomization seed, range or weights inline in Extended / Clear, select
+In **OPERATIONS**, set randomization seed, range or weights, select
 scope, then Apply for one direct edit in either view.
 TIME 01 normalizes a drawn TIE to NOTE. Scope never changes active bounds;
 All 32 also edits inactive storage. Each changed result is one undoable edit.

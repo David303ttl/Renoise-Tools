@@ -162,8 +162,8 @@ retains the leading-NOTE invariant. Pitch randomization retains flags and
 samples uniformly from notes allowed by the enabled mask within its MIDI range.
 An empty intersection rejects the operation. Each random operation advances
 the Park–Miller state once before the first draw to diversify adjacent seeds.
-PITCH and TIME retain independent entered/last session seeds. Valid Apply records
-Last used and retains the entered seed. Reapplying an earlier seed with unchanged
+PITCH and TIME retain independent entered/last session seeds. Valid Apply
+remembers the seed and retains the entered seed. Reapplying an earlier seed with unchanged
 parameters, mask and scope reproduces its generated values. Repeat last reuses
 its last seed with current parameters/mask without changing the seed field.
 Undo affects source, not seeds. Reset preserves LAST STEP and label/custom

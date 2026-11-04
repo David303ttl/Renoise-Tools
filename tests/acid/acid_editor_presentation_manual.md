@@ -60,3 +60,12 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
     Check song release/unload cleanup; unresolved release failures must remain
     in shared feedback. Injected failure coverage is in
     `acid_audition_lifecycle_spec.lua` and `acid_program_staging_spec.lua`.
+14. Confirm SCALE follows the editor: Root, Scale and Follow, then Category,
+    Search and Import, then the mask controls. Root, filtering and Follow must
+    not save or add history. Selecting a scale applies one undoable mask edit;
+    aliases/categories appear in its tooltip. Import failures use shared feedback.
+15. Confirm OPERATIONS follows SCALE without a workspace tab. Exercise all ten
+    operations in Active memory and All 32 stored scopes. Only Randomize PITCH
+    shows seed/range; only Randomize TIME shows seed/weights. Apply with seed A,
+    change the field to B and Repeat last: it uses A with current settings and
+    leaves B displayed. Repeated parameter changes must leave no blank rows.

@@ -2953,7 +2953,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       elseif name=="button" then
         if properties.text=="Undo" then return "acid_undo" end
         if properties.text=="Redo" then return "acid_redo" end
-        for index,label in ipairs({"Extended / Clear","Output"}) do
+        for index,label in ipairs({"Output"}) do
           if properties.text==label then return "acid_workspace_tab_"..index end
         end
         if properties.text=="Previous TIME" then return "acid_previous_time" end
@@ -4271,7 +4271,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if not controls[id] then return nil,"Editor toolbar control is missing: "..id end
     end
     metrics.gui_toolbar_verified=true
-    local workspace_panels={"acid_extended_panel","acid_output_panel"}
+    local workspace_panels={"acid_output_panel"}
     for index,panel_id in ipairs(workspace_panels) do
       local tab_ok,tab_error=run_button("workspace-tab-"..index,"acid_workspace_tab_"..index,function()
         return controls[panel_id].visible==true,"Workspace tab did not reveal "..panel_id
@@ -4621,7 +4621,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         local navigation_data=song.tool_data
         local navigation_phrase=assert(ownership.snapshot(phrase))
         for _,id in ipairs({"acid_pitch_page_2","acid_pitch_page_1","acid_time_page_2",
-            "acid_time_page_1","acid_workspace_tab_2","acid_workspace_tab_1"}) do callbacks[id]() end
+            "acid_time_page_1","acid_workspace_tab_1"}) do callbacks[id]() end
         value("acid_editor_view",2);value("acid_editor_view",1)
         value("acid_phrase_choice",new_phrase_choice_index)
         value("acid_phrase_choice",phrase_index)

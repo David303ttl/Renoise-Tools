@@ -172,15 +172,15 @@ local RANDOM_SEED_MAX=2147483646
 local RANDOM_WEIGHT_MAX=1000
 local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local RANDOM_FIELD_WIDTH=90
-local RANDOM_LAST_SEED_WIDTH=200
 local TIMING_CHOICE_WIDTH=125
 local WORKSPACE_HEIGHT=248
 local FEEDBACK_WIDTH,FEEDBACK_SPACING=820,2
 local FEEDBACK_LINE_HEIGHT,FEEDBACK_PADDING=20,8
 local FEEDBACK_EMPTY_HEIGHT=1
+local EMPTY_HOLDER_WIDTH,EMPTY_HOLDER_HEIGHT=1,1
 local FEEDBACK_ISSUE_ORDER={"save","destination","scale","audition","input","generation","approximation"}
 local SCALE_UI={root_width=65,category_width=155,choice_width=255,
-  search_width=165,detail_width=800,import_width=95}
+  search_width=165,import_width=95}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
 local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
@@ -299,7 +299,7 @@ function M.show()
     if issue.key=="scale_too_large" then return "Use a smaller scale file." end
     if issue.key=="scale_save_failed" then return "Custom scales could not be saved. Import the file again to retry." end
     if issue.key=="scale_save_uncertain" then return "Custom scales could not be verified; import is disabled. Reopen ACID to reload them." end
-    if issue.key=="scale_imported" then return string.format("Imported %d scale definitions.",args.count) end
+    if issue.key=="scale_imported" then return "Scales imported." end
     if issue.key=="phrase_duplicated" then return "Phrase duplicated." end
     if issue.key=="phrase_updated" then return "Phrase updated." end
     if issue.key=="phrase_approximate" then return "Phrase updated with a musical approximation." end
@@ -1817,7 +1817,7 @@ function M.show()
     refresh_clipboard()
     if not accepted then feedback.request_failure("generation",true) end
   end}
-  local extended_panel
+  local scale_panel,operations_panel
   do
   local function admit_operation()
     if stage or label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
@@ -1853,35 +1853,54 @@ function M.show()
     return control
   end
   local random_state={last={}}
-  local pitch_parameters=vb:row{id="acid_random_pitch_parameters",spacing=4,visible=false,
+  local pitch_parameters=vb:row{id="acid_random_pitch_parameters",spacing=4,
     vb:text{text="Seed"},random_field("pitch_seed",1,RANDOM_SEED_MAX,1),
     vb:text{text="MIDI range"},random_field("min_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MIN),
     vb:text{text="to"},random_field("max_note",RANDOM_NOTE_MIN,RANDOM_NOTE_MAX,RANDOM_NOTE_MAX)}
-  local time_parameters=vb:row{id="acid_random_time_parameters",spacing=4,visible=false,
+  local time_parameters=vb:row{id="acid_random_time_parameters",spacing=4,
     vb:text{text="Seed"},random_field("time_seed",1,RANDOM_SEED_MAX,1),
     vb:text{text="NOTE"},random_field("note_weight",0,RANDOM_WEIGHT_MAX,2),
     vb:text{text="TIE"},random_field("tie_weight",0,RANDOM_WEIGHT_MAX,1),
     vb:text{text="REST"},random_field("rest_weight",0,RANDOM_WEIGHT_MAX,1)}
-  random_state.display=vb:text{id="acid_random_last_seed",text="",width=RANDOM_LAST_SEED_WIDTH}
   random_state.repeat_button=vb:button{id="acid_random_repeat",text="Repeat last",active=false,
     notifier=function() random_state.run(true) end}
-  local parameter_row=vb:column{id="acid_random_parameters",spacing=4,visible=false,
-    pitch_parameters,time_parameters,
-    vb:row{spacing=8,random_state.display,random_state.repeat_button}}
+  local parameter_holder=vb:column{id="acid_random_parameters",
+    size={width=EMPTY_HOLDER_WIDTH,height=EMPTY_HOLDER_HEIGHT}}
+  local parameter_fields_holder=vb:column{id="acid_random_parameter_fields",
+    size={width=EMPTY_HOLDER_WIDTH,height=EMPTY_HOLDER_HEIGHT}}
+  local parameter_content=vb:column{id="acid_random_parameter_content",spacing=4,
+    parameter_fields_holder,random_state.repeat_button}
+  local active_parameter_view
+  local parameter_content_attached=false
+  local function select_random_parameters(operation)
+    local next_view=operation=="randomize_pitch" and pitch_parameters or
+      (operation=="randomize_time" and time_parameters or nil)
+    if not rawequal(next_view,active_parameter_view) then
+      if active_parameter_view then parameter_fields_holder:remove_view(active_parameter_view) end
+      active_parameter_view=next_view
+      if active_parameter_view then parameter_fields_holder:add_view(active_parameter_view) end
+      if not active_parameter_view then
+        parameter_fields_holder.size={width=EMPTY_HOLDER_WIDTH,height=EMPTY_HOLDER_HEIGHT}
+      end
+    end
+    if next_view and not parameter_content_attached then
+      parameter_holder:add_view(parameter_content)
+      parameter_content_attached=true
+    elseif not next_view and parameter_content_attached then
+      parameter_holder:remove_view(parameter_content)
+      parameter_holder.size={width=EMPTY_HOLDER_WIDTH,height=EMPTY_HOLDER_HEIGHT}
+      parameter_content_attached=false
+    end
+  end
   local operation_choice=vb:popup{id="acid_operation",items=operation_names,width=180,value=1,
     notifier=function(value)
       local operation=operation_ids[value]
-      local pitch=operation=="randomize_pitch"
-      local time=operation=="randomize_time"
-      pitch_parameters.visible=pitch
-      time_parameters.visible=time
-      parameter_row.visible=pitch or time
+      select_random_parameters(operation)
       random_state.refresh()
     end}
   local operation_scope=vb:popup{id="acid_operation_scope",items={"Active memory","All 32 stored"},width=150,value=1}
   random_state.refresh=function()
     local last=random_state.last[operation_ids[operation_choice.value]]
-    render(random_state.display,"text","Last used: "..(last and tostring(last) or "—"))
     render(random_state.repeat_button,"active",last~=nil and stage==nil)
   end
   ui.refresh_random=random_state.refresh
@@ -1943,7 +1962,7 @@ function M.show()
     local scale_query=""
     local visible_scales={}
     local category_names={"All"}
-    local root_choice,category_choice,scale_choice,scale_search,scale_detail
+    local root_choice,category_choice,scale_choice,scale_search
     local function rebuild_categories()
       local seen={}
       category_names={"All"}
@@ -2018,7 +2037,6 @@ function M.show()
         scale_state.follow=value
         release_audition();update()
       end}
-    scale_detail=vb:text{id="acid_scale_detail",text="",width=SCALE_UI.detail_width}
     local import_scales=vb:button{id="acid_scale_import",text="Import .txt",width=SCALE_UI.import_width,
       notifier=function()
         if guard_stage() then return end
@@ -2060,7 +2078,7 @@ function M.show()
         updating=false
         rebuild_scale_choices();update()
         feedback.clear_issue("scale",false)
-        feedback.confirm("scale_imported",{count=#entries},false)
+        feedback.confirm("scale_imported",nil,false)
       end}
     scale_state.refresh=function()
       render(root_choice,"value",scale_state.root+1)
@@ -2076,34 +2094,33 @@ function M.show()
         end
       end
       render(scale_choice,"value",selected)
-      local detail=string.format("%d unique scales | %d shown | MASK %s | Follow scale %s",
-        #scale_state.catalog,#visible_scales,pattern.scale_mask_enabled and "on" or "off",scale_state.follow and "on" or "off")
-      render(scale_detail,"text",detail)
       render(scale_choice,"tooltip",matched and
         (matched.category.." | "..table.concat(matched.aliases or {},", ")) or "Choose a scale to enable MASK.")
     end
     rebuild_scale_choices()
     return {root=root_choice,category=category_choice,choice=scale_choice,
-      search=scale_search,follow=follow_choice,import=import_scales,detail=scale_detail}
+      search=scale_search,follow=follow_choice,import=import_scales}
   end)()
   ui.operation_controls={operation_choice,operation_scope,operation_button}
   for _,control in pairs(random_fields) do ui.operation_controls[#ui.operation_controls+1]=control end
-  extended_panel=vb:column{id="acid_extended_panel",spacing=4,
-    vb:text{text="EXTENDED / CLEAR",font="bold"},
-    vb:row{spacing=6,operation_choice,operation_scope,
-      operation_button},parameter_row,
-    vb:row{spacing=6,vb:text{text="Root"},ui.scale_controls.root,ui.scale_controls.category,ui.scale_controls.choice,
-      vb:text{text="Follow scale"},ui.scale_controls.follow},
-    vb:row{spacing=6,vb:text{text="Search"},ui.scale_controls.search,ui.scale_controls.import},ui.scale_controls.detail,mask_row,
-    vb:text{text="Apply keeps the seed. Return to a seed and Apply with the same settings to recall its result."},
-    vb:text{text="Root browses without editing; choose a scale to apply MASK. Follow snaps new notes."}}
+  scale_panel=vb:column{id="acid_scale_panel",spacing=4,
+    vb:text{text="SCALE",font="bold"},
+    vb:row{spacing=6,vb:text{text="Root"},ui.scale_controls.root,
+      vb:text{text="Scale"},ui.scale_controls.choice,
+      vb:text{text="Follow"},ui.scale_controls.follow},
+    vb:row{spacing=6,vb:text{text="Category"},ui.scale_controls.category,
+      vb:text{text="Search"},ui.scale_controls.search,
+      ui.scale_controls.import},mask_row}
+  operations_panel=vb:column{id="acid_operations_panel",spacing=4,
+    vb:text{text="OPERATIONS",font="bold"},
+    vb:row{spacing=6,operation_choice,operation_scope,operation_button},parameter_holder}
   end
   local output_panel=vb:column{id="acid_output_panel",spacing=4,
     vb:text{text="OUTPUT",font="bold"},
     vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
       vb:text{text="PB Range"},pb_range_popup},
     vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."}}
-  local tab_names={"Extended / Clear","Output"}
+  local tab_names={"Output"}
   local tab_row=vb:row{spacing=4}
   for index,name in ipairs(tab_names) do
     local tab=index
@@ -2113,10 +2130,9 @@ function M.show()
     end}
     tab_row:add_child(ui.workspace.tabs[index])
   end
-  ui.workspace.panels={extended_panel,output_panel}
+  ui.workspace.panels={output_panel}
   local workspace=vb:column{spacing=4,tab_row,
-    vb:stack{autosize=false,size={width=820,height=WORKSPACE_HEIGHT},views={
-      extended_panel,output_panel}}
+    vb:stack{autosize=false,size={width=820,height=WORKSPACE_HEIGHT},views={output_panel}}
   }
   for _,panel in ipairs(ui.workspace.panels) do
     panel.origin={0,0}
@@ -2147,7 +2163,7 @@ function M.show()
       vb:text{text="Copy scope"},clipboard.choice,copy_button,clipboard.paste_button},
     stage_status,program_panel,grid_panel,entry_navigation,
     vb:row{spacing=5,ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
-    workspace,
+    scale_panel,operations_panel,workspace,
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
         if guard_stage() then return end
