@@ -1682,6 +1682,7 @@ function M.show()
     pb_range=next_state.pb_range
     phrase_label,phrase_label_custom=next_state.label,next_state.label_custom
     if not history:commit(proposal) then return end
+    feedback.clear_confirmation()
     invalidate_projection()
     local _,_,effects=save_draft()
     update()

@@ -610,11 +610,9 @@ do
  assert(log.sinks==0 and ctx:editor_state().source.length==0)
  assert(not ctx:request_generation('manual'))
  ctx:transition('programmatic',values(source))
- local recoverable=ctx:editor_recovery()
- assert(#recoverable>0 and recoverable[#recoverable].source.length==0)
- recoverable[#recoverable].source.length=17
- local pristine=ctx:editor_recovery()
- assert(pristine[#pristine].source.length==0,'invalid recovery projection was mutable')
+ local released,warning=ctx:release_document()
+ assert(released and warning=='Invalid ACID editor buffers are session-only and were released',
+   'document release did not report the discarded invalid editor buffer')
 end
 
 -- Reorder/rename refresh preserves revisions; removal and native object changes revoke.

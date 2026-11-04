@@ -19,6 +19,8 @@ with `remove_view()` when empty. Message height follows the number of lines.
 Sizes use named constants. Routine successful Live Edit updates do not publish
 confirmations; new edits clear obsolete confirmations while unresolved failures
 and useful approximation warnings remain visible.
+Successful source Undo/Redo also clears obsolete confirmations without clearing
+unresolved failures or approximation warnings.
 
 | Producer evidence | Presentation and lifetime |
 | --- | --- |
@@ -118,7 +120,9 @@ remain for their later scheduled tasks; this is not the completed redesign.
 | Inspector and sampler audit | Constructors, callbacks, imports, mocks and both `renoise/selection_context.lua` and `renoise/sampler_audit.lua` deleted |
 | Make Independent | Context eligibility/projection/action, identity-only mutation authorization, eligibility helpers, transition and `runtime/independence.lua` deleted; ownership/collision checks and musical Duplicate remain |
 | Detached-draft actions | Context list/copy/discard wrappers, draft-cache list/copy/discard and private copy-origin metadata deleted; automatic saving/restoration, capture, detached session records, volatile warnings and revision-specific commit cleanup remain |
+| Invalid-editor recovery accessor | Public accessor and accessor-only coverage deleted; private invalid-buffer records retain document-release loss detection |
 | Revalidate | Context status/action, integrity proof/clear, committed-capture and ownership recovery-comparison helpers, and writer blocker-clear API deleted; evidence producers, mutation/metadata capture, write rejection and same-song evidence suspension/resumption remain |
+| Recovery snapshot registry | Unread private snapshot retention deleted; complete phrase-read validation still rejects unreadable mutation preconditions |
 | Report support | Exclusive formatters, report-only refresh functions/state, decoded pagination and recovery workspace removed; projection validation, error-position navigation, history, staged entry, audition cleanup and observer lifetimes remain |
 | Obsolete test/native workflows | Action-only GUI/runtime independence specs and native recovery-action cases removed; retained coverage uses live editor/runtime workflows. Current owners include `acid_gui_live_edit_lifecycle_spec.lua` and `acid_draft_baseline_spec.lua` |
 
@@ -137,6 +141,7 @@ integrity evidence; context/request admission reads its blocking state.
 | --- | --- |
 | Foreign/colliding/deleted/modified destination | Remains non-owned and cannot reach the writer. Explicit valid target or New selection is allowed only through normal admission and cannot bypass a song blocker |
 | Recorded mutation, metadata or writer-integrity evidence | Remains blocked across target changes, dialog reopen and same-song reattachment; Generate, Live Edit and Duplicate reject without capture/dispatch or source/phrase changes. No ACID repair action remains |
+| Writer-only integrity rejection | Synchronous structured rejection records a song blocker; subsequent requests reject without dispatch and feedback states that ACID cannot safely update the song |
 | Mutation evidence recording/finalization failure | Remains blocked through same-song dialog/document lifetimes. The existing context resets its fallback on attachment of a different song; no same-song reopen or retry remedy is offered |
 | Verified commit followed by failed adoption and failed evidence recording | Dialog reopen remains blocked. Same-song document reattachment uses fresh full membership, identity, stored-source/settings and native-output classification. The intact committed target can pass subsequent explicit admission; a corrupted postimage remains unavailable and never reaches the writer. This is not a general blocker-clear or user repair procedure |
 | Observer failure or dispatch uncertainty | Existing successful observer reattachment and verified writer-occupancy admission remain the only applicable clearing evidence; no removed repair action is invoked |
@@ -149,18 +154,23 @@ behavior are unchanged.
 
 ### Verification
 
+Native and harness receipts below were not rerun. Native writer-blocker and
+Undo/Redo feedback checks remain unverified for the current source changes.
+
 | Check | Result |
 | --- | --- |
-| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 passed after the final runtime deletion chain; Lua 5.1; 103.16 s |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 passed; Lua 5.1; 66.26 s |
+| Focused regressions | Real writer-only blocker persists across Generate, Live Edit, Duplicate, target changes, dialog reopen and same-song reattachment without phrase/store mutation. Undo/Redo clears confirmations and retains unresolved issues. Both regressions fail against the unfixed runtime/GUI |
+| Second-pass review | Independent runtime and GUI review completed; retired accessor and snapshot registry absent; complete phrase-read rejection and invalid-buffer release warning retained |
 | `./tests/renoise/runner_spec.ps1` | Passed transport, ownership, keyboard configuration, reporting and installation lifecycle checks |
 | `./tests/renoise/test_package_dev.ps1` | Passed payload, fixture, session ACL, syntax, bootstrap, Unicode path and packaging checks |
 | `./scripts/package.ps1 -Tool ACID` | 32 runtime files; all archive bytes match source; `main.lua` and `manifest.xml` at root; no retired modules, SDK or development files |
-| Archive | `dist/com.david303ttl.ACID_0.1.xrnx`; SHA-256 `23c65a6c9aaa7df38abc60918c630f9cf42955560ada54b1611d354bbd43cb56` |
-| GUI SHA-256 | `d319184014eaf8060fb0e487d8788b2b5906928f2bd596a3c8c4696bbf6e2504` |
-| Source inventory | `gui.lua`: 2,266 lines; 30 Lua runtime files, 13,622 lines. Baseline: 2,276 GUI lines and 33 Lua files, 14,849 lines; no presentation helper extraction |
+| Archive | `dist/com.david303ttl.ACID_0.1.xrnx`; SHA-256 `fc665f8eda0c8ca90ae005ecff60030e215237126eb2a7938584ffa09c654186` |
+| GUI SHA-256 | `b4fff3481e5b00fd0e34a9efdef6a923d3d00ce539494c8731f1281804052d52` |
+| Source inventory | `gui.lua`: 2,267 lines; 30 Lua runtime files, 13,637 lines. Baseline: 2,276 GUI lines and 33 Lua files, 14,849 lines; no presentation helper extraction |
 | Native `editor-responsiveness` | PASS; 32 retained GUI actions, source/draft/phrase checks, Live Edit and feedback ownership, audition functional checks; report `tmp/interactive-c6ecb42d77244b569e1b7a1d1af153ec/report.json` |
 | Native `integrity-observers` | PASS; blocker survives dialog reopen and target change, Generate/Duplicate reject, committed phrase/store preserved; report `tmp/interactive-d197a6eaaead46768bf6d82443650db4/report.json` |
-| Native `writer-recovery` | PASS on the final runtime source; blocked dirty-editor rebind remains unavailable, Generate/Duplicate reject, exact native snapshot/tool bytes/inventory and both immutable source rows preserved; report `tmp/interactive-aa44479fad094a909acb998e4b13fe15/report.json` |
+| Native `writer-recovery` | Recorded PASS at `66885a7`; blocked dirty-editor rebind remains unavailable, Generate/Duplicate reject, exact native snapshot/tool bytes/inventory and both immutable source rows preserved; report `tmp/interactive-aa44479fad094a909acb998e4b13fe15/report.json` |
 | Final harness checks | Focused acceptance driver regression spec and `git diff --check` passed after obsolete test-only helper removal and diagnostic formatting cleanup |
 | Host cleanup | Runner-owned Renoise closed; original 36-file installed ACID tool restored and verified |
 

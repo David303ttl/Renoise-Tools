@@ -590,16 +590,26 @@ end
 
 do
   local previous_song_accessor=renoise.song
-  local function duplicate_fixture()
+  local function duplicate_fixture(fail_integrity_record)
     local target={}
     for key,value in pairs(instrument)do target[key]=value end
     target.name,target.phrases="Duplicate transaction",{}
     local target_song={instruments={target},tool_data="",transport={timing_model=2,groove_enabled=false}}
     function target_song:is_undo_redoing()return false end
     renoise.song=function()return target_song end
+    local integrity_module=require("runtime.integrity")
+    local original_integrity_new=integrity_module.new
+    if fail_integrity_record then
+      integrity_module.new=function(...)
+        local integrity=original_integrity_new(...)
+        integrity.record=function()return false,"injected integrity record failure"end
+        return integrity
+      end
+    end
     local owner=new_context()
     local completions,delivery=delivered()
     owner:attach_document(target_song);owner:open_dialog(delivery);owner:bind_new(target)
+    integrity_module.new=original_integrity_new
     edit(owner,source(48));dispatch(owner)
     local original=assert(completions[1].phrase)
     assert_success(completions[1],original,"duplicate origin create")
@@ -661,7 +671,7 @@ do
 
   for _,phase in ipairs({"allocation","insertion","materialization","store","verification",
       "origin-materialized","origin-committed","rollback"}) do
-    local owner,target_song,target,original,completions,descriptor=duplicate_fixture()
+    local owner,target_song,target,original,completions,descriptor=duplicate_fixture(phase=="rollback")
     local raw=target_song.tool_data
     local baseline=assert(ownership.snapshot(original))
     local allocate,insert,apply,commit,restore,classify=store.allocate,target.insert_phrase_at,
@@ -709,6 +719,45 @@ do
       else assert(ownership.compare(baseline,assert(ownership.snapshot(original))),phase..": origin phrase changed")end
     end
     owner:release_document()
+    if phase=="rollback" then
+      local fresh=new_context()
+      fresh:attach_document(target_song);fresh:open_dialog()
+      assert(fresh:bind_phrase(target,original).kind=="owned")
+      edit(fresh,source(55))
+      assert(not fresh:integrity_state().blocked,
+        "new same-song context unexpectedly inherited ACID integrity evidence")
+      local calls=sink_calls
+      local phrase_count,phrase_before=#target.phrases,assert(ownership.snapshot(original))
+      local store_before=target_song.tool_data
+      local accepted,reason=fresh:request_generation("manual")
+      assert(not accepted and type(reason)=="string" and
+        reason:find("Phrase rollback failed",1,true),
+        "real writer did not return its writer-only integrity rejection")
+      assert(fresh:integrity_state().blocked and sink_calls==calls+1,
+        "fresh context did not retain the same-song writer blocker")
+      assert(#target.phrases==phrase_count and target_song.tool_data==store_before and
+        ownership.compare(phrase_before,assert(ownership.snapshot(original))),
+        "writer-only rejection changed the phrase, source, or song store")
+      assert(not fresh:request_generation("manual") and sink_calls==calls+1,
+        "retained writer blocker allowed a later dispatch")
+      assert(not fresh:request_duplicate() and sink_calls==calls+1,
+        "retained writer blocker allowed Duplicate")
+      fresh:transition("arm")
+      assert(not fresh:request_generation("live") and sink_calls==calls+1,
+        "retained writer blocker allowed Live Edit")
+      fresh:bind_new(target)
+      assert(not fresh:request_generation("manual") and sink_calls==calls+1,
+        "target change bypassed the retained writer blocker")
+      fresh:close_dialog();fresh:open_dialog()
+      assert(not fresh:request_generation("manual") and sink_calls==calls+1,
+        "dialog reopen cleared the retained writer blocker")
+      fresh:release_document()
+      fresh:attach_document(target_song);fresh:open_dialog();fresh:bind_phrase(target,original)
+      assert(fresh:integrity_state().blocked and
+        not fresh:request_generation("manual") and sink_calls==calls+1,
+        "same-song reattachment cleared the retained writer blocker")
+      fresh:release_document()
+    end
   end
 
   -- A failed runtime adoption after a verified writer commit stays blocked

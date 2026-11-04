@@ -79,7 +79,7 @@ do
     reconcile = true, mutation_state = true, occupancy_state = true,
     record_blocker = true, integrity_state = true, transition = true, revision_state = true, editor_state = true,
      rename_label = true,
-    musical_eligibility = true, editor_recovery = true,
+    musical_eligibility = true,
     validate_checkpoint = true, flush_pending = true, generation_state = true,
     is_temporary = true}
   for key, value in pairs(ctx) do

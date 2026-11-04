@@ -13,7 +13,6 @@ local PINNED_MAX_LINES = 512
 local PINNED_NOTE_COLUMNS = 12
 local PINNED_EFFECT_COLUMNS = 8
 local indexed_snapshots=setmetatable({},{__mode="k"})
-local recovery_captures=setmetatable({},{__mode="k"})
 local function hash(phrase)
   local acc=HASH_INITIAL
   local function feed(value)
@@ -498,16 +497,13 @@ function M.snapshot_for_verification(phrase,limits)
   return snapshot_with_mode(phrase,limits,true)
 end
 
--- Integrity evidence retains private read-only phrase preimages. Unlike public
--- snapshots, canonical empty cell tables may be shared within one image.
+-- Validate complete phrase readability before admitting a mutation.
 function M.capture_recovery(phrase,limits)
   local capacities,capacity_error=snapshot_capacities(limits)
   if not capacities then return nil,capacity_error end
   local ok,image=pcall(capture,phrase,capacities,true)
   if not ok then return nil,"Cannot inspect complete phrase: "..tostring(image) end
-  local token={}
-  recovery_captures[token]=image
-  return token
+  return {}
 end
 
 local function cell_is_default(snapshot,defaults,fields)

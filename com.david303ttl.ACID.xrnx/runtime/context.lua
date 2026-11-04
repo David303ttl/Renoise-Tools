@@ -997,8 +997,30 @@ function M.new(options)
         end
         return false, blocked_reason
       end
+      local rejected_request=record.request
       record.rejected = true
       retire(record)
+      if type(rejection)=="table" and (rejection.status=="integrity_blocked" or
+          rejection.integrity_blocked==true or rejection.category=="integrity") then
+        local rejection_current=not record.released and record.epoch==epoch and record.session==session and
+          current_song~=nil and type(rejected_request)=="table" and
+          rawequal(rejected_request.song,current_song)
+        if rejection_current then
+          local evidence={operation=rejected_request.kind,
+            committed=rejection.committed==true,reason=rejection.reason or rejection.message,
+            recovery=rejection.recovery or {}}
+          local recorded_ok,recorded=pcall(function()
+            return integrity and integrity:record(evidence)
+          end)
+          if recorded_ok and recorded then
+            transitions:transition("blocker")
+            invalidate("ACID cannot safely update this song")
+          else
+            mutation_recording_failed_reason="ACID cannot safely update this song because writer integrity evidence could not be recorded"
+            mutation_recording_failed_song=current_song
+          end
+        end
+      end
       return false, reason_text(rejection, "Generation request rejected")
     end
 
@@ -1185,10 +1207,6 @@ function M.new(options)
     editor.draft_warning=nil
     transitions:transition("metadata",{changed=true})
     return true
-  end
-
-  function context:editor_recovery()
-    return ownership.copy_snapshot(editor_recovery)
   end
 
   compute_musical_eligibility=function(self,token,known_target)

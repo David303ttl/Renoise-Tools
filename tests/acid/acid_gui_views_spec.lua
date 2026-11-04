@@ -1088,6 +1088,37 @@ local timing_control=control("acid_timing")
 timing_control:fire(timing_control.value==1 and 2 or 1)
 assert(not control("acid_status").text:find("Phrase updated.",1,true),
   "a later ordinary source edit clears the superseded Generate confirmation")
+button("Generate / Regenerate ACID Phrase"):fire()
+generation_callback(terminal_result(generation_request,"committed","Confirmation before Undo."))
+assert(control("acid_status").text:find("Phrase updated.",1,true),
+  "manual Generate confirms before Undo")
+button("Undo"):fire()
+assert(not control("acid_status").text:find("Phrase updated.",1,true),
+  "Undo clears the superseded Generate confirmation")
+button("Generate / Regenerate ACID Phrase"):fire()
+generation_callback(terminal_result(generation_request,"committed","Confirmation before Redo."))
+assert(control("acid_status").text:find("Phrase updated.",1,true),
+  "manual Generate confirms before Redo")
+button("Redo"):fire()
+assert(not control("acid_status").text:find("Phrase updated.",1,true),
+  "Redo clears the superseded Generate confirmation")
+button("Generate / Regenerate ACID Phrase"):fire()
+generation_callback(terminal_result(generation_request,"failed","Injected generation failure."))
+assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
+  "a failed Generate keeps its retryable error")
+button("Undo"):fire()
+assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
+  "Undo retains unresolved generation failure feedback")
+button("Redo"):fire()
+assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
+  "Redo retains unresolved generation failure feedback")
+button("Generate / Regenerate ACID Phrase"):fire()
+generation_callback(terminal_result(generation_request,"approximate","Approximation fixture."))
+assert(control("acid_status").text:find("Phrase updated with a musical approximation.",1,true),
+  "an approximate Generate keeps its warning")
+button("Undo"):fire()
+assert(control("acid_status").text:find("Phrase updated with a musical approximation.",1,true),
+  "Undo retains unresolved approximation feedback")
 
 -- Instrument inventory notifications refresh the native destination popup on
 -- idle while preserving its bound object and without requesting a render.

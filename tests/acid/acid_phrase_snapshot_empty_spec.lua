@@ -185,7 +185,11 @@ phrase.line=original_line
 
 local recovery=assert(ownership.capture_recovery(phrase,limits))
 assert(type(recovery)=="table" and next(recovery)==nil,
-  "integrity evidence capture exposed its image through the token")
+  "mutation preflight exposed its inspected phrase image")
+fail_hidden_note_access=true
+assert(not ownership.capture_recovery(phrase,limits),
+  "mutation preflight accepted unreadable hidden phrase data")
+fail_hidden_note_access=false
 
 local public=assert(ownership.snapshot(phrase,limits))
 assert(public.lines[2].notes[1]~=public.lines[2].notes[2] and
