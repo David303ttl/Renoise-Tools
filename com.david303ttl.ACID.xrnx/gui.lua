@@ -229,7 +229,7 @@ function M.show()
   local label_ui={}
   local clipboard={scopes={"pitch","time","both"}}
   local guard_stage,finish_stage
-  local stage_status,stage_actions,entry_navigation
+  local stage_status,stage_actions,entry_navigation,entry_controls
   local refresh_stage
   local function current_session()
     local state=runtime and runtime:lifetime_state()
@@ -278,8 +278,10 @@ function M.show()
     if issue.key=="duplicate_failed" then return "Couldn't duplicate the phrase. Try again." end
     if issue.key=="missing_pitch" then return string.format("Cannot generate: choose a pitch for step %d.",args.position) end
     if issue.key=="missing_timing" then return string.format("Cannot generate: enter timing for step %d.",args.position) end
-    if issue.key=="entry_unavailable" then return "This entry is no longer available." end
-    if issue.key=="entry_destination_changed" then return "Entry was discarded because the destination changed." end
+    if issue.key=="entry_destination_changed" then return "The destination changed. Start entry again." end
+    if issue.key=="entry_song_changed" then return "The song changed. Start entry again." end
+    if issue.key=="entry_in_progress" then return "Finish or cancel entry before changing parameters." end
+    if issue.key=="entry_program_required" then return "Start entry in Program view." end
     if issue.key=="clipboard_scope_mismatch" then return "Select the copied scope before pasting." end
     if issue.key=="clipboard_empty" then return "Copy a scope before pasting." end
     if issue.key=="input_failed" then return "The edit could not be applied." end
@@ -477,6 +479,8 @@ function M.show()
         else
           selected_step=stage.cursor;time_page=editor.page_for(stage.cursor)
         end
+      elseif stage then
+        if stage.memory=="pitch" then selected_pitch=stage.cursor else selected_step=stage.cursor end
       end
       update()
     end}
@@ -548,14 +552,11 @@ function M.show()
     end
     return current_session()
   end
-  local function missing_positions()
-    local missing={}
-    if stage then for _,position in ipairs(stage.target_positions) do
-      if not stage.entered[position] then
-        missing[#missing+1]=string.format(stage.memory=="pitch" and "P%02d" or "T%02d",position)
-      end
-    end end
-    return missing
+  local function report_stale_stage()
+    local song_changed=stage and (not rawequal(renoise.song(),stage.origin.song) or not current_session())
+    stage=nil
+    update()
+    feedback.set_issue("input",song_changed and "entry_song_changed" or "entry_destination_changed")
   end
   local function first_missing_position()
     if stage then
@@ -601,7 +602,8 @@ function M.show()
   end
   local function clear_resolved_input()
     if not stage and not project().error then
-      feedback.clear_input("missing_pitch","missing_timing","entry_unavailable","entry_destination_changed")
+      feedback.clear_input("missing_pitch","missing_timing","entry_destination_changed","entry_song_changed",
+        "entry_in_progress","entry_program_required")
     end
   end
   local function stage_resolution()
@@ -720,16 +722,15 @@ function M.show()
     if stage_status then
       render(stage_status,"visible",stage~=nil)
       render(entry_navigation,"visible",stage~=nil)
-      local missing=missing_positions()
-      render(stage_status,"text",stage and (editor_view==2 and
-        "Program entry staged; return to Program to finish or discard" or
-        string.upper(stage.memory).." CANDIDATE | "..(#missing==0 and "All positions entered" or
-          "Missing: "..table.concat(missing,", "))) or "Edit One | canonical source")
+      render(stage_status,"text",stage and ((stage.memory=="pitch" and "Pitch" or "Timing").." "..
+        tostring(stage.cursor).." of "..tostring(#stage.target_positions)..(editor_view==2 and
+        "; return to Program to edit or reveal a missing position" or "")) or "")
       render(stage_actions.back,"active",stage~=nil)
       render(stage_actions.enter,"active",stage~=nil)
       render(stage_actions.restart,"active",stage~=nil)
-      render(stage_actions.finish,"active",stage~=nil and #missing==0)
-      render(stage_actions.discard,"active",stage~=nil)
+      render(stage_actions.finish,"active",stage~=nil and first_missing_position()==nil)
+      render(stage_actions.cancel,"active",stage~=nil)
+      render(entry_controls,"visible",stage==nil and editor_view==1)
     end
   end
   local function refresh_clipboard()
@@ -908,6 +909,11 @@ function M.show()
     time_page=editor.page_for(index)
     update()
   end
+  local function reveal_missing_position(position)
+    if position and editor_view==1 then
+      if stage.memory=="pitch" then choose_pitch(position) else choose_time(position) end
+    end
+  end
   local function changed(request_live)
     if not history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom) then update();return end
     feedback.clear_confirmation()
@@ -923,13 +929,14 @@ function M.show()
   finish_stage=function()
     release_audition()
     if not stage then return false end
-    if not valid_stage() then feedback.set_issue("input","entry_unavailable");return false end
+    if not valid_stage() then report_stale_stage();return false end
     local eligible=runtime:musical_eligibility()
     if not eligible then feedback.request_failure("input",false);return false end
-    local missing=missing_positions()
-    if #missing>0 then
+    local position=first_missing_position()
+    if position then
       feedback.set_issue("input",stage.memory=="pitch" and "missing_pitch" or "missing_timing",
-        {position=first_missing_position()})
+        {position=position})
+      reveal_missing_position(position)
       return false
     end
     local valid=sequencer.validate(stage.candidate)
@@ -954,24 +961,26 @@ function M.show()
     end
     if not stage then return false end
     if not valid_stage() then
-      stage=nil;update();feedback.set_issue("input","entry_unavailable");return true
+      report_stale_stage();return true
     end
-    local missing=missing_positions()
-    if #missing>0 then
+    local position=first_missing_position()
+    if position then
       feedback.set_issue("input",stage.memory=="pitch" and "missing_pitch" or "missing_timing",
-        {position=first_missing_position()})
+        {position=position})
+      reveal_missing_position(position)
     end
-    local buttons=#missing==0 and {"Stay","Discard","Finish"} or {"Stay","Discard"}
-    local answer=renoise.app():show_prompt("Program entry staged",
-      #missing==0 and "Resolve entry, then invoke the requested action again." or
+    local buttons=not position and {"Stay","Cancel","Finish"} or {"Stay","Cancel"}
+    local answer=renoise.app():show_prompt("Entry in progress",
+      not position and "Finish entry, then try again." or
         string.format("Complete %s step %d before continuing.",stage.memory=="pitch" and "pitch" or "timing",
-          first_missing_position()),buttons)
-    if answer=="Finish" and #missing==0 then finish_stage()
-    elseif answer=="Discard" then stage=nil;clear_resolved_input();update() end
+          position),buttons)
+    if answer=="Finish" and not position then finish_stage()
+    elseif answer=="Cancel" then stage=nil;clear_resolved_input();update() end
     update()
     return true
   end
   local function begin_stage(memory)
+    if editor_view~=1 then feedback.set_issue("input","entry_program_required");return end
     if guard_stage() then return end
     local eligible=runtime:musical_eligibility()
     if not eligible then feedback.request_failure("input",false);return end
@@ -979,14 +988,15 @@ function M.show()
     local count=memory=="pitch" and pattern.pitch_length or pattern.length
     local positions={}
     for index=1,count do positions[index]=string.format(memory=="pitch" and "P%02d" or "T%02d",index) end
-    local answer=renoise.app():show_prompt("Re-enter "..string.upper(memory),
+    local answer=renoise.app():show_prompt(memory=="pitch" and "Enter pitches" or "Enter timing",
       table.concat(positions,", ")..(memory=="pitch" and
-        ": C/NORMAL, ACCENT off, SLIDE off. All other positions and TIME preserved." or
-        ": NOTE. All other positions and PITCH flags preserved."),{"Cancel","Proceed"})
+        ": enter each pitch. Accent and slide start off." or ": enter NOTE, TIE or REST for each position."),
+      {"Cancel","Proceed"})
     if answer~="Proceed" then return end
+    feedback.clear_input("entry_destination_changed","entry_song_changed")
     stage={memory=memory,candidate=assert(sequencer.copy_source(pattern)),
       target_positions={},entered={},cursor=1,origin=origin}
-    if not valid_stage() then stage=nil;feedback.set_issue("input","entry_unavailable");return end
+    if not valid_stage() then report_stale_stage();return end
     for index=1,count do
       stage.target_positions[index]=index
       stage.entered[index]=false
@@ -1002,7 +1012,7 @@ function M.show()
       return false
     end
     if not stage then return true end
-    if not valid_stage() then feedback.set_issue("input","entry_unavailable");return false end
+    if not valid_stage() then report_stale_stage();return false end
     return editor_view==1 and stage.memory==memory and position<=#stage.target_positions
   end
   timing_popup:add_notifier(function(value)
@@ -1709,9 +1719,10 @@ function M.show()
     program_octave_row:add_child(ui.program.octave_buttons[index])
     grid_octave_row:add_child(ui.grid.octave_buttons[index])
   end
-  stage_status=vb:text{id="acid_program_stage_status",size={width=820,height=18},text="Edit One",font="bold"}
+  stage_status=vb:text{id="acid_program_stage_status",size={width=820,height=18},text="",font="bold"}
   local function stage_navigation(action)
-    if not stage or not valid_stage() then return end
+    if not stage then return end
+    if not valid_stage() then report_stale_stage();return end
     if action=="enter" then
       stage.entered[stage.cursor]=true
       stage.cursor=math.min(#stage.target_positions,stage.cursor+1)
@@ -1722,21 +1733,20 @@ function M.show()
   end
   stage_actions={
     back=vb:button{id="acid_program_back",text="Back",notifier=function() stage_navigation("back") end},
-    enter=vb:button{id="acid_program_enter",text="Enter and Advance",notifier=function() stage_navigation("enter") end},
-    restart=vb:button{id="acid_program_restart",text="Restart Cursor",notifier=function() stage_navigation("restart") end},
+    enter=vb:button{id="acid_program_enter",text="Enter and advance",notifier=function() stage_navigation("enter") end},
+    restart=vb:button{id="acid_program_restart",text="Restart",notifier=function() stage_navigation("restart") end},
     finish=vb:button{id="acid_program_finish",text="Finish",notifier=function() finish_stage() end},
-    discard=vb:button{id="acid_program_discard",text="Discard",notifier=function()
+    cancel=vb:button{id="acid_program_discard",text="Cancel",notifier=function()
       release_audition()
-      if stage and renoise.app():show_prompt("Discard entry","Discard the detached candidate?",{"Stay","Discard"})=="Discard" then
+      if stage and renoise.app():show_prompt("Cancel entry","Cancel this entry?",{"Stay","Cancel"})=="Cancel" then
         stage=nil;clear_resolved_input();update()
       end
     end}}
-  local entry_controls=vb:row{spacing=4,
-    vb:button{id="acid_program_edit_one",text="Edit One",notifier=function() guard_stage() end},
-    vb:button{id="acid_program_reenter_pitch",text="Re-enter PITCH",notifier=function() begin_stage("pitch") end},
-    vb:button{id="acid_program_reenter_time",text="Re-enter TIME",notifier=function() begin_stage("time") end}}
+  entry_controls=vb:row{spacing=4,
+    vb:button{id="acid_program_reenter_pitch",text="Enter pitches",notifier=function() begin_stage("pitch") end},
+    vb:button{id="acid_program_reenter_time",text="Enter timing",notifier=function() begin_stage("time") end}}
   entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
-    stage_actions.restart,stage_actions.finish,stage_actions.discard}
+    stage_actions.restart,stage_actions.finish,stage_actions.cancel}
   local function audition_pitch()
     if not current_session() or (stage and (stage.memory~="pitch" or not valid_stage())) then return end
     local records=stage and stage_resolution().resolved_records or project().resolved_records
@@ -1755,7 +1765,7 @@ function M.show()
   program_audition_button=vb:button{id="acid_audition",text="Audition",notifier=audition_pitch}
   grid_audition_button=vb:button{id="acid_grid_audition",text="Audition",notifier=audition_pitch}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
-    entry_controls,entry_navigation,
+    entry_controls,
     vb:text{text="PITCH",font="bold"},
     program_pitch_page_row,selector_rows(ui.program.pitch_selectors),
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},program_keyboard},
@@ -1814,7 +1824,7 @@ function M.show()
       if label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
         feedback.set_issue("input","label_editor_open")
       else
-        feedback.set_issue("input","entry_unavailable")
+        feedback.set_issue("input","entry_in_progress")
       end
       return false
     end
@@ -2135,7 +2145,7 @@ function M.show()
     vb:row{id="acid_editor_toolbar",spacing=8,
       vb:text{text="Editor"},view_popup,undo_button,redo_button,
       vb:text{text="Copy scope"},clipboard.choice,copy_button,clipboard.paste_button},
-    stage_status,program_panel,grid_panel,
+    stage_status,program_panel,grid_panel,entry_navigation,
     vb:row{spacing=5,ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
     workspace,
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,

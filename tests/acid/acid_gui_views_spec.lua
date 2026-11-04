@@ -1616,9 +1616,10 @@ do
   control("acid_operation"):fire(RANDOM_PITCH)
   valid_random_parameters()
   app.show_prompt=function(_,title)
-    if title=="Re-enter PITCH" then return "Proceed" end
+    if title=="Enter pitches" then return "Proceed" end
     return "Stay"
   end
+  control("acid_editor_view"):fire(1)
   control("acid_program_reenter_pitch"):fire()
   for _,name in ipairs({"pitch_seed","time_seed","min_note","max_note","note_weight","tie_weight","rest_weight"}) do
     assert(not control("acid_operation_"..name).active,"staging disables inline parameter: "..name)
@@ -1628,7 +1629,7 @@ do
   control("acid_operation_open"):fire()
   assert(draft_writes==before.drafts and render_calls==before.writes and
     control("acid_program_discard").active,"random Apply respects pending stage guard")
-  app.show_prompt=function()return "Discard"end
+  app.show_prompt=function()return "Cancel"end
   control("acid_program_discard"):fire()
   local main_dialog=dialog
   control("acid_label_rename"):fire()

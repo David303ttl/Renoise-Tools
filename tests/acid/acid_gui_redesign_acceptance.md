@@ -254,6 +254,32 @@ Native presentation, playback and lifecycle checks remain unverified for this
 change. Runtime file layout and package inputs are unchanged; no package rebuild
 is required.
 
+## Task 7 sequential entry
+
+Program exposes Enter pitches and Enter timing during normal editing. Entry
+shows cursor progress with Back, Enter and advance, Restart, Finish and Cancel
+outside the editor panels. Grid retains accepted-source viewing; returning to
+Program restores the entry cursor. Restart preserves entered positions and
+Cancel retains confirmation without committing pending edits.
+
+Finish remains disabled until every position is entered. A guarded action
+identifies the first missing numeric position and reveals it in Program without
+marking it entered. Grid stays selected and directs completion in Program.
+Finish retains destination, song, revision, eligibility and source validation;
+resolving entry does not resume the requested action automatically.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1; 59.23 s |
+| Focused entry fixtures | Missing position 5, cross-page PITCH navigation, TIME selection, cursor progress, Restart markers, Cancel isolation and Grid Finish/Cancel passed |
+| Second-pass review | Independent safety, callback, parenting and helper-order review completed; obsolete prompt references removed from current specs and native probes |
+| `git diff --check` | Passed |
+
+Native entry, layout and lifecycle checks in
+`acid_editor_presentation_manual.md` remain unverified for this change.
+Runtime file layout and package inputs are unchanged; no package rebuild is
+required.
+
 ## Baseline
 
 | Item | Evidence |
@@ -332,7 +358,7 @@ Inspected definitions and offline docs: `view.lua`, `rack.lua`,
 | --- | --- | --- |
 | Target, phrase, length, timing, Program/Grid and output controls; `acid_last_step`, `acid_timing`, `acid_output_policy`, `acid_pb_range`, `acid_editor_view` (`gui.lua:309-359`, `1114-1339`) | Target selection binds through `runtime.context`; edit callbacks save through `changed()`; `update()` renders current values (`gui.lua:550-739`) | Retain. `acid_gui_views_spec.lua`, `acid_gui_admission_spec.lua`, `acid_runtime_inventory_spec.lua`; destination and regeneration manuals |
 | Program/Grid pitch keys, octaves, C+, accent, slide, PITCH/TIME positions, and pages; ID families `acid_program_*`, `acid_grid_*`, `acid_pitch_page_*`, `acid_time_page_*` (`gui.lua:944-1050`, `1695-1775`) | Selection/edit callbacks at `gui.lua:740-1059`; `update()` and `refresh_stage()` render selection, active bounds, pages and staged entry (`gui.lua:516-699`) | Retain. `acid_gui_views_spec.lua`, `acid_editor_spec.lua`, `acid_program_staging_spec.lua`; editor presentation manual |
-| Entry actions `acid_program_back`, `acid_program_enter`, `acid_program_restart`, `acid_program_finish`, `acid_program_discard`, `acid_program_edit_one`, `acid_program_reenter_pitch`, `acid_program_reenter_time` | `stage_navigation`, `finish_stage`, `begin_stage`, `refresh_stage` (`gui.lua:516-534`, `1706-1741`) | Retain. `acid_program_discard` remains the cancel ID; visible label changes later. `acid_program_check` is removed with diagnostics. |
+| Entry actions `acid_program_back`, `acid_program_enter`, `acid_program_restart`, `acid_program_finish`, `acid_program_discard`, `acid_program_reenter_pitch`, `acid_program_reenter_time` | `stage_navigation`, `finish_stage`, `begin_stage`, `refresh_stage` in `gui.lua` | Retain. `acid_program_discard` remains the Cancel ID. Redundant `acid_program_edit_one` is deleted; `acid_program_check` is removed with diagnostics. |
 | Audition `acid_audition`, Live Edit `acid_live_edit`, and Generate / Regenerate (anonymous button) (`gui.lua:1422-1438`, `1742-1758`, `2170-2188`) | Shared audition release and lifecycle hooks (`gui.lua:94-170`, `2198-2268`); generation admission through runtime; result feedback in `acid_status` | Retain audition, Live Edit and Generate. Remove permanent anonymous `Retry Live Edit` in Task 9. `acid_audition_status` is a separate cleanup report slated to merge into shared feedback. Tests: audition lifecycle, GUI admission/views, runtime request/writer integration; Live Edit manual |
 | Rename, Duplicate, Reset, Undo/Redo; `acid_label_*`, `acid_pattern_duplicate`, `acid_pattern_reset` (`gui.lua:1444-1542`, `1815-1827`, `2148-2155`) | Rename attempt/save lifecycle, duplicate admission and editor history | Retain. Rename dialog Save/Retry/Discard Attempt resolves label edits and stays; it is not recovery UI. `acid_duplicate_label_spec.lua`, `acid_editor_spec.lua` |
 | Copy/Paste, operations, random parameters, scale browser/import and mask; `acid_clipboard_*`, `acid_operation_*`, `acid_random_*`, `acid_scale_*`, `acid_mask_*` (`gui.lua:1788-2092`) | Scoped source edits and operation/scale update callbacks; `update()` refreshes active state (`gui.lua:550-739`) | Retain. Clipboard, GUI views, sequencer and scale specs |

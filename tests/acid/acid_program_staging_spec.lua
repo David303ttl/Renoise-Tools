@@ -3,6 +3,8 @@ local seq=require("model.sequencer")
 local store=require("renoise.pattern_store")
 local editor=require("model.editor_state")
 local PITCH_COUNT,TIME_COUNT=3,4
+local LONG_ENTRY_COUNT,MISSING_POSITION=20,5
+local PAGE_SIZE=seq.PAGE_SIZE
 local SELECTED_COLOR=0xF0
 local ACCEPTED_PITCH_NAME,CANDIDATE_PITCH_NAME="C#3","E3"
 local song,instrument=fixture.fixture()
@@ -128,6 +130,16 @@ local function begin(memory)
   answer="Proceed"
   fire("acid_program_reenter_"..memory)
 end
+local function cancel_stage(decision)
+  answer=decision
+  fire("acid_program_discard")
+end
+local function select_stage_position(memory,position)
+  local page=math.floor((position-1)/PAGE_SIZE)+1
+  local cell=(position-1)%PAGE_SIZE+1
+  fire("acid_program_"..memory.."_page_"..page)
+  fire(string.format("acid_program_select_%s_%02d",memory,cell))
+end
 local function enter_all(count)
   fire("acid_program_restart")
   for _=1,count do fire("acid_program_enter")end
@@ -140,6 +152,10 @@ local function unchanged(before,revision,save_count,write_count)
   assert(writes==write_count,"candidate generated output")
 end
 gui.show()
+assert(builder.views.acid_program_edit_one==nil and
+  view("acid_program_reenter_pitch").text=="Enter pitches" and
+  view("acid_program_reenter_time").text=="Enter timing",
+  "entry launches replace Edit One with contextual labels")
 do
   local original=assert(seq.copy_source(current()))
   local initial_revision,initial_saves,initial_writes=history.revision,saves,writes
@@ -169,7 +185,7 @@ do
     answer="Stay";fire(id)
     assert(view("acid_program_enter").active,"clipboard action must preserve stage on Stay")
     unchanged(original,pasted_revision,pasted_saves,initial_writes)
-    answer="Discard";fire(id)
+    answer="Cancel";fire(id)
     assert(not view("acid_program_enter").active,"clipboard guard must discard on request")
     unchanged(original,pasted_revision,pasted_saves,initial_writes)
   end
@@ -180,10 +196,14 @@ local revision,save_count,write_count=history.revision,saves,writes
 answer="Cancel"
 fire("acid_program_reenter_pitch")
 unchanged(before,revision,save_count,write_count)
-assert(not view("acid_program_enter").active,"cancel must leave Edit One")
+assert(not view("acid_program_enter").active,"cancel must remain in normal editing")
 begin("pitch")
 local confirmation=prompts[#prompts]
 assert(confirmation.message:find("P01",1,true) and confirmation.message:find("P03",1,true))
+for _,term in ipairs({"origin","candidate","revision","transaction"}) do
+  assert(not confirmation.message:lower():find(term,1,true),"ordinary entry prompt hides internal term: "..term)
+end
+assert(view("acid_program_restart").text=="Restart" and view("acid_program_discard").text=="Cancel")
 assert(not view("acid_program_finish").active)
 fire("acid_program_select_time_02")
 button("REST"):fire()
@@ -273,9 +293,9 @@ assert(current().pitch_events[1].note==36)
 button("Undo"):fire()
 assert(current().pitch_events[1].note==40,"Undo requires a fresh invocation")
 begin("pitch")
-answer="Discard"
+answer="Cancel"
 button("Generate / Regenerate ACID Phrase"):fire()
-assert(writes==write_count,"Discard must abandon Generate")
+assert(writes==write_count,"Cancel must abandon Generate")
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(writes==write_count+1,"Generate requires a fresh invocation")
 write_count=writes
@@ -290,7 +310,6 @@ local actions={
   function()control("valuebox",78):fire(TIME_COUNT+1)end,
   function()control("popup",78):fire(PITCH_COUNT+1)end,
   function()control("popup",360):fire(2)end,
-  function()fire("acid_program_edit_one")end,
   function()fire("acid_program_reenter_pitch")end,
   function()fire("acid_program_reenter_time")end,
   function()button("Generate / Regenerate ACID Phrase"):fire()end,
@@ -298,7 +317,7 @@ local actions={
   function()button("Retry Live Edit"):fire()end
 }
 for _,complete in ipairs({false,true})do
-  for _,decision in ipairs({"Stay","Discard","Finish"})do
+  for _,decision in ipairs({"Stay","Cancel","Finish"})do
     for _,action in ipairs(actions)do
       begin("time")
       fire("acid_program_select_time_02")
@@ -326,11 +345,11 @@ for _,complete in ipairs({false,true})do
       assert(control("popup",360).value==prior_target,"guard must abandon target selection")
       assert(not view("acid_live_edit").value,"guard must abandon Live Edit toggle")
       local offered={};for _,choice in ipairs(prompts[#prompts].buttons)do offered[choice]=true end
-      assert(offered.Stay and offered.Discard)
+      assert(offered.Stay and offered.Cancel)
       assert((offered.Finish==true)==complete,"incomplete guard cannot offer Finish")
       local pending=decision=="Stay" or (not complete and decision=="Finish")
       assert(view("acid_program_enter").active==pending,"guard must resolve only stage")
-      if pending then answer="Discard";fire("acid_program_edit_one")end
+      if pending then answer="Cancel";fire("acid_program_reenter_pitch")end
       if changed_finish then button("Undo"):fire()end
     end
   end
@@ -361,7 +380,9 @@ revision=history.revision
 fire("acid_program_finish")
 assert(history.revision==revision,"stale Finish cannot overwrite revision")
 assert(seq.same_source(runtime:editor_state().source,newer),"stale Finish cannot overwrite newer source")
-assert(view("acid_program_enter").active,"stale Finish must retain stage")
+assert(not view("acid_program_enter").active,"stale Finish discards the invalid stage")
+assert(view("acid_status").text=="The destination changed. Start entry again.",
+  "stale entry reports a concise destination message")
 prompt_count=#prompts
 dialog:close()
 tool.app_idle_observable:fire()
@@ -387,6 +408,110 @@ local function fresh(replacement)
   song.selected_phrase=instrument.phrases[1]
   dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
   gui.show()
+end
+do
+  local long_source=seq.new_pattern(TIME_COUNT)
+  long_source.pitch_length=LONG_ENTRY_COUNT
+  for index=1,seq.MAX_STEPS do
+    long_source.pitch_events[index]=seq.new_pitch(index%12,0,true,true)
+    long_source.time_events[index]=index%2==0 and "R" or "N"
+  end
+  fresh(long_source)
+  local canonical=seq.copy_source(current())
+  local revision_before,saves_before,writes_before=history.revision,saves,writes
+  begin("pitch")
+  assert(view("acid_program_stage_status").text=="Pitch 1 of 20")
+  for position=1,LONG_ENTRY_COUNT do
+    if position~=MISSING_POSITION then
+      select_stage_position("pitch",position)
+      fire("acid_program_enter")
+    end
+  end
+  select_stage_position("pitch",17)
+  fire("acid_program_enter")
+  assert(view("acid_program_stage_status").text=="Pitch 18 of 20",
+    "progress follows the cursor after skipping an unentered target")
+  answer="Stay"
+  button("Generate / Regenerate ACID Phrase"):fire()
+  assert(view("acid_program_select_pitch_05").color[1]==SELECTED_COLOR and
+    view("acid_program_stage_status").text=="Pitch 5 of 20" and
+    view("acid_program_pitch_page_1").color[1]==SELECTED_COLOR,
+    "blocked Program Generate returns to page one and reveals the first missing position")
+  unchanged(canonical,revision_before,saves_before,writes_before)
+  fire("acid_editor_view",2)
+  assert(view("acid_program_stage_status").text:find("return to Program",1,true),
+    "Grid feedback directs the user to Program while retaining stage progress")
+  answer="Stay"
+  button("Generate / Regenerate ACID Phrase"):fire()
+  assert(view("acid_editor_view").value==2 and view("acid_program_stage_status").text:find("return to Program",1,true),
+    "blocked Grid Generate stays in Grid and explains where to edit")
+  unchanged(canonical,revision_before,saves_before,writes_before)
+  fire("acid_editor_view",1)
+  assert(view("acid_program_select_pitch_05").color[1]==SELECTED_COLOR and
+    view("acid_program_stage_status").text=="Pitch 5 of 20",
+    "returning to Program restores the missing cursor")
+  assert(not view("acid_program_finish").active)
+  fire("acid_program_finish")
+  unchanged(canonical,revision_before,saves_before,writes_before)
+  for _=1,LONG_ENTRY_COUNT do fire("acid_program_enter")end
+  assert(view("acid_program_finish").active)
+  select_stage_position("pitch",LONG_ENTRY_COUNT)
+  view("acid_program_key_05"):fire()
+  assert(not view("acid_program_finish").active,"candidate edit invalidates its entered marker")
+  local candidate_revision,candidate_saves,candidate_writes=history.revision,saves,writes
+cancel_stage("Cancel")
+  unchanged(canonical,candidate_revision,candidate_saves,candidate_writes)
+  assert(not view("acid_program_enter").active and view("acid_program_discard").text=="Cancel",
+    "Cancel discards the candidate stage")
+
+  fresh(long_source)
+  begin("pitch")
+  fire("acid_program_key_05")
+  enter_all(LONG_ENTRY_COUNT)
+  fire("acid_program_restart")
+  assert(view("acid_program_finish").active and view("acid_program_stage_status").text=="Pitch 1 of 20",
+    "Restart resets only the cursor and preserves every entered marker")
+  fire("acid_editor_view",2)
+  assert(view("acid_program_finish").active and view("acid_program_discard").active,
+    "Finish and Cancel remain reachable in Grid after complete entry")
+  revision_before,saves_before,writes_before=history.revision,saves,writes
+  fire("acid_program_finish")
+  assert(history.revision==revision_before+1 and saves==saves_before+1 and writes==writes_before,
+    "Finish from Grid commits the complete candidate once")
+
+  fresh(long_source)
+  begin("pitch")
+  fire("acid_program_key_05")
+  fire("acid_editor_view",2)
+  revision_before,saves_before,writes_before=history.revision,saves,writes
+cancel_stage("Cancel")
+  unchanged(canonical,revision_before,saves_before,writes_before)
+  assert(not view("acid_program_enter").active,"Cancel from Grid abandons the staged candidate")
+
+  local time_source=seq.new_pattern(MISSING_POSITION)
+  time_source.pitch_length=PITCH_COUNT
+  for index=1,seq.MAX_STEPS do
+    time_source.pitch_events[index]=seq.new_pitch(index%12,0,true,true)
+    time_source.time_events[index]=index%2==0 and "R" or "N"
+  end
+  fresh(time_source)
+  local time_before=seq.copy_source(current())
+  revision_before,saves_before,writes_before=history.revision,saves,writes
+  begin("time")
+  for position=1,MISSING_POSITION do
+    if position~=MISSING_POSITION then
+      select_stage_position("time",position)
+      fire("acid_program_enter")
+    end
+  end
+  answer="Stay"
+  button("Generate / Regenerate ACID Phrase"):fire()
+  assert(view("acid_program_select_time_05").color[1]==SELECTED_COLOR and
+    view("acid_program_stage_status").text=="Timing 5 of 5" and
+    view("acid_program_time_page_1").color[1]==SELECTED_COLOR,
+    "blocked TIME Generate reveals the first missing position: "..
+      view("acid_program_stage_status").text)
+  unchanged(time_before,revision_before,saves_before,writes_before)
 end
 do
   local project=editor.project
@@ -567,9 +692,9 @@ for _,complete in ipairs({false,true})do
     else
       assert(not view("acid_program_enter").active,name.." must invalidate staged candidate")
       local message=view("acid_status").text
-      assert(message:find("This entry is no longer available.",1,true) or
-        message:find("Entry was discarded because the destination changed.",1,true),
-        name.." must report transient entry discard after restoring canonical editor: "..message)
+      assert(message:find("The destination changed. Start entry again.",1,true) and
+        not message:lower():find("origin",1,true) and not message:lower():find("revision",1,true),
+        name.." must report a concise destination change after restoring canonical editor: "..message)
     end
   end
 end
@@ -625,7 +750,9 @@ for _,complete in ipairs({false,true})do
       "stale origin cannot authorize candidate editing or Finish")
     local actual=drift=="runtime" and runtime:editor_state().source or current()
     assert(seq.same_source(actual,newer),"stale stage must preserve newer canonical state")
-    assert(view("acid_program_enter").active,"revision rejection must retain transient stage")
+    assert(not view("acid_program_enter").active and
+      view("acid_status").text=="The destination changed. Start entry again.",
+      "stale revision discards transient entry with a concise destination message")
   end
 end
 for _,memory in ipairs({"pitch","time"})do
@@ -751,8 +878,8 @@ local audition_writes,audition_saves=writes,saves
 fire("acid_audition")
 assert(note_calls[#note_calls].note==48,"PITCH audition resolves detached candidate")
 assert(seq.same_source(before_audition,current()) and writes==audition_writes and saves==audition_saves)
-answer="Discard";fire("acid_program_discard")
-assert(note_calls[#note_calls].kind=="off","Discard releases before its prompt")
+cancel_stage("Cancel")
+assert(note_calls[#note_calls].kind=="off","Cancel releases before its prompt")
 fire("acid_audition")
 assert(note_calls[#note_calls].note==38,"canonical audition resolves mask")
 begin("time")
@@ -762,7 +889,7 @@ local calls_before_time=#note_calls
 fire("acid_audition")
 fire("acid_grid_audition")
 assert(#note_calls==calls_before_time,"TIME-stage notifier cannot trigger audition")
-answer="Discard";fire("acid_program_discard")
+cancel_stage("Cancel")
 local function releases(action,label)
   fire("acid_audition")
   assert(note_calls[#note_calls].kind=="on",label.." onset")
@@ -789,7 +916,7 @@ releases(function()fire("acid_program_enter")end,"Enter navigation")
 releases(function()fire("acid_program_back")end,"Back navigation")
 releases(function()fire("acid_program_restart")end,"Restart navigation")
 releases(function()answer="Stay";button("Undo"):fire()end,"pending-stage guard")
-releases(function()answer="Discard";fire("acid_program_discard")end,"Discard prompt")
+releases(function()cancel_stage("Cancel")end,"Cancel prompt")
 app.show_prompt=prompt_impl
 local note_off=song.trigger_instrument_note_off
 local failed_releases=0

@@ -17,8 +17,8 @@ The header places Instrument first, then Phrase with Rename and Duplicate.
 Length, Timing, Reset pattern and Pitch span sit above the editor.
 Program and Grid have independent PITCH and TIME cursors and pages. Grid
 selects sixteen positions per page for direct editing with shared pitch and
-NOTE/TIE/REST controls. Program offers direct Edit One and staged Re-enter
-PITCH or Re-enter TIME. Both views
+NOTE/TIE/REST controls. Program offers direct editing and **Enter pitches**
+or **Enter timing**. Both views
 edit the same source; switching views does not change or regenerate the
 sequence. Reducing Length keeps hidden TIME entries available if the length
 is increased again; inactive TIME positions remain inspectable but cannot be
@@ -28,19 +28,21 @@ TIME buttons show **Note**, **Tie** or **Rest**; assignment controls below the
 active editor's TIME positions highlight the selected command. Grid pitches
 show Renoise note names with **ACC** and **SLD** when enabled. Pitch tooltips
 identify musical notes. Grid shows canonical source; Program shows the
-candidate during re-entry.
+pending edits during sequential entry.
 
 Shared feedback shows unresolved save, destination, scale, audition and output
 issues. Routine successful Live Edit stays quiet; explicit Generate confirms
-completion. Entry navigation appears only during re-entry.
+completion. Entry navigation and cursor progress appear only during entry.
 
-Re-enter starts a detached candidate over the active memory span. Set each value
-and press **Enter and Advance** to mark it entered. Back and Restart Cursor only
-move the stage cursor; changing an entered value clears its marker. Generate
-reports missing entries without applying an incomplete candidate. **Finish** is
+Sequential entry starts separate edits over the active memory span. Set each value
+and press **Enter and advance** to mark it entered. Back and Restart only
+move the cursor; changing an entered value clears its marker. Generate
+identifies the first missing position and reveals it in Program without applying
+incomplete edits. Grid remains read-only during entry; return to Program to
+complete missing positions. **Finish** is
 available only after every position is entered and applies one undoable edit;
-**Discard** abandons the candidate. Neither action automatically resumes a
-blocked navigation or command: invoke that action again. Closing the dialog or
+**Cancel** abandons the pending edits after confirmation. Neither action resumes
+a blocked navigation or command automatically: invoke that action again. Closing the dialog or
 changing song drops the candidate and retains the canonical draft best effort.
 
 **Audition** in each view's PITCH controls previews the selected resolved pitch

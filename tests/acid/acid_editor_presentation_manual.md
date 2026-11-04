@@ -9,16 +9,23 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
    views show the same full command name, distinct colors on unselected steps,
    and a highlighted assignment button. Undo and Redo each edit.
 3. Inspect both TIME pages and inactive steps. Confirm labels remain readable
-   and inactive steps cannot be assigned. Re-enter TIME and check labels show
-   candidate assignments; discard restores the accepted assignments.
+   and inactive steps cannot be assigned. Enter timing and check labels show
+   pending assignments; Cancel restores the accepted assignments.
 4. Confirm Grid pitches show Renoise note names, ACC and SLD only when enabled,
    with musical note identification on hover. Neither view shows selected-position
    summaries or source-interpretation diagnostics. Each view has Audition
    beside its PITCH controls; Note/Tie/Rest sit below its TIME positions.
-5. Confirm staging navigation appears during re-entry and disappears after
-   Finish or Discard. Switch to Grid during staging and back to Program.
-6. Attempt Generate with incomplete entry and verify missing-position feedback
-   and source navigation. Check generation failures and audition cleanup errors
+5. Confirm Enter pitches/Enter timing appear in Program during normal editing.
+   During entry, launch controls disappear and Back, Enter and advance, Restart,
+   Finish and Cancel appear with cursor progress. Restart preserves entered
+   markers; Cancel requires confirmation and leaves source/history unchanged.
+   Switch to Grid and back: progress and Finish/Cancel remain reachable, Grid
+   shows accepted values and cannot edit pending values.
+6. Enter all positions except 5, then attempt Generate from another page.
+   Confirm Finish is disabled, feedback identifies position 5 and Program reveals
+   it with matching cursor progress without saving or generating. Repeat in Grid:
+   the view stays Grid and directs completion in Program. Finish complete entry,
+   then invoke Generate again. Check generation failures and audition cleanup errors
    remain readable. Successful Live Edit stays quiet; a new edit clears an old
    explicit success confirmation while unresolved warnings remain visible.
 7. Compare dialog height, spacing and text clipping in both views at the
