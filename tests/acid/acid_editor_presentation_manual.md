@@ -32,3 +32,10 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
     above the editor. Reduce Length with a different Pitch span, then restore it:
     inactive TIME entries and PITCH memory must remain intact. Check both Timing
     divisions and undoable Reset pattern; Reset must respect pending entry.
+11. Confirm Program/Grid, Undo, Redo, clipboard scope, Copy and Paste share one
+    toolbar. No Pattern / Copy tab or clipboard contents report remains. Copy
+    PITCH, select TIME and confirm Paste is inactive. Return to PITCH, edit and
+    paste: one Undo restores the edit; identical Paste adds no history or write.
+    Repeat with TIME and Both. Copy, scope selection and editor switching must
+    not save or generate. During entry or an unresolved rename, Paste remains
+    inactive. Undo/Redo save failures remain visible without a success paragraph.

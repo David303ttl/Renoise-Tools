@@ -489,23 +489,32 @@ assert_navigation_neutral(navigation,"workspace view navigation")
 view:fire(1)
 assert(display_snapshot()==initial)
 assert_navigation_neutral(navigation,"return workspace navigation")
-local workspace_tabs={"Pattern / Copy","Extended / Clear","Output"}
-local workspace_panels={"acid_pattern_copy_panel","acid_extended_panel","acid_output_panel"}
+local toolbar=control("acid_editor_toolbar")
+local toolbar_controls={view,button("Undo"),button("Redo"),control("acid_clipboard_scope"),
+  control("acid_clipboard_copy"),control("acid_clipboard_paste")}
+for _,item in ipairs(toolbar_controls) do
+  assert(builder.parent_of(item)==toolbar,"view, history and clipboard controls share the editor toolbar")
+end
+assert(control("acid_clipboard_copy").active~=false and not control("acid_clipboard_paste").active and
+  builder.views.acid_clipboard_status==nil and builder.views.acid_pattern_copy_panel==nil,
+  "empty clipboard disables Paste without a status view")
+for _,node in ipairs(builder.nodes) do
+  assert(node.text~="Pattern / Copy","retired Pattern / Copy tab is not constructed")
+end
+local workspace_tabs={"Extended / Clear","Output"}
+local workspace_panels={"acid_extended_panel","acid_output_panel"}
 for index,tab in ipairs(workspace_tabs) do
   text_control(tab):fire()
   for panel_index,id in ipairs(workspace_panels) do
     assert(control(id).visible==(panel_index==index),
-      tab.." selects its workspace panel without leaving other panels visible")
+      tab.." selects its retained panel without showing the other")
   end
 end
-assert(control("acid_clipboard_copy").active~=false and not control("acid_clipboard_paste").active and
-  control("acid_clipboard_status").text=="Clipboard empty",
-  "Pattern / Copy exposes Copy and disables empty Paste")
 assert(control("acid_operation_open") and control("acid_mask_enabled"),
   "Extended / Clear exposes scoped operations and mask controls")
 assert(control("acid_output_policy").active and control("acid_pb_range").active,
   "Output provides active phrase policy and PB Range controls")
-assert_navigation_neutral(navigation,"workspace tab navigation")
+assert_navigation_neutral(navigation,"retained workspace tab navigation")
 for _=1,20 do tool.app_idle_observable:fire() end
 assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
 
@@ -854,9 +863,13 @@ button("NOTE"):fire()
 assert(not button("Redo").active,"new edits discard the redo branch")
 
 phrase_popup:fire(1)
+control("acid_clipboard_copy"):fire()
+assert(control("acid_clipboard_paste").active==true,"matching clipboard is eligible before generation")
 button("Generate / Regenerate ACID Phrase"):fire()
 assert(generation_request.target_index==1,"the first owned phrase can be generated in place")
+assert(control("acid_clipboard_paste").active==false,"pending generation disables Paste immediately")
 generation_callback(terminal_result(generation_request,"committed","Phrase 01 generated."))
+assert(control("acid_clipboard_paste").active==true,"completed generation restores Paste eligibility")
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual regeneration accepts structural selection changes without altering playback")
 assert(control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
@@ -1271,7 +1284,9 @@ do
   local renders,draft_count=render_calls,draft_writes
   local rename_writes=writes
   local initial_name=control("acid_label_accepted").text
+  local editor_builder=builder
   save_label("Invalid/name")
+  assert(editor_builder.views.acid_clipboard_paste.active==false,"open rename dialog gates Paste")
   assert(writes==rename_writes,"invalid phrase name reached persistence")
   assert(control("acid_label_accepted").text==initial_name,"invalid phrase name changed accepted name")
   assert(control("acid_label_error").text=="Use the name format shown above.",
@@ -1290,12 +1305,16 @@ do
   dialog=main_dialog
   save_label("Accepted B")
   assert(control("acid_label_accepted").text=="Accepted B")
+  assert(not control("acid_status").text:find("saved",1,true),
+    "successful rename does not leave a persistent save paragraph")
   assert(render_calls==renders and draft_writes==draft_count,
     "label-only rename does not use musical edit or generation paths")
   failing=true
   button("Undo"):fire()
   dialog=main_dialog
-  assert(control("acid_label_field").value=="Accepted A" and not control("acid_label_field").active)
+  assert(control("acid_label_field").value=="Accepted A" and not control("acid_label_field").active and
+    editor_builder.views.acid_clipboard_paste.active==false,
+    "failed label-only history persistence keeps Paste guarded")
   assert(control("acid_label_accepted").text=="Accepted B" and
     control("acid_label_error").text=="Phrase name could not be saved. Retry or discard this attempt." and
     control("acid_status").text:find("Phrase name could not be saved. Retry or discard the attempt.",1,true) and
@@ -1304,7 +1323,7 @@ do
   local pending_writes=writes
   button("Undo"):fire()
   button("Redo"):fire()
-  control("acid_clipboard_paste"):fire()
+  editor_builder.views.acid_clipboard_paste:fire()
   control("acid_instrument"):fire(2)
   control("acid_pattern_duplicate"):fire()
   program_key(3):fire()
@@ -1315,9 +1334,13 @@ do
   failing=false
   control("acid_label_retry"):fire()
   assert(control("acid_label_accepted").text=="Accepted A")
+  assert(not control("acid_status").text:find("saved",1,true),
+    "successful label-only Undo does not report a saved paragraph")
   button("Redo"):fire()
   assert(control("acid_label_accepted").text=="Accepted B",
     "Retry commits original Undo proposal instead of appending a rename")
+  assert(not control("acid_status").text:find("saved",1,true),
+    "successful label-only Redo remains quiet")
   failing=true
   save_label("Attempted C")
   assert(control("acid_label_field").value=="Attempted C" and
@@ -1328,7 +1351,8 @@ do
     "Discard Attempt restores accepted field without accepting failed text")
   failing=false
   button("Undo"):fire()
-  assert(control("acid_label_accepted").text=="Accepted A",
+  assert(control("acid_label_accepted").text=="Accepted A" and
+    not control("acid_status").text:find("saved",1,true),
     "Undo after discard uses accepted history")
   failing=true
   local before_retry_writes=writes

@@ -228,7 +228,7 @@ function M.show()
   local session
   local stage
   local label_ui={}
-  local clipboard={scopes={"pitch","time","both"},names={pitch="PITCH",time="TIME",both="Both"}}
+  local clipboard={scopes={"pitch","time","both"}}
   local guard_stage,finish_stage
   local stage_status,stage_actions,entry_navigation
   local refresh_stage
@@ -301,7 +301,6 @@ function M.show()
     if issue.key=="scale_save_uncertain" then return "Custom scales could not be verified; import is disabled. Reopen ACID to reload them." end
     if issue.key=="scale_imported" then return string.format("Imported %d scale definitions.",args.count) end
     if issue.key=="phrase_duplicated" then return "Phrase duplicated." end
-    if issue.key=="label_saved" then return "Phrase name saved." end
     if issue.key=="phrase_updated" then return "Phrase updated." end
     if issue.key=="phrase_approximate" then return "Phrase updated with a musical approximation." end
     return "The action could not be completed."
@@ -741,19 +740,21 @@ function M.show()
       render(stage_actions.discard,"active",stage~=nil)
     end
   end
+  local function refresh_clipboard()
+    if clipboard.choice then
+      local scope=clipboard.scopes[clipboard.choice.value]
+      local eligible=not not runtime:musical_eligibility()
+      local editor_available=stage==nil and not label_ui.attempt and
+        not (label_ui.dialog and label_ui.dialog.visible)
+      render(clipboard.paste_button,"active",clipboard.payload~=nil and
+        clipboard.scope==scope and eligible and editor_available)
+    end
+  end
   update=function()
     updating=true
     local projection=project()
     refresh_stage()
-    if clipboard.choice then
-      local scope=clipboard.scopes[clipboard.choice.value]
-      render(clipboard.paste_button,"active",clipboard.payload~=nil and clipboard.scope==scope)
-      render(clipboard.status,"text",clipboard.payload and string.format("Captured %s | %s%s%s",
-        clipboard.names[clipboard.scope],
-        clipboard.payload.pitch_length and ("PITCH span "..clipboard.payload.pitch_length) or "",
-        clipboard.payload.pitch_length and clipboard.payload.length and " | " or "",
-        clipboard.payload.length and ("LAST STEP "..clipboard.payload.length) or "") or "Clipboard empty")
-    end
+    refresh_clipboard()
     render(view_heading,"text",editor_view==1 and "PROGRAM VIEW" or "GRID VIEW")
     if program_panel then render(program_panel,"visible",editor_view==1) end
     if grid_panel then render(grid_panel,"visible",editor_view==2) end
@@ -934,6 +935,7 @@ function M.show()
     clear_resolved_input()
     if effects and effects.live_intent and current_session() then
       runtime:flush_pending()
+      refresh_clipboard()
     end
   end
   finish_stage=function()
@@ -1482,6 +1484,7 @@ function M.show()
   instrument_choice=target
   deliver=function(request,result)
     if type(request)~="table" or not current_session() then return end
+    refresh_clipboard()
     local success=result.kind=="success" and result.verified==true
     local request_context=feedback_request_contexts[request] or feedback.context()
     feedback_request_contexts[request]=nil
@@ -1623,6 +1626,7 @@ function M.show()
     else label_ui.dialog=renoise.app():show_custom_dialog("ACID - Phrase name",label_ui.content) end
     label_ui.field.edit_mode=label_ui.field.active
     active_label_dialog=label_ui.dialog
+    update()
   end
   label_ui.apply=function(attempt)
     local function current()
@@ -1653,14 +1657,17 @@ function M.show()
       label_ui.show(attempt)
       return
     end
-    if attempt.proposal then assert(history:commit(attempt.proposal),"Label history proposal changed during persistence")
-    else history:record(pattern,output_policy,pb_range,attempt.label,attempt.label_custom) end
+    if attempt.proposal then
+      assert(history:commit(attempt.proposal),"Label history proposal changed during persistence")
+    else
+      history:record(pattern,output_policy,pb_range,attempt.label,attempt.label_custom)
+    end
+    feedback.clear_confirmation()
     phrase_label,phrase_label_custom=attempt.label,attempt.label_custom
     label_ui.attempt=nil
     label_ui.close()
     feedback.clear_input("label_save_failed","label_attempt_stale","label_editor_open")
     update()
-    feedback.confirm("label_saved")
   end
   local function move_history(direction)
     if guard_stage() then return end
@@ -1684,7 +1691,10 @@ function M.show()
     local _,_,effects=save_draft()
     update()
     clear_resolved_input()
-    if effects and effects.live_intent and current_session() then runtime:flush_pending() end
+    if effects and effects.live_intent and current_session() then
+      runtime:flush_pending()
+      refresh_clipboard()
+    end
   end
   undo_button=vb:button{text="Undo",active=false,notifier=function()
     move_history("undo")
@@ -1784,7 +1794,6 @@ function M.show()
     time_pages,time_grid}
   clipboard.choice=vb:popup{id="acid_clipboard_scope",items={"PITCH","TIME","Both"},value=1,
     notifier=function() if not updating then release_audition();update() end end}
-  clipboard.status=vb:text{id="acid_clipboard_status",text="Clipboard empty"}
   local copy_button=vb:button{id="acid_clipboard_copy",text="Copy",notifier=function()
     if guard_stage() then return end
     clipboard.scope=clipboard.scopes[clipboard.choice.value]
@@ -1815,11 +1824,9 @@ function M.show()
     if not current_session() then feedback.request_failure("generation",true);return end
     apply_pending_selected_phrase_selection()
     local accepted=runtime:request_duplicate()
+    refresh_clipboard()
     if not accepted then feedback.request_failure("generation",true) end
   end}
-  local pattern_copy_panel=vb:column{id="acid_pattern_copy_panel",spacing=4,
-    vb:text{text="PATTERN / COPY",font="bold"},
-    vb:row{spacing=6,clipboard.choice,copy_button,clipboard.paste_button},clipboard.status}
   local extended_panel
   do
   local function admit_operation()
@@ -2106,7 +2113,7 @@ function M.show()
     vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
       vb:text{text="PB Range"},pb_range_popup},
     vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."}}
-  local tab_names={"Pattern / Copy","Extended / Clear","Output"}
+  local tab_names={"Extended / Clear","Output"}
   local tab_row=vb:row{spacing=4}
   for index,name in ipairs(tab_names) do
     local tab=index
@@ -2116,10 +2123,10 @@ function M.show()
     end}
     tab_row:add_child(ui.workspace.tabs[index])
   end
-  ui.workspace.panels={pattern_copy_panel,extended_panel,output_panel}
+  ui.workspace.panels={extended_panel,output_panel}
   local workspace=vb:column{spacing=4,tab_row,
     vb:stack{autosize=false,size={width=820,height=WORKSPACE_HEIGHT},views={
-      pattern_copy_panel,extended_panel,output_panel}}
+      extended_panel,output_panel}}
   }
   for _,panel in ipairs(ui.workspace.panels) do
     panel.origin={0,0}
@@ -2145,9 +2152,10 @@ function M.show()
       vb:text{text="Length"},last_step_box,
       vb:text{text="Timing"},timing_popup,reset_button,
       vb:text{text="Pitch span"},pitch_length_popup},
-    vb:row{spacing=8,
-      vb:text{text="Editor"},view_popup,undo_button,
-      redo_button,audition_button},
+    vb:row{id="acid_editor_toolbar",spacing=8,
+      vb:text{text="Editor"},view_popup,undo_button,redo_button,
+      vb:text{text="Copy scope"},clipboard.choice,copy_button,clipboard.paste_button,
+      audition_button},
     view_heading,stage_status,program_panel,grid_panel,
     vb:row{spacing=5,vb:text{text="Assign selected TIME"},
       ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
@@ -2157,6 +2165,7 @@ function M.show()
         if guard_stage() then return end
         if runtime:revision_state().armed then
           local accepted=runtime:request_generation("live")
+          refresh_clipboard()
           if not accepted then feedback.request_failure("generation",false) end
         end
       end}},
@@ -2177,6 +2186,7 @@ function M.show()
         end
         clear_resolved_input()
         local accepted=runtime:request_generation("manual")
+        refresh_clipboard()
         if not accepted then feedback.request_failure("generation",false) end
       end}},
     feedback.holder}
@@ -2212,8 +2222,13 @@ function M.show()
       return
     end
     if observed_dialog.visible then
+      if label_ui.dialog and not label_ui.dialog.visible then
+        label_ui.close()
+        update()
+      end
       apply_pending_selected_phrase_selection()
       runtime:flush_pending()
+      refresh_clipboard()
       return
     end
     detach_this_watch()

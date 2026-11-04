@@ -361,7 +361,7 @@ tool.app_idle_observable:fire()
 assert(#prompts==prompt_count,"dialog close discards without prompting")
 gui.show()
 assert(not view("acid_program_enter").active,"reopen cannot restore transient stage")
-assert(not view("acid_clipboard_paste").active and view("acid_clipboard_status").text=="Clipboard empty",
+assert(not view("acid_clipboard_paste").active and builder.views.acid_clipboard_status==nil,
   "reopen cannot restore session clipboard")
 local drafts=require("runtime.draft_cache")
 local function fresh(replacement)
@@ -456,6 +456,24 @@ do
 end
 
 do
+  fresh(source)
+  fire("acid_clipboard_scope",3)
+  fire("acid_clipboard_copy")
+  local editor_builder=builder
+  assert(view("acid_clipboard_paste").active,"matching clipboard starts eligible")
+  fire("acid_label_rename")
+  assert(editor_builder.views.acid_clipboard_paste.active==false,"open rename dialog gates Paste")
+  fire("acid_label_discard")
+  assert(editor_builder.views.acid_clipboard_paste.active==true,
+    "discarded rename restores Paste eligibility")
+  editor_builder.views.acid_label_rename:fire()
+  local native_label_dialog=dialog
+  native_label_dialog:close()
+  assert(editor_builder.views.acid_clipboard_paste.active==false,
+    "native close remains gated until idle refresh")
+  tool.app_idle_observable:fire()
+  assert(editor_builder.views.acid_clipboard_paste.active==true,
+    "idle refresh releases the native-close guard")
   fresh(source)
   fire("acid_clipboard_scope",3)
   fire("acid_clipboard_copy")

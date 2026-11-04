@@ -112,7 +112,7 @@ The native case command is:
 
 The GUI has no Details, source/preview/live-state report, decoded view,
 inspector, Sampler Audit, Check or recovery actions. Only the shared renderer
-writes feedback text. Workspace navigation, Pattern / Copy and Live Edit Retry
+writes feedback text. Workspace navigation and Live Edit Retry
 remain for their later scheduled tasks; this is not the completed redesign.
 
 | Removed dependency | Disposition and retained responsibility |
@@ -202,6 +202,29 @@ Native header fit, selection synchronization and rename/reset interaction checks
 in `acid_editor_presentation_manual.md` remain unverified for this change.
 Runtime file layout and package inputs are unchanged; no package rebuild is
 required.
+
+## Task 5 toolbar and history
+
+Program/Grid, Undo, Redo, clipboard scope, Copy and Paste share one toolbar.
+Clipboard contents/status rendering and the Pattern / Copy panel and tab are
+removed. The payload and PITCH/TIME/Both scopes remain session state. Paste
+requires a matching payload, musical eligibility and no pending entry or rename;
+its callback retains independent guards, candidate validation and no-op handling.
+Accepted paste uses the existing history/save/Live Edit path. History retains
+proposal/commit and label-only persistence; successful history moves stay quiet
+while save failures remain visible.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/setup_sdk.ps1` | Pinned API 6.2 SDK confirmed; view membership and stack definitions/docs inspected |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1; 72.47 s |
+| `lua tests/acid/acid_gui_views_spec.lua` | Final pending-generation eligibility and removed-panel assertions passed |
+| Second-pass review | Independent callback/history review, request and label-dialog availability checks, strict boolean state and obsolete-reference audit completed |
+| `git diff --check` | Passed |
+
+Native toolbar fit and clipboard/history checks in
+`acid_editor_presentation_manual.md` remain unverified. Runtime file layout and
+package inputs are unchanged; no package rebuild is required.
 
 ## Baseline
 

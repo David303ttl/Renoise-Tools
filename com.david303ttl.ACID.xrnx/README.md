@@ -187,7 +187,9 @@ warning. Hybrid sample layers may respond differently.
 
 ## Pattern tools
 
-In **Pattern / Copy**, choose PITCH, TIME or Both, then Copy or Paste. The
+In the editor toolbar beside Program/Grid and Undo/Redo, choose PITCH, TIME or
+Both, then Copy or Paste. Paste requires a matching copied scope and available
+editing; pending entry or an unresolved rename must be resolved first. The
 session clipboard holds all 32 records and the corresponding active bounds.
 It excludes timing, mask, labels, output settings and destination identity.
 Copy and scope selection do not save or generate. Paste is one ordinary edit;

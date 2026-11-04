@@ -36,7 +36,7 @@ For save/reopen, record the saved file and a fresh Renoise process identity.
 | 13.1 Fresh source and shared views | Program/Grid, independent selectors/pages, all 32 stored slots and baseline-relative indicators; capture both views at normal display scale |
 | 13.2 Sequential entry | PITCH/TIME entry, Check/Finish/Discard and navigation admission; distinguish staged values from canonical Grid/draft |
 | 13.3 Mask and output | Extended / Clear mask controls, raw/resolved Decoded rows, tie-breaking and Generate/save/reopen |
-| 13.4 Clipboard, labels, duplicate and failures | Pattern / Copy controls, all 32 values, metadata-only history, duplicate pre-save/readback and rollback evidence |
+| 13.4 Clipboard, labels, duplicate and failures | Editor toolbar clipboard scopes, all 32 values, metadata-only history, duplicate pre-save/readback and rollback evidence |
 | 13.5 Clear and randomization | Execute the inline-parameter scope fixture below, then every remaining canonical check |
 | 13.6 Audition and lifecycle | Actual sound/release, busy-host timing, modal/context cleanup and captured-object identity |
 | 13.7 Persistence, ownership, undo and Live Edit | [Live Edit](acid_live_edit_manual.md), exact source/output association, corrupt/unsupported store byte preservation |
