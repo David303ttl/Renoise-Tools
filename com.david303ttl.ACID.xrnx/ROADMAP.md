@@ -703,6 +703,12 @@ Callback latency is recorded without an acceptance threshold.
 
 **Status:** Gates 0–12 PASS; closed. M4 closeout remains unchanged.
 
+**M5 follow-up — GUI redesign:** Planned. Execute the
+[GUI Redesign Playbook](M5_GUI_REDESIGN_PLAYBOOK.md) Tasks 1–12 in order to replace
+workspace navigation with one compact musical interface and remove development
+and recovery presentation. Existing M5 musical, persistence and safety contracts
+remain in force; this follow-up has separate implementation and acceptance.
+
 **Dependency:** M4 scoped closeout. The complete normative contract, linear implementation gates, regression matrix, deletion inventory, and native acceptance procedure are in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
 
 ---

@@ -6,6 +6,12 @@ closeout evidence and limits remain historical and unchanged.
 
 **Status:** Gates 0–12 PASS; M5 closed.
 
+**Presentation follow-up:** The planned
+[M5 GUI Redesign Playbook](M5_GUI_REDESIGN_PLAYBOOK.md) defines a separate linear
+GUI cleanup. It supersedes this document's presentation requirements only where
+explicitly stated; protected musical and runtime contracts and this closeout
+record remain unchanged.
+
 **Execution rule:** Follow the gates in order; Gates 1+2 are one atomic gate.
 Stop at the first failed exit criterion. Do not implement later consumers against incomplete
 source, schema, compiler, or runtime contracts. This is a documentation-only
