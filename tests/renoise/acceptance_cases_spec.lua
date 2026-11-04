@@ -142,6 +142,8 @@ assert(helpers.callback_latency_acceptance("Detailed",{edit=1000})=="NOT_CLAIMED
 assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
   helpers.resolve_acceptance_profile("multi-instrument-workflow")=="Warm",
   "profiled native acceptance cases must default to Warm")
+assert(helpers.resolve_acceptance_profile("gui-redesign")==nil,
+  "GUI redesign acceptance must not claim instrumentation or performance acceptance")
 local latency_8=helpers.production_latency_fixture("production-latency-8x8")
 assert(helpers.diagnostic_performance({})=="NOT_MEASURED")
 assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=30,

@@ -1110,10 +1110,12 @@ function Invoke-AcidNativeScenario {
 Export-ModuleMember -Function Resolve-AcidAcceptanceProfile, Get-RenoiseExecutable, Get-RenoiseSessionConfig, Connect-RenoiseDriver, Invoke-RenoiseDriverBootstrap, Invoke-RenoiseDriverRequest, Get-RenoiseProcessIdentity, Assert-RenoiseProcessIdentity, Import-RenoiseTestEnvironment, Get-AcidKeyboardConfiguration, Find-AutoHotkeyV2Executable, Invoke-AcidKeyboardHelper, Wait-AcidObservedState, Invoke-AcidKeyboardJourney, Get-AcidScenarioCatalog, Get-AcidInteractiveScenarioSelection, Assert-AcidScenarioFixtures, Get-AcidSnapshotPathValue, ConvertTo-AcidCanonicalJson, Compare-AcidScenarioSnapshot, Get-AcidScenarioReportDiff, Invoke-AcidNativeScenario
 
 function Get-DirectoryHash {
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Path, [switch]$ExcludeRootPreferences)
     $root = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
     Assert-DirectoryHasNoReparsePoints -Path $root
-    $records = @(Get-ChildItem -LiteralPath $root -Recurse -Force | Sort-Object { $_.FullName.Substring($root.Length) } | ForEach-Object {
+    $records = @(Get-ChildItem -LiteralPath $root -Recurse -Force | Where-Object {
+        -not ($ExcludeRootPreferences -and $_.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/') -ceq 'preferences.xml')
+    } | Sort-Object { $_.FullName.Substring($root.Length) } | ForEach-Object {
         $relativePath = $_.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
         if ($_.PSIsContainer) {
             [pscustomobject]@{ Path = $relativePath; Kind = 'directory' }
@@ -1143,6 +1145,99 @@ function Assert-DirectoryHasNoReparsePoints {
             if ($item.PSIsContainer) { $pending.Push($item.FullName) }
         }
     }
+}
+
+function Get-RenoiseDirectoryEntryInventory {
+    param([Parameter(Mandatory)][string]$Path)
+    $root = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    Assert-DirectoryHasNoReparsePoints -Path $root
+    $entries = [Collections.Generic.Dictionary[string, string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop) {
+        $relativePath = $item.FullName.Substring($root.Length).TrimStart('\','/').Replace('\','/')
+        if ($item.PSIsContainer) {
+            $entries[$relativePath] = 'directory'
+        } else {
+            $hash = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            $entries[$relativePath] = 'file:' + $hash
+        }
+    }
+    return $entries
+}
+
+function Invoke-RenoiseVerifiedDirectoryRemoval {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$ExpectedHash,
+        [string]$PreservePreferencesPath,
+        [ValidateRange(1, 5)][int]$MaximumAttempts = 4,
+        [scriptblock]$RemoveAction = { param($Target) Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction Stop }
+    )
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $null }
+    $generatedPreferences = $null
+    if ((Get-DirectoryHash -Path $Path) -cne $ExpectedHash) {
+        $preferencesPath = Join-Path $Path 'preferences.xml'
+        if (-not (Test-Path -LiteralPath $preferencesPath -PathType Leaf) -or
+            (Get-DirectoryHash -Path $Path -ExcludeRootPreferences) -cne $ExpectedHash) {
+            throw 'Installed ACID files changed during the run; keeping the current directory and restoration backup untouched.'
+        }
+        $preferencesHash = (Get-FileHash -LiteralPath $preferencesPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $generatedPreferences = 'file:' + $preferencesHash
+    }
+    $expectedEntries = Get-RenoiseDirectoryEntryInventory -Path $Path
+    if ($generatedPreferences) {
+        if ($generatedPreferences -notmatch '^file:[0-9a-f]{64}$' -or [string]::IsNullOrWhiteSpace($PreservePreferencesPath)) {
+            throw 'Unexpected generated preferences.xml; keeping the current directory and restoration backup untouched.'
+        }
+        $preferencesSource = Join-Path $Path 'preferences.xml'
+        $preferencesHash = (Get-FileHash -LiteralPath $preferencesSource -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+        $expectedPreferencesHash = $generatedPreferences.Substring('file:'.Length)
+        if ($preferencesHash -cne $expectedPreferencesHash) {
+            throw 'Generated preferences.xml changed during preservation; keeping the current directory and restoration backup untouched.'
+        }
+        if (Test-Path -LiteralPath $PreservePreferencesPath) {
+            $existingHash = (Get-FileHash -LiteralPath $PreservePreferencesPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            if ($existingHash -cne $preferencesHash) {
+                throw 'A different preserved preferences.xml already exists; keeping the current directory and restoration backup untouched.'
+            }
+        } else {
+            Copy-Item -LiteralPath $preferencesSource -Destination $PreservePreferencesPath -ErrorAction Stop
+            $copiedHash = (Get-FileHash -LiteralPath $PreservePreferencesPath -Algorithm SHA256 -ErrorAction Stop).Hash.ToLowerInvariant()
+            if ($copiedHash -cne $preferencesHash) {
+                throw 'Generated preferences.xml preservation copy did not verify; keeping the current directory and restoration backup untouched.'
+            }
+        }
+    } elseif ((Get-DirectoryHash -Path $Path) -cne $ExpectedHash) {
+        throw 'Installed ACID files changed during restoration setup; keeping the current directory and restoration backup untouched.'
+    }
+    $preservationResult = if ($generatedPreferences) {
+        [pscustomobject]@{ path = $PreservePreferencesPath; sha256 = $expectedPreferencesHash }
+    } else { $null }
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $MaximumAttempts; $attempt++) {
+        if (-not (Test-Path -LiteralPath $Path)) { return $preservationResult }
+        if ($attempt -gt 1) {
+            $actualEntries = Get-RenoiseDirectoryEntryInventory -Path $Path
+            foreach ($relativePath in $actualEntries.Keys) {
+                if (-not $expectedEntries.ContainsKey($relativePath) -or
+                    $actualEntries[$relativePath] -cne $expectedEntries[$relativePath]) {
+                    throw "Installed ACID files changed during restoration at '$relativePath'; keeping the current directory and restoration backup untouched."
+                }
+            }
+        }
+        try {
+            & $RemoveAction $Path
+            if (-not (Test-Path -LiteralPath $Path)) { return $preservationResult }
+            $lastError = [IOException]::new('The deployed directory still exists after removal.')
+        } catch {
+            $lastError = $_.Exception
+            if (-not (Test-Path -LiteralPath $Path)) { return $preservationResult }
+        }
+        if ($attempt -lt $MaximumAttempts) {
+            $delay = [Math]::Min(100 * [Math]::Pow(2, $attempt - 1), 500)
+            Start-Sleep -Milliseconds ([int]$delay)
+        }
+    }
+    throw "Could not remove the verified deployed ACID directory after $MaximumAttempts attempts: $($lastError.Message)"
 }
 
 
@@ -1209,6 +1304,7 @@ function Get-RenoiseDeploymentOperation {
         Add-Trace -Operation 'install.fixtures_backup' -Status 'PASS' -Details @{ backup = 'run artifact directory' }
     }
     $installedDirectoryHash = $deploymentStageToolHash
+    if ((Get-DirectoryHash -Path $deploymentStageToolPath) -cne $installedDirectoryHash) { throw 'Staged ACID tool changed while preparing deployment; refusing installation.' }
     $installedSessionHash = $deploymentStageSessionHash
     Move-Item -LiteralPath $deploymentStageToolPath -Destination $installedToolPath
     $toolDeployed = $true
@@ -1225,12 +1321,22 @@ function Get-RenoiseDeploymentOperation {
 }
 function Get-RenoiseRestorationOperation {
     return {
+        param([scriptblock]$DirectoryRemovalAction)
         if ($toolDeployed -and $installedToolPath -and (Test-Path -LiteralPath $installedToolPath)) {
-            if (-not $installedDirectoryHash -or (Get-DirectoryHash -Path $installedToolPath) -cne $installedDirectoryHash) {
+            if (-not $installedDirectoryHash) {
                 throw 'Installed ACID files changed during the run; keeping the current directory and restoration backup untouched.'
             }
-            Assert-DirectoryHasNoReparsePoints -Path $installedToolPath
-            Remove-Item -LiteralPath $installedToolPath -Recurse -Force
+            $preservedPreferencesPath = if ($artifactRoot) { Join-Path $artifactRoot 'generated-preferences.xml' } else { $null }
+            $removalArguments = @{
+                Path = $installedToolPath
+                ExpectedHash = $installedDirectoryHash
+                PreservePreferencesPath = $preservedPreferencesPath
+            }
+            if ($DirectoryRemovalAction) { $removalArguments.RemoveAction = $DirectoryRemovalAction }
+            $removalResult = Invoke-RenoiseVerifiedDirectoryRemoval @removalArguments
+            if ($removalResult) {
+                Add-Trace -Operation 'install.preferences_preserved' -Status 'PASS' -Details @{ path = 'generated-preferences.xml'; sha256 = $removalResult.sha256 }
+            }
         }
         if ($localBackupToolPath -and (Test-Path -LiteralPath $localBackupToolPath)) {
             if (Test-Path -LiteralPath $installedToolPath) { throw 'ACID target is occupied; keeping the same-volume original and verified run backup untouched.' }
@@ -1272,7 +1378,7 @@ function Get-RenoiseRestorationOperation {
         if ($installedToolPath) { Add-Trace -Operation 'install.restore' -Status 'PASS' -Details @{ original_installation_restored = $true } }
     }
 }
-Export-ModuleMember -Function Get-DirectoryHash, Assert-DirectoryHasNoReparsePoints, Assert-RenoiseListenerOwner, Get-RenoiseDeploymentOperation, Get-RenoiseRestorationOperation
+Export-ModuleMember -Function Get-DirectoryHash, Assert-DirectoryHasNoReparsePoints, Assert-RenoiseListenerOwner, Get-RenoiseDeploymentOperation, Get-RenoiseRestorationOperation, Invoke-RenoiseVerifiedDirectoryRemoval
 
 function Stop-RenoiseDriver {
     param([Net.Sockets.TcpClient]$Client, [pscustomobject]$Session, [string]$SessionPath,

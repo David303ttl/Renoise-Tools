@@ -74,9 +74,11 @@ process, or select an existing instance with a disposable song:
 | `metadata-undo` | Real Enter-driven label rename followed by native Undo/Redo; fails if the host exposes no undo entry or does not restore exact metadata |
 | `metadata-recovery` | Guarded Enter-driven label rename; uncertain setter blocking, exact-byte restoration without retry, unrelated native edit preservation and automatic cold-process readback |
 | `editor-responsiveness` | Native Program/Grid editing, feedback membership, retained controls, and responsive callbacks; functional checks only, not a performance threshold |
+| `gui-redesign` | Task 12 native GUI callback subset, including Program staging, Grid guard controls, accepted Grid audition, staged Program audition, and fixture cleanup; visual fit and audible sound require separate observation |
+| `gui-layout` | Real production dialog compact/expanded Program and Grid states, random parameters, multiline feedback and collapsed holders; each state settles through Renoise idle before measurement |
+| `gui-lifecycle` | Unequal length boundaries, native instrument/phrase changes, stale-target rejection, real XRNS draft restoration, scale import and generation from restored edits |
 | `integrity-observers` | Sticky post-commit integrity blocker survives reopen/target change and rejects Generate/Duplicate without phrase or store mutation |
 | `writer-recovery` | Contradictory writer result preserves both committed source revisions; a dirty blocked editor remains unavailable after reopen and rejects Generate/Duplicate without mutation |
-| `layout-sizing` | Disposable ViewBuilder sizing prototype checks empty/full holder cycles and maximum-first centering; production fit still needs host verification after final UI layout changes |
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures -RenoiseExe <renoise-executable>

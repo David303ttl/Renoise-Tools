@@ -54,6 +54,8 @@ renoise.app=function()return app end
 renoise.ViewBuilder=function()
   builder={views={},nodes={}}
   local parent_by_child={}
+  local default_size={width=0,height=0}
+  local sizes=setmetatable({},{__mode="k"})
   local function add_view(parent,child)
     if parent_by_child[child] then error("view already has a parent") end
     parent.views[#parent.views+1]=child;parent_by_child[child]=parent
@@ -66,6 +68,12 @@ renoise.ViewBuilder=function()
   end
   setmetatable(builder,{__index=function(_,kind)return function(_,properties)
     local node={kind=kind,views={},notifiers={}}
+    setmetatable(node,{__index=function(view,key)
+      if key=="size" then return sizes[view] or default_size end
+    end,__newindex=function(view,key,value)
+      if key=="size" then sizes[view]=value~=default_size and value or nil
+      else rawset(view,key,value) end
+    end})
     node.children=node.views
     for key,value in pairs(properties or {})do
       if type(key)=="number"then add_view(node,value)else node[key]=value end

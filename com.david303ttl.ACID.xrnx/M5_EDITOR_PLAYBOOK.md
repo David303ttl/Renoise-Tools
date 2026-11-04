@@ -82,7 +82,7 @@ architecture or public compatibility facade.
 | Song source/settings/label/draft serialization | `renoise.pattern_store` | Strict schema-2 codec, atomic candidate writes, new metadata fields. |
 | Draft restore and revision tokens | `runtime.draft_cache` | Carry label/custom values and exact revision identity; preserve last-good source. |
 | Request capture and stale checks | `runtime.requests`, `runtime.context` | Freeze all relevant values; include label metadata tokens where commit/clear depends on it. |
-| Target observation/eligibility/integrity | `runtime.observers`, `runtime.transitions`, `runtime.integrity`, `runtime.eligibility`, `runtime.inventory` | Compare source association including mask; preserve blocked and recovery behavior. |
+| Target observation/eligibility/integrity | `runtime.observers`, `runtime.transitions`, `runtime.integrity`, `runtime.inventory` | Compare source association including mask; preserve blocked writes and automatic draft restoration. |
 | ID ownership and phrase names | `renoise.phrase_ownership` | Preserve stable IDs and sealed names; display labels are never seals. |
 | Phrase generation and transaction | `writers.phrase_writer`, `writers.phrase_materializer` | Remain sole production phrase writer; preserve preflight, verified postimage, rollback and ownership. |
 

@@ -6,7 +6,8 @@ audible playback separately.
 
 1. Open ACID at normal display scaling. Confirm the full interface fits without
    clipping. Expand sequential entry, random-operation parameters and multiline
-   feedback; controls remain reachable and unused rows collapse.
+   feedback; controls remain reachable and unused rows collapse. The dialog
+   width stays constant throughout; Program and Grid may have different heights.
 2. Edit PITCH spans and TIME lengths at positions 16, 17 and 32. Check note
    keys, octaves, C+, accent, slide and TIME commands. Switch Program and Grid,
    page each memory, and confirm their cursors/pages stay independent,
@@ -15,7 +16,9 @@ audible playback separately.
    edit, save or generation.
 3. Enter pitches and timing. Confirm progress, Back, Enter and advance, Restart,
    Finish and Cancel work. An incomplete entry identifies the first missing
-   position; Finish stays unavailable. A stale target cannot commit the entry.
+   position; Finish stays unavailable. In Grid, Back, Enter and advance and
+   Restart stay disabled and cannot mark positions entered; Finish and Cancel
+   remain reachable. A stale target cannot commit the entry.
 4. Copy and paste PITCH, TIME and Both. Confirm scope eligibility, one undoable
    edit for a changed paste and no edit for an identical paste. Undo and Redo
    restore the expected source.
@@ -34,8 +37,10 @@ audible playback separately.
    with Generate through normal admission. Unsafe targets remain unavailable.
 8. Check Rename, Duplicate and Reset. Confirm validation, guards, destination
    identity, source and history behavior. Audition pitches in both views and
-   confirm note release on position/page/view changes, editing, target changes,
-   dialog close and song release. Change instrument/phrase selection, delete or
+   confirm Grid auditions its displayed accepted pitch while Program auditions
+   the staged pitch during PITCH entry. Confirm note release on position/page/view
+   changes, editing, target changes, dialog close and song release. Change
+   instrument/phrase selection, delete or
    reorder a target, and close/reopen ACID. No stale callback may affect the
    next selection or session.
 9. Save and reopen the song with ungenerated edits. Confirm supported drafts

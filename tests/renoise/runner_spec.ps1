@@ -541,7 +541,7 @@ try {
         [IO.Directory]::Delete($junctionPath, $false)
     }
 
- foreach ($case in @('unchanged','changed','changed-empty-directory','changed-empty-fixtures','reparse','partial','failed-launch','bad-backup')) {
+ foreach ($case in @('unchanged','changed','changed-empty-directory','changed-empty-fixtures','reparse','partial','transient-remove','partial-remove-with-change','failed-launch','bad-backup')) {
     $toolsPath = Join-Path $root $case
     $artifactRoot = Join-Path $toolsPath 'artifacts'
     New-Item -ItemType Directory $artifactRoot -Force | Out-Null
@@ -619,6 +619,37 @@ try {
         Assert (Test-Path $localBackupToolPath) 'changed installation lost backup'
         if ($case -eq 'changed-empty-directory') {
             Assert (Test-Path (Join-Path $installedToolPath 'empty-added-during-run') -PathType Container) 'restoration removed an added empty directory'
+        }
+    } elseif ($case -in @('transient-remove','partial-remove-with-change')) {
+        $script:runnerRemoveAttempts = 0
+        $removeAction = {
+            param($Target)
+            $script:runnerRemoveAttempts++
+            if ($script:runnerRemoveAttempts -eq 1) {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $Target 'main.lua') -Force
+                if ($case -eq 'partial-remove-with-change') {
+                    Set-Content -LiteralPath (Join-Path $Target 'unexpected.lua') 'changed during restoration'
+                }
+                throw [IO.IOException]::new('injected transient directory lock')
+            }
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction Stop
+        }
+        if ($case -eq 'transient-remove') {
+            $preferencesPath = Join-Path $installedToolPath 'preferences.xml'
+            Set-Content -LiteralPath $preferencesPath '<Preferences />'
+            $preferencesHash = (Get-FileHash -LiteralPath $preferencesPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $operation = Get-RenoiseRestorationOperation
+            . $operation $removeAction
+            Assert ($script:runnerRemoveAttempts -eq 2) 'transient directory lock was not retried exactly once'
+            $preservedPreferences = Join-Path $artifactRoot 'generated-preferences.xml'
+            Assert ((Get-FileHash -LiteralPath $preservedPreferences -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $preferencesHash) 'generated preferences.xml was not preserved byte-for-byte'
+        } else {
+            $operation = Get-RenoiseRestorationOperation
+            Reject { . $operation $removeAction } 'changed during restoration'
+            Assert ($script:runnerRemoveAttempts -eq 1) 'restoration retried after a partial removal revealed an unexpected file'
+            Assert (Test-Path -LiteralPath (Join-Path $installedToolPath 'unexpected.lua')) 'restoration deleted a file added after the partial removal'
+            Assert (Test-Path -LiteralPath $localBackupToolPath -PathType Container) 'partial changed installation lost its restoration backup'
+            continue
         }
     } else {
         . ([scriptblock]::Create((Get-RenoiseRestorationOperation)))

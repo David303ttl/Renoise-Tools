@@ -777,6 +777,12 @@ final layout absence in an earlier task that deliberately retains temporary tabs
 
 ## Task 12 — Run final checks and native acceptance
 
+Current evidence is recorded in the
+[Task 12 acceptance record](../tests/acid/acid_gui_redesign_acceptance.md#task-12-verification-2026-11-04).
+Task 12 is complete: automated deletion/package checks and required native
+journeys pass, including stable dialog width. Audio was tested and accepted by
+the user; the acceptance record separates that observation from driver results.
+
 1. Run in PowerShell 7 from the repository root:
 
    ```powershell

@@ -946,7 +946,9 @@ local function test_fixed_native_acceptance_command()
       assert(type(json_codec) == "table" and type(json_codec.array) == "function",
         "acceptance runner did not receive the shared response codec")
       assert(case_name == "integrity-observers" or case_name == "writer-recovery" or
-        case_name == "editor-responsiveness" or case_name == "import-donor" or case_name == "ownership-negatives" or
+        case_name == "editor-responsiveness" or case_name == "gui-redesign" or case_name == "gui-layout" or
+        case_name == "gui-lifecycle" or
+        case_name == "import-donor" or case_name == "ownership-negatives" or
         case_name == "revision-undo-fixture" or case_name == "revision-undo-prepare" or case_name == "revision-undo" or
         case_name == "revision-live-undo-fixture" or case_name == "revision-live-undo-prepare" or case_name == "revision-live-undo" or
         case_name == "persistence-failures" or
@@ -1103,6 +1105,31 @@ local function test_fixed_native_acceptance_command()
   local integrity = find_response(take_responses(client), "acceptance-integrity-observers")
   assert(integrity and integrity.ok)
   assert_equal(integrity.result.status, "PASS")
+  send_request(host, client, "acceptance-gui-lifecycle", "acid.acceptance.run", {case = "gui-lifecycle"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-gui-lifecycle"), nil)
+  host.release:fire()
+  host.new_document:fire()
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-gui-lifecycle"), nil,
+    "GUI lifecycle acceptance must finish its real save/load round trip across document epochs")
+  assert(completion({status = "PASS", case = "gui-lifecycle"}))
+  fire_idle(host)
+  local gui_lifecycle = find_response(take_responses(client), "acceptance-gui-lifecycle")
+  assert(gui_lifecycle and gui_lifecycle.ok)
+  assert_equal(gui_lifecycle.result.status, "PASS")
+  send_request(host, client, "acceptance-document-scoped", "acid.acceptance.run", {case = "gui-redesign"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-document-scoped"), nil)
+  host.release:fire()
+  host.new_document:fire()
+  fire_idle(host)
+  local canceled_acceptance = find_response(take_responses(client), "acceptance-document-scoped")
+  assert(canceled_acceptance and not canceled_acceptance.ok)
+  assert_equal(canceled_acceptance.error.code, "canceled",
+    "ordinary acceptance must remain scoped to its original document epoch")
+  assert(not completion({status = "PASS", case = "gui-redesign"}),
+    "late ordinary acceptance completion was accepted after document release")
   send_request(host, client, "acceptance-writer-recovery", "acid.acceptance.run", {case = "writer-recovery"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-writer-recovery"), nil)
@@ -1124,6 +1151,26 @@ local function test_fixed_native_acceptance_command()
   local responsiveness = find_response(take_responses(client), "acceptance-editor-responsiveness")
   assert(responsiveness and responsiveness.ok)
   assert_equal(responsiveness.result.status, "PASS")
+  send_request(host, client, "acceptance-gui-layout", "acid.acceptance.run", {case = "gui-layout"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-gui-layout"), nil,
+    "production GUI layout acceptance returned before its idle-separated states settled")
+  assert(completion, "GUI layout acceptance runner was not called")
+  local layout_states = acceptance_json_codec.array()
+  layout_states[1] = {name = "program-compact", root_size = {width = 846, height = 732}}
+  local layout_result = {status = "PASS", case = "gui-layout", metrics = {states = layout_states}}
+  assert(acceptance_json_codec.encode(layout_result), "native GUI layout result does not encode with the shared acceptance codec")
+  assert(completion(layout_result))
+  fire_idle(host)
+  local gui_layout = find_response(take_responses(client), "acceptance-gui-layout")
+  assert(gui_layout and gui_layout.ok, gui_layout and tostring(gui_layout.error and gui_layout.error.code) or "GUI layout response missing")
+  assert_equal(gui_layout.result.status, "PASS")
+  assert_equal(gui_layout.result.metrics.states[1].name, "program-compact")
+  send_request(host, client, "acceptance-retired-layout-sizing", "acid.acceptance.run", {case = "layout-sizing"})
+  fire_idle(host)
+  local retired_layout = find_response(take_responses(client), "acceptance-retired-layout-sizing")
+  assert(retired_layout and not retired_layout.ok)
+  assert_equal(retired_layout.error.code, "invalid_arguments")
   send_request(host, client, "acceptance-ownership-negatives", "acid.acceptance.run", {case = "ownership-negatives"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-ownership-negatives"), nil)

@@ -84,9 +84,7 @@ local exclusion_calls={
  function(value)return store.write_draft(song,first,a,source,'repeat',0,value)end,
  function(value)return store.clear_draft(song,first,a,value)end,
  function(value)return validator.classify(song,first,a,{}, {}, {},value)end,
- function(value)return validator.compatibility(a,{}, {}, {}, {},value)end,
  function(value)return validator.classify(song,first,a,{}, {}, {excluded=value})end,
- function(value)return validator.compatibility(a,{}, {}, {}, {excluded=value})end,
 }
 local before_exclusions=song.tool_data
 for _,value in ipairs({{[collision]=true},{[a]=true},{},{token={}},false})do
@@ -97,7 +95,7 @@ for _,value in ipairs({{[collision]=true},{[a]=true},{},{token={}},false})do
  end
 end
 -- Explicit nil surplus arguments must also reject under Lua 5.1.
-for index=1,9 do
+for index=1,8 do
  local result,reason=exclusion_calls[index](nil)
  assert(not result and reason=='Ownership exclusions are not supported')
 end

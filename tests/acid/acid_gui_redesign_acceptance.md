@@ -1,5 +1,196 @@
 # ACID GUI redesign acceptance
 
+## Task 12 verification (2026-11-04)
+
+Base revision: `fb747b93b47ba18e063890b25f297dca33f8ab07`, plus the
+verification changes in this checkout. Task 12 acceptance is **COMPLETE** as of
+2026-11-05. Native functional, layout and persistence checks pass; audio was
+tested and accepted by the user separately from automated callback assertions.
+
+### Automated checks and deletion inventory
+
+`./scripts/run_tests.ps1 -Tool ACID` passed all 77 Lua 5.1 specs after the
+final unused eligibility module was removed. The four focused dependency,
+identity, live-identity and output-compatibility specs also passed.
+
+Fresh-process `tests/renoise/runner_spec.ps1` and
+`tests/renoise/test_package_dev.ps1` pass. The native transport and acceptance
+driver Lua regression specs pass. `git diff --check` is clean.
+
+| Inventory | Final disposition |
+| --- | --- |
+| Inspector, sampler audit and Make Independent modules | Deleted; no production imports or lazy loads |
+| Recovery, revalidation, identity-only eligibility and report interfaces | Deleted; retained draft restoration, ownership classification, evidence recording and write admission remain active |
+| `runtime/eligibility.lua` | Deleted after reachability tracing found no production consumer |
+| Validator `compatibility` and `preflight` exports | Deleted; compatibility remains private to the active classifier, destination preflight remains used by the writer; regression assertions use retained APIs |
+| Workspace tabs, decoded/report views, permanent Live Edit Retry and alternative GUI paths | Absent from production constructors, update paths and runtime exports |
+| Tests and native probes | Retained workflows use the production GUI/runtime; retired names occur in absence assertions rather than executable calls |
+| Historical/planning mentions | Kept in the redesign/editor/runtime playbooks and earlier acceptance receipts; these describe deletion requirements or superseded results |
+| Persisted identity and source markers | Kept where required by active ownership, drafts and schema contracts |
+
+There are no unresolved deletion rows. `model.output_planner.location` remains
+an active planning/reference-writer contract, outside the retired workflows.
+Manifest/API/tool versions, persisted schemas, ARP and DigitaktSampleChain are
+unchanged.
+
+| Size | Task 1 baseline | Current |
+| --- | ---: | ---: |
+| `gui.lua` | 2,276 lines | 2,271 lines |
+| Runtime Lua files | 33 | 29 |
+| Runtime Lua lines | 14,849 | 13,026 |
+| Release archive entries | 35 | 31 |
+
+No presentation helper was extracted. Production reachability starts at
+`main.lua` and `gui.lua`; the remaining private modules have live consumers.
+
+### Release package
+
+`./scripts/package.ps1 -Tool ACID` rebuilt
+`dist/com.david303ttl.ACID_0.1.xrnx`. SHA-256:
+`ff37b964288384bff410fe4fbd24f3dceab3f657720d9891e34db33dbacf32da`.
+All 31 entries match source bytes; entry points are at archive root, module
+directories are preserved, and SDK, tests, Markdown, development drivers and
+retired modules are excluded.
+
+Packaged `gui.lua` SHA-256:
+`eafb522e2578d22890b4f51636ce2be70ff69306265f209f2b2175363eb3ff72`.
+
+```text
+gui.lua
+LICENSE
+main.lua
+manifest.xml
+model/articulation.lua
+model/control_signals.lua
+model/cycle_interpreter.lua
+model/editor_state.lua
+model/legato.lua
+model/output_planner.lua
+model/policies.lua
+model/scale_data.lua
+model/scales.lua
+model/sequencer.lua
+model/timing.lua
+renoise/pattern_store.lua
+renoise/phrase_ownership.lua
+renoise/target_capabilities.lua
+runtime/audition.lua
+runtime/context.lua
+runtime/draft_cache.lua
+runtime/integrity.lua
+runtime/inventory.lua
+runtime/observers.lua
+runtime/requests.lua
+runtime/scale_preferences.lua
+runtime/transitions.lua
+writers/phrase_materializer.lua
+writers/phrase_pitch_bend.lua
+writers/phrase_validator.lua
+writers/phrase_writer.lua
+```
+
+### Native acceptance
+
+Runs use Renoise 3.5.4 / API 6.2 and runner-owned disposable processes. The
+existing user-owned Renoise process is not the test target. Injected failures
+and simulated prompt responses are identified separately from native control,
+phrase and storage observations.
+
+The production layout probe replaces the synthetic planned-layout prototype;
+the retired `layout-sizing` case is rejected. `gui-redesign` exercises retained
+functional callbacks, while `gui-layout` measures six idle-separated production
+states and verifies holder dimensions, document neutrality and observer cleanup.
+
+The native run exposed a screen-fit defect: expanding Grid placed the bottom
+at y=1,149 on a work area ending at y=1,080. The dialog now opens with space
+reserved from the largest real child dimensions and the seven-slot feedback
+limit, then immediately restores its current size. Root spacing reuses
+`SECTION_SPACING`. No source, history or output state is changed by reservation.
+
+At 96 DPI (100% scaling), the 1,920 × 1,080 screen has usable work area
+x=0..1,920, y=40..1,080. The reserved opening window is 846 × 999 at
+x=537, y=60, bottom y=1,059. All measured states fit; the top remains at y=60.
+PrintWindow captures were inspected for Program, Grid, staging, random controls
+and three simultaneous feedback messages. Controls and feedback are visible;
+collapsed rows do not retain the reserved opening area.
+
+| Production state | Content size | Outer window |
+| --- | ---: | ---: |
+| Program compact | 844 × 670 | 846 × 696 |
+| Grid compact | 844 × 775 | 846 × 801 |
+| Program, random parameters and three feedback messages | 844 × 749 | 846 × 775 |
+| Program, staged entry plus parameters and feedback | 844 × 771 | 846 × 797 |
+| Grid, staged entry plus parameters and feedback | 844 × 893 | 846 × 919 |
+| Program after cancellation and parameter collapse, retaining feedback | 844 × 710 | 846 × 736 |
+
+Final layout receipt: `tmp/interactive-5bec0603a43941f99cf0de98b284360f/report.json`.
+The visual capture run precedes the permanent width anchor; the final native
+measurements confirm the same opening and expanded dimensions.
+OS bounds: `tmp/gui-final-window-samples.json`; inspected captures include
+`tmp/gui-final-window-08.png` and `tmp/gui-final-window-12.png`. These establish
+screen fit at the recorded scaling, not audible playback or other DPI settings.
+
+The user confirmed audio was working and tested on 2026-11-04 and accepted that
+check without further loopback capture. This is user-observed audio acceptance;
+the driver does not claim acoustic measurements. Display acceptance covers the
+recorded normal 100% scaling required by the native matrix.
+
+The native `gui-redesign` journey passes, including staging and stale-entry
+guards, clipboard scopes and history, every operation in both scopes, inactive
+memory preservation, masks and scale application, labels, Duplicate, Reset,
+accepted/staged audition source selection and Live Edit controls. The driver
+yields between bounded operation groups to permit native idle processing.
+Preference-document initialization runs on the normal callback before the
+test coroutine. Receipt:
+`tmp/interactive-b8f015014a7b49cdacf974b22dace7ed/report.json`.
+The overall run and installation restoration both pass. Simulated prompt
+responses exercise production callbacks; audio acceptance remains the separate
+user observation above.
+
+The clean dialog previously shrank from width 844 to 797 after instrument
+selection, then widened when optional rows appeared. The existing title and
+staging status now reserve the shared content width. All 593 native callback
+measurements remain at width 844, including feedback, entry, operation and
+view changes. Vertical holder collapse remains unchanged.
+
+Both editor panels also reserve the same `CONTENT_WIDTH`. The final layout
+run measures both panels at 820 in every state and confirms constant root
+width through Program → Grid → Program. A final Program window capture in
+`tmp/gui-shared-width-window-samples.json` measures outer width 846.
+
+Protected native cases also pass on the final checkout:
+`integrity-observers` in
+`tmp/interactive-482d7500c04540f9a499e13a793ee72c/report.json`, and
+`writer-recovery` in
+`tmp/interactive-f37e842f4ada432ea93af718f74efb47/report.json`.
+Both overall runs and installation restoration pass. These use controlled
+failure injection against real native objects; they do not claim naturally
+occurring host faults or audible playback measurements.
+
+The final `gui-lifecycle` run passes all 12 checks in
+`tmp/interactive-528bd3f0d29143d5925d4b451222ce00/report.json`, including
+installation restoration. It verifies unequal 1/16/17/32 boundaries, independent
+pages and highlights, inactive memory, native instrument changes, exact phrase
+binding after reorder, and rejection of Finish after target deletion. It saves
+a real XRNS with ungenerated edits, releases and reloads that document, verifies
+GUI/notifier teardown and automatic draft restoration, then generates from the
+restored source. Import uses temporary valid/invalid files through the production
+parser and preferences; only the file chooser response is supplied by the probe.
+
+| Required journey | Evidence |
+| --- | --- |
+| Normal-scale Program/Grid fit, expanded rows, readable feedback, stable width | `gui-layout`, inspected window captures, 593 `gui-redesign` width samples |
+| Unequal boundaries, pages, highlights, inactive memory and pitch/time entry | `gui-lifecycle` and `gui-redesign` |
+| Clipboard scopes, history, every operation/scope, seeded repeat, labels, Duplicate and Reset | `gui-redesign` |
+| Scale browsing, root/category/search, Follow, masks and import | `gui-redesign` and `gui-lifecycle` |
+| New/existing Generate, Live Edit arm/edit/failure and explicit retry | `gui-redesign` |
+| Native target changes/deletion/reorder, dialog/song lifetime and XRNS restoration | `gui-lifecycle`, `gui-layout` and `gui-redesign` |
+| Unavailable targets and persistent blockers | `integrity-observers`, `writer-recovery` and stale-target rejection |
+| Audition | Native accepted/staged-source callbacks; user-tested audio acceptance |
+
+There are no outstanding required checks. Detailed manual steps remain in
+[acid_editor_presentation_manual.md](acid_editor_presentation_manual.md).
+
 ## Task 1 status
 
 Baseline, API constraints, control ownership and production reachability are
@@ -108,7 +299,7 @@ The native case command is:
 ./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Install -ApproveDisposableSong -AcceptanceCase layout-sizing -RenoiseExe <renoise-executable>
 ```
 
-## Task 3 current disposition
+## Task 3 implementation disposition
 
 The GUI has no Details, source/preview/live-state report, decoded view,
 inspector, Sampler Audit, Check or recovery actions. Only the shared renderer

@@ -57,13 +57,18 @@ assert(store.save(song,1,source,'play_once',0))
 local function classify(profile,opts)
  return validator.classify(song,instrument,phrase,profile or sample,capacities,opts or options)
 end
+local function classify_phrase(target,committed_source,profile,policy,pb_range)
+ local target_instrument={name='compatibility fixture',phrases={target}}
+ local target_song={instruments={target_instrument},tool_data=''}
+ local id=assert(ownership.id(target))
+ assert(store.save(target_song,id,committed_source,policy or 'play_once',pb_range or 0))
+ return validator.classify(target_song,target_instrument,target,profile or sample,capacities,options)
+end
 local candidate=assert(classify())
 assert(candidate.kind=='owned' and seq.same_source(candidate.source,source))
-assert(validator.preflight(candidate.baseline,planned))
 assert(ownership.compare(candidate.baseline,assert(ownership.snapshot(phrase))))
 local materialized_phrase=phrase_fixture();apply(materialized_phrase,materialization_plan)
-local materialized_result=assert(validator.compatibility(materialized_phrase,
- {pattern=source,output_policy='play_once',pb_range=0},sample,capacities,options))
+local materialized_result=assert(classify_phrase(materialized_phrase,source))
 assert(materialized_result.kind=='owned',
  'private materialization plan differs from the compatible public output')
 local detached_candidate=assert(ownership.copy_snapshot(candidate.baseline))
@@ -250,8 +255,7 @@ assert(store.write_draft(song,instrument,phrase,draft,'repeat',12))
 local with_draft=song.tool_data
 assert(seq.same_source(assert(classify()).source,source))
 assert(song.tool_data==with_draft)
-local entry={pattern=source,output_policy='play_once',pb_range=0}
-local standalone=assert(validator.compatibility(phrase,entry,sample,capacities,options))
+local standalone=assert(classify())
 source.pitch_events[32].accent=true
 assert(not standalone.source.pitch_events[32].accent)
 source.pitch_events[32].accent=false
@@ -305,9 +309,8 @@ local mapped={key_tracking=3,base_note=43,note_range={36,47},looping=true,loop_s
 phrase.mapping=mapped
 assert(classify())
 local longer=assert(seq.copy_source(source));longer.length=8
-local mapped_baseline=assert(ownership.snapshot(phrase))
-assert(not validator.preflight(mapped_baseline,output(longer)))
-assert(validator.preflight(mapped_baseline,planned))
+assert(not classify_phrase(phrase,longer),"mapped phrase length changes must remain unsupported")
+assert(classify(),"unchanged mapped output must remain compatible")
 phrase.mapping=nil
 for _,update in ipairs({function(s)s.paragraphs={' '}end,function(s)s.paragraphs={'return pattern {}'}end,
  function(s)s.parameters={{name='sentinel',value=23}}end,function(s)s.pending_changes=1 end,
@@ -333,9 +336,10 @@ end
 local slide=assert(seq.copy_source(source));slide.time_events[2]='N';slide.pitch_events[2].slide=true
 local plugin={sample=false,plugin=true,midi=false,alias=false}
 local slide_phrase=phrase_fixture();apply(slide_phrase,output(slide,'play_once',plugin))
-assert(validator.compatibility(slide_phrase,{pattern=slide,output_policy='play_once',pb_range=0},plugin,capacities,options))
-assert(not validator.compatibility(slide_phrase,{pattern=slide,output_policy='play_once',pb_range=0},sample,capacities,options))
-assert(not validator.compatibility(slide_phrase,{pattern=slide,output_policy='play_once',pb_range=0},{},capacities,options))
+local plugin_result=assert(classify_phrase(slide_phrase,slide,plugin))
+assert(plugin_result.kind=='owned')
+assert(not classify_phrase(slide_phrase,slide,sample))
+assert(not classify_phrase(slide_phrase,slide,{}))
 local foreign=phrase_fixture();instrument.phrases[2]=foreign
 local foreign_result,_,foreign_kind=validator.classify(song,instrument,foreign,sample,capacities,options)
 assert(not foreign_result and foreign_kind=='foreign');instrument.phrases[2]=nil
@@ -354,13 +358,13 @@ assert(song.tool_data==raw and ownership.compare(baseline,assert(ownership.snaps
 for _,case in ipairs({{profile=sample,pb=0},{profile=plugin,pb=2}})do
  local current_output=output(slide,'play_once',case.profile,case.pb)
  local current_phrase=phrase_fixture();apply(current_phrase,current_output)
- local current_baseline=assert(ownership.snapshot(current_phrase))
- assert(validator.preflight(current_baseline,current_output))
+ assert(classify_phrase(current_phrase,slide,case.profile,'play_once',case.pb))
  for key,required in pairs(current_output.required_visibility)do
   if (type(required)=='boolean'and required)or(type(required)=='number'and required>0)then
-   local changed=assert(ownership.copy_snapshot(current_baseline))
-   if type(required)=='boolean'then changed.properties[key]=false else changed.properties[key]=required-1 end
-   assert(not validator.preflight(changed,current_output),key)
+   local original=current_phrase[key]
+   if type(required)=='boolean'then current_phrase[key]=false else current_phrase[key]=required-1 end
+   assert(not classify_phrase(current_phrase,slide,case.profile,'play_once',case.pb),key)
+   current_phrase[key]=original
   end
  end
 end
@@ -375,8 +379,6 @@ for _,key in ipairs({'instrument_column_visible','volume_column_visible',
 end
 assert(destination_output.required_visibility.visible_note_columns>1 and
  destination_output.required_visibility.visible_effect_columns>0)
-assert(not validator.preflight(narrow_destination,destination_output),
- 'current-output preflight must retain the existing visibility floor')
 local narrow_before=assert(ownership.copy_snapshot(narrow_destination))
 assert(validator.preflight_destination(narrow_destination,destination_output),
  'destination preflight must allow the planned note/effect/ancillary expansion')
@@ -410,12 +412,9 @@ instrument.phrases[1]=readonly
 local readonly_song=setmetatable({},{__index=song,__newindex=function()error('unexpected store write')end})
 assert(validator.classify(readonly_song,instrument,readonly,sample,capacities,options))
 instrument.phrases[1]=phrase
-assert(not validator.compatibility(phrase,{pattern=source},sample,capacities,options))
-assert(not validator.compatibility(phrase,{pattern=source,output_policy='play_once'},sample,capacities,options))
 assert(not validator.classify(song,instrument,phrase,sample,capacities,1))
 local poisoned=setmetatable({},{__index=function()error('options access was not rejected')end})
 assert(not validator.classify(song,instrument,phrase,sample,capacities,poisoned))
-assert(not validator.compatibility(phrase,entry,sample,capacities,poisoned))
 local frozen=assert(classify())
 assert(frozen.planning_inputs.capabilities.sample==true and frozen.planning_inputs.capacities.max_lines==512
  and frozen.planning_inputs.options.pitch_bend_delivery==true and frozen.planning_inputs.options.excluded==nil)

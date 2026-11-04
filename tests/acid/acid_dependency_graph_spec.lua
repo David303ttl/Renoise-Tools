@@ -168,7 +168,7 @@ end
 assert(files:close())
 assert(sources.main and sources["model.articulation"], "runtime inventory is incomplete")
 for _, name in ipairs({ "writers.script_runner", "writers.pattrns_writer", "writers.gate_writer", "writers.legato_writer",
-    "renoise.selection_context", "renoise.sampler_audit", "runtime.independence" }) do
+    "renoise.selection_context", "renoise.sampler_audit", "runtime.independence", "runtime.eligibility" }) do
   assert(not sources[name], name .. " must remain outside the release runtime")
 end
 assert(sources["runtime.context"], "runtime context interface is missing")
@@ -190,9 +190,9 @@ assert(writer.clear_integrity_blocker == nil, "writer exposes a retired blocker 
 local drafts=require("runtime.draft_cache")
 assert(drafts.list==nil and drafts.copy_to_new==nil and drafts.discard==nil,
   "draft cache exposes retired recovery actions")
-local eligibility=require("runtime.eligibility")
-assert(eligibility.independence==nil and eligibility.same_independence==nil,
-  "eligibility exposes retired identity operations")
+local validator=require("writers.phrase_validator")
+assert(validator.compatibility==nil and validator.preflight==nil,
+  "phrase validator exposes retired compatibility or projection APIs")
 local integrity=require("runtime.integrity").new(nil,nil)
 assert(integrity.status==nil and integrity.clear==nil and integrity.capture_committed==nil,
   "integrity owner exposes retired proof or repair actions")

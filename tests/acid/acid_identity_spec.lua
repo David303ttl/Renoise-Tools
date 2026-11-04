@@ -65,7 +65,7 @@ assert(bindings[1].name == "Global:ACID:Show")
 bindings[1].invoke()
 production_gui.show = show
 assert(show_calls == #menus + #bindings, "every entry point reaches the same GUI")
-for _, name in ipairs({"renoise.selection_context", "renoise.sampler_audit", "runtime.independence"}) do
+for _, name in ipairs({"renoise.selection_context", "renoise.sampler_audit", "runtime.independence", "runtime.eligibility"}) do
   assert(package.loaded[name] == nil, "startup loaded a retired module: " .. name)
 end
 print("ACID package identity checks passed")

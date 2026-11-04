@@ -437,7 +437,7 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('api-probe','integrity-observers','writer-recovery','editor-responsiveness','layout-sizing','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','metadata-undo','metadata-recovery')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('api-probe','integrity-observers','writer-recovery','editor-responsiveness','gui-redesign','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','metadata-undo','metadata-recovery')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($metadataRecoveryAcceptance -and $RenoiseProcessId -gt 0) {

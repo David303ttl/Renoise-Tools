@@ -55,8 +55,15 @@ local function view_builder()
     end
     error("view is not a child")
   end
+  local default_size={width=0,height=0}
+  local sizes=setmetatable({},{__mode="k"})
   local native_view_metatable={__eq=function()
     error("native ViewBuilder controls do not support equality")
+  end,__index=function(_,key)
+    if key=="size" then return sizes[_] or default_size end
+  end,__newindex=function(node,key,value)
+    if key=="size" then sizes[node]=value~=default_size and value or nil
+    else rawset(node,key,value) end
   end}
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
@@ -138,7 +145,8 @@ local app={}
 function app:show_custom_dialog(_,content)
   assert(not content.dialog_attached,"dialog content cannot be attached twice")
   content.dialog_attached=true
-  dialog={visible=true,content=content,show=function()end,close=function(self)self.visible=false end}
+  dialog={visible=true,content=content,opening_height=content.size.height,
+    show=function()end,close=function(self)self.visible=false end}
   return dialog
 end
 function app:show_warning(message) error(message) end
@@ -387,6 +395,8 @@ package.loaded.gui=nil
 require("gui").show()
 runtime_context.new=new_context
 assert(dialog and dialog.visible)
+assert(dialog.opening_height>dialog.content.size.height,
+  "temporary maximum opening reserve is removed after the dialog is shown")
 for _,id in ipairs({"acid_source_state","acid_source_diagnostic","acid_source_summary",
     "acid_preview_summary","acid_live_edit_state","acid_details_panel","acid_details_toggle",
     "acid_decoded_previous","acid_decoded_next","acid_decoded_page_label","acid_decoded_rows",
@@ -423,6 +433,9 @@ end
 assert_removed_construction_absent()
 local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
+assert(program.views[1].width==grid.views[1].width and
+  program.views[1].width==builder.views.acid_status.width,
+  "Program and Grid reserve the same content width before either view is mounted")
 local view=builder.views.acid_editor_view
 local editor_holder=assert(builder.views.acid_editor_view_holder)
 local entry_holder=assert(builder.views.acid_entry_holder)
@@ -598,8 +611,9 @@ assert(child_index(root,editor_holder)<child_index(root,control("acid_time_assig
   child_index(root,control("acid_scale_panel"))<child_index(root,control("acid_operations_panel")) and
   child_index(root,control("acid_operations_panel"))<child_index(root,control("acid_output_panel")),
   "the root follows editor, TIME assignment, entry, SCALE, OPERATIONS and OUTPUT order")
-assert(root.size==nil and editor_holder.size==nil and program.size==nil and grid.size==nil and
-  control("acid_output_panel").size==nil,
+assert(rawget(root,"size")==nil and rawget(editor_holder,"size")==nil and
+  rawget(program,"size")==nil and rawget(grid,"size")==nil and
+  rawget(control("acid_output_panel"),"size")==nil,
   "content-sized sections have no fixed dimensions")
 for _,node in ipairs(builder.nodes) do
   assert(node.kind~="stack","fixed-height workspace stack is absent")

@@ -174,7 +174,7 @@ local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local RANDOM_FIELD_WIDTH=90
 local TIMING_CHOICE_WIDTH=125
 local SECTION_SPACING,OUTPUT_CONTROL_SPACING=4,8
-local FEEDBACK_WIDTH,FEEDBACK_SPACING=820,2
+local CONTENT_WIDTH,FEEDBACK_SPACING=820,2
 local FEEDBACK_LINE_HEIGHT,FEEDBACK_PADDING=20,8
 local FEEDBACK_EMPTY_HEIGHT=1
 local EMPTY_HOLDER_WIDTH,EMPTY_HOLDER_HEIGHT=1,1
@@ -258,7 +258,7 @@ function M.show()
     labels[i]=string.format("%02X: %s",i-1,name)
   end
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
-  feedback.status=vb:multiline_text{id="acid_status",width=FEEDBACK_WIDTH,
+  feedback.status=vb:multiline_text{id="acid_status",width=CONTENT_WIDTH,
     height=FEEDBACK_EMPTY_HEIGHT,font="bold",visible=false,text=""}
   feedback.holder=vb:column{id="acid_feedback",spacing=FEEDBACK_SPACING,visible=false}
   feedback.status_attached=false
@@ -693,28 +693,18 @@ function M.show()
       p.accent and " ACC" or "",p.slide and " SLD" or "")
   end
   render=function(view,property,value)
-    if property~="value" and not (rawequal(view,feedback.status) and property=="text") then
-      local cache=rendered[view]
-      if cache then
-        local previous=cache[property]
-        if previous~=nil then
-          if same_render_value(previous,value) then return end
-          view[property]=value
-          cache[property]=retain_render_value(value)
-          return
-        end
-      else
-        cache={};rendered[view]=cache
-      end
-    end
-    local current=view[property]
-    local equal=same_render_value(current,value)
-    if not equal then view[property]=value end
-    if property~="value" and not (rawequal(view,feedback.status) and property=="text") then
-      local cache=rendered[view]
-      if not cache then cache={};rendered[view]=cache end
+    local cacheable=property~="value" and not (rawequal(view,feedback.status) and property=="text")
+    local cache=cacheable and rendered[view] or nil
+    local previous=cache and cache[property]
+    if previous~=nil then
+      if same_render_value(previous,value) then return end
+      view[property]=value
       cache[property]=retain_render_value(value)
+      return
     end
+    if cacheable and not cache then cache={};rendered[view]=cache end
+    if not same_render_value(view[property],value) then view[property]=value end
+    if cacheable then cache[property]=retain_render_value(value) end
   end
   refresh_stage=function()
     if label_ui.display then render(label_ui.display,"text",phrase_label) end
@@ -1713,7 +1703,7 @@ function M.show()
     program_octave_row:add_child(ui.program.octave_buttons[index])
     grid_octave_row:add_child(ui.grid.octave_buttons[index])
   end
-  stage_status=vb:text{id="acid_program_stage_status",text="",font="bold"}
+  stage_status=vb:text{id="acid_program_stage_status",width=CONTENT_WIDTH,text="",font="bold"}
   local function stage_navigation(action)
     if not stage or editor_view~=1 then return end
     if not valid_stage() then report_stale_stage();return end
@@ -1759,7 +1749,7 @@ function M.show()
   program_audition_button=vb:button{id="acid_audition",text="Audition",notifier=audition_pitch}
   grid_audition_button=vb:button{id="acid_grid_audition",text="Audition",notifier=audition_pitch}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
-    vb:text{text="PITCH",font="bold"},
+    vb:text{text="PITCH",width=CONTENT_WIDTH,font="bold"},
     program_pitch_page_row,selector_rows(ui.program.pitch_selectors),
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},program_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},program_octave_row,
@@ -1768,7 +1758,7 @@ function M.show()
     vb:text{text="TIME",font="bold"},
     program_time_page_row,selector_rows(ui.program.time_selectors)}
   grid_panel=vb:column{id="acid_grid_panel",spacing=4,
-    vb:text{text="PITCH",font="bold"},
+    vb:text{text="PITCH",width=CONTENT_WIDTH,font="bold"},
     pitch_pages,pitch_grid,
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},grid_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},grid_octave_row,
@@ -1832,6 +1822,7 @@ function M.show()
     if not accepted then feedback.request_failure("generation",true) end
   end}
   local scale_panel,operations_panel
+  local opening_parameter_height
   do
   local function admit_operation()
     if stage or label_ui.attempt or (label_ui.dialog and label_ui.dialog.visible) then
@@ -1884,6 +1875,8 @@ function M.show()
     size={width=EMPTY_HOLDER_WIDTH,height=EMPTY_HOLDER_HEIGHT}}
   local parameter_content=vb:column{id="acid_random_parameter_content",spacing=4,
     parameter_fields_holder,random_state.repeat_button}
+  opening_parameter_height=math.max(pitch_parameters.size.height,time_parameters.size.height)+
+    parameter_content.size.height-parameter_fields_holder.size.height-parameter_holder.size.height
   local active_parameter_view
   local parameter_content_attached=false
   local function select_random_parameters(operation)
@@ -2159,8 +2152,8 @@ function M.show()
     reset_source(pattern.length)
     changed()
   end}
-  local content=vb:column{margin=12,spacing=7,
-    vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
+  local content=vb:column{margin=12,spacing=SECTION_SPACING,
+    vb:text{text="ACID  |  PITCH / TIME EDITOR",width=CONTENT_WIDTH,font="big"},
     vb:row{id="acid_instrument_header",spacing=6,vb:text{text="Instrument"},target},
     vb:row{id="acid_phrase_header",spacing=6,
       vb:text{text="Phrase"},phrase_choice,
@@ -2191,7 +2184,14 @@ function M.show()
     invalidate_projection()
   end)
   update()
+  local content_size=content.size
+  local opening_height=math.max(program_panel.size.height,grid_panel.size.height)-editor_panel_holder.size.height+
+    math.max(stage_controls.size.height,entry_controls.size.height)-entry_holder.size.height+
+    opening_parameter_height+
+    #FEEDBACK_ISSUE_ORDER*FEEDBACK_LINE_HEIGHT+FEEDBACK_PADDING-feedback.holder.size.height
+  content.size={width=content_size.width,height=content_size.height+opening_height}
   dialog=renoise.app():show_custom_dialog("ACID - PITCH/TIME",content)
+  content.size=content_size
   dialog_session=session
   local observed_dialog=dialog
   local observed_session=session

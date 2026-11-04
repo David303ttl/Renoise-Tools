@@ -2457,7 +2457,38 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   local original_classify_against=validator.classify_against
   local captured_baseline_is_opaque
   local capture_calls,sink_calls=0,0
+  local captured_root_view
+  local finished=false
   local metrics={}
+  metrics.gui_root_width_samples=0
+  local function record_gui_root_width(action)
+    if finished or not captured_root_view then return end
+    local ok,size=pcall(function() return captured_root_view.size end)
+    local width=ok and type(size)=="table" and (size.width or size[1])
+    if type(width)~="number" then
+      metrics.gui_root_width_failure=metrics.gui_root_width_failure or
+        "Native GUI root width is unavailable after "..action
+      return
+    end
+    local initial=metrics.gui_root_width_opening
+    if initial==nil then
+      initial=width
+      metrics.gui_root_width_opening=initial
+      metrics.gui_root_width_max=width
+    end
+    metrics.gui_root_width_samples=metrics.gui_root_width_samples+1
+    metrics.gui_root_width_max=math.max(metrics.gui_root_width_max,width)
+    if width~=initial then
+      metrics.gui_root_width_failure=metrics.gui_root_width_failure or
+        "Native GUI root width changed after "..action..": expected "..
+          tostring(initial)..", got "..tostring(width)
+    end
+  end
+  local function assert_gui_root_width(checkpoint)
+    assert(metrics.gui_root_width_opening,"Native GUI root width was not measured before "..checkpoint)
+    assert(not metrics.gui_root_width_failure,metrics.gui_root_width_failure or
+      "Native GUI root width changed before "..checkpoint)
+  end
   metrics.instrumentation_profile=profile_mode
   metrics.performance_acceptance=latency_only and "NOT_CLAIMED" or "NOT_MEASURED"
   metrics.acceptance_claim="FUNCTIONAL_ONLY"
@@ -2587,6 +2618,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     metrics.editor_fixture_store_restored=store_set and song.tool_data==original_store
   end
   local function fail(reason)
+    if finished then return end
+    finished=true
     cleanup()
     local result={status="FAIL",case="editor-responsiveness",reason=tostring(reason)}
     for key,value in pairs(metrics) do result[key]=value end
@@ -2936,10 +2969,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     local function control_alias(name,properties)
       if not properties then return nil end
       if properties.id then return properties.id end
-      if name=="multiline_textfield" and properties.width==820 then return "acid_responsiveness_status" end
       if name=="valuebox" then return "acid_last_step" end
       if name=="popup" then
-        if properties.width==290 then return "acid_instrument_choice" end
         if properties.width==360 then return "acid_phrase_choice" end
         local items=properties.items
         if type(items)=="table" then
@@ -2953,8 +2984,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       elseif name=="button" then
         if properties.text=="Undo" then return "acid_undo" end
         if properties.text=="Redo" then return "acid_redo" end
-        if properties.text=="Previous TIME" then return "acid_previous_time" end
-        if properties.text=="Next TIME" then return "acid_next_time" end
         if properties.text=="NOTE" then return "acid_time_command_note" end
         if properties.text=="TIE" then return "acid_time_command_tie" end
         if properties.text=="REST" then return "acid_time_command_rest" end
@@ -2973,7 +3002,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local callback=function(...)
         if detailed_profile then callback_counts[id]=(callback_counts[id] or 0)+1 end
         if suppress_captured_notifiers then return end
-        return notifier(...)
+        local result=pack_values(notifier(...))
+        if captured_root_view then record_gui_root_width("callback "..tostring(id)) end
+        return unpack_values(result,1,result.n)
       end
       callbacks[id]=callback
       return callback
@@ -3231,8 +3262,10 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         return setmetatable({}, {__index=function(_,name)
           local member=app[name]
           if name=="show_custom_dialog" and type(member)=="function" then
-            return function(_, ...)
-              captured_test_dialog=member(app,...)
+            return function(_,title,content,...)
+              captured_root_view=content
+              captured_test_dialog=member(app,title,content,...)
+              record_gui_root_width("dialog open")
               return captured_test_dialog
             end
           end
@@ -3280,8 +3313,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       close_test_gui()
       return nil,"GUI did not expose its native dialog for teardown"
     end
-    local instrument_control=controls.acid_instrument_choice
-    local instrument_notifier=callbacks.acid_instrument_choice
+    local instrument_control=controls.acid_instrument
+    local instrument_notifier=callbacks.acid_instrument
     local instrument_choice_index
     if instrument_control and type(instrument_control.items)=="table" then
       local expected_prefix=string.format("%02X:",instrument_index-1)
@@ -3297,12 +3330,13 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       return nil,"GUI did not expose the generated phrase instrument choice"
     end
     local instrument_select_started=os.clock()
-    local instrument_dispatch_before=callback_counts.acid_instrument_choice or 0
+    local instrument_dispatch_before=callback_counts.acid_instrument or 0
     instrument_control.value=instrument_choice_index
-    if (callback_counts.acid_instrument_choice or 0)==instrument_dispatch_before then
+    if (callback_counts.acid_instrument or 0)==instrument_dispatch_before then
       instrument_notifier(instrument_choice_index)
     end
     metrics.gui_instrument_selection_elapsed_ms=(os.clock()-instrument_select_started)*1000
+    assert_gui_root_width("instrument selection")
     local phrase_notifier=callbacks.acid_phrase_choice
     local phrase_index
     local actual_phrase_control=controls.acid_phrase_choice
@@ -3329,6 +3363,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     phrase_profile_enabled=false
     metrics.gui_phrase_selection_elapsed_ms=(os.clock()-phrase_select_started)*1000
+    assert_gui_root_width("phrase selection")
     publish_phrase_profile("gui_phrase_initial_profile")
     if not controls.acid_program_select_pitch_01 or not controls.acid_program_select_time_01 then
       close_test_gui()
@@ -3341,6 +3376,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       close_test_gui()
       return nil,"GUI callback target did not load the representative 32-step phrase"
     end
+    coroutine.yield()
     do
       local status=controls.acid_status
       if not status or not controls.acid_feedback then
@@ -3350,7 +3386,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local before_revision=gui_context:revision_state().edit_revision
       local duplicate=gui_context.request_duplicate
       local checked,check_error=pcall(function()
-        assert(status.text=="" and not status.visible,"ready feedback must be empty")
+        assert(status.text=="" and not status.visible,
+          string.format("ready feedback must be empty (visible=%s, text=%q)",
+            tostring(status.visible),tostring(status.text)))
         metrics.gui_feedback_empty_height=controls.acid_feedback.height
         gui_context.request_duplicate=function()return false,"injected duplicate rejection"end
         callbacks.acid_pattern_duplicate()
@@ -3370,6 +3408,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end)
       gui_context.request_duplicate=duplicate
       if not checked then close_test_gui();return nil,tostring(check_error) end
+      assert_gui_root_width("feedback probes")
     end
     local original_note=phrase:line(1):note_column(1).note_value
     local samples={note={},octave={},command={}}
@@ -3404,6 +3443,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if control then
         local callback_started=detailed_profile and os.clock() or nil
         notifier(value)
+        assert_gui_root_width("callback "..callback_id)
         if detailed_profile then
           dispatch_elapsed=dispatch_elapsed+(os.clock()-callback_started)*1000
         end
@@ -3423,10 +3463,10 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           table.concat(button_color,",") or tostring(button_color or "unavailable")
         metrics["gui_"..kind.."_button_text_after"]=control and control.text or "unavailable"
         metrics["gui_"..kind.."_phrase_choice_after"]=controls.acid_phrase_choice.value
-        metrics["gui_"..kind.."_instrument_choice_after"]=controls.acid_instrument_choice.value
+        metrics["gui_"..kind.."_instrument_choice_after"]=controls.acid_instrument.value
         metrics["gui_"..kind.."_instrument_native_index_after"]=song.selected_instrument_index
         metrics["gui_"..kind.."_instrument_native_matches"]=rawequal(song.selected_instrument,instrument)
-        local status=controls.acid_responsiveness_status
+        local status=controls.acid_status
         metrics["gui_"..kind.."_status_after"]=status and tostring(status.text):sub(1,240) or "unavailable"
         metrics["gui_"..kind.."_transition_result"]=gui_transition_result==nil and "nil" or "returned"
         metrics["gui_"..kind.."_transition_error"]=tostring(gui_transition_error or "")
@@ -3467,6 +3507,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if callbacks[alias] then
         callbacks[alias](value)
       end
+      assert_gui_root_width("action "..name)
       local elapsed=(os.clock()-started)*1000
       local memory_delta_kb=detailed_profile and (collectgarbage("count")-memory_before) or nil
       record_action(name,elapsed,memory_delta_kb)
@@ -3493,6 +3534,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local memory_before=detailed_profile and collectgarbage("count") or nil
       local started=os.clock()
       callback()
+      assert_gui_root_width("action "..name)
       local elapsed=(os.clock()-started)*1000
       local memory_delta_kb=detailed_profile and (collectgarbage("count")-memory_before) or nil
       record_action(name,elapsed,memory_delta_kb)
@@ -3631,13 +3673,21 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         action()
         assert(expected_prompt==nil,"Program action did not request its confirmation")
       end
+      local function set_editor_view(value)
+        suppress_captured_notifiers=true
+        controls.acid_editor_view.value=value
+        suppress_captured_notifiers=false
+        callbacks.acid_editor_view(value)
+      end
       local called,reason=pcall(function()
         renoise.app=function()
           return setmetatable({}, {__index=function(_,name)
             if name=="show_prompt" then return function(_,title,message,buttons)
               if captured_audition then assert(not captured_audition:active(),"Prompt opened before audition release") end
               assert(expected_prompt and title==expected_prompt.title,"Unexpected Program prompt: "..tostring(title))
-              assert(#buttons==expected_prompt.count,"Program guard offered incorrect decisions")
+              assert(#buttons==expected_prompt.count,"Program guard offered incorrect decisions for "..
+                tostring(title)..": expected "..tostring(expected_prompt.count)..", got ["..
+                table.concat(buttons," | ").."]")
               local answer=expected_prompt.answer
               local available=false
               for _,button in ipairs(buttons) do if button==answer then available=true end end
@@ -3654,14 +3704,19 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         callbacks.acid_pitch_page_1()
         callbacks.acid_grid_pitch_01()
         local canonical_note=assert(sequence.prepare_resolution(before_source)).resolved_records[1].note
-        start_audition(canonical_note)
-        start_audition(canonical_note)
+        set_editor_view(2)
+        assert(controls.acid_grid_audition.active,"Grid PITCH audition was unavailable for accepted source")
+        callbacks.acid_grid_audition()
+        assert(captured_audition:active() and audition_note==canonical_note,
+          "Grid audition did not use the accepted pitch")
+        unchanged()
+        callbacks.acid_grid_audition()
         local second_outcome=assert(captured_audition:last_outcome())
         assert(second_outcome.reason=="second audition" and second_outcome.release_ok and
           #second_outcome.cleanup_errors==0,"Second audition did not release prior lifecycle")
+        set_editor_view(1)
         callbacks.acid_pitch_page_1()
         released()
-        start_audition(canonical_note)
         prompt("Enter pitches","Proceed",2,callbacks.acid_program_reenter_pitch)
         released()
         assert(not controls.acid_program_finish.active,"Incomplete Program candidate enabled Finish")
@@ -3691,7 +3746,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         unchanged()
         callbacks.acid_program_enter()
         assert(controls.acid_program_finish.active,"Re-entered candidate did not restore Finish")
-        prompt("Entry in progress","Cancel",2,callbacks.acid_undo)
+        prompt("Entry in progress","Cancel",3,callbacks.acid_undo)
         unchanged()
         assert(not controls.acid_program_enter.active,"Discard retained Program candidate")
         prompt("Enter timing","Proceed",2,callbacks.acid_program_reenter_time)
@@ -3716,15 +3771,45 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         local restored=assert(persisted.read_draft(song,instrument,phrase))
         assert(sequence.same_source(before_source,restored),"One Undo did not restore pre-stage source")
         assert(ownership.compare(before_phrase,assert(ownership.snapshot(phrase))),"Finish with Live Edit off changed native phrase")
+
+        prompt("Enter pitches","Proceed",2,callbacks.acid_program_reenter_pitch)
+        set_editor_view(2)
+        assert(rawequal(controls.acid_editor_view_holder.views[1],controls.acid_grid_panel),
+          "Grid view did not mount during staged pitch entry")
+        assert(not controls.acid_program_back.active and not controls.acid_program_enter.active and
+          not controls.acid_program_restart.active and not controls.acid_program_finish.active and
+          controls.acid_program_discard.active,
+          "Grid staging exposed blocked navigation or hid Cancel")
+        local staged_status=controls.acid_program_stage_status.text
+        callbacks.acid_program_back()
+        callbacks.acid_program_enter()
+        callbacks.acid_program_restart()
+        assert(controls.acid_program_stage_status.text==staged_status,
+          "Grid staging dispatched blocked Back, Enter or Restart")
+        assert(controls.acid_grid_audition.active,"Grid accepted-pitch audition was disabled during staged entry")
+        callbacks.acid_grid_audition()
+        local accepted_note=assert(sequence.prepare_resolution(before_source)).resolved_records[1].note
+        assert(captured_audition:active() and audition_note==accepted_note,
+          "Grid audition did not use the accepted pitch during staging")
+        unchanged()
+        set_editor_view(1)
+        released()
+        prompt("Cancel entry","Cancel",2,callbacks.acid_program_discard)
+        assert(not controls.acid_program_enter.active,"Grid staging Cancel retained the candidate")
+        unchanged()
       end)
       renoise.app=app_factory
       if not called then return nil,"Program entry native callbacks: "..tostring(reason) end
+      assert_gui_root_width("program entry probes")
       metrics.gui_program_entry_native_checked=true
       metrics.gui_audition_native_functional_checked=true
       metrics.gui_audition_sound_verified=false
       metrics.gui_audition_timer_duration_verified=false
       metrics.gui_program_entry_prompt_responses_simulated=true
       metrics.gui_program_entry_prompt_count=prompt_count
+      metrics.gui_grid_staging_guards_verified=true
+      metrics.gui_grid_accepted_audition_verified=true
+      metrics.gui_program_staged_audition_verified=true
       return true
     end
     local entry_ok,entry_error=verify_program_entry()
@@ -3852,18 +3937,61 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local scope_random_seed=1
       local pitch_record_fields={"note","key","octave","accent","slide"}
       local function state() return assert(gui_context:editor_state()) end
+      local exact_context="fixture setup"
+      local function source_difference(expected,actual)
+        for _,field in ipairs({"length","pitch_length","timing_mode","scale_mask_enabled"}) do
+          if expected[field]~=actual[field] then
+            return string.format("%s expected %s, durable %s",field,tostring(expected[field]),tostring(actual[field]))
+          end
+        end
+        for index=1,sequence.MAX_STEPS do
+          for _,field in ipairs(pitch_record_fields) do
+            if expected.pitch_events[index][field]~=actual.pitch_events[index][field] then
+              return string.format("pitch_events[%d].%s expected %s, durable %s",index,field,
+                tostring(expected.pitch_events[index][field]),tostring(actual.pitch_events[index][field]))
+            end
+          end
+          if expected.time_events[index]~=actual.time_events[index] then
+            return string.format("time_events[%d] expected %s, durable %s",index,
+              tostring(expected.time_events[index]),tostring(actual.time_events[index]))
+          end
+        end
+        for index=1,#expected.scale_mask do
+          if expected.scale_mask[index]~=actual.scale_mask[index] then
+            return string.format("scale_mask[%d] expected %s, durable %s",index,
+              tostring(expected.scale_mask[index]),tostring(actual.scale_mask[index]))
+          end
+        end
+        return "source matches; metadata differs"
+      end
       local function exact(expected)
+        assert_gui_root_width("extended "..exact_context)
         local actual=state()
         assert(sequence.same_source(expected.source,actual.source),"Extended operation source differs")
         assert(actual.label==expected.label and actual.label_custom==expected.label_custom and
           actual.output_policy==expected.output_policy and actual.pb_range==expected.pb_range,
           "Extended operation changed excluded metadata")
         local source,policy,pb,label,custom=persisted.read_draft(song,instrument,phrase)
-        assert(source and sequence.same_source(expected.source,source),
-          "Extended operation durable draft source differs")
-        assert(policy==expected.output_policy and pb==expected.pb_range and
-          label==expected.label and custom==expected.label_custom,
-          "Extended operation durable draft metadata differs")
+        local function matches(expected_source,expected_policy,expected_pb,expected_label,expected_custom)
+          return source and sequence.same_source(expected_source,source) and
+            policy==expected_policy and pb==expected_pb and label==expected_label and custom==expected_custom
+        end
+        if source then
+          local draft_matches=matches(expected.source,expected.output_policy,expected.pb_range,
+            expected.label,expected.label_custom)
+          if not draft_matches then
+            error("Extended operation durable draft differs: "..exact_context.."; "..
+              source_difference(expected.source,source))
+          end
+        else
+          assert(not policy,"Cannot read extended operation durable draft: "..tostring(policy))
+          local committed,committed_policy,committed_pb,committed_label,committed_custom=
+            persisted.read_entry(song,ownership.id(phrase))
+          assert(committed and sequence.same_source(expected.source,committed) and
+            committed_policy==expected.output_policy and committed_pb==expected.pb_range and
+            committed_label==expected.label and committed_custom==expected.label_custom,
+            "Extended operation has neither a matching draft nor committed source: "..exact_context)
+        end
       end
       local function scope_preserved(before,after,operation,scope)
         assert(after.length==before.length and after.pitch_length==before.pitch_length,
@@ -3887,6 +4015,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         controls[id].value=next_value
         suppress_captured_notifiers=false
         if callbacks[id] then callbacks[id](next_value) end
+        assert_gui_root_width("extended control "..id)
       end
       local function set_parameters()
         for parameter,next_value in pairs(parameters) do
@@ -3896,7 +4025,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           else value("acid_operation_"..parameter,next_value) end
         end
       end
-      local ok,reason=pcall(function()
+      do
         renoise.ViewBuilder=captured_builder_factory
         renoise.app=function()
           return setmetatable({}, {__index=function(_,name)
@@ -3913,6 +4042,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         local function prepare_fixture(action)
           local previous=state().source
           action()
+          assert_gui_root_width("extended fixture action")
           if not sequence.same_source(previous,state().source) then fixture_edits=fixture_edits+1 end
         end
         value("acid_operation_scope",2)
@@ -3941,6 +4071,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
               set_parameters()
               local before=state()
               local candidate=assert(sequence.operation_candidate(before.source,operation,scope,parameters))
+              exact_context=operation.." / "..scope.." apply"
               value("acid_operation",operation_index)
               value("acid_operation_scope",scope_index)
               local raw=song.tool_data
@@ -3958,16 +4089,18 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
               if sequence.same_source(before.source,candidate) then
                 assert(song.tool_data==raw,"No-op operation persisted data")
               else
-                callbacks.acid_undo();exact(before)
+                callbacks.acid_undo();exact_context=operation.." / "..scope.." undo";exact(before)
+                exact_context=operation.." / "..scope.." redo"
                 callbacks.acid_redo()
                 exact(expected)
                 scope_preserved(before.source,state().source,operation,scope)
-                callbacks.acid_undo();exact(before)
+                callbacks.acid_undo();exact_context=operation.." / "..scope.." undo after redo";exact(before)
               end
+              coroutine.yield()
             end
           end
         end
-        for index=1,fixture_edits do callbacks.acid_undo() end
+        for index=1,fixture_edits do callbacks.acid_undo();coroutine.yield() end
         exact(fixture_before)
         local before=state()
         local edits=0
@@ -3975,6 +4108,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           local previous=state().source
           value(id,next_value)
           if not sequence.same_source(previous,state().source) then edits=edits+1 end
+          coroutine.yield()
         end
         mask("acid_mask_enabled",false)
         for class=1,12 do mask(string.format("acid_mask_class_%02d",class),false) end
@@ -3983,6 +4117,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         value("acid_mask_enabled",true)
         assert(song.tool_data==raw and not state().source.scale_mask_enabled,
           "Empty enabled mask was accepted")
+        coroutine.yield()
         mask("acid_mask_class_01",true)
         assert(not state().source.scale_mask_enabled,"Enabling a disabled class enabled mask")
         mask("acid_mask_enabled",true)
@@ -3999,11 +4134,12 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         raw=song.tool_data
         value("acid_mask_class_01",false)
         assert(song.tool_data==raw and state().source.scale_mask[1],"Last enabled class was removed")
-        for index=1,edits do callbacks.acid_undo() end
+        for index=1,edits do callbacks.acid_undo();coroutine.yield() end
         exact(before)
         for _,view_index in ipairs({1,2}) do
           value("acid_editor_view",view_index)
           callbacks.acid_pattern_reset()
+          assert_gui_root_width("extended reset "..view_index)
           local reset=state()
           assert(sequence.same_source(sequence.new_pattern(before.source.length),reset.source),
             "Reset did not restore canonical source defaults")
@@ -4014,9 +4150,11 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             "Reset did not restore output defaults")
           raw=song.tool_data
           callbacks.acid_pattern_reset()
+          assert_gui_root_width("extended no-op reset "..view_index)
           assert(song.tool_data==raw,"Identical Reset persisted data")
           if not sequence.same_source(before.source,reset.source) or before.output_policy~=reset.output_policy or
               before.pb_range~=reset.pb_range then callbacks.acid_undo();exact(before) end
+          coroutine.yield()
         end
         do
           local library=require("model.scales")
@@ -4040,6 +4178,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             assert(applied.source.scale_mask[index]==c_mask[index],"Native C preset class differs")
           end
           exact(applied)
+          coroutine.yield()
           raw=song.tool_data
           value("acid_scale_root",3)
           assert(song.tool_data==raw and
@@ -4051,6 +4190,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           end
           callbacks.acid_undo()
           exact(applied)
+          coroutine.yield()
           value("acid_scale_root",1)
           assert(sequence.same_source(state().source,applied.source),"Returning root changed source")
           value("acid_scale_follow",true)
@@ -4070,6 +4210,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             callbacks.acid_undo()
           end
           exact(applied)
+          coroutine.yield()
           value("acid_scale_follow",false)
           value("acid_operation",9)
           value("acid_operation_scope",1)
@@ -4088,6 +4229,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           value("acid_operation_pitch_seed",1)
           callbacks.acid_operation_open()
           exact(randomized_one)
+          coroutine.yield()
           value("acid_operation_pitch_seed",2)
           callbacks.acid_operation_open()
           exact(randomized_two)
@@ -4103,10 +4245,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
           "Extended operations with Live Edit off changed native phrase")
         value("acid_editor_view",original_view)
         assert(same_native_selection(selection,native_selection(song)),"Extended operations changed selection")
-      end)
+      end
       renoise.app,renoise.ViewBuilder=app_factory,builder_factory
       suppress_captured_notifiers=false
-      if not ok then return nil,"Extended native callbacks: "..tostring(reason) end
       metrics.gui_extended_operations_native_functional_checked=true
       metrics.gui_mask_native_functional_checked=true
       metrics.gui_reset_native_functional_checked=true
@@ -4906,7 +5047,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     return true
   end
   local accepted,start_error=writer.create(create_request,function(result)
-    local callback_ok,callback_error=xpcall(function()
+    local function run_acceptance()
     if type(result)~="table" or result.kind~="success" or result.verified~=true or not result.phrase then
       fail(describe_failure(result or "long phrase creation failed"));return
     end
@@ -5232,7 +5373,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
             "editor responsiveness fixture did not restore initial native selection" or
           "metadata-driven fresh request failed") or nil}
       for key,value in pairs(metrics) do result[key]=value end
-      done(result,gui_context)
+       finished=true
+       done(result,gui_context)
     end
     completion_idle:add_notifier(wait_completion)
     end
@@ -5269,13 +5411,26 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if not started then fail(start_error) end
     end
     live_probe_idle:add_notifier(start_live_probe)
-    end,function(callback_error)
-      if debug and type(debug.traceback)=="function" then
-        return debug.traceback(tostring(callback_error),2)
+    end
+    local custom_scales,custom_scales_error=require("runtime.scale_preferences").load(renoise.tool())
+    if type(custom_scales)~="string" then
+      fail("GUI acceptance could not initialize scale preferences: "..tostring(custom_scales_error))
+      return
+    end
+    local thread=coroutine.create(run_acceptance)
+    local function resume_acceptance()
+      if finished then return end
+      local resumed,reason=coroutine.resume(thread)
+      if not resumed then
+        local debug_api=rawget(_G,"debug")
+        local failure=debug_api and type(debug_api.traceback)=="function" and
+          debug_api.traceback(thread,tostring(reason)) or tostring(reason)
+        fail(failure)
+      elseif coroutine.status(thread)~="dead" then
+        on_next_idle(resume_acceptance)
       end
-      return tostring(callback_error)
-    end)
-    if not callback_ok then fail(callback_error) end
+    end
+    resume_acceptance()
   end)
   if not accepted then fail(describe_failure(start_error or "long phrase writer rejected request")) end
   return true
@@ -8077,289 +8232,6 @@ local function run_phrase_midi_delivery(done,options,json)
   return true
 end
 
-local function run_layout_sizing(done)
-  local FEEDBACK_PROBE_WIDTH=640
-  local FEEDBACK_PROBE_MAX_LINES=8
-  local FEEDBACK_PROBE_LINE_HEIGHT=22
-  local FEEDBACK_PROBE_EMPTY_SIZE={width=1,height=1}
-  local vb=renoise.ViewBuilder()
-  local function text(label,width,height)
-    return vb:text{text=label,size={width=width or 90,height=height or 20}}
-  end
-  local function button(label,width)
-    return vb:button{text=label,size={width=width or 54,height=24}}
-  end
-  local function popup(items,width)
-    return vb:popup{items=items,value=1,size={width=width or 110,height=24}}
-  end
-  local function row(...)
-    return vb:row{spacing=4,views={...}}
-  end
-  local function record_size(view)
-    local size=view.size
-    return {width=size.width or size[1],height=size.height or size[2]}
-  end
-  local function labels(prefix,first,last)
-    local result={}
-    for index=first,last do result[#result+1]=button(prefix..string.format("%02d",index),34) end
-    return result
-  end
-
-  local function action_row(...)
-    return row(...)
-  end
-  local pitch_positions=labels("P",1,16)
-  local time_positions=labels("T",1,16)
-  local function make_key_controls()
-    local keys={}
-    for _,name in ipairs({"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}) do
-      keys[#keys+1]=button(name,34)
-    end
-    local first,second={},{}
-    for index,key in ipairs(keys) do
-      local target=index<=6 and first or second
-      target[#target+1]=key
-    end
-    return vb:column{spacing=3,views={vb:row{spacing=3,views=first},
-      vb:row{spacing=3,views=second}}}
-  end
-  local pitch_page_controls=action_row(button("Previous PITCH",100),text("PITCH page 1 / 2",100),
-    button("Next PITCH",92))
-  local time_page_controls=action_row(button("Previous TIME",100),text("TIME page 1 / 2",100),
-    button("Next TIME",92))
-  local function make_pitch_controls()
-    return action_row(popup({"Octave 4","Octave 5","Octave 6"},105),
-      button("Accent",58),button("Slide",48),button("C+",42),button("Audition",64))
-  end
-  local program_editor=vb:column{id="sizing_program_editor",spacing=4,views={
-    text("PITCH",64),vb:row{spacing=3,views=pitch_positions},pitch_page_controls,
-    make_key_controls(),make_pitch_controls(),
-    text("TIME",64),vb:row{spacing=3,views=time_positions},time_page_controls,
-    action_row(button("Note",48),button("Tie",42),button("Rest",48)),
-  }}
-  local grid_pitch=labels("G",1,16)
-  local grid_time=labels("T",1,16)
-  local grid_editor=vb:column{id="sizing_grid_editor",spacing=4,views={
-    text("PITCH GRID",100),vb:row{spacing=3,views=grid_pitch},
-    make_key_controls(),make_pitch_controls(),
-    text("TIME GRID",100),vb:row{spacing=3,views=grid_time},
-  }}
-  local editor_holder=vb:column{id="sizing_editor_holder",spacing=0,views={program_editor}}
-  local feedback=vb:column{id="sizing_feedback",spacing=0}
-  local feedback_content=vb:multiline_text{id="sizing_feedback_content",text=table.concat({
-    "The latest phrase edits could not be saved.",
-    "The previous phrase still has unsaved edits.",
-    "This phrase is unavailable for editing.",
-    "The scale library could not be loaded.",
-    "Audition cleanup could not release the active note.",
-    "PITCH position 17 is missing.",
-    "Generation was rejected; the song cannot be updated safely.",
-    "Some generated notes were approximated."},"\n"),
-    size={width=FEEDBACK_PROBE_WIDTH,height=FEEDBACK_PROBE_MAX_LINES*FEEDBACK_PROBE_LINE_HEIGHT}}
-  local entry=vb:column{id="sizing_entry",spacing=0}
-  local entry_content=action_row(text("PITCH entry 07 / 32",122),button("Back",48),
-    button("Enter and advance",118),button("Restart",60),button("Finish",52),button("Cancel",54))
-  local parameters=vb:column{id="sizing_parameters",spacing=3}
-  local parameter_pitch=action_row(text("Seed",40),vb:valuebox{min=1,max=2147483646,value=1,size={width=90,height=24}},
-    text("MIDI range",76),vb:valuebox{min=24,max=60,value=24,size={width=68,height=24}},
-    text("to",18),vb:valuebox{min=24,max=60,value=60,size={width=68,height=24}})
-  local parameter_time=action_row(text("Seed",40),vb:valuebox{min=1,max=2147483646,value=1,size={width=90,height=24}},
-    text("NOTE",40),vb:valuebox{min=0,max=1000,value=2,size={width=58,height=24}},
-    text("TIE",30),vb:valuebox{min=0,max=1000,value=1,size={width=58,height=24}},
-    text("REST",42),vb:valuebox{min=0,max=1000,value=1,size={width=58,height=24}})
-  local parameter_repeat=action_row(text("Last used seed: 1",150),button("Repeat last",84))
-  local root=vb:column{id="sizing_root",margin=8,spacing=5,views={
-    action_row(text("ACID",70),text("Instrument",68),popup({"Instrument 01"},260)),
-    action_row(text("Phrase",52),popup({"Phrase 01"},230),button("Rename",58),button("Duplicate",70),button("Reset",52)),
-    action_row(text("Length",52),vb:valuebox{min=1,max=32,value=32,size={width=65,height=24}},
-      text("Timing",50),popup({"1/16","1/8","1/4"},75),text("Pitch span",70),
-      vb:valuebox{min=1,max=32,value=13,size={width=65,height=24}}),
-    action_row(popup({"Program","Grid"},100),button("Undo",48),button("Redo",48),
-      popup({"PITCH","TIME","ALL"},90),button("Copy",48),button("Paste",48)),
-    editor_holder,
-    action_row(text("Entry",52),button("Enter pitches",90),button("Enter timing",90)),
-    entry,
-    action_row(text("Root",40),popup({"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"},70),
-      text("Scale",45),popup({"Major","Minor","Custom"},120),button("Follow",55),
-      text("Category",62),popup({"All","Western","World"},100),text("Search",45),
-      vb:textfield{text="",size={width=100,height=24}},button("Import",52)),
-    action_row(text("Scale mask",72),button("Enable",55),
-      button("C",32),button("C#",32),button("D",32),button("D#",32),button("E",32),button("F",32),
-      button("F#",32),button("G",32),button("G#",32),button("A",32),button("A#",32),button("B",32)),
-    action_row(text("Operations",78),popup({"Shift","Transpose","Reverse","Randomize"},150),
-      popup({"PITCH","TIME","ALL"},90),button("Apply",56)),
-    parameters,
-    action_row(text("OUTPUT",72),popup({"Phrase","Pattern"},110),text("Bend range",76),
-      vb:valuebox{min=1,max=96,value=2,size={width=60,height=24}},button("Live Edit",68),button("Generate",72)),
-    feedback,
-  }}
-
-  local dialog
-  local idle=renoise.tool().app_idle_observable
-  local phase="empty-program"
-  local phase_started=os.clock()
-  local metrics={probe="planned-full-layout"}
-  local settled=false
-  local on_idle
-  local function finish(status,reason)
-    if settled then return end
-    settled=true
-    pcall(function() idle:remove_notifier(on_idle) end)
-    if dialog then pcall(function() if dialog.visible then dialog:close() end end) end
-    done({status=status,case="layout-sizing",reason=reason,metrics=metrics})
-  end
-  local function attach_maximum()
-    feedback_content.size={width=FEEDBACK_PROBE_WIDTH,
-      height=FEEDBACK_PROBE_MAX_LINES*FEEDBACK_PROBE_LINE_HEIGHT}
-    feedback:add_view(feedback_content)
-    entry:add_view(entry_content)
-    parameters:add_view(parameter_pitch)
-    parameters:add_view(parameter_time)
-    parameters:add_view(parameter_repeat)
-  end
-  local function remove_maximum()
-    if #feedback.views>0 then
-      feedback_content.size=FEEDBACK_PROBE_EMPTY_SIZE
-      feedback:remove_view(feedback_content)
-    end
-    if #entry.views>0 then entry:remove_view(entry_content) end
-    if #parameters.views>0 then
-      parameters:remove_view(parameter_pitch)
-      parameters:remove_view(parameter_time)
-      parameters:remove_view(parameter_repeat)
-    end
-  end
-  local function reset_empty_holder(holder)
-    holder.size={width=1,height=1}
-  end
-  on_idle=function()
-    if settled then return end
-    if os.clock()-phase_started<1.2 then return end
-    phase_started=os.clock()
-    if phase=="empty-program" then
-      metrics.empty_program_root=record_size(root)
-      metrics.empty_feedback=record_size(feedback)
-      metrics.empty_entry=record_size(entry)
-      metrics.empty_parameters=record_size(parameters)
-      metrics.empty_editor_holder=record_size(editor_holder)
-      metrics.empty_feedback_members=#feedback.views
-      metrics.empty_entry_members=#entry.views
-      metrics.empty_parameter_members=#parameters.views
-      attach_maximum()
-      phase="full-program"
-      return
-    end
-    if phase=="full-program" then
-      metrics.full_program_root=record_size(root)
-      metrics.full_feedback=record_size(feedback)
-      metrics.full_feedback_members=#feedback.views
-      metrics.full_entry=record_size(entry)
-      metrics.full_entry_members=#entry.views
-      metrics.full_parameters=record_size(parameters)
-      metrics.full_parameter_members=#parameters.views
-      remove_maximum()
-      reset_empty_holder(feedback)
-      reset_empty_holder(entry)
-      reset_empty_holder(parameters)
-      phase="empty-program-after"
-      return
-    end
-    if phase=="empty-program-after" then
-      metrics.empty_program_after_root=record_size(root)
-      metrics.empty_program_after_feedback=record_size(feedback)
-      metrics.empty_program_after_entry=record_size(entry)
-      metrics.empty_program_after_parameters=record_size(parameters)
-      editor_holder:remove_view(program_editor)
-      reset_empty_holder(editor_holder)
-      editor_holder:add_view(grid_editor)
-      phase="empty-grid-first"
-      return
-    end
-    if phase=="empty-grid-first" then
-      metrics.empty_grid_root=record_size(root)
-      metrics.empty_grid_feedback=record_size(feedback)
-      metrics.empty_grid_entry=record_size(entry)
-      metrics.empty_grid_parameters=record_size(parameters)
-      metrics.empty_grid_editor_holder=record_size(editor_holder)
-      metrics.empty_grid_feedback_members=#feedback.views
-      metrics.empty_grid_entry_members=#entry.views
-      metrics.empty_grid_parameter_members=#parameters.views
-      attach_maximum()
-      phase="full-grid"
-      return
-    end
-    if phase=="full-grid" then
-      metrics.grid_editor=record_size(grid_editor)
-      metrics.full_grid_root=record_size(root)
-      metrics.full_grid_entry=record_size(entry)
-      metrics.full_grid_parameters=record_size(parameters)
-      remove_maximum()
-      reset_empty_holder(feedback)
-      reset_empty_holder(entry)
-      reset_empty_holder(parameters)
-      phase="empty-grid-after"
-      return
-    end
-    if phase=="empty-grid-after" then
-      metrics.empty_grid_after_root=record_size(root)
-      metrics.empty_grid_after_feedback=record_size(feedback)
-      metrics.empty_grid_after_entry=record_size(entry)
-      metrics.empty_grid_after_parameters=record_size(parameters)
-      editor_holder:remove_view(grid_editor)
-      reset_empty_holder(editor_holder)
-      editor_holder:add_view(program_editor)
-      attach_maximum()
-      metrics.full_again_program_root=record_size(root)
-      metrics.full_again_feedback=record_size(feedback)
-      metrics.full_again_feedback_members=#feedback.views
-      metrics.full_again_entry_members=#entry.views
-      metrics.full_again_parameter_members=#parameters.views
-      phase="full-again-program"
-      return
-    end
-    if phase=="full-again-program" then
-      metrics.feedback_cycle_resized=metrics.full_program_root.height>metrics.empty_program_root.height and
-        metrics.empty_program_after_root.height==metrics.empty_program_root.height and
-        metrics.empty_grid_after_root.height==metrics.empty_grid_root.height and
-        metrics.full_grid_root.height>metrics.empty_grid_root.height and
-        metrics.empty_program_after_feedback.height==1 and
-        metrics.empty_program_after_entry.height==1 and
-        metrics.empty_program_after_parameters.height==1 and
-        metrics.empty_grid_feedback.height==1 and metrics.empty_grid_entry.height==1 and
-        metrics.empty_grid_parameters.height==1 and metrics.empty_grid_editor_holder.height>1 and
-        metrics.empty_grid_after_feedback.height==1 and metrics.empty_grid_after_entry.height==1 and
-        metrics.empty_grid_after_parameters.height==1 and
-        metrics.full_again_program_root.height==metrics.full_program_root.height
-      metrics.membership_cycle_valid=metrics.empty_feedback_members==0 and
-        metrics.full_feedback_members==1 and metrics.empty_grid_feedback_members==0 and
-        metrics.full_again_feedback_members==1 and metrics.empty_entry_members==0 and
-        metrics.full_entry_members==1 and metrics.empty_parameter_members==0 and
-        metrics.full_parameter_members==3 and metrics.empty_grid_entry_members==0 and
-        metrics.empty_grid_parameter_members==0 and metrics.full_again_entry_members==1 and
-        metrics.full_again_parameter_members==3
-      if metrics.feedback_cycle_resized and metrics.membership_cycle_valid then
-        finish("PASS")
-      else
-        finish("FAIL","native root sizing or holder membership did not follow the empty/full cycle")
-      end
-    end
-  end
-  attach_maximum()
-  metrics.opened_at_max_program_root=record_size(root)
-  local opened,open_error=pcall(function()
-    dialog=renoise.app():show_custom_dialog("ACID planned layout sizing probe",root)
-  end)
-  if not opened then finish("FAIL",tostring(open_error));return true end
-  remove_maximum()
-  reset_empty_holder(feedback)
-  reset_empty_holder(entry)
-  reset_empty_holder(parameters)
-  phase="empty-program"
-  phase_started=os.clock()
-  idle:add_notifier(on_idle)
-  return true
-end
-
 function M.run(case_name, done, json, profile_mode, options)
   if type(done) ~= "function" then return false, "completion callback is required" end
   if case_name=="metadata-recovery-prepare" or case_name=="metadata-recovery" or case_name=="metadata-recovery-cold" then
@@ -8393,6 +8265,23 @@ function M.run(case_name, done, json, profile_mode, options)
     return true
   end
   profile_mode=resolved_profile
+  if case_name == "gui-redesign" then
+    return run_editor_responsiveness(function(result, context)
+      if type(result) == "table" then
+        result.case = case_name
+        result.native_visual_acceptance = "NOT_CAPTURED"
+        result.native_audio_acceptance = "NOT_CAPTURED"
+        if result.status == "PASS" then result.native_gui_callbacks_verified = true end
+      end
+      done(result, context)
+    end, "Warm")
+  end
+  if case_name == "gui-layout" then
+    return dofile(renoise.tool().bundle_path .. "\\__dev\\gui_layout_acceptance.lua").run(done, json)
+  end
+  if case_name == "gui-lifecycle" then
+    return dofile(renoise.tool().bundle_path .. "\\__dev\\gui_lifecycle_acceptance.lua").run(done)
+  end
   if case_name == "ownership-negatives" then return run_ownership_negatives(done) end
   if case_name == "import-donor" then return run_ownership_negatives(done, true) end
   if case_name == "revision-undo-fixture" then return run_revision_undo_fixture(done) end
@@ -8407,7 +8296,6 @@ function M.run(case_name, done, json, profile_mode, options)
   if case_name == "multi-instrument-workflow" then return run_multi_instrument_workflow(done, json,profile_mode) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
   if case_name == "editor-responsiveness" then return run_editor_responsiveness(done,profile_mode) end
-  if case_name == "layout-sizing" then return run_layout_sizing(done) end
   if case_name == "selection-feasibility" then return run_selection_feasibility(done, json) end
   if case_name == "direct-output-feasibility" then return run_direct_output_feasibility(done, json) end
   if case_name == "source-undo-feasibility" then
