@@ -11,14 +11,16 @@ Open **Tools > ACID...**, use the Pattern Editor context menu, or assign a
 shortcut to `Global:ACID:Show` in **Edit > Preferences > Keys**. Renoise
 keeps shortcuts in each user's keymap. ACID does not set a default shortcut. The command
 opens or focuses the same ACID window as the menu entries. A fresh draft is
-ready immediately: 32 C pitch entries, 32 NOTE commands, LAST STEP 16 and an
-active PITCH span of 16. Change LAST STEP and the active PITCH span as needed.
+ready immediately: 32 C pitch entries, 32 NOTE commands, Length 16 and a
+Pitch span of 16. Change Length and Pitch span independently as needed.
+The header places Instrument first, then Phrase with Rename and Duplicate.
+Length, Timing, Reset pattern and Pitch span sit above the editor.
 Program and Grid have independent PITCH and TIME cursors and pages. Grid
 selects sixteen positions per page for direct editing with shared pitch and
 NOTE/TIE/REST controls. Program offers direct Edit One and staged Re-enter
 PITCH or Re-enter TIME. Both views
 edit the same source; switching views does not change or regenerate the
-sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
+sequence. Reducing Length keeps hidden TIME entries available if the length
 is increased again; inactive TIME positions remain inspectable but cannot be
 edited directly. All 32 PITCH entries remain stored and editable.
 
@@ -97,7 +99,7 @@ one traversal with an explicit final release. Changing this policy changes the
 owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
 instrument's global phrase trigger settings.
 
-The Destination phrase control binds ACID to an exact instrument and phrase.
+The Phrase control binds ACID to an exact instrument and phrase.
 Selecting an ACID-owned phrase in Renoise's Phrase Editor loads its source and
 PB Range into ACID. Navigation and restoring a saved draft never generate music.
 Native instrument and phrase changes refresh the choices without inferring
@@ -224,7 +226,7 @@ scope, then Apply for one direct edit in either view.
 TIME 01 normalizes a drawn TIE to NOTE. Scope never changes active bounds;
 All 32 also edits inactive storage. Each changed result is one undoable edit.
 
-**Reset Pattern** preserves LAST STEP and label. It resets all pitch notes and
+**Reset pattern** preserves Length and label. It resets all pitch notes and
 flags, all TIME commands, PITCH span to 16, timing to straight, mask to disabled
 with every class selected, and output/PB settings to defaults. An identical
 reset has no edit effect. Reset applies immediately in both views and one
@@ -263,7 +265,7 @@ rejects unsupported speed timing before changing phrases or saved source.
 ## Development checks
 
 Use the [editor presentation checklist](../tests/acid/acid_editor_presentation_manual.md)
-for labels, Details, staging visibility and layout.
+for labels, phrase controls, staging visibility and layout.
 
 From the repository root in PowerShell 7:
 

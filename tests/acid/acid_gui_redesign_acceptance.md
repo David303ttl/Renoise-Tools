@@ -179,6 +179,30 @@ helpers; the final writer check and complete Lua suite include that deletion.
 These are functional receipts, not acoustic or latency acceptance. Final
 production-layout fit and other display scaling settings remain Task 12 checks.
 
+## Task 4 header and sequence settings
+
+Instrument precedes Phrase with Rename and Duplicate. One adjacent Name display
+shows the accepted name, including ungenerated label edits. Length, Timing,
+Reset pattern and Pitch span appear above the editor. Timing choices include
+their divisions; the separate division/cycle display is removed.
+
+The existing target, rename, duplicate and reset owners retain admission,
+pending-entry guards, save/retry handling and history. GUI fixtures check row
+membership/order, unequal TIME length and PITCH span, preservation of all stored
+pitch events and inactive TIME entries, unresolved rename action guards, failed
+Save/Retry and label-only Undo without source saving or generation.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1; 61.36 s |
+| Second-pass review | Independent contract review and final callback/test diff review completed; redundant guards removed, row order and rename failure cases covered; no remaining `step_division` reference |
+| `git diff --check` | Passed |
+
+Native header fit, selection synchronization and rename/reset interaction checks
+in `acid_editor_presentation_manual.md` remain unverified for this change.
+Runtime file layout and package inputs are unchanged; no package rebuild is
+required.
+
 ## Baseline
 
 | Item | Evidence |

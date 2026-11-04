@@ -21,3 +21,14 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
    explicit success confirmation while unresolved warnings remain visible.
 7. Compare dialog height, spacing and text clipping in both views at the
    display scaling used for normal work, including every workspace tab.
+8. Confirm Instrument precedes Phrase, Rename and Duplicate. Select New Phrase
+   and an owned phrase; confirm native selection and the accepted name agree.
+   Attempt destination changes during entry and an unresolved rename attempt;
+   neither may bypass its guard.
+9. Rename with an invalid name, then a valid name. On an injected save failure,
+   confirm the proposal survives, Retry saves once and label-only Undo restores
+   the accepted name without changing destination or notes.
+10. Confirm Length, Timing, Reset pattern and Pitch span appear in that order
+    above the editor. Reduce Length with a different Pitch span, then restore it:
+    inactive TIME entries and PITCH memory must remain intact. Check both Timing
+    divisions and undoable Reset pattern; Reset must respect pending entry.

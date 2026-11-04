@@ -82,6 +82,7 @@ local function view_builder()
   setmetatable(builder,{__index=function(_,kind)
     return function(_,properties) return construct(kind,properties) end
   end})
+  builder.parent_of=function(child) return parent_by_child[child] end
   return builder
 end
 
@@ -731,8 +732,44 @@ assert(render_calls==0)
 view:fire(1)
 
 local last_step=control("acid_last_step")
+local pitch_length=control("acid_pitch_length")
 assert(last_step and last_step.min==1 and last_step.max==32)
+assert(pitch_length and builder.views.acid_timing.items[1]:find("1/16",1,true) and
+  builder.views.acid_timing.items[2]:find("1/8",1,true),
+  "sequence settings expose the TIME divisions and independent PITCH span")
+local instrument_header=builder.views.acid_instrument_header
+local phrase_header=builder.views.acid_phrase_header
+local sequence_settings=builder.views.acid_sequence_settings
+assert(builder.parent_of(instrument_header)==dialog.content and
+  builder.parent_of(phrase_header)==dialog.content and
+  builder.parent_of(sequence_settings)==dialog.content,
+  "phrase header and sequence settings are attached directly to the main dialog")
+local function child_index(parent,child)
+  for index,view in ipairs(parent.views) do
+    if rawequal(view,child) then return index end
+  end
+end
+assert(child_index(dialog.content,instrument_header)<child_index(dialog.content,phrase_header) and
+  child_index(dialog.content,phrase_header)<child_index(dialog.content,sequence_settings) and
+  builder.parent_of(builder.views.acid_label_rename)==phrase_header and
+  builder.parent_of(builder.views.acid_pattern_duplicate)==phrase_header and
+  child_index(sequence_settings,last_step)<child_index(sequence_settings,builder.views.acid_timing) and
+  child_index(sequence_settings,builder.views.acid_timing)<child_index(sequence_settings,builder.views.acid_pattern_reset) and
+  child_index(sequence_settings,builder.views.acid_pattern_reset)<child_index(sequence_settings,pitch_length),
+  "phrase header precedes Length, Timing, Reset Pattern, and Pitch span")
+local before_time_resize=assert(sequencer.copy_source(saved_draft()))
+pitch_length:fire(12)
+local selected_pitch_length=saved_draft().pitch_length
 last_step:fire("20")
+assert(saved_draft().length==20 and selected_pitch_length==12 and saved_draft().pitch_length==12 and
+  sequencer.same_source(before_time_resize,saved_draft())==false,
+  "TIME length changes independently from PITCH span")
+for index,event in ipairs(before_time_resize.pitch_events) do
+  local resized=saved_draft().pitch_events[index]
+  assert(event.note==resized.note and event.key==resized.key and event.octave==resized.octave and
+      event.accent==resized.accent and event.slide==resized.slide,
+    "TIME length changes preserve stored PITCH events")
+end
 control("acid_time_page_2"):fire()
 control("acid_grid_select_time_01"):fire()
 assert(control("acid_program_time_summary").text:find("TIME 17",1,true))
@@ -791,7 +828,7 @@ assert(timing_popup.value==2)
 local before_reset_source=assert(sequencer.copy_source(saved_draft()))
 local reset_pitch=builder.views.acid_program_pitch_summary.tooltip
 app.show_prompt=function() error("Reset must not prompt") end
-button("Reset Pattern"):fire()
+control("acid_pattern_reset"):fire()
 app.show_prompt=function() return "Cancel" end
 assert(timing_popup.value==1,"Reset Source restores straight timing")
 local reset_source=assert(sequencer.copy_source(saved_draft()))
@@ -1232,6 +1269,15 @@ do
     dialog=main_dialog
   end
   local renders,draft_count=render_calls,draft_writes
+  local rename_writes=writes
+  local initial_name=control("acid_label_accepted").text
+  save_label("Invalid/name")
+  assert(writes==rename_writes,"invalid phrase name reached persistence")
+  assert(control("acid_label_accepted").text==initial_name,"invalid phrase name changed accepted name")
+  assert(control("acid_label_error").text=="Use the name format shown above.",
+    "invalid phrase name did not show grammar feedback")
+  control("acid_label_discard"):fire()
+  dialog=main_dialog
   save_label("Accepted A")
   assert(control("acid_label_accepted").text=="Accepted A")
   control("acid_label_rename"):fire()
@@ -1251,14 +1297,16 @@ do
   dialog=main_dialog
   assert(control("acid_label_field").value=="Accepted A" and not control("acid_label_field").active)
   assert(control("acid_label_accepted").text=="Accepted B" and
-    control("acid_label_error").text=="Label could not be saved. Retry or discard this attempt." and
-    control("acid_status").text:find("Phrase label could not be saved. Retry or discard the attempt.",1,true) and
+    control("acid_label_error").text=="Phrase name could not be saved. Retry or discard this attempt." and
+    control("acid_status").text:find("Phrase name could not be saved. Retry or discard the attempt.",1,true) and
     not control("acid_status").text:find("injected",1,true),
     "failed metadata Undo retains accepted label and proposed history transition")
   local pending_writes=writes
   button("Undo"):fire()
   button("Redo"):fire()
   control("acid_clipboard_paste"):fire()
+  control("acid_instrument"):fire(2)
+  control("acid_pattern_duplicate"):fire()
   program_key(3):fire()
   phrase_popup:fire(2)
   assert(writes==pending_writes and control("acid_label_accepted").text=="Accepted B" and
@@ -1282,7 +1330,21 @@ do
   button("Undo"):fire()
   assert(control("acid_label_accepted").text=="Accepted A",
     "Undo after discard uses accepted history")
-  assert(render_calls==renders and draft_writes==draft_count)
+  failing=true
+  local before_retry_writes=writes
+  save_label("Retry this name")
+  assert(control("acid_label_field").value=="Retry this name" and
+    control("acid_label_error").text=="Phrase name could not be saved. Retry or discard this attempt." and
+    control("acid_label_accepted").text=="Accepted A",
+    "failed Rename Save retains its outstanding attempt and accepted name")
+  failing=false
+  control("acid_label_retry"):fire()
+  assert(writes==before_retry_writes+2 and control("acid_label_accepted").text=="Retry this name",
+    "Rename Retry saves the pending name")
+  button("Undo"):fire()
+  assert(control("acid_label_accepted").text=="Accepted A" and
+    render_calls==renders and draft_writes==draft_count,
+    "label-only Undo does not save or regenerate phrase source")
   label_context.rename_label=rename
   dialog=main_dialog
 end
@@ -1324,9 +1386,9 @@ do
       local writes=draft_writes
       control("acid_operation_open"):fire()
       assert(draft_writes==writes,"identical Clear is inert")
-      button("Reset Pattern"):fire()
+      control("acid_pattern_reset"):fire()
       writes=draft_writes
-      button("Reset Pattern"):fire()
+      control("acid_pattern_reset"):fire()
       assert(draft_writes==writes,"identical Reset is inert")
       for operation=CLEAR_PITCH,RANDOM_PITCH-1 do
         control("acid_operation").value=operation

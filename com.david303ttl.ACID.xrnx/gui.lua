@@ -173,6 +173,7 @@ local RANDOM_WEIGHT_MAX=1000
 local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local RANDOM_FIELD_WIDTH=90
 local RANDOM_LAST_SEED_WIDTH=200
+local TIMING_CHOICE_WIDTH=125
 local WORKSPACE_HEIGHT=248
 local FEEDBACK_WIDTH,FEEDBACK_SPACING=820,2
 local FEEDBACK_LINE_HEIGHT,FEEDBACK_PADDING=20,8
@@ -285,7 +286,7 @@ function M.show()
     if issue.key=="clipboard_empty" then return "Copy a scope before pasting." end
     if issue.key=="input_failed" then return "The edit could not be applied." end
     if issue.key=="operation_failed" then return "The operation could not be applied. Check its parameters." end
-    if issue.key=="label_save_failed" then return "Phrase label could not be saved. Retry or discard the attempt." end
+    if issue.key=="label_save_failed" then return "Phrase name could not be saved. Retry or discard the attempt." end
     if issue.key=="label_attempt_stale" then return "The editor changed. Discard this label attempt." end
     if issue.key=="label_editor_open" then return "Resolve the phrase label attempt before editing the source." end
     if issue.key=="audition_start_failed" then return "Could not start the audition." end
@@ -300,7 +301,7 @@ function M.show()
     if issue.key=="scale_save_uncertain" then return "Custom scales could not be verified; import is disabled. Reopen ACID to reload them." end
     if issue.key=="scale_imported" then return string.format("Imported %d scale definitions.",args.count) end
     if issue.key=="phrase_duplicated" then return "Phrase duplicated." end
-    if issue.key=="label_saved" then return "Phrase label saved." end
+    if issue.key=="label_saved" then return "Phrase name saved." end
     if issue.key=="phrase_updated" then return "Phrase updated." end
     if issue.key=="phrase_approximate" then return "Phrase updated with a musical approximation." end
     return "The action could not be completed."
@@ -490,8 +491,8 @@ function M.show()
     workspace={panels={},tabs={}},mask={classes={}}}
   local program_pitch_summary,program_time_summary
   local program_accent,program_slide,program_c_plus,grid_c_plus
-  local pitch_length_popup=vb:popup{items=length_items,width=78,value=sequencer.PAGE_SIZE}
-  local timing_popup=vb:popup{id="acid_timing",items={"Straight","Triplet"},width=105,value=1}
+  local pitch_length_popup=vb:popup{id="acid_pitch_length",items=length_items,width=78,value=sequencer.PAGE_SIZE}
+  local timing_popup=vb:popup{id="acid_timing",items={"Straight (1/16)","Triplet (1/8)"},width=TIMING_CHOICE_WIDTH,value=1}
   local playback_popup=vb:popup{id="acid_output_policy",items={"Play Once","Repeat"},width=105,value=2}
   local pb_range_values=policies.PB_CHOICES
   local pb_range_items={}
@@ -499,7 +500,6 @@ function M.show()
     pb_range_items[index]=value==0 and "Off" or string.format("±%d",value)
   end
   local pb_range_popup=vb:popup{id="acid_pb_range",items=pb_range_items,width=92,value=1}
-  local step_division=vb:text{text="Straight 1/16"}
   local pitch_page_buttons,time_page_buttons={},{}
   local pitch_cells,pitch_headers,pitch_columns,time_cells,time_headers={},{},{},{},{}
   local accent=vb:checkbox{value=false}
@@ -760,9 +760,6 @@ function M.show()
     render(pitch_length_popup,"value",pattern.pitch_length or sequencer.PAGE_SIZE)
     render(pitch_length_popup,"active",true)
     render(timing_popup,"value",pattern.timing_mode=="triplet" and 2 or 1)
-    render(step_division,"text",pattern.timing_mode=="triplet" and
-      string.format("1/8 triplet; cycle %d/3 beats",pattern.length) or
-      string.format("1/16 straight; cycle %d/4 beats",pattern.length))
     render(playback_popup,"value",output_policy=="play_once" and 1 or 2)
     render(playback_popup,"active",true)
     for index,value in ipairs(pb_range_values) do
@@ -1480,7 +1477,7 @@ function M.show()
     end
     return changed
   end
-  local target=vb:popup{width=290,items=labels,value=selected_instrument,
+  local target=vb:popup{id="acid_instrument",width=290,items=labels,value=selected_instrument,
     notifier=function(n)if not loading then select_instrument(n) end end}
   instrument_choice=target
   deliver=function(request,result)
@@ -1611,19 +1608,19 @@ function M.show()
         feedback.clear_input("label_save_failed","label_attempt_stale","label_editor_open")
       end}
       label_ui.content=label_vb:column{margin=12,spacing=8,
-        label_vb:text{text="Phrase label: 1–32 ASCII letters, digits, spaces, _, . or -; start with a letter or digit."},
+        label_vb:text{text="Phrase name: 1–32 characters. Use A–Z, a–z, 0–9, spaces, _, . or -; start with a letter or number."},
         label_ui.field,label_ui.error,label_vb:row{spacing=6,label_ui.save,label_ui.retry,label_ui.discard}}
     end
     label_ui.field.value=attempt and attempt.label or phrase_label
     label_ui.field.active=not (attempt and attempt.proposal)
     local error_key=attempt and attempt.error_key
-    label_ui.error.text=error_key=="invalid_label" and "Use the label format shown above." or
+    label_ui.error.text=error_key=="invalid_label" and "Use the name format shown above." or
       error_key=="history_changed" and "The editor changed. Discard this attempt." or
-      error_key and "Label could not be saved. Retry or discard this attempt." or ""
+      error_key and "Phrase name could not be saved. Retry or discard this attempt." or ""
     label_ui.save.active=attempt==nil
     label_ui.retry.active=attempt~=nil
     if visible then label_ui.dialog:show()
-    else label_ui.dialog=renoise.app():show_custom_dialog("ACID - Phrase label",label_ui.content) end
+    else label_ui.dialog=renoise.app():show_custom_dialog("ACID - Phrase name",label_ui.content) end
     label_ui.field.edit_mode=label_ui.field.active
     active_label_dialog=label_ui.dialog
   end
@@ -1813,21 +1810,16 @@ function M.show()
     changed()
   end}
   label_ui.display=vb:text{id="acid_label_accepted",width=300,text=phrase_label}
+  local duplicate_button=vb:button{id="acid_pattern_duplicate",text="Duplicate",notifier=function()
+    if guard_stage() then return end
+    if not current_session() then feedback.request_failure("generation",true);return end
+    apply_pending_selected_phrase_selection()
+    local accepted=runtime:request_duplicate()
+    if not accepted then feedback.request_failure("generation",true) end
+  end}
   local pattern_copy_panel=vb:column{id="acid_pattern_copy_panel",spacing=4,
     vb:text{text="PATTERN / COPY",font="bold"},
-    vb:row{spacing=6,vb:text{text="Label"},label_ui.display,
-      vb:button{id="acid_label_rename",text="Rename",notifier=function()
-        if guard_stage() then return end
-        label_ui.show()
-      end}},
-    vb:row{spacing=6,clipboard.choice,copy_button,clipboard.paste_button,
-      vb:button{id="acid_pattern_duplicate",text="Duplicate",notifier=function()
-        if guard_stage() then return end
-        if not current_session() then feedback.request_failure("generation",true);return end
-        apply_pending_selected_phrase_selection()
-        local accepted=runtime:request_duplicate()
-        if not accepted then feedback.request_failure("generation",true) end
-      end}},clipboard.status}
+    vb:row{spacing=6,clipboard.choice,copy_button,clipboard.paste_button},clipboard.status}
   local extended_panel
   do
   local function admit_operation()
@@ -2133,22 +2125,28 @@ function M.show()
     panel.origin={0,0}
     panel.size={width=820,height=WORKSPACE_HEIGHT}
   end
+  local reset_button=vb:button{id="acid_pattern_reset",text="Reset pattern",notifier=function()
+    if guard_stage() then return end
+    if not ui.admit_operation() then return end
+    reset_source(pattern.length)
+    changed()
+  end}
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
-    vb:row{spacing=6,vb:text{text="Target instrument"},target,
-      vb:text{text="Destination phrase"},phrase_choice},
-    vb:row{spacing=10,vb:text{text="LAST STEP"},last_step_box,
-      vb:text{text="Timing"},timing_popup,step_division,
-      vb:text{text="Active PITCH span"},pitch_length_popup},
-    vb:row{spacing=8,
-      vb:text{text="Editor"},view_popup,
-      vb:button{id="acid_pattern_reset",text="Reset Pattern",notifier=function()
+    vb:row{id="acid_instrument_header",spacing=6,vb:text{text="Instrument"},target},
+    vb:row{id="acid_phrase_header",spacing=6,
+      vb:text{text="Phrase"},phrase_choice,
+      vb:button{id="acid_label_rename",text="Rename",notifier=function()
         if guard_stage() then return end
-        if not ui.admit_operation() then return end
-        reset_source(pattern.length)
-        changed()
-      end},
-      undo_button,
+        label_ui.show()
+      end},duplicate_button},
+    vb:row{spacing=6,vb:text{text="Name"},label_ui.display},
+    vb:row{id="acid_sequence_settings",spacing=10,
+      vb:text{text="Length"},last_step_box,
+      vb:text{text="Timing"},timing_popup,reset_button,
+      vb:text{text="Pitch span"},pitch_length_popup},
+    vb:row{spacing=8,
+      vb:text{text="Editor"},view_popup,undo_button,
       redo_button,audition_button},
     view_heading,stage_status,program_panel,grid_panel,
     vb:row{spacing=5,vb:text{text="Assign selected TIME"},
