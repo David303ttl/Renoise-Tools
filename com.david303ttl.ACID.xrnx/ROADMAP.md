@@ -40,7 +40,7 @@ pitch, gate, OFF, and glide math may be implemented afresh or factored into
 capability-aware operators **without retaining deprecated mode identities**.
 Historical baseline at roadmap creation: source schema `ACID-PITCH-TIME-1`. M5 replaces it with strict `ACID-PITCH-TIME-2` under the normative specification; ownership checks, write preflight and rollback continue to protect unrelated Renoise content.
 
-The [design contract](DESIGN.md) defines architecture and unresolved fidelity issues. This file defines **sequence, deliverables, acceptance gates, and verification**. M5's [Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md) is the sole normative M5 contract and takes precedence over older M5 wording retained here as historical context. It specifies the clean cutover to `ACID-PITCH-TIME-2`; schema-1 references below describe the earlier baseline only, not a supported active format or migration path. When a detail is uncertain outside that accepted M5 contract, maintain a research/test item; do not convert an assumption into a guarantee.
+The [design contract](DESIGN.md) defines architecture and unresolved fidelity issues. This file defines **sequence, deliverables, acceptance gates, and verification**. The [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md) defines source and musical behavior; the [GUI Redesign Playbook](M5_GUI_REDESIGN_PLAYBOOK.md) defines the current interface and its acceptance. Older M5 wording retained here is historical context. The editor specification specifies the clean cutover to `ACID-PITCH-TIME-2`; schema-1 references below describe the earlier baseline only, not a supported active format or migration path. When a detail is uncertain outside those contracts, maintain a research/test item; do not convert an assumption into a guarantee.
 
 The [second-pass reference record](M2_BLUEPRINT.md#24-original-roland-reference-checked-in-the-second-pass)
 identifies the April 1982 Roland manual, checksum, printed pages and R01–R04
@@ -703,13 +703,16 @@ Callback latency is recorded without an acceptance threshold.
 
 **Status:** Gates 0–12 PASS; closed. M4 closeout remains unchanged.
 
-**M5 follow-up — GUI redesign:** Planned. Execute the
-[GUI Redesign Playbook](M5_GUI_REDESIGN_PLAYBOOK.md) Tasks 1–12 in order to replace
-workspace navigation with one compact musical interface and remove development
-and recovery presentation. Existing M5 musical, persistence and safety contracts
-remain in force; this follow-up has separate implementation and acceptance.
+**M5 GUI redesign:** Tasks 1–11 are implemented; automated regression coverage
+passes. Native acceptance remains open. Track execution
+and final evidence in the [GUI Redesign Playbook](M5_GUI_REDESIGN_PLAYBOOK.md)
+and its linked acceptance record. Existing musical, persistence and safety
+contracts remain in force.
 
-**Dependency:** M4 scoped closeout. The complete normative contract, linear implementation gates, regression matrix, deletion inventory, and native acceptance procedure are in the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md).
+**Dependency:** M4 scoped closeout. Source and musical behavior remain defined by
+the [M5 Editor Implementation Specification](M5_EDITOR_PLAYBOOK.md). Current GUI
+requirements, deletion inventory and native acceptance are defined by the
+[GUI Redesign Playbook](M5_GUI_REDESIGN_PLAYBOOK.md).
 
 ---
 
@@ -746,7 +749,7 @@ remain in force; this follow-up has separate implementation and acceptance.
 | --- | --- | --- |
 | PITCH/TIME NOTE/TIE/REST consumption | Semantic compiler state/fixtures | Decoded preview versus rendered phrase |
 | Program versus Grid view (M3.5-S) | One source, independent TIME/PITCH bounds through 32, byte-equivalent semantics, view-change purity | Switch views on 17/32-step source with span 3; generated phrase unchanged |
-| M5 editor, schema, source operations and acceptance | [Sole normative M5 implementation specification](M5_EDITOR_PLAYBOOK.md); schema-1 references in earlier sections are historical only | Follow the linked specification's mandatory native acceptance matrix |
+| M5 editor, schema and source operations | [M5 source and musical contract](M5_EDITOR_PLAYBOOK.md); schema-1 references in earlier sections are historical only | Use the GUI redesign playbook's native acceptance matrix for the current interface |
 | Default C + 32-position storage | Initial state and validation | Fresh-pattern controls and output |
 | LAST STEP, Reset and two pages | 1/16/17/32 lengths; Reset and Reset Undo restore source and output policy | Edit 16/17/32, reset once, undo, confirm boundary entries intact |
 | Repeated phrase loops | At least three semantic cycles | Audible/visual repeats across several cycles |

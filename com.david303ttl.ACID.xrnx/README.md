@@ -114,9 +114,10 @@ optionally applies each valid source/settings edit through the single serialized
 synchronous writer. The write finishes inside the initiating user action; if a
 writer job is already active, only the latest pending trigger is retained.
 Undo and Redo cover source edits and phrase output policy and PB Range. A failed
-Live Edit remains armed; resolve the reported issue, then use **Generate**
-to retry through the usual admission checks. Enabling
-Live Edit arms subsequent edits without writing.
+Live Edit remains armed. **Generate** can retry an ordinary failed write after
+the usual admission checks; an unsafe destination or song-integrity blocker
+remains unavailable and cannot be cleared by retrying. Enabling Live Edit arms
+subsequent edits without writing.
 Label-only changes use ACID Undo/Redo without rendering, source dirtying or a
 phrase revision. Native host Undo for label metadata is not guaranteed.
 Normal generation creates only for an explicitly selected **New Phrase**
@@ -129,8 +130,8 @@ the XRNS. A successful write clears only the exact draft revision it commits;
 later edits remain dirty. If a draft has an ambiguous destination or persistence
 fails, it remains available in the open session and ACID reports the unsaved
 state. Give a new draft's instrument a unique name or generate its phrase before
-closing the song. Detached drafts are session-only and have no manual recovery
-interface. ACID protects
+closing the song. Detached drafts are session-only; ACID provides no action to
+copy or discard them manually. ACID protects
 foreign or modified phrases and uses ownership checks, source persistence and
 verified rollback when updating an owned phrase in place. The persisted source
 schema is `ACID-PITCH-TIME-2`. Only empty song tool data or strict schema 2
@@ -269,8 +270,8 @@ rejects unsupported speed timing before changing phrases or saved source.
 
 ## Development checks
 
-Use the [editor presentation checklist](../tests/acid/acid_editor_presentation_manual.md)
-for labels, phrase controls, staging visibility and layout.
+Use the [editor acceptance guide](../tests/acid/acid_editor_presentation_manual.md)
+for the current interface, editing journey and layout checks.
 
 From the repository root in PowerShell 7:
 

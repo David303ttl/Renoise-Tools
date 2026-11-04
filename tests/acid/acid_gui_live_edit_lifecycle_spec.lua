@@ -235,23 +235,6 @@ package.loaded["writers.phrase_writer"]={
   release=function()end
 }
 
-local editor_module=require("model.editor_state")
-local force_diagnostic=false
-package.loaded["model.editor_state"]={
-  MAX_PAGES=editor_module.MAX_PAGES,
-  project=function(pattern)
-    if force_diagnostic then
-      return {error={step=3,pitch_index=2,message="TIME step 03: test diagnostic."},
-        used={},mapping={},repeat_mapping={},note_count=0}
-    end
-    return editor_module.project(pattern)
-  end,
-  new_history=editor_module.new_history,
-  classify_difference=editor_module.classify_difference,
-  index_on_page=editor_module.index_on_page,
-  page_for=editor_module.page_for,
-  step_text=editor_module.step_text
-}
 renoise={
   song=function()return song end,
   tool=function()return tool end,
@@ -496,17 +479,17 @@ pitch_key(builder,3):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
   "a fresh edit on explicitly selected New can create after blocked target rejection")
-local safety_append={id=25,name="ACID explicit recovery"}
+local safety_append={id=25,name="ACID New Phrase"}
 tool.writer_calls[11].options.phrase_mutation(function()
   other_instrument.phrases[5]=safety_append
   return safety_append
 end)
 render_callbacks[11](terminal_result(tool.writer_calls[11],"committed","safety append committed"))
-assert(phrase_choice.value==5,"explicit recovery create binds the returned phrase")
+assert(phrase_choice.value==5,"New Phrase creation binds the returned phrase")
 pitch_key(builder,10):fire()
 tool.app_idle_observable:fire()
 assert(#render_callbacks==12 and tool.writer_calls[12].target==5,
-  "edits after explicit recovery regenerate the created phrase")
+  "edits after New Phrase creation regenerate the created phrase")
 render_callbacks[12](terminal_result(tool.writer_calls[12],"committed","safety phrase updated"))
 pitch_key(builder,8):fire()
 tool.app_idle_observable:fire()

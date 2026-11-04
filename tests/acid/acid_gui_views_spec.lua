@@ -395,14 +395,32 @@ for _,id in ipairs({"acid_source_state","acid_source_diagnostic","acid_source_su
     "acid_make_independent","acid_revalidate","acid_program_check"}) do
   assert(builder.views[id]==nil,"removed diagnostic or recovery view remains: "..id)
 end
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="button" then
-    assert(node.text~="Inspect selected Renoise pattern (read only)" and node.text~="Sampler audit" and
-      node.text~="Check" and node.text~="Copy to New" and node.text~="Make Independent" and
-      node.text~="Revalidate" and node.text~="Recover Draft",
-      "removed diagnostic or recovery action remains: "..tostring(node.text))
+local function assert_removed_construction_absent()
+  local removed_captions={
+    ["Details"]=true,["Decoded"]=true,["Sampler audit"]=true,
+    ["Inspect selected Renoise pattern (read only)"]=true,["Check"]=true,
+    ["Copy to New"]=true,["Make Independent"]=true,["Revalidate"]=true,
+    ["Recover Draft"]=true,["Output"]=true,["Extended / Clear"]=true,
+    ["Pattern / Copy"]=true,["Retry Live Edit"]=true,
+  }
+  local removed_id_prefixes={"acid_details_","acid_decoded_","acid_audit_",
+    "acid_inspection_","acid_recovery_","acid_workspace_","acid_extended_"}
+  for id in pairs(builder.views) do
+    for _,prefix in ipairs(removed_id_prefixes) do
+      assert(id:sub(1,#prefix)~=prefix,"removed interface view remains: "..id)
+    end
+  end
+  for _,node in ipairs(builder.nodes) do
+    if node.kind=="button" then
+      assert(not removed_captions[node.text],
+        "removed interface button remains: "..tostring(node.text))
+      if node.text=="Retry" then
+        assert(node.id=="acid_label_retry","permanent retry button remains: "..tostring(node.id))
+      end
+    end
   end
 end
+assert_removed_construction_absent()
 local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
 local view=builder.views.acid_editor_view
@@ -560,9 +578,6 @@ end
 assert(control("acid_clipboard_copy").active~=false and not control("acid_clipboard_paste").active and
   builder.views.acid_clipboard_status==nil and builder.views.acid_pattern_copy_panel==nil,
   "empty clipboard disables Paste without a status view")
-for _,node in ipairs(builder.nodes) do
-  assert(node.text~="Pattern / Copy","retired Pattern / Copy tab is not constructed")
-end
 assert(builder.parent_of(control("acid_output_panel"))==dialog.content and
   builder.views.acid_extended_panel==nil,
   "Output is attached directly to the content column")
@@ -1508,6 +1523,7 @@ do
   label_context.rename_label=rename
   dialog=main_dialog
 end
+assert_removed_construction_absent()
 do
   phrase_popup:fire(#phrase_popup.items)
   local mask=control("acid_mask_enabled")
@@ -1752,12 +1768,6 @@ do
   for index,name in ipairs(operation_names) do
     assert(operation.items[index]==name,"operation selector order matches its operation ID")
   end
-  for _,node in ipairs(builder.nodes) do
-    if node.kind=="button" then
-      assert(node.text~="Extended / Clear","retired operations tab remains")
-      assert(node.text~="Output","workspace navigation button remains")
-    end
-  end
   assert(builder.views.acid_extended_panel==nil and builder.views.acid_workspace_tabs==nil,
     "workspace navigation and its alternate panel are absent")
   assert(contains(scale_panel,control("acid_scale_root")) and
@@ -1809,9 +1819,12 @@ do
       local before=assert(sequencer.copy_source(label_context:editor_state().source))
       local expected=assert(sequencer.operation_candidate(before,operation_id,scope_name,values))
       local writes=draft_writes
+      local generations=render_calls
       control("acid_operation_open"):fire()
       assert(sequencer.same_source(expected,label_context:editor_state().source),
         operation_id.." uses the selected "..scope_name.." scope")
+      assert(render_calls==generations,
+        operation_id.." leaves generation unchanged for "..scope_name.." scope")
       if not sequencer.same_source(before,expected) then
         assert(draft_writes==writes+1,operation_id.." creates one edit")
         button("Undo"):fire()

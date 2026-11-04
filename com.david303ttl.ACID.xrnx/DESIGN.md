@@ -36,19 +36,20 @@ view changes and Start/Repeating preview never edit source or queue regeneration
 Fresh drafts have C pitches, NOTE commands, TIME length 16 and PITCH span 16.
 Reducing active length preserves hidden entries. Reset is explicit and undoable.
 Source, phrase output/PB settings and label/custom metadata share one linear
-Undo/Redo history. Program Re-enter holds a detached candidate and entered
-markers until Finish applies one real edit. Every staged position must be
-entered; navigation and Check never mark or commit it. Incomplete stages offer
-Discard/Stay only. Guard resolution never resumes the blocked action.
+Undo/Redo history. Sequential entry holds a detached candidate and entered
+markers until Finish applies one real edit. Every position must be entered;
+navigation never marks or commits it. Incomplete entry can be cancelled, and
+guard resolution never resumes the blocked action.
 
-PITCH and TIME cursors/pages are independent. Grid shows canonical source;
-inactive TIME slots are inspectable but direct editing is blocked. TIME labels
-show Note/Tie/Rest; assignment controls highlight the selected command. Grid
-pitches show resolved Renoise note names and enabled ACC/SLD flags. Tooltips
-retain raw values and stored/referenced/modified markers. Details starts
-collapsed and holds routine source/Live Edit reports and pattern inspection;
-source errors and generation results remain visible. Entry navigation is shown
-only during re-entry. Audition uses
+The compact editor places instrument and phrase selection, rename/duplicate,
+sequence settings, Program/Grid editing, scale, operations and output in one
+interface. PITCH and TIME cursors/pages are independent. Grid shows canonical
+source; inactive TIME slots are inspectable but direct editing is blocked.
+TIME labels show Note/Tie/Rest; assignment controls highlight the selected
+command. Grid pitches show resolved Renoise note names and enabled ACC/SLD
+flags. Tooltips retain raw values and stored/referenced/modified markers.
+Shared feedback shows unresolved issues. Entry navigation is shown only during
+sequential entry. Audition uses
 the resolved selected or PITCH-stage note without source/draft/history writes.
 A captured song/instrument/track lifecycle releases before replacement onset
 and context changes; removed objects make cleanup best effort.
@@ -187,8 +188,9 @@ commit. Manual generation and Live Edit use structured render outcomes.
 
 CLEAN, RENDERING, COMMITTED, APPROXIMATE and ERROR
 separate pending edits, successful output, sonic limitations and write safety.
-Recoverable failures keep Live Edit armed and preserve the draft. Retry or a
-relevant edit schedules another attempt without an automatic retry loop.
+Recoverable failures keep Live Edit armed and preserve the draft. Generate or
+a relevant edit can attempt another write through normal admission; there is
+no automatic retry loop. Persistent integrity blockers continue to reject writes.
 Normal generation requires an explicitly armed New Phrase destination for
 creation; Duplicate uses its captured committed-source authorization. Foreign,
 modified, deleted and colliding destinations block generation. A hard API or
@@ -218,5 +220,8 @@ MIDI delivery, sample continuity or GUI scaling. The manual checklist in
 required host checks and their results. Unrun checks remain unverified.
 
 The pinned API SDK is a development reference, never a runtime dependency.
-[ROADMAP.md](ROADMAP.md) tracks implementation and acceptance gates. The [editor playbook](M5_EDITOR_PLAYBOOK.md) is the normative editor and native
-acceptance contract. Final integrated native acceptance remains unverified.
+[ROADMAP.md](ROADMAP.md) tracks implementation and acceptance gates. The
+[editor playbook](M5_EDITOR_PLAYBOOK.md) defines source and musical behavior;
+the [GUI redesign playbook](M5_GUI_REDESIGN_PLAYBOOK.md) defines the current
+interface and its acceptance procedure. Final integrated native acceptance
+remains open until its required checks are recorded.

@@ -343,6 +343,35 @@ Native screen fit, scaling, expanded-row resizing and playback checks remain
 unverified. Runtime file layout and package inputs are unchanged; no package
 rebuild was required. `gui.lua` is 13 lines smaller than before Tasks 9-10.
 
+## Task 11 Regression coverage
+
+| Behavior | Current evidence |
+| --- | --- |
+| Editors, toolbar, entry, scales and operations | `acid_gui_views_spec.lua` covers independent selection/pages, inactive positions, membership cycles, all ten operations in both scopes, parameter visibility, seeded Repeat last and no generation from operations |
+| Removed construction | Registered IDs and constructor records reject diagnostic, decoded, inspection, recovery, workspace, Pattern / Copy and permanent retry controls, including anonymous and hidden buttons; lazy Rename retains only its supported Retry |
+| Failure feedback and admission | GUI views/admission/staging fixtures inject generation, draft save, custom-scale load/import/save, Rename save, audition cleanup and destination failures; source, history, saves, requests and identity assertions accompany feedback checks |
+| Stale results and lifecycle | GUI admission, timing-race, Live Edit lifecycle and audition fixtures preserve stale-result rejection, cleanup and exact destinations; timing/lifecycle specs use the real editor model without unused diagnostic injection |
+| Retained runtime | Dependency-graph and runtime-integrity specs assert retired modules/methods are absent; integrity fixtures preserve blocker outcomes across targets, dialog reopen and document lifetimes |
+| Startup | `acid_identity_spec.lua` loads real `main.lua`/GUI/runtime dependencies without retired-module stubs and checks both menu callbacks and the keybinding reach the same GUI |
+| History and musical semantics | Editor, clipboard, duplicate-label, sequencer, scale, draft, store and writer specs retain deterministic source, no-op, persistence and transaction assertions |
+| Native procedures | `acid_editor_presentation_manual.md` follows the final acceptance journey; README and DESIGN describe the current interface. Historical receipts remain unchanged |
+
+All five retained GUI builders support membership removal and reject duplicate
+parenting. Removed views retain ID lookup in mocks. Executable native probes
+have no retired action dependencies; active ownership snapshot/capture helpers
+remain used by integrity and writer paths. Native layout, sizing and audio
+correctness remain outside mocked coverage.
+
+Only tests and documentation changed. No runtime or package inputs changed;
+no package rebuild is required. Final native acceptance remains open in Task 12.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1; 63.91 s |
+| `git diff --check` | Passed |
+| Second-pass verification | Builder membership, constructor records, startup dependencies, failure fixtures, runtime absence and current documentation reviewed |
+| Native checks | Not performed; final production layout, playback and host acceptance remain unverified |
+
 ## Baseline
 
 | Item | Evidence |

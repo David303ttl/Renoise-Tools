@@ -15,6 +15,10 @@ local function fixture()
   log.done=done
   return true
  end})
+ for _,retired in ipairs({'recovery_entries','copy_recovery_to_new','discard_recovery',
+   'independence_projection','make_independent','revalidation_status','revalidate'}) do
+  assert(ctx[retired]==nil,'runtime context exposes retired action: '..retired)
+ end
  ctx:attach_document(song);ctx:open_dialog()
  local target=ctx:bind_phrase(instrument,phrase)
  assert(target.kind=='owned' and target.baseline)

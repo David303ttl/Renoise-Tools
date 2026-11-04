@@ -209,23 +209,6 @@ package.loaded["writers.phrase_writer"]={
   end
 }
 
-local editor_module=require("model.editor_state")
-local force_diagnostic=false
-package.loaded["model.editor_state"]={
-  MAX_PAGES=editor_module.MAX_PAGES,
-  project=function(pattern)
-    if force_diagnostic then
-      return {error={step=3,pitch_index=2,message="TIME step 03: test diagnostic."},
-        used={},mapping={},repeat_mapping={},note_count=0}
-    end
-    return editor_module.project(pattern)
-  end,
-  new_history=editor_module.new_history,
-  classify_difference=editor_module.classify_difference,
-  index_on_page=editor_module.index_on_page,
-  page_for=editor_module.page_for,
-  step_text=editor_module.step_text
-}
 renoise={
   song=function()return song end,
   tool=function()return tool end,
