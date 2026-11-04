@@ -113,21 +113,14 @@ function M.failures(done)
     local blocked_writes = writes
     assert(not context:rename_label("Blocked rename", true) and writes == blocked_writes,
       "blocked editor attempted another metadata write")
-    assert(not context:revalidation_status().verified, "third storage passed revalidation")
     mode = nil
     song.tool_data = context_baseline
     assert(context:integrity_state().blocked, "byte restoration cleared blocker implicitly")
+    assert(context:integrity_state().blocked, "byte restoration cleared blocker implicitly")
     assert(not context:rename_label("Still blocked", true) and writes == blocked_writes,
-      "restored bytes allowed writes without explicit revalidation")
-    local status, proof = context:revalidation_status()
-    assert(status.verified and proof, "exact restoration did not yield revalidation proof")
-    assert(context:revalidate(proof), "explicit revalidation did not clear blocker")
-    assert(not context:integrity_state().blocked, "explicit revalidation retained blocker")
-    context:restore_editor_target(instrument, nil)
-    assert(context:rename_label(CHANGED_LABEL, true), "revalidated editor did not resume writes")
-    checks.uncertain_context_write_blocker = true
-    checks.explicit_revalidation_required = true
-    native_unchanged()
+      "restored bytes allowed writes after integrity failure")
+    checks.sticky_blocker_survives_storage_restore = true
+    checks.no_retry_after_integrity_failure = true    native_unchanged()
     checks.native_phrase_preimage = true
     checks.canonical_and_draft_cache_isolation = true
   end)

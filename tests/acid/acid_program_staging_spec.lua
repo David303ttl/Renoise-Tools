@@ -49,10 +49,26 @@ renoise.tool=function()return tool end
 renoise.app=function()return app end
 renoise.ViewBuilder=function()
   builder={views={},nodes={}}
+  local parent_by_child={}
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child;parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then table.remove(parent.views,index);parent_by_child[child]=nil;return end
+    end
+    error("view is not a child")
+  end
   setmetatable(builder,{__index=function(_,kind)return function(_,properties)
-    local node={kind=kind,children={},notifiers={}}
-    for key,value in pairs(properties or {})do node[key]=value end
-    function node:add_child(child)self.children[#self.children+1]=child end
+    local node={kind=kind,views={},notifiers={}}
+    node.children=node.views
+    for key,value in pairs(properties or {})do
+      if type(key)=="number"then add_view(node,value)else node[key]=value end
+    end
+    function node:add_view(child)add_view(self,child)end
+    function node:remove_view(child)remove_view(self,child)end
+    node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(fn)self.notifiers[#self.notifiers+1]=fn end
     function node:fire(value)
       if value~=nil then self.value=value end
@@ -190,18 +206,6 @@ fire("acid_program_select_pitch_03")
 fire("acid_program_enter")
 assert(not view("acid_program_finish").active,"final Enter cannot hide another missing marker")
 local prompt_count=#prompts
-fire("acid_program_check")
-unchanged(before,revision,save_count,write_count)
-assert(not view("acid_program_finish").active,"Check must not mark missing targets")
-assert(view("acid_status").text:find("Cannot generate: choose a pitch for step 1.",1,true),
-  "Check must identify the first missing pitch position")
-local project=editor.project
-editor.project=function()return {error={message="coordinate free diagnostic"}}end
-fire("acid_program_check")
-editor.project=project
-assert(view("acid_status").text:find("The edit could not be applied.",1,true) and
-  not view("acid_status").text:find("coordinate free diagnostic",1,true),
-  "Check maps coordinate-free projection failures without rendering diagnostic prose")
 unchanged(before,revision,save_count,write_count)
 fire("acid_editor_view",2)
 assert(#prompts==prompt_count,"view navigation must not prompt")
@@ -559,11 +563,25 @@ for _,complete in ipairs({false,true})do
   assert(not view("acid_program_enter").active,"failed canonical save cannot authorize stale stage")
   assert(drafts.has_volatile(song),"native switch must retain failed origin draft")
   assert(view("acid_status").text:find("Edits to the previous phrase could not be saved with the song.",1,true),
-    "discard notice must retain canonical draft save warning")
+    "the verified origin draft failure remains phrase-scoped")
   local recovered=assert(drafts.get(song,instrument,origin,runtime:draft_options()))
   assert(seq.same_source(recovered,canonical),"recoverable draft must be canonical, never candidate")
 end
 fail_saves=false
+fresh(source)
+begin("pitch")
+local has_volatile=drafts.has_volatile
+drafts.has_volatile=function(candidate)
+  assert(rawequal(candidate,song))
+  return true
+end
+song.selected_phrase=instrument.phrases[2]
+song.selected_phrase_observable:fire()
+tool.app_idle_observable:fire()
+drafts.has_volatile=has_volatile
+assert(view("acid_status").text:find("Some edits could not be saved with this song.",1,true) and
+  not view("acid_status").text:find("previous phrase",1,true),
+  "native selection uses song-scoped wording when only song-wide volatile evidence exists")
 for _,complete in ipairs({false,true})do
   for _,drift in ipairs({"runtime","history"})do
     fresh()
@@ -624,39 +642,6 @@ assert(seq.same_source(recovered,current()),"Finish save failure recovery must c
 fail_saves=false
 fresh()
 begin("pitch")
-local project=editor.project
-local diagnostic_position=2
-editor.project=function(...)
-  local projection=project(...)
-  projection.error={message="injected candidate diagnostic",pitch_index=diagnostic_position}
-  return projection
-end
-fire("acid_program_check")
-local jump=button("Go to source error")
-assert(jump.active,"candidate Check must enable coordinate navigation")
-jump:fire()
-fire("acid_program_enter")
-assert(view("acid_program_select_pitch_02").text:find("+",1,true),
-  "candidate diagnostic must move the staged cursor to its in-scope position")
-local selected_summary=view("acid_program_pitch_summary").text
-diagnostic_position=seq.MAX_STEPS+1
-fire("acid_program_check")
-jump:fire()
-assert(view("acid_program_pitch_summary").text==selected_summary,
-  "out-of-scope diagnostic must preserve staged cursor")
-diagnostic_position=nil
-fire("acid_program_check")
-assert(not jump.active,"coordinate-free diagnostic must remain a message")
-local newer=seq.copy_source(current())
-newer.pitch_events[1]=seq.new_pitch(9,0,false,false)
-assert(runtime:transition("edit",{source=newer,output_policy="play_once",pb_range=0}))
-diagnostic_position=1
-jump:fire()
-assert(view("acid_program_pitch_summary").text==selected_summary,
-  "stale diagnostic navigation must preserve staged cursor")
-assert(view("acid_status").text:find("This entry is no longer available.",1,true),
-  "stale diagnostic navigation must report invalid origin")
-editor.project=project
 local HIGHLIGHT=0xF0
 local function highlighted(prefix,class)
   for index=1,12 do
@@ -691,7 +676,6 @@ fire("acid_editor_view",1)
 highlighted("acid_program_key_",0)
 fire("acid_program_key_05")
 highlighted("acid_program_key_",2)
-fire("acid_program_check")
 highlighted("acid_program_key_",2)
 assert(seq.same_source(current(),masked),"candidate resolution cannot rewrite canonical source")
 local note_calls,timers={},{}
@@ -707,8 +691,9 @@ function song:trigger_instrument_note_on(i,t,n,v)note_calls[#note_calls+1]={kind
 function song:trigger_instrument_note_off(i,t,n)note_calls[#note_calls+1]={kind="off",note=n}end
 fire("acid_audition")
 assert(note_calls[#note_calls].note==38 and note_calls[#note_calls].kind=="on")
-fire("acid_program_check")
-assert(note_calls[#note_calls].kind=="off","Check releases audition")
+fire("acid_editor_view",2)
+assert(note_calls[#note_calls].kind=="off","view navigation releases audition")
+fire("acid_editor_view",1)
 fire("acid_audition")
 fire("acid_program_pitch_page_2")
 assert(note_calls[#note_calls].kind=="off","page navigation releases audition")
@@ -739,9 +724,7 @@ local function releases(action,label)
   assert(next(timers)==nil,label.." detaches timer")
 end
 for _,id in ipairs({"acid_program_select_pitch_01","acid_program_select_time_01",
-    "acid_pitch_page_1","acid_time_page_1","acid_program_time_page_1",
-    "acid_decoded_next","acid_decoded_previous","acid_recovery_previous","acid_recovery_next",
-    "acid_recovery_choice"}) do
+    "acid_pitch_page_1","acid_time_page_1","acid_program_time_page_1"}) do
   releases(function()fire(id)end,id)
 end
 releases(function()song.selected_track_observable:fire()end,"native track selection")

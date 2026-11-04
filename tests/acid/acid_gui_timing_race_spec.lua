@@ -16,15 +16,28 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local parent_by_child={}
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child;parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then table.remove(parent.views,index);parent_by_child[child]=nil;return end
+    end
+    error("view is not a child")
+  end
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
     for key,value in pairs(properties or {}) do
-      if type(key)=="number" then node.views[#node.views+1]=value
+      if type(key)=="number" then add_view(node,value)
       else node[key]=value end
     end
     if node.id then builder.views[node.id]=node end
     builder.nodes[#builder.nodes+1]=node
-    function node:add_child(child) self.views[#self.views+1]=child end
+    function node:add_view(child) add_view(self,child) end
+    function node:remove_view(child) remove_view(self,child) end
+    node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
     function node:fire(value)
       self.value=value
@@ -120,11 +133,7 @@ package.loaded["renoise.phrase_ownership"]={
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
-  matches_recovery=function(_,token)return type(token)=="table" end,
-  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
-package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
-package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 local active_request
 local function terminal_result(call,status,message)
@@ -256,29 +265,22 @@ end
 local builder,dialog=open_gui()
 local timing=builder.views.acid_timing
 local generate=button(builder,"Generate / Regenerate ACID Phrase")
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",builder.views.acid_source_state.text)
 generate:fire()
 local manual=tool.writer_calls[#tool.writer_calls]
 assert(manual.pattern.timing_mode=="straight" and manual.options.token:is_current(),
   "manual generation starts with a current straight snapshot")
 timing:fire(2)
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
-assert(builder.views.acid_source_diagnostic.text:find("cycle 16/3 beats",1,true))
 builder.views.acid_editor_view:fire(2)
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 button(builder,"Undo"):fire()
-assert(timing.value==1 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+assert(timing.value==1)
 button(builder,"Redo"):fire()
-assert(timing.value==2 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+assert(timing.value==2)
 assert(not manual.options.token:is_current(),
   "changing timing invalidates the pending manual render")
 render_callbacks[#render_callbacks](terminal_result(manual,"suspended","invalidated"))
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 generate:fire()
 local manual_call=tool.writer_calls[#tool.writer_calls]
 render_callbacks[#render_callbacks](terminal_result(manual_call,"committed","saved"))
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
-  "a successful current generation clears the dirty indication")
 timing:fire(2)
 
 
@@ -305,7 +307,6 @@ assert(second~=first and second.pattern.timing_mode=="straight" and second.optio
   "Live Edit queues the newest timing after the stale render settles")
 local live_result=terminal_result(second,"committed","saved")
 render_callbacks[#render_callbacks](live_result)
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
 live_checkbox:fire(false)
 
 
@@ -315,12 +316,10 @@ assert(pb_range_popup(builder).value==2, "timing edits retain phrase one PB Rang
 phrase_choice:fire(2)
 assert(timing.value==2 and pb_range_popup(builder).value==5,
   "phrase two restores its committed timing and separate PB Range")
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",builder.views.acid_source_state.text)
 timing:fire(1)
 phrase_choice:fire(1)
 assert(timing.value==2 and pb_range_popup(builder).value==2,
   "switching back restores phrase one's timing draft and PB Range")
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 phrase_choice:fire(2)
 assert(timing.value==1 and pb_range_popup(builder).value==5,
   "phrase two retains its independent timing draft")

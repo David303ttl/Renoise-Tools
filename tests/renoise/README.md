@@ -70,25 +70,26 @@ process, or select an existing instance with a disposable song:
 
 | Acceptance case | Checks |
 | --- | --- |
-| `persistence-failures` | Injected setter failures over native song storage, exact rollback/cache isolation, native phrase preimages and explicit integrity revalidation |
-| `recovery-labels-prepare` | Save a custom-labeled recovery draft, restart the runner-owned Renoise process, compare exact persisted state, then recover and generate |
+| `persistence-failures` | Injected setter failures over native song storage, exact rollback/cache isolation, native phrase preimages and sticky integrity blocking after bytes are restored |
 | `metadata-undo` | Real Enter-driven label rename followed by native Undo/Redo; fails if the host exposes no undo entry or does not restore exact metadata |
-| `metadata-recovery` | Guarded Enter-driven owned/New label renames; zero phrase recovery reads or generation, uncertain setter blocking, exact bytes and stale-proof checks, unrelated native edit preservation, explicit revalidation and automatic cold-process readback |
+| `metadata-recovery` | Guarded Enter-driven label rename; uncertain setter blocking, exact-byte restoration without retry, unrelated native edit preservation and automatic cold-process readback |
+| `editor-responsiveness` | Native Program/Grid editing, feedback membership, retained controls, and responsive callbacks; functional checks only, not a performance threshold |
+| `integrity-observers` | Sticky post-commit integrity blocker survives reopen/target change and rejects Generate/Duplicate without phrase or store mutation |
+| `writer-recovery` | Contradictory writer result preserves both committed source revisions; a dirty blocked editor remains unavailable after reopen and rejects Generate/Duplicate without mutation |
+| `layout-sizing` | Disposable ViewBuilder sizing prototype checks empty/full holder cycles and maximum-first centering; production fit still needs host verification after final UI layout changes |
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures -RenoiseExe <renoise-executable>
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase recovery-labels-prepare -RenoiseExe <renoise-executable>
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase metadata-undo -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -Scenario transport -AcceptanceCase metadata-recovery -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
 ```
 
-`recovery-labels-prepare` requires a runner-owned process and performs its cold
-verification automatically. `metadata-undo` uses the existing guarded AutoHotkey
-Enter action. `metadata-recovery` uses that guarded dialog action and requires a
-runner-owned process for its automatic cold reopen. It exercises the runtime
-rename seam; the planned label editor UI and ACID label history controls retain
-their separate acceptance requirements. Fault injection uses a test-only proxy; it does not emulate disk
-failure. All cases use disposable songs and restore the original tool installation.
+`metadata-undo` uses the existing guarded AutoHotkey Enter action.
+`metadata-recovery` uses that guarded dialog action and requires a runner-owned
+process for its automatic cold reopen. It exercises the runtime rename seam; the
+label editor UI retains its separate acceptance requirements. Fault injection
+uses a test-only proxy; it does not emulate disk failure. All cases use
+disposable songs and restore the original tool installation.
 
 Other instances and virtual desktops can stay in use. No dedicated account,
 active-desktop check, profile registry match, screenshots or trace evidence is
@@ -103,28 +104,16 @@ because the backup does not copy their external contents.
 
 ### Ownership acceptance
 
-Run the native rejection, user-action undo and cold-process checks separately:
+Run the native ownership rejection checks separately:
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase ownership-negatives
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase independence-undo -TestEnvironment '<path>' -AllowKeyboardFocusActivation
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase make-independent -ColdProcessRoundTrip
 ```
 
-- Undo: guarded Enter to the verified PID; real dialog callback, native undo/redo,
-  reopened collision fixture with empty history, all operation states through
-  undo/redo exhaustion, blocked invalid regeneration and no source repair.
-  Logical grouping is reported separately from safe blocking.
-- Cold reopen: save → fresh process → exact-target regeneration → save → another
-  fresh process; compare complete pre-save baselines (IDs, source/settings,
-  phrase snapshots and raw persisted bytes) across both restarts, including
-  the foreign sentinel. The route uses runtime restoration and the native writer;
-  the production GUI journey remains required under Gate 8.
-- Import: native donor instrument export → separate recipient song → native
-  import; exact donor phrase preservation, missing source, regeneration and
-  Make Independent refusal, and unchanged unrelated recipient records.
-- Isolation: runner-owned processes only; `-RenoiseProcessId` is rejected for cold
-  restarts. Temporary fixtures/session files and verified installation restoration.
+The import check exports a donor instrument, imports it into a separate
+recipient song, and verifies that generation rejects a phrase without a local
+source record while preserving unrelated recipient records. Removed recovery
+and Make Independent actions are not part of the current native case set.
 
 Result classes are consistent across scenario and run reports: `PASS` means
 every requested postcondition was independently observed; `FAIL` means an
@@ -440,7 +429,7 @@ Run all four exceptional admission/recovery regressions on real native phrases:
 ```
 
 The fixed case checks post-commit identity/source preservation, contradictory
-success with a captured draft, retryable blocker clearance and exceptional facade
-getters. It uses injected failures in the disposable host and restores its hooks.
-See the [verification record](host_verification.md#exceptional-writer-recovery-verification-2026-10-31)
-for actual results and the separate manual playback/undo acceptance limit.
+success, a sticky blocker after dialog reopen, and rejected Generate and Duplicate
+requests with the committed phrase and store unchanged. It uses a disposable host
+and restores its hooks. Historical retry/clearance results remain in the
+[verification record](host_verification.md#exceptional-writer-recovery-verification-2026-10-31).

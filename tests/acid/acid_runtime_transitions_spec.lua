@@ -28,7 +28,7 @@ before=engine:revision_state()
 effects=engine:transition('edit',{changed=false,valid=true,eligible=true})
 assert(not effects.live_intent and not effects.revoke)
 assert(effects.revisions.edit_revision==before.edit_revision)
-for _,kind in ipairs({'programmatic','reset','recovery'})do
+for _,kind in ipairs({'programmatic','reset'})do
  effects=engine:transition(kind,{changed=true})
  assert(effects.revoke=='all' and not effects.live_intent and not effects.request)
 end
@@ -63,7 +63,7 @@ effects=engine:transition('edit',{changed=true,valid=true,eligible=true})
 assert(not effects.live_intent and effects.preserve_draft)
 
 -- Observation, guarded actions and completion never request music themselves.
-for _,kind in ipairs({'external','undo','close','blocker','independence'})do
+for _,kind in ipairs({'external','undo','close','blocker'})do
  before=engine:revision_state()
  effects=engine:transition(kind,{semantic_changed=true})
  assert(effects.revoke=='all' and not effects.request and not effects.live_intent)

@@ -68,13 +68,11 @@ end
 assert(private_snapshot and private_snapshot.content==911,
   "draft proof retains the validator-sealed native snapshot")
 assert(cache.detach(private_song,private_instrument,private_phrase,"Private snapshot check"))
-local recovery_copy=assert(cache.list(private_song)[1])
-assert(recovery_copy.baseline and recovery_copy.baseline.snapshot and
-  not rawequal(recovery_copy.baseline.snapshot,private_snapshot),
-  "recovery callers receive a detached snapshot copy")
-recovery_copy.baseline.snapshot.content=-1
-assert(private_snapshot.content==911,
-  "mutating a recovery result cannot alter the retained native proof")
+assert(cache.get(private_song,private_instrument,private_phrase)==nil,
+  "detached drafts cannot rehydrate against a newer baseline")
+assert(cache.has_volatile(private_song),"detached session draft was omitted from release warnings")
+local released,release_warning=cache.release(private_song)
+assert(released and release_warning,"detached session draft release was not reported")
 
 -- All three host object identities scope a draft independently.
 assert(cache.put(song_a, instrument_a, phrase_b, sequencer.new_pattern(8), "repeat"))

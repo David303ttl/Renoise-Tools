@@ -138,11 +138,6 @@ function M.diagnostic()
   return { code = last_diagnostic.code, message = last_diagnostic.message }
 end
 
-function M.clear_integrity_blocker(song)
-  if song ~= nil then integrity_errors[song] = nil end
-  if last_diagnostic and last_diagnostic.code == "transaction.blocker_recording" then last_diagnostic = nil end
-end
-
 local function set_diagnostic(code, message)
   last_diagnostic = { code = code, message = tostring(message) }
 end

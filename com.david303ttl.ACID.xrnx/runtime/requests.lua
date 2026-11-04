@@ -123,7 +123,7 @@ local function verify(record,request,admission,light_target,light_values,candida
     if state[key]~=record.values[key] then return false,"Request revision changed: "..key end
   end
   local blocked,block_reason=record.access.blocked(record.token)
-  if blocked then return false,block_reason or "Song integrity requires revalidation" end
+  if blocked then return false,block_reason or "ACID cannot safely update this song" end
   local occupancy=record.access.occupancy(record.token)
   if not occupancy.available then return false,occupancy.reason or "The writer slot is occupied" end
   local transport=record.song.transport

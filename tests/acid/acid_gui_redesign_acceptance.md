@@ -3,16 +3,22 @@
 ## Task 1 status
 
 Baseline, API constraints, control ownership and production reachability are
-recorded below. Task 1 exit remains open until the native sizing probe runs.
+recorded below. The disposable native sizing gate passed at 100% display
+scaling, including holder membership, Program/Grid sizing and open-dialog
+resizing. Final screen-fit acceptance remains required in Task 12.
 Paths under `gui.lua`, `runtime/`, `renoise/` and `writers/` refer to
 `com.david303ttl.ACID.xrnx/`; test and manual paths refer to `tests/acid/`.
 
 ## Task 2 feedback contract
 
-One GUI-local owner renders save, destination, scale, audition, input and
-generation issues in that order. Confirmations appear only without unresolved
-issues. Empty feedback reserves one pixel; message height follows the number of
-lines. Sizes use named constants.
+One GUI-local owner renders save, destination, scale, audition, input,
+generation and approximation issues in that order. Confirmations appear only
+without unresolved issues. Empty feedback has no attached child; populated
+feedback attaches the status view with ViewBuilder `add_view()` and removes it
+with `remove_view()` when empty. Message height follows the number of lines.
+Sizes use named constants. Routine successful Live Edit updates do not publish
+confirmations; new edits clear obsolete confirmations while unresolved failures
+and useful approximation warnings remain visible.
 
 | Producer evidence | Presentation and lifetime |
 | --- | --- |
@@ -27,13 +33,14 @@ lines. Sizes use named constants.
 
 Required failure fixtures and source/history/write/save assertions are in
 `acid_gui_admission_spec.lua`, `acid_gui_views_spec.lua` and
-`acid_program_staging_spec.lua`. Separate diagnostic/recovery controls remain
-within Task 3's deletion scope.
+`acid_program_staging_spec.lua`. Diagnostic/recovery controls and their
+exclusive action dependencies are removed.
 
-## Task 2 verification
+## Historical Task 2 verification
 
-Implementation and automated/native functional checks pass on the working tree
-based on `e6e9af4a26f855016a0b3588b34b1176a897cf93`.
+These receipts describe the earlier implementation based on
+`e6e9af4a26f855016a0b3588b34b1176a897cf93`, before the corrections and deletions
+below. Their hashes and counts do not identify the current package.
 
 | Check | Result |
 | --- | --- |
@@ -41,9 +48,8 @@ based on `e6e9af4a26f855016a0b3588b34b1176a897cf93`.
 | `./scripts/run_tests.ps1 -Tool ACID` | 79 specs passed, 0 failed; Lua 5.1; 66.20 s |
 | `git diff --check` | Passed |
 | Native `editor-responsiveness` | PASS; Renoise 3.5.4 / API 6.2; 35 GUI actions, shared feedback ownership/order, 1-pixel empty holder and 48-pixel two-issue view; source metadata, phrase inventory, native selection and original tool installation restored |
-| Native report | `tmp/interactive-1bf129d27860488d8fa4e996f0769033/report.json` |
-| Native command | `./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>` |
-| Native-tested `gui.lua` SHA-256 | `46bce18db9101f335f19e6f0dd16c87b7d8d9c2f09ead5ebd0e7a6a64f9cb548`; matches current source |
+| Historical native report | `tmp/interactive-1bf129d27860488d8fa4e996f0769033/report.json` |
+| Historical native command | `./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>` |
 | `./scripts/package.ps1 -Tool ACID` | 35 runtime files; archive inventory and every file's bytes match source; entry points at root; no SDK, Markdown, tests or development driver |
 | Archive | `dist/com.david303ttl.ACID_0.1.xrnx`; SHA-256 `c00ef8be060120f894c30350e0b9383344cfd9010ce366bd1b4840ce563b2775` |
 
@@ -52,6 +58,116 @@ Save/load, stale completion, uncertain scale storage and failed audition cleanup
 remain injected Lua fixtures. Audible output, timer duration, native metadata
 Undo and visual screen-fit/scaling checks are unverified; this is functional
 acceptance, not full visual/audio acceptance.
+
+## Feedback follow-up before report removal
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -RenoiseExe <renoise-executable>` | PASS on Renoise 3.5.4 / API 6.2; 35 GUI actions; feedback failures retained and holder emptied; disposable phrase inventory, metadata and native selection restored |
+| Feedback native report | `tmp/interactive-cd9d82aa224c4a33acc47d552f895f2f/report.json` |
+| `layout-sizing` | PASS on the disposable full-interface prototype after the maximum-first open sequence; exact empty/full cycles passed for both editors and dynamic holders |
+| Sizing report | `tmp/interactive-323105d1a1324a08a52b86e54cef93c4/report.json` |
+| OS window capture | `tmp/layout-window-samples.json`; stable screenshots are `tmp/layout-window-02.png` through `tmp/layout-window-04.png` |
+
+## Native sizing probe
+
+The test-only prototype represents the planned full editor at maximum musical
+length 32, with all 16 PITCH/TIME positions, the full 12-key range and C+, full
+scale mask, maximum Randomize parameter rows, active entry controls and the
+maximum eight-line feedback holder. The native API reported these content sizes:
+
+| State | Root | Editor | Feedback | Entry | Operation parameters |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Program empty | 741 × 562 | 589 × 267 | 1 × 1, no child | 1 × 1, no child | 1 × 1, no children |
+| Program maximum | 741 × 837 | 589 × 267 | 640 × 176, one child | 474 × 24, one child | 444 × 78, three rows |
+| Grid empty | 741 × 478 | 589 × 183 | 1 × 1, no child | 1 × 1, no child | 1 × 1, no children |
+| Grid maximum | 741 × 753 | 589 × 183 | 640 × 176, one child | 474 × 24, one child | 444 × 78, three rows |
+
+The first experiment opened the dialog empty and then expanded it. Renoise kept
+the original top at y=266, placing maximum Program content below the usable
+work area. The accepted prototype opens at maximum Program size, then removes
+inactive entry/parameter/feedback views and resets their empty holder sizes to
+1 × 1 before the first idle update. Later empty/full and Program/Grid changes
+shrink and expand the same open dialog without changing its top position. Exact
+root dimensions returned after each cycle.
+
+The host was Renoise 3.5.4 / API 6.2 at 96 DPI (100% scaling), on a 1920 × 1080
+screen with usable work area x=0..1920, y=40..1080. The maximum Program dialog
+measured 743 × 863 at x=588, y=128, bottom y=991, leaving 89 pixels of usable
+height. Empty Program measured 743 × 588, empty Grid 743 × 504, and maximum Grid
+743 × 779. The window stayed at y=128 while content expanded and collapsed; all
+measured states fit the work area. The full prototype was visually inspected at
+this scale. This is a 100% scaling prototype result, not final production GUI
+acceptance; Task 12 must check the completed production layout on the host.
+
+The native case command is:
+
+```powershell
+./scripts/run_interactive_tests.ps1 -Tool ACID -Suite Native -Install -ApproveDisposableSong -AcceptanceCase layout-sizing -RenoiseExe <renoise-executable>
+```
+
+## Task 3 current disposition
+
+The GUI has no Details, source/preview/live-state report, decoded view,
+inspector, Sampler Audit, Check or recovery actions. Only the shared renderer
+writes feedback text. Workspace navigation, Pattern / Copy and Live Edit Retry
+remain for their later scheduled tasks; this is not the completed redesign.
+
+| Removed dependency | Disposition and retained responsibility |
+| --- | --- |
+| Inspector and sampler audit | Constructors, callbacks, imports, mocks and both `renoise/selection_context.lua` and `renoise/sampler_audit.lua` deleted |
+| Make Independent | Context eligibility/projection/action, identity-only mutation authorization, eligibility helpers, transition and `runtime/independence.lua` deleted; ownership/collision checks and musical Duplicate remain |
+| Detached-draft actions | Context list/copy/discard wrappers, draft-cache list/copy/discard and private copy-origin metadata deleted; automatic saving/restoration, capture, detached session records, volatile warnings and revision-specific commit cleanup remain |
+| Revalidate | Context status/action, integrity proof/clear, committed-capture and ownership recovery-comparison helpers, and writer blocker-clear API deleted; evidence producers, mutation/metadata capture, write rejection and same-song evidence suspension/resumption remain |
+| Report support | Exclusive formatters, report-only refresh functions/state, decoded pagination and recovery workspace removed; projection validation, error-position navigation, history, staged entry, audition cleanup and observer lifetimes remain |
+| Obsolete test/native workflows | Action-only GUI/runtime independence specs and native recovery-action cases removed; retained coverage uses live editor/runtime workflows. Current owners include `acid_gui_live_edit_lifecycle_spec.lua` and `acid_draft_baseline_spec.lua` |
+
+The dependency-graph spec asserts that all three retired module files and the
+retired draft, eligibility, integrity and writer methods are absent. The
+context surface allowlist and GUI constructor checks reject retained facades or
+hidden controls. The release archive excludes all three modules. Retained
+`context:restore_editor_target()` uses draft restoration, requests use draft
+capture/currentness guards, and committed delivery uses revision-specific
+compare-and-clear. `context:record_blocker()` and mutation scopes retain
+integrity evidence; context/request admission reads its blocking state.
+
+### Supported unavailable outcomes
+
+| State | Lifetime and supported behavior |
+| --- | --- |
+| Foreign/colliding/deleted/modified destination | Remains non-owned and cannot reach the writer. Explicit valid target or New selection is allowed only through normal admission and cannot bypass a song blocker |
+| Recorded mutation, metadata or writer-integrity evidence | Remains blocked across target changes, dialog reopen and same-song reattachment; Generate, Live Edit and Duplicate reject without capture/dispatch or source/phrase changes. No ACID repair action remains |
+| Mutation evidence recording/finalization failure | Remains blocked through same-song dialog/document lifetimes. The existing context resets its fallback on attachment of a different song; no same-song reopen or retry remedy is offered |
+| Verified commit followed by failed adoption and failed evidence recording | Dialog reopen remains blocked. Same-song document reattachment uses fresh full membership, identity, stored-source/settings and native-output classification. The intact committed target can pass subsequent explicit admission; a corrupted postimage remains unavailable and never reaches the writer. This is not a general blocker-clear or user repair procedure |
+| Observer failure or dispatch uncertainty | Existing successful observer reattachment and verified writer-occupancy admission remain the only applicable clearing evidence; no removed repair action is invoked |
+| Unsaved/unreadable drafts | Ordinary save/load feedback remains separate from output results. Removal does not discard drafts, adopt foreign music, automatically select New or claim unsaved edits were saved |
+
+These failure lifetimes are covered by deterministic injected fixtures. They do
+not establish disk-failure, acoustic or exhaustive native fault acceptance.
+Persisted schemas, manifests, musical algorithms and active writer transaction
+behavior are unchanged.
+
+### Verification
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 passed after the final runtime deletion chain; Lua 5.1; 103.16 s |
+| `./tests/renoise/runner_spec.ps1` | Passed transport, ownership, keyboard configuration, reporting and installation lifecycle checks |
+| `./tests/renoise/test_package_dev.ps1` | Passed payload, fixture, session ACL, syntax, bootstrap, Unicode path and packaging checks |
+| `./scripts/package.ps1 -Tool ACID` | 32 runtime files; all archive bytes match source; `main.lua` and `manifest.xml` at root; no retired modules, SDK or development files |
+| Archive | `dist/com.david303ttl.ACID_0.1.xrnx`; SHA-256 `23c65a6c9aaa7df38abc60918c630f9cf42955560ada54b1611d354bbd43cb56` |
+| GUI SHA-256 | `d319184014eaf8060fb0e487d8788b2b5906928f2bd596a3c8c4696bbf6e2504` |
+| Source inventory | `gui.lua`: 2,266 lines; 30 Lua runtime files, 13,622 lines. Baseline: 2,276 GUI lines and 33 Lua files, 14,849 lines; no presentation helper extraction |
+| Native `editor-responsiveness` | PASS; 32 retained GUI actions, source/draft/phrase checks, Live Edit and feedback ownership, audition functional checks; report `tmp/interactive-c6ecb42d77244b569e1b7a1d1af153ec/report.json` |
+| Native `integrity-observers` | PASS; blocker survives dialog reopen and target change, Generate/Duplicate reject, committed phrase/store preserved; report `tmp/interactive-d197a6eaaead46768bf6d82443650db4/report.json` |
+| Native `writer-recovery` | PASS on the final runtime source; blocked dirty-editor rebind remains unavailable, Generate/Duplicate reject, exact native snapshot/tool bytes/inventory and both immutable source rows preserved; report `tmp/interactive-aa44479fad094a909acb998e4b13fe15/report.json` |
+| Final harness checks | Focused acceptance driver regression spec and `git diff --check` passed after obsolete test-only helper removal and diagnostic formatting cleanup |
+| Host cleanup | Runner-owned Renoise closed; original 36-file installed ACID tool restored and verified |
+
+Editor/integrity native checks preceded deletion of unreachable proof-comparison
+helpers; the final writer check and complete Lua suite include that deletion.
+These are functional receipts, not acoustic or latency acceptance. Final
+production-layout fit and other display scaling settings remain Task 12 checks.
 
 ## Baseline
 
@@ -148,7 +264,10 @@ in `gui.lua:1114-1438`; recovery rendering is in `gui.lua:1543-1675`.
 The generic Retry Live Edit button is an anonymous constructor at
 `gui.lua:2162-2169`; it is separate from the retained rename dialog retry.
 
-## Runtime deletion inventory
+## Baseline runtime deletion inventory
+
+The following dependency map records the pre-deletion implementation. Current
+dispositions and supported blocker outcomes are recorded above.
 
 | Candidate and current direct callers | Dependency chain and disposition | Protected behavior and coverage |
 | --- | --- | --- |
@@ -162,7 +281,7 @@ Packaged modules are listed in the baseline archive above. Final module, test,
 probe, documentation and archive dispositions remain pending deletion and the
 final package inspection.
 
-## Blocker producers and current lifetimes
+## Baseline blocker producers and lifetimes
 
 | Scope | Producer and current clearing condition | Permitted behavior and evidence |
 | --- | --- | --- |
@@ -188,15 +307,6 @@ remain distinct in feedback.
 | New Phrase; owned, foreign, colliding and unavailable destinations | `acid_gui_views_spec.lua`, `acid_runtime_inventory_spec.lua`, `acid_runtime_writer_integration_spec.lua` |
 | Observer, mutation, adoption and writer blocker fixtures | `acid_runtime_observers_spec.lua`, `acid_runtime_mutation_spec.lua`, `acid_runtime_integrity_spec.lua`, `acid_runtime_writer_integration_spec.lua` |
 
-The presentation manual `acid_editor_presentation_manual.md` currently expects
-Details, diagnostics, decoded output and workspace tabs. The Live Edit manual
-also uses workspace navigation. These are old-interface procedures for the
-later documentation task; destination, Live Edit, regeneration and lifecycle
-guides remain protected behavior references.
-
-## Native sizing probe
-
-Native feedback sizing is covered by Task 2. Full planned holders and the tallest
-planned editor, screen work area/scaling, complete dialog dimensions and
-open-dialog resizing remain unverified. Task 1's complete layout-sizing exit
-remains open; feedback measurements do not establish final screen fit.
+The current presentation and Live Edit manuals use retained workflows.
+Workspace navigation remains until its later layout task; destination,
+regeneration and lifecycle guides remain protected behavior references.

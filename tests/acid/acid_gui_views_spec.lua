@@ -39,6 +39,22 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local parent_by_child={}
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child
+    parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then
+        table.remove(parent.views,index)
+        parent_by_child[child]=nil
+        return
+      end
+    end
+    error("view is not a child")
+  end
   local native_view_metatable={__eq=function()
     error("native ViewBuilder controls do not support equality")
   end}
@@ -46,12 +62,15 @@ local function view_builder()
     local node={kind=kind,views={},notifiers={}}
     setmetatable(node,native_view_metatable)
     for key,value in pairs(properties or {}) do
-      if type(key)=="number" then node.views[#node.views+1]=value
+      if type(key)=="number" then add_view(node,value)
       else node[key]=value end
     end
     if node.id then builder.views[node.id]=node end
     builder.nodes[#builder.nodes+1]=node
-    function node:add_child(child) self.views[#self.views+1]=child end
+    function node:add_view(child) add_view(self,child) end
+    function node:remove_view(child) remove_view(self,child) end
+    node.add_child=node.add_view
+    node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
     function node:fire(value)
       self.value=value
@@ -64,6 +83,20 @@ local function view_builder()
     return function(_,properties) return construct(kind,properties) end
   end})
   return builder
+end
+
+do
+  local membership_builder=view_builder()
+  local holder=membership_builder:column{id="membership_holder"}
+  local child=membership_builder:text{id="membership_child"}
+  holder:add_view(child)
+  assert(#holder.views==1 and rawequal(holder.views[1],child),
+    "add_view attaches a child once")
+  assert(not pcall(function()holder:add_view(child)end),
+    "add_view rejects duplicate parenting")
+  holder:remove_view(child)
+  assert(#holder.views==0 and membership_builder.views.membership_child==child,
+    "remove_view detaches the child while retaining its ID lookup")
 end
 
 local tool={app_new_document_observable=observable(),app_idle_observable=observable(),
@@ -231,8 +264,6 @@ package.loaded["renoise.phrase_ownership"]={
   id=function(phrase) if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
-  matches_recovery=function(_,token)return type(token)=="table" end,
-  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
 local persisted_drafts={}
 local draft_writes=0
@@ -278,8 +309,6 @@ end,
     return existed
   end,
   has_drafts=function()return next(persisted_drafts)~=nil end}
-package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
-package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 renoise={Document={create=function()
   return function(properties)
     local document={}
@@ -312,24 +341,10 @@ editor.project=function(...)
 end
 local runtime_context=require("runtime.context")
 local new_context=runtime_context.new
-local recovery_action_reads=0
-local recovery_reason_fixture
 local label_context
 runtime_context.new=function(options)
   local context=new_context(options)
   label_context=context
-  local recovery_entries=context.recovery_entries
-  context.recovery_entries=function(self,...)
-    recovery_action_reads=recovery_action_reads+1
-    local entries=recovery_entries(self,...)
-    if recovery_reason_fixture then
-      entries=entries or {}
-      entries[#entries+1]={token={},revision=1,
-        labels={instrument="Recovery fixture",phrase="Long diagnostic"},
-        reason=recovery_reason_fixture}
-    end
-    return entries
-  end
   return context
 end
 tool.app_new_document_observable.fail_add=true
@@ -371,6 +386,22 @@ package.loaded.gui=nil
 require("gui").show()
 runtime_context.new=new_context
 assert(dialog and dialog.visible)
+for _,id in ipairs({"acid_source_state","acid_source_diagnostic","acid_source_summary",
+    "acid_preview_summary","acid_live_edit_state","acid_details_panel","acid_details_toggle",
+    "acid_decoded_previous","acid_decoded_next","acid_decoded_page_label","acid_decoded_rows",
+    "acid_recovery_detail","acid_recovery_previous","acid_recovery_next","acid_recovery_page_label",
+    "acid_recovery_choice","acid_recovery_copy","acid_recovery_discard","acid_recovery_panel",
+    "acid_make_independent","acid_revalidate","acid_program_check"}) do
+  assert(builder.views[id]==nil,"removed diagnostic or recovery view remains: "..id)
+end
+for _,node in ipairs(builder.nodes) do
+  if node.kind=="button" then
+    assert(node.text~="Inspect selected Renoise pattern (read only)" and node.text~="Sampler audit" and
+      node.text~="Check" and node.text~="Copy to New" and node.text~="Make Independent" and
+      node.text~="Revalidate" and node.text~="Recover Draft",
+      "removed diagnostic or recovery action remains: "..tostring(node.text))
+  end
+end
 local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
 local view=builder.views.acid_editor_view
@@ -384,19 +415,16 @@ for id in pairs(builder.views) do
 end
 local function assert_direct_memory_controls(node)
   assert(node.kind~="popup","memory editing must use direct controls")
-  assert(node.kind~="multiline_text","decoded preview belongs in its workspace tab")
+  assert(node.kind~="multiline_text","memory editors contain direct controls only")
   for _,child in ipairs(node.views) do assert_direct_memory_controls(child) end
 end
 assert_direct_memory_controls(program)
 assert_direct_memory_controls(grid)
 local function display_snapshot()
-  return table.concat({builder.views.acid_source_summary.text,
-    builder.views.acid_preview_summary.text,builder.views.acid_source_diagnostic.text,
-    builder.views.acid_program_pitch_summary.tooltip,
-    builder.views.acid_program_time_summary.text},"|")
+  return table.concat({builder.views.acid_program_pitch_summary.tooltip,
+    builder.views.acid_program_time_summary.text,builder.views.acid_status.text},"|")
 end
 local initial=display_snapshot()
-local initial_recovery_action_reads=recovery_action_reads
 local initial_projections=projection_calls
 local initial_classifications=classification_calls
 local function button(text)
@@ -405,7 +433,6 @@ local function button(text)
   end
   error("missing button: "..text)
 end
-local recovery_item_reads
 local function control(id)
   assert(builder.views[id],"missing behavioral GUI control: "..id)
   return builder.views[id]
@@ -429,45 +456,15 @@ local function assert_navigation_neutral(before,label)
   assert(button("Undo").active==before.undo and button("Redo").active==before.redo,
     label.." must not create a history transition")
   assert(draft_writes==before.drafts,label.." must not persist a draft")
-  assert(recovery_item_reads==before.recovery_reads,label.." must not rescan recovery entries")
 end
 local function navigation_snapshot()
   return {writes=render_calls,projections=projection_calls,
     classifications=classification_calls,undo=button("Undo").active,
-    redo=button("Redo").active,drafts=draft_writes,recovery_reads=recovery_item_reads}
+    redo=button("Redo").active,drafts=draft_writes}
 end
-local recovery_choice=builder.views.acid_recovery_choice
-local recovery_items=recovery_choice.items
-local recovery_item_writes=0
-recovery_item_reads=0
-recovery_choice.items=nil
-setmetatable(recovery_choice,{__index=function(_,key)
-  if key=="items" then recovery_item_reads=recovery_item_reads+1;return recovery_items end
-end,__newindex=function(self,key,value)
-  if key=="items" then recovery_item_writes=recovery_item_writes+1;recovery_items=value
-  else rawset(self,key,value) end
-end})
-local summary_view=builder.views.acid_source_summary
-local summary_text=summary_view.text
-local summary_writes,summary_reads=0,0
-summary_view.text=nil
-setmetatable(summary_view,{__index=function(_,key)
-  if key=="text" then summary_reads=summary_reads+1;return summary_text end
-end,__newindex=function(self,key,value)
-  if key=="text" then summary_writes=summary_writes+1;summary_text=value
-  else rawset(self,key,value) end
-end})
 local navigation=navigation_snapshot()
-assert(not control("acid_details_panel").visible,"routine diagnostics start collapsed")
-control("acid_details_toggle"):fire()
-assert(control("acid_details_panel").visible,"Details exposes diagnostic reports")
-control("acid_details_toggle"):fire()
-assert(not control("acid_details_panel").visible,"Details can be collapsed again")
-assert_navigation_neutral(navigation,"diagnostic visibility")
 assert(not control("acid_program_stage_status").visible,
-  "idle entry does not show staging diagnostics")
-assert(not control("acid_source_diagnostic").visible,
-  "valid source does not show a routine validation report")
+  "idle entry does not show staging feedback")
 control("acid_program_select_time_02"):fire()
 local initial_time_label=control("acid_program_select_time_02").text
 for _,assignment in ipairs({{"TIE","Tie"},{"REST","Rest"}}) do
@@ -491,9 +488,8 @@ assert_navigation_neutral(navigation,"workspace view navigation")
 view:fire(1)
 assert(display_snapshot()==initial)
 assert_navigation_neutral(navigation,"return workspace navigation")
-local workspace_tabs={"Decoded","Pattern / Copy","Extended / Clear","Output","Recovery"}
-local workspace_panels={"acid_decoded_panel","acid_pattern_copy_panel","acid_extended_panel",
-  "acid_output_panel","acid_recovery_panel"}
+local workspace_tabs={"Pattern / Copy","Extended / Clear","Output"}
+local workspace_panels={"acid_pattern_copy_panel","acid_extended_panel","acid_output_panel"}
 for index,tab in ipairs(workspace_tabs) do
   text_control(tab):fire()
   for panel_index,id in ipairs(workspace_panels) do
@@ -509,13 +505,6 @@ assert(control("acid_operation_open") and control("acid_mask_enabled"),
 assert(control("acid_output_policy").active and control("acid_pb_range").active,
   "Output provides active phrase policy and PB Range controls")
 assert_navigation_neutral(navigation,"workspace tab navigation")
-assert(control("acid_recovery_choice").items[1]=="No detached drafts" and
-  control("acid_recovery_detail"),
-  "Recovery remains available and reports the empty-recovery state instead of an unavailable placeholder")
-assert(summary_writes==0,"unchanged summary text is not assigned again")
-assert(recovery_item_reads<=1,
-  "recovery items are read only to seed the rendered-value cache")
-local initial_recovery_item_reads=recovery_item_reads
 for _=1,20 do tool.app_idle_observable:fire() end
 assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
 
@@ -636,11 +625,7 @@ view:fire(2)
 local bounded_views={
   {control("acid_grid_pitch_01"),98},
   {control("acid_grid_pitch_header_01"),98},
-  {control("acid_grid_pitch_column_01"),98},
-  {control("acid_source_summary"),820},
-  {control("acid_preview_summary"),820},
-  {control("acid_source_diagnostic"),820},
-  {control("acid_decoded_rows"),820}
+  {control("acid_grid_pitch_column_01"),98}
 }
 local widths={}
 for index,entry in ipairs(bounded_views) do
@@ -651,6 +636,8 @@ for index,entry in ipairs(bounded_views) do
 end
 assert(control("acid_status").width==820,
   "shared feedback has a bounded width and content-sized height")
+assert(#control("acid_feedback").views==0,
+  "empty feedback holder has no attached status child")
 local pitch_cell=control("acid_grid_pitch_01")
 local pitch_header=control("acid_grid_pitch_header_01")
 local old_grid_label=pitch_cell.text
@@ -732,86 +719,11 @@ assert(alternate_draft.pitch_events[2].note==25 and
   alternate_draft.pitch_events[2].key==1 and alternate_draft.pitch_events[2].octave==-1 and
   alternate_draft.pitch_events[2].accent and alternate_draft.pitch_events[2].slide,
   "editing alternate raw (36,12,-1) uses keyboard mapping and preserves ACCENT/SLIDE")
-local decoded_rows
-local decoded_page_label
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_text" and node.size and node.size.height==76 then decoded_rows=node end
-  if node.kind=="text" and node.text=="TIME 01-04 / 32" then decoded_page_label=node end
-end
-assert(decoded_rows and decoded_page_label,"decoded paging controls were not built")
-local decoded_line_count=decoded_rows.text=="" and 0 or 1
-for _ in decoded_rows.text:gmatch("\n") do decoded_line_count=decoded_line_count+1 end
-assert(decoded_line_count==4,"decoded workspace is bounded to four visible rows")
-assert(text_control("Previous 4") and text_control("Next 4"),
-  "decoded sequence uses bounded four-row paging controls")
-local decoded_navigation=navigation_snapshot()
-for _=1,7 do text_control("Next 4"):fire() end
-assert(decoded_page_label.text=="TIME 29-32 / 32",
-  "decoded paging reaches exactly the final four of 32 TIME positions")
-text_control("Next 4"):fire()
-assert(decoded_page_label.text=="TIME 29-32 / 32",
-  "decoded paging cannot advance past the source")
-for _=1,7 do text_control("Previous 4"):fire() end
-assert(decoded_page_label.text=="TIME 01-04 / 32",
-  "decoded paging returns to the first four TIME positions")
-assert_navigation_neutral(decoded_navigation,"decoded paging")
-local recovery_items=control("acid_recovery_choice").items
-assert(#recovery_items<=16,"recovery selector is bounded to sixteen entries")
-recovery_reason_fixture=string.rep("Injected recovery evidence remains available across bounded pages. ",32)
-control("acid_recovery_choice"):fire(1)
-assert(#control("acid_recovery_choice").items<=16,
-  "recovery selection remains bounded while displaying long evidence")
-local recovery_page_label=control("acid_recovery_page_label")
-local recovery_detail=control("acid_recovery_detail")
-local function visible_lines(text)
-  local count=text=="" and 0 or 1
-  for _ in text:gmatch("\n") do count=count+1 end
-  return count
-end
-assert(visible_lines(recovery_detail.text)<=4,
-  "long recovery evidence renders no more than four lines at once")
-local recovery_navigation=navigation_snapshot()
-local recovery_first_page=recovery_page_label.text
-local _,recovery_page_count_text=recovery_first_page:match("^(%d+) / (%d+)$")
-local recovery_page_count=tonumber(recovery_page_count_text)
-assert(recovery_page_count and recovery_page_count>1,
-  "long recovery evidence exposes multiple bounded pages")
-for page=1,recovery_page_count do
-  assert(visible_lines(recovery_detail.text)<=4 and recovery_detail.text~="",
-    "recovery page "..page.." contains at most four nonempty lines")
-  if page<recovery_page_count then
-    control("acid_recovery_next"):fire()
-    assert(recovery_page_label.text==string.format("%d / %d",page+1,recovery_page_count),
-      "recovery Next advances exactly one page")
-  end
-end
-local recovery_last_page=recovery_page_label.text
-assert(visible_lines(recovery_detail.text)<=4 and
-  recovery_detail.text:find("OWNERSHIP:",1,true),
-  "the final recovery page retains ownership context within the line bound")
-control("acid_recovery_next"):fire()
-assert(recovery_page_label.text==recovery_last_page,
-  "recovery paging cannot advance past its final page")
-while control("acid_recovery_previous").active do control("acid_recovery_previous"):fire() end
-assert(recovery_page_label.text==recovery_first_page and visible_lines(recovery_detail.text)<=4,
-  "recovery paging returns to its first bounded page")
-assert(recovery_detail.text:find("Injected recovery evidence",1,true),
-  "the first recovery page displays injected long-reason content")
-assert_navigation_neutral(recovery_navigation,"recovery detail paging")
-recovery_reason_fixture=nil
-control("acid_recovery_choice"):fire(1)
-local recovery_writes_before_source_edit=recovery_item_writes
-
 control("acid_time_page_1"):fire()
 control("acid_grid_select_time_01"):fire()
-local recovery_reads_before_time_edit=recovery_action_reads
 button("REST"):fire()
 assert(projection_calls>initial_projections,"a TIME edit refreshes the canonical projection")
-assert(recovery_action_reads==recovery_reads_before_time_edit,
-  "a successful source edit does not rescan recovery actions")
 assert(render_calls==0)
-assert(recovery_item_writes==recovery_writes_before_source_edit,
-  "unchanged recovery choices are not reassigned during source edits")
 local shared_view_snapshot=display_snapshot()
 view:fire(2)
 assert(display_snapshot()==shared_view_snapshot,"Program and Grid project the same canonical source")
@@ -856,7 +768,8 @@ assert(pb_range_popup and pb_range_popup.items[1]=="Off" and
   pb_range_popup.items[4]=="±24" and pb_range_popup.items[5]=="±48" and
   pb_range_popup.value==1,"PB Range defaults to Off and offers the documented assumptions")
 last_step:fire("32")
-assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
+assert(last_step.value==32 and saved_draft().length==32,"LAST STEP accepts the maximum sequence length")
+local settings_source=assert(sequencer.copy_source(saved_draft()))
 local before_settings=projection_calls
 output_popup:fire(1)
 assert(projection_calls==before_settings+1,"output-policy edits invalidate projection once")
@@ -869,27 +782,26 @@ builder.views.acid_editor_view:fire(2)
 assert(projection_calls==before_settings+3,"host invalidation refreshes the projection")
 builder.views.acid_editor_view:fire(1)
 assert(projection_calls==before_settings+3,"the refreshed host projection is reused")
-assert(pb_range_popup.value==3 and builder.views.acid_source_summary.text:find("STEPS 32/32",1,true),
+assert(pb_range_popup.value==3 and sequencer.same_source(settings_source,saved_draft()),
   "PB Range changes do not mutate canonical PITCH/TIME source")
 
 local timing_popup=builder.views.acid_timing
 timing_popup:fire(2)
 assert(timing_popup.value==2)
-local reset_preview=builder.views.acid_preview_summary.text
+local before_reset_source=assert(sequencer.copy_source(saved_draft()))
 local reset_pitch=builder.views.acid_program_pitch_summary.tooltip
 app.show_prompt=function() error("Reset must not prompt") end
 button("Reset Pattern"):fire()
 app.show_prompt=function() return "Cancel" end
 assert(timing_popup.value==1,"Reset Source restores straight timing")
-assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
-assert(builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
+local reset_source=assert(sequencer.copy_source(saved_draft()))
+assert(reset_source.length==32,"Reset Pattern retains LAST STEP")
 assert(output_popup.value==2,"Reset Source restores Repeat output")
 assert(pb_range_popup.value==1,"Reset Source restores PB Range Off")
 assert(button("Undo").active)
 button("Undo"):fire()
 assert(timing_popup.value==2,"Undo restores the previous timing")
-assert(builder.views.acid_source_summary.text:find("STEPS 32/32",1,true))
-assert(builder.views.acid_preview_summary.text==reset_preview)
+assert(sequencer.same_source(before_reset_source,saved_draft()),"Undo restores the exact pre-reset source")
 builder.views.acid_editor_view:fire(1)
 assert(builder.views.acid_program_pitch_summary.tooltip==reset_pitch,
   "undo restores selected PITCH without changing selection")
@@ -897,7 +809,7 @@ assert(output_popup.value==1,"Undo restores the previous output policy")
 assert(pb_range_popup.value==3,"Undo restores the prior PB Range")
 assert(button("Redo").active)
 button("Redo"):fire()
-assert(output_popup.value==2 and builder.views.acid_preview_summary.text:find("Start: NOTE",1,true))
+assert(output_popup.value==2 and sequencer.same_source(reset_source,saved_draft()))
 assert(pb_range_popup.value==1,"Redo restores the reset PB Range Off")
 assert(timing_popup.value==1,"Redo restores straight timing")
 button("Undo"):fire()
@@ -991,8 +903,12 @@ generation_request.options.phrase_mutation(function()
 end)
 generation_callback(terminal_result(generation_request,"committed","Live append committed."))
 assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
+assert(not control("acid_status").text:find("Phrase updated.",1,true),
+  "a verified Live Edit does not publish a routine success confirmation")
 synchronous_writes=true
 program_key(5):fire()
+assert(not control("acid_status").text:find("Phrase updated.",1,true),
+  "a new source edit clears any obsolete success confirmation immediately")
 assert(render_calls==live_render_base+2 and active_request==nil,
   "a synchronous writer completes inside the native source-edit callback")
 tool.app_idle_observable:fire()
@@ -1150,7 +1066,28 @@ button("Generate / Regenerate ACID Phrase"):fire()
 assert(render_calls==before_queued_generate+1 and generation_request.target_index==2,
   "explicit Generate applies queued native selection and renders while Live Edit is armed")
 generation_callback(terminal_result(generation_request,"committed","Queued destination generated."))
+assert(control("acid_status").text:find("Phrase updated.",1,true),
+  "an explicit Generate keeps its useful success confirmation")
+assert(#control("acid_feedback").views==1 and
+  rawequal(control("acid_feedback").views[1],control("acid_status")) and
+  builder.views.acid_status==control("acid_status"),
+  "feedback attaches the status view once and keeps its ID lookup")
+phrase_popup:fire(1)
+assert(#control("acid_feedback").views==0 and
+  builder.views.acid_status==control("acid_status"),
+  "a target refresh detaches obsolete confirmation and retains its ID lookup")
+phrase_popup:fire(2)
+assert(#control("acid_feedback").views==0,
+  "repeated target refreshes leave the empty holder detached")
+button("Generate / Regenerate ACID Phrase"):fire()
+generation_callback(terminal_result(generation_request,"committed","Explicit edit confirmation fixture."))
+assert(control("acid_status").text:find("Phrase updated.",1,true),
+  "manual Generate presents a confirmation before a later source edit")
 live_checkbox:fire(false)
+local timing_control=control("acid_timing")
+timing_control:fire(timing_control.value==1 and 2 or 1)
+assert(not control("acid_status").text:find("Phrase updated.",1,true),
+  "a later ordinary source edit clears the superseded Generate confirmation")
 
 -- Instrument inventory notifications refresh the native destination popup on
 -- idle while preserving its bound object and without requesting a render.
@@ -1783,8 +1720,7 @@ for _,node in ipairs(builder.nodes) do
 end
 assert(startup_phrase,"startup phrase chooser was not created")
 startup_phrase:fire(startup_phrase.value==1 and 2 or 1)
-assert(builder.views.acid_status.text=="Custom scales could not be loaded; import is disabled." and
-  builder.views.acid_source_state.text~="SOURCE UNAVAILABLE",
+assert(builder.views.acid_status.text=="Custom scales could not be loaded; import is disabled.",
   "successful phrase restoration and target switching preserve startup scale feedback")
 scale_preferences.load=original_scale_load
 dialog.visible=false

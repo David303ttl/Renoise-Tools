@@ -66,9 +66,7 @@ local function labels(instrument,phrase)
 end
 local function metadata(record)
   return {token=record.token,revision=record.revision,recovered=record.recovered==true,
-    persistent=record.persistent==true,warning=record.warning,
-    recovery_token=record.origin and record.origin.token,
-    recovery_revision=record.origin and record.origin.revision}
+    persistent=record.persistent==true,warning=record.warning}
 end
 local function values(record)
   return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record),
@@ -327,11 +325,6 @@ function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selectio
       record.revision~=selection.revision then
     return nil,"Draft changed before identity rebind"
   end
-  local origin_token=record.origin and record.origin.token
-  local origin_revision=record.origin and record.origin.revision
-  if selection.recovery_token~=origin_token or selection.recovery_revision~=origin_revision then
-    return nil,"Draft recovery origin changed before identity rebind"
-  end
   local source,source_error=sequencer.copy_source(pattern)
   if not source then return nil,source_error end
   if not sequencer.same_source(record.pattern,source) or
@@ -548,10 +541,6 @@ function M.compare_and_clear(song,descriptor,created)
   local records=bucket(song,descriptor.instrument,false)
   local key=descriptor.phrase or NEW
   local record=records[key]
-  if created==true and descriptor.kind=="new" and record.origin and
-      record.origin.revision==record.revision then
-    state(song,true).recovery[record.origin.token]=nil
-  end
   records[key]=nil
   return true
 end
@@ -571,72 +560,6 @@ function M.compare_and_clear_revision(song,descriptor,revision_id)
       record.revision~=captured.revision then return false end
   records[captured.phrase]=nil
   return true
-end
-
-function M.list(song)
-  local session=state(song,false)
-  local result={}
-  for _,entry in pairs(session and session.recovery or {}) do result[#result+1]=assert(copied(entry)) end
-  table.sort(result,function(a,b)return a.token<b.token end)
-  return result
-end
-
-function M.discard(song,token,revision)
-  if type(token)=="table" then
-    if getmetatable(token)~=nil or revision~=nil then return false end
-    revision=token.revision
-    token=token.token
-  end
-  local session=state(song,false)
-  local entry=session and session.recovery[token]
-  if not entry or (revision~=nil and revision~=entry.revision) then return false end
-  session.recovery[token]=nil
-  return true
-end
-
-function M.copy_to_new(song,instrument,selection,revision_or_options,options)
-  local valid,target_error=valid_target(song,instrument,nil)
-  if not valid then return nil,target_error end
-  local token,revision
-  if type(selection)=="table" then
-    if getmetatable(selection)~=nil or options~=nil then return nil,"Invalid recovery selection" end
-    token,revision=selection.token,selection.revision
-    options=revision_or_options
-  else
-    token=selection
-    if type(revision_or_options)=="number" then
-      revision=revision_or_options
-    else
-      options=revision_or_options
-    end
-  end
-  if not policies.is_integer(token) or token<1 or
-      (revision~=nil and (not policies.is_integer(revision) or revision<1)) then
-    return nil,"Invalid recovery selection"
-  end
-  local options_valid,options_error=valid_options(options)
-  if not options_valid then return nil,options_error end
-  local session=state(song,false)
-  local entry=session and session.recovery[token]
-  if not entry or (revision~=nil and revision~=entry.revision) then
-    return nil,"Recovery entry is unavailable or has changed"
-  end
-  local verified,err=scratch_baseline(song,instrument)
-  if not verified then return nil,err end
-  local outgoing,outgoing_error,_,outgoing_state=resolve(song,instrument,nil,options)
-  if not outgoing and outgoing_state=="error" then
-    return nil,outgoing_error or "Cannot preserve the current New Phrase scratch"
-  end
-  if outgoing then M.detach(song,instrument,nil,"Scratch preserved before recovery copy") end
-  local saved,save_error=M.put(song,instrument,nil,entry.pattern,entry.output_policy,entry.pb_range,
-    options,entry.label,entry.label_custom)
-  local record=bucket(song,instrument,false)[NEW]
-  if not record then return nil,save_error end
-  record.origin={token=token,revision=record.revision}
-  local source,policy,pb,meta,label,label_custom=values(record)
-  meta.recovery_token=token
-  meta.warning=not saved and save_error or nil
-  return source,policy,pb,meta,label,label_custom
 end
 
 function M.clear(song,instrument,phrase)

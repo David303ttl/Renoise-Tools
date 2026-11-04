@@ -24,8 +24,7 @@ local function exercise(state)
   local ownership = require("renoise.phrase_ownership")
   local store = require("renoise.pattern_store")
   local sequence = require("model.sequencer")
-  local original_song, original_current = renoise.song, ownership.is_current
-  local original_capture = ownership.capture_recovery
+  local original_song, original_current, original_capture = renoise.song, ownership.is_current, ownership.capture_recovery
   local mode, writes, captures, renders, recovery_reads = nil, 0, 0, 0, 0
   local checks = {}
   local proxy = setmetatable({}, {
@@ -77,7 +76,7 @@ local function exercise(state)
       recovery_reads = recovery_reads + 1
       error("Unrelated native phrase recovery is unavailable")
     end
-    for _, destination in ipairs({"owned", "new"}) do
+    for _, destination in ipairs({"owned"}) do
       local target = destination == "owned" and phrase or nil
       assert(context:restore_editor_target(instrument, target), "Cannot restore label destination")
       local revision = context:revision_state()
@@ -99,37 +98,27 @@ local function exercise(state)
       local blocked_writes = writes
       assert(not context:rename_label("Blocked", true) and writes == blocked_writes)
       assert(not context:request_generation("manual") and captures == 0 and renders == 0)
-      assert(not context:revalidation_status().verified, "Uncertain bytes yielded a proof")
-      -- A legitimate unrelated native edit is outside a metadata receipt.
+      -- A separate native edit does not authorize clearing the metadata blocker.
       local foreign = state.foreign[2]
       local cell = foreign:line(FOREIGN_LINE):note_column(1)
       cell.note_value = cell.note_value + 1
       foreign_snapshots[2] = assert(ownership.snapshot(foreign))
       song.tool_data = before .. "\n"
-      assert(not context:revalidation_status().verified, "Nonexact storage yielded a proof")
       mode = nil
       song.tool_data = before
-      local status, proof = context:revalidation_status()
-      assert(status.verified and proof and context:integrity_state().blocked,
-        "Exact metadata restoration with unrelated edits did not permit explicit recovery")
+      assert(context:integrity_state().blocked, "restoring exact bytes cleared the blocker")
       assert(not context:rename_label("Still blocked", true) and writes == blocked_writes,
-        "Inspection implicitly cleared integrity")
-      song.tool_data = before .. "changed after proof"
-      assert(not context:revalidate(proof), "Stale proof accepted changed storage")
-      song.tool_data = before
-      status, proof = context:revalidation_status()
-      assert(status.verified and context:revalidate(proof) and not context:integrity_state().blocked)
-      assert(not context:revalidate(proof), "Recovery proof was reusable")
-      assert(context:restore_editor_target(instrument, target))
-      assert(context:rename_label(destination == "owned" and OWNED_LABEL or NEW_LABEL, true))
+        "restored bytes allowed another metadata write")
+      checks.uncertain_write_remains_blocked = true
+      checks.unrelated_native_edit_preserved = true
       native_exact()
-      checks[destination .. "_uncertain_write_revalidated"] = true
+      checks[destination .. "_uncertain_write_blocked"] = true
       checks[destination .. "_unrelated_native_edit_preserved"] = true
     end
     local _, _, _, label, custom = store.read_entry(song, state.id)
-    assert(label == OWNED_LABEL and custom == true)
-    local draft, _, _, pending_label, pending_custom = store.read_draft(proxy, instrument, nil)
-    assert(draft and pending_label == NEW_LABEL and pending_custom == true)
+    assert(label == "Accepted owned" and custom == true)
+    local draft = store.read_draft(proxy, instrument, nil)
+    assert(draft == nil, "failed label write created an unrelated New Phrase draft")
     assert(captures == 0 and renders == 0 and recovery_reads == 0)
     checks.zero_generation_and_recovery_reads = true
   end)
@@ -154,18 +143,18 @@ function M.run(case_name, done, helpers)
       local id = assert(ownership.id(phrase))
       local source, _, _, label, custom = store.read_entry(song, id)
       local draft, _, _, draft_label, draft_custom = store.read_draft(song, instrument, nil)
-      assert(source and label == OWNED_LABEL and custom == true)
-      assert(draft and draft_label == NEW_LABEL and draft_custom == true)
-      assert(song.instruments[2].phrases[1]:line(FOREIGN_LINE):note_column(1).note_value == FOREIGN_NOTE + 2,
+      assert(source and label == "Accepted owned" and custom == true)
+      assert(draft == nil, "Cold reopen found an unrequested New Phrase draft")
+      assert(song.instruments[2].phrases[1]:line(FOREIGN_LINE):note_column(1).note_value == FOREIGN_NOTE + 1,
         "Cold reopen lost unrelated native edits")
       context = require("runtime.context").new({writer = require("writers.phrase_writer"),
         capture = function() error("Cold restore requested generation") end,
         sink = function() error("Cold restore requested a render") end})
       context:attach_document(song); context:open_dialog()
-      for _, target in ipairs({"owned", "new"}) do
-        assert(context:restore_editor_target(instrument, target == "owned" and phrase or nil))
+      for _, target in ipairs({"owned"}) do
+        assert(context:restore_editor_target(instrument, phrase))
         local editor = context:editor_state()
-        assert(editor.label == (target == "owned" and OWNED_LABEL or NEW_LABEL) and editor.label_custom)
+        assert(editor.label == "Accepted owned" and editor.label_custom)
       end
       assert(helpers.baseline(song) == baseline, "Cold restoration mutated persisted native state")
     end)

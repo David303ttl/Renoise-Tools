@@ -16,15 +16,28 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local parent_by_child={}
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child;parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then table.remove(parent.views,index);parent_by_child[child]=nil;return end
+    end
+    error("view is not a child")
+  end
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
     for key,value in pairs(properties or {}) do
-      if type(key)=="number" then node.views[#node.views+1]=value
+      if type(key)=="number" then add_view(node,value)
       else node[key]=value end
     end
     if node.id then builder.views[node.id]=node end
     builder.nodes[#builder.nodes+1]=node
-    function node:add_child(child) self.views[#self.views+1]=child end
+    function node:add_view(child) add_view(self,child) end
+    function node:remove_view(child) remove_view(self,child) end
+    node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
     function node:fire(value)
       self.value=value
@@ -128,11 +141,7 @@ package.loaded["renoise.phrase_ownership"]={
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
-  matches_recovery=function(_,token)return type(token)=="table" end,
-  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
-package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
-package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 local active_request
 local sync_next_result
@@ -336,20 +345,6 @@ button(builder,"Undo"):fire()
 assert(pb_range_popup(builder).value==2,"Undo restores the previous PB Range")
 button(builder,"Redo"):fire()
 assert(pb_range_popup(builder).value==1,"Redo restores the changed PB Range")
-pb_range_popup(builder):fire(3)
-force_diagnostic=true
-song.selected_phrase_observable:fire()
-builder.views.acid_editor_view:fire(2)
-local go_to_error=button(builder,"Go to source error")
-assert(go_to_error.active,"invalid source exposes diagnostic navigation: "..builder.views.acid_source_diagnostic.text)
-go_to_error:fire()
-builder.views.acid_editor_view:fire(1)
-assert(builder.views.acid_program_time_summary.text:find("TIME 03",1,true) and
-  builder.views.acid_program_pitch_summary.tooltip:find("P02",1,true),
-  "diagnostic navigation selects the failing TIME and PITCH positions")
-force_diagnostic=false
-song.selected_phrase_observable:fire()
-builder.views.acid_editor_view:fire(1)
 fail_draft_persistence=true
 local timing=builder.views.acid_timing
 timing:fire(timing.value==1 and 2 or 1)
@@ -362,6 +357,7 @@ fail_draft_persistence=false
 dialog.visible=false
 builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
+pb_range_popup(builder):fire(3)
 builder.views.acid_editor_view:fire(2)
 builder.views.acid_grid_pitch_02:fire()
 builder.views.acid_editor_view:fire(1)
@@ -374,8 +370,6 @@ assert(live_checkbox,"Live Edit checkbox was not created")
 live_checkbox:fire(true)
 assert(#render_callbacks==0,"arming Live Edit does not write")
 pitch_key(builder,5):fire()
-assert(builder.views.acid_live_edit_state.text=="LIVE EDIT DIRTY",
-  "editing the armed source leaves a queued edit: "..builder.views.acid_live_edit_state.text)
 assert(#render_callbacks==1,"source editing starts Live Edit inside the user edit callback")
 tool.app_idle_observable:fire()
 assert(#render_callbacks==1 and tool.writer_calls[1].options.token,
@@ -386,8 +380,6 @@ local first_failure=terminal_result(tool.writer_calls[1],"error","temporary rend
 first_failure.diagnostics={"temporary render failure"}
 render_callbacks[1](first_failure)
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
-assert(builder.views.acid_live_edit_state.text:find("ERROR",1,true),
-  "last Live Edit failure remains visible")
 local status=builder.views.acid_status
 assert(status.text=="Couldn't update the phrase. Try again.",status.text)
 pitch_key(builder,6):fire()
@@ -408,15 +400,17 @@ assert(#render_callbacks==3 and tool.writer_calls[3].pattern.pitch_events[2].key
     tostring(tool.writer_calls[3].pattern.pitch_events[1].key).." P2="..
     tostring(tool.writer_calls[3].pattern.pitch_events[2].key))
 assert(not status.text:find(long_diagnostic,1,true), "a superseded request cannot replace current details with a stale error")
-assert(not builder.views.acid_live_edit_state.text:find(long_diagnostic,1,true),
-  "the live status does not duplicate long diagnostics into an auto-sizing text view")
 local approximate_result=terminal_result(tool.writer_calls[3],"approximate","recovered with approximation")
 approximate_result.diagnostics={"slide approximated"}
 render_callbacks[3](approximate_result)
 assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
 assert(status.text=="Phrase updated with a musical approximation.",status.text)
-assert(builder.views.acid_live_edit_state.text:find("APPROXIMATE",1,true),
-  "draft cleanup failure does not change a successful render status")
+live_checkbox:fire(false)
+local timing=builder.views.acid_timing
+timing:fire(timing.value==1 and 2 or 1)
+assert(status.text=="Phrase updated with a musical approximation.",
+  "an approximation warning remains visible while the source is edited")
+live_checkbox:fire(true)
 
 
 phrase_choice:fire(2)
@@ -518,15 +512,6 @@ render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnost
 assert(status.text:find("Couldn't update the phrase. Try again.",1,true) and
   not status.text:find(long_diagnostic,1,true),
   "current generation failure uses a safe message instead of request diagnostics")
-local live_state=builder.views.acid_live_edit_state.text
-local live_state_view=builder.views.acid_live_edit_state
-assert(live_state_view.kind=="multiline_text" and live_state_view.size.width==820 and
-  live_state_view.size.height==48,
-  "live status uses a fixed-size wrapping view so long diagnostics cannot widen the dialog")
-assert(live_state:find("LIVE EDIT ERROR",1,true) and
-  live_state:find("LAST COMMIT: COMMITTED | Other target / 05 ACID explicit recovery",1,true) and
-  not live_state:find("safety phrase updated",1,true),
-  "a later render error preserves a concise summary of the prior successful commit")
 
 local before_reset=#render_callbacks
 pitch_key(builder,3):fire()
@@ -553,126 +538,5 @@ local next_key=saved_pitch(11,1).key==0 and 2 or 1
 pitch_key(builder,next_key):fire()
 assert(#render_callbacks==before_sync+1 and tool.writer_calls[#tool.writer_calls].completed,
   "Live Edit write and completion finish before the native edit callback returns")
-assert(builder.views.acid_live_edit_state.text:find("LIVE EDIT COMMITTED",1,true),
-  "the synchronous commit is visible before the callback returns")
 live_checkbox:fire(false)
-local draft_cache=require("runtime.draft_cache")
-local recovered_source=require("model.sequencer").new_pattern(8)
-recovered_source.pitch_events[1]=require("model.sequencer").new_pitch(10,0,true,false)
-assert(draft_cache.put(song,instrument,phrase_one,recovered_source,"play_once",24))
-local recovery_token=assert(draft_cache.detach(song,instrument,phrase_one,"Native phrase changed"))
-target_popup:fire(1)
-phrase_choice:fire(#phrase_choice.items)
-pitch_key(builder,4):fire()
-local count_before_copy=#render_callbacks
-live_checkbox:fire(true)
-local recovery_popup=builder.views.acid_recovery_choice
-local recovery_rows=draft_cache.list(song)
-local recovery_index
-for index,entry in ipairs(recovery_rows) do
-  if entry.token==recovery_token then recovery_index=index end
-end
-assert(recovery_index,"detached draft is listed")
-recovery_popup:fire(recovery_index)
-assert(builder.views.acid_recovery_detail.text:find("Native phrase changed",1,true))
-builder.views.acid_recovery_copy:fire()
-assert(#render_callbacks==count_before_copy,"armed recovery never invokes the writer")
-assert(phrase_choice.value==#phrase_choice.items,"recovery binds explicit New")
-assert(builder.views.acid_program_pitch_summary.tooltip:find("P01",1,true) and
-  builder.views.acid_program_pitch_summary.tooltip:find("46",1,true) and
-  pb_range_popup(builder).value==4,
-  "recovery projects source and bend range")
-local source,policy,pb=draft_cache.get(song,instrument,nil)
-assert(source.pitch_events[1].key==10 and policy=="play_once" and pb==24)
-local found_original,found_scratch=false,false
-for _,entry in ipairs(draft_cache.list(song)) do
-  found_original=found_original or entry.token==recovery_token
-  found_scratch=found_scratch or entry.pattern.pitch_events[1].key==3
-end
-assert(found_original and found_scratch,"copy retains original and occupied outgoing scratch")
-builder.views.acid_recovery_discard:fire()
-for _,entry in ipairs(draft_cache.list(song)) do assert(entry.token~=recovery_token) end
-assert(#render_callbacks==count_before_copy,"discard never invokes the writer")
-source=draft_cache.get(song,instrument,nil)
-assert(source.pitch_events[1].key==10,"discarding recovery keeps the copied editor draft")
-assert(builder.views.acid_make_independent.active==false,"unique targets cannot be rekeyed")
-assert(builder.views.acid_revalidate.active==false,"unblocked songs need no revalidation")
-instrument.name="Renamed target"
-instrument.name_observable:fire()
-tool.app_idle_observable:fire()
-assert(target_popup.items[target_popup.value]:find("Renamed target",1,true),
-  "native rename refreshes instrument choices")
-assert(phrase_choice.value==#phrase_choice.items,"native rename preserves explicit New")
-song.instruments={other_instrument,instrument}
-song.selected_instrument_index=2
-dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
-song.instruments_observable:fire()
-tool.app_idle_observable:fire()
-assert(target_popup.value==2 and target_popup.items[2]:find("Renamed target",1,true),
-  "native reorder keeps the exact bound instrument")
-song.instruments={instrument}
-song.selected_instrument_index=1
-dofile("tests/acid/observer_host_fixture.lua").attach(song,observable)
-song.instruments_observable:fire()
-tool.app_idle_observable:fire()
-assert(#target_popup.items==1 and target_popup.value==1,"native removal refreshes instrument choices")
-assert(phrase_choice.value==#phrase_choice.items and #render_callbacks==count_before_copy,
-  "native inventory notifications neither redirect New nor generate")
-
--- A failed explicit create must keep the selected recovery origin available;
--- only the exact copied revision consumed by a later verified create clears it.
-local retry_source=require("model.sequencer").new_pattern(8)
-retry_source.pitch_events[1]=require("model.sequencer").new_pitch(7,0,true,false)
-assert(draft_cache.put(song,instrument,phrase_two,retry_source,"repeat",12))
-local retry_origin=assert(draft_cache.detach(song,instrument,phrase_two,"Retry recovered create"))
-live_checkbox:fire(true)
-recovery_rows=draft_cache.list(song)
-local retry_index
-for index,entry in ipairs(recovery_rows) do
-  if entry.token==retry_origin then retry_index=index end
-end
-assert(retry_index,"newly detached origin appears in the recovery chooser")
-recovery_popup:fire(retry_index)
-builder.views.acid_recovery_copy:fire()
-assert(phrase_choice.value==#phrase_choice.items and live_checkbox.value,
-  "recovery copy keeps the explicit New destination and armed state")
-local before_retry=#render_callbacks
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#render_callbacks==before_retry+1 and tool.writer_calls[#tool.writer_calls].kind=="create",
-  "manual Generate starts an explicit recovered create")
-render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"error",
-  "temporary recovered create failure"))
-assert(phrase_choice.value==#phrase_choice.items,"failed create retains the selected New destination")
-assert(recovery_popup.value==retry_index,
-  "failed create keeps the exact recovery row selected")
-local origin_present=false
-for _,entry in ipairs(draft_cache.list(song)) do
-  origin_present=origin_present or entry.token==retry_origin
-end
-assert(origin_present,"failed create preserves its exact selected recovery origin")
-local retained_tokens={}
-for _,entry in ipairs(draft_cache.list(song)) do retained_tokens[entry.token]=true end
-before_retry=#render_callbacks
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#render_callbacks==before_retry+1 and tool.writer_calls[#tool.writer_calls].kind=="create",
-  "the unchanged recovered draft can retry its explicit create")
-local recovered_created={id=31,name="Recovered create"}
-tool.writer_calls[#tool.writer_calls].options.phrase_mutation(function()
-  instrument.phrases[#instrument.phrases+1]=recovered_created
-  return recovered_created
-end)
-render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed",
-  "recovered create committed"))
-assert(phrase_choice.value==#phrase_choice.items-1 and
-  phrase_choice.items[phrase_choice.value]:find("Recovered create",1,true),
-  "successful create binds its exact returned phrase")
-local remaining_tokens={}
-for _,entry in ipairs(draft_cache.list(song)) do remaining_tokens[entry.token]=true end
-assert(not remaining_tokens[retry_origin],"verified create clears only its exact recovery origin")
-for token in pairs(retained_tokens) do
-  if token~=retry_origin then
-    assert(remaining_tokens[token],"successful create preserves unrelated recovery entries")
-  end
-end
-
-print("ACID GUI draft recovery and typed Live Edit outcome checks passed")
+print("ACID GUI draft lifecycle and Live Edit outcome checks passed")

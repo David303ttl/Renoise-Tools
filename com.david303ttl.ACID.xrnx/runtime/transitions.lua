@@ -57,7 +57,7 @@ function M.new()
       end
     elseif kind=="metadata" then
       if values.changed==true then metadata_revision=metadata_revision+1 end
-    elseif kind=="programmatic" or kind=="reset" or kind=="recovery" then
+    elseif kind=="programmatic" or kind=="reset" then
       invalidate(effects)
       if values.changed==true then edit_revision=edit_revision+1 end
       effects.preserve_draft=true
@@ -73,9 +73,6 @@ function M.new()
         invalidate(effects)
         active_trigger=values.trigger
       end
-    elseif kind=="independence" then
-      invalidate(effects)
-      effects.independence_intent=true
     elseif kind=="external" or kind=="undo" then
       invalidate(effects)
       effects.reconcile=true

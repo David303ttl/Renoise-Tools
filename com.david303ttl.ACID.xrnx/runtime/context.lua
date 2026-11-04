@@ -26,23 +26,20 @@
 --
 -- Request contract:
 --   Capture owns request values; this context passes them through unchanged
---   and does not synthesize eligibility, frozen values, mutation, blocker, or
---   independence behavior. The request shape reserves:
+--   and does not synthesize eligibility, frozen values, mutation, or blocker
+--   behavior. The request shape reserves:
 --     request:mutate(token, action) -> all action result values
 --       Same operation token only. Depth-counted and non-yielding; unwinds on
 --       success or exception, revokes authorization on exception, and
 --       rethrows the original failure. No user callback, idle wait, or render
 --       wait may run inside it.
---       Requires writer.is_temporary and captures exact pre-scope recovery
---       evidence. A failed outer scope records that evidence for explicit
---       revalidation after settlement and native restoration.
+--       Requires writer.is_temporary and captures exact pre-scope evidence.
+--       A failed outer scope blocks further ACID mutations for that song.
 --     request:record_blocker(token, evidence)
 --       Verifies the matching live epoch/job, retains copied scalar/value
 --       evidence and exact recovery references only while that song is
 --       current, and records the evidence before a terminal result.
 --   Musical generation enters only through request_generation and its sink.
---   Make Independent has a separate explicit eligibility/action entry and
---   never enters the musical sink.
 --
 -- context:request_generation(trigger) -> true | false, reason
 --   Admission requires no request already starting or dispatching, no
@@ -213,12 +210,8 @@ function M.new(options)
   local last_commit_label = nil
   local mutation_depth, mutation_token = 0, nil
   local mutation_finalizing=false
-  local identity_recovery_evidence=nil
   local mutation_recording_failed_reason=nil
   local mutation_recording_failed_song=nil
-  local identity_token={}
-  local identity_running=false
-  local identity_reconciling=false
   local mutation_evidence=nil
   local mutation_group_membership=nil
   local expected_mutation_inventory=nil
@@ -227,10 +220,8 @@ function M.new(options)
   local native_revision_pending,editor_revision_pending=false,false
   local compute_musical_eligibility
   local draft_options_for_target
-  local cached_independence_projection=nil
 
   local function invalidate_target_projection()
-    cached_independence_projection=nil
     if inventory then inventory:invalidate_projection() end
   end
   local invalidate
@@ -648,7 +639,7 @@ function M.new(options)
           mutation_recording_failed_song=current_song
         end
         transitions:transition("blocker")
-        invalidate("Song integrity requires revalidation")
+        invalidate("ACID cannot safely update this song")
       end
       return false,saved and save_error or "Duplicate draft could not be durably verified"
     end
@@ -706,7 +697,7 @@ function M.new(options)
       self:transition("request",{trigger=trigger})
     end
     if integrity and integrity:state().blocked then return false,integrity:state().reason end
-    if mutation_failed then return false,"Synchronous mutation failed; recovery must be verified" end
+    if mutation_failed then return false,"ACID cannot safely update this song after a failed synchronous mutation" end
     if dispatching then
       return false, "A generation request is already dispatching"
     end
@@ -880,16 +871,16 @@ function M.new(options)
             if recorded then
               record.blocker_pending=true
               transitions:transition("blocker")
-              invalidate("Song integrity requires revalidation")
+              invalidate("ACID cannot safely update this song")
             else
               adoption_blocked_reason=terminal.reason
               block(record,"completion.baseline_blocker",
-                record_error or "Committed destination requires revalidation")
+                record_error or "ACID cannot safely update this song")
             end
           elseif terminal_current then
             adoption_blocked_reason=terminal.reason
             block(record,"completion.baseline_blocker",
-              "Committed destination requires revalidation")
+              "ACID cannot safely update this song")
           end
         end
       end
@@ -910,7 +901,7 @@ function M.new(options)
           if recorded_ok and recorded then
             record.blocker_pending=true
             transitions:transition("blocker")
-            invalidate("Song integrity requires revalidation")
+            invalidate("ACID cannot safely update this song")
           else
             adoption_blocked_reason=terminal.reason or
               record_error or "Integrity recovery evidence could not be recorded"
@@ -1081,7 +1072,7 @@ function M.new(options)
     if effects.revoke=="all" or (effects.revoke=="live" and active and active.trigger=="live") then
       invalidate(reason or "Runtime state changed")
     end
-    if effects.detach_draft and not identity_reconciling and inventory and current_song then
+    if effects.detach_draft and inventory and current_song then
       local target=inventory:target_state()
       if target.instrument and drafts.detach then
         pcall(drafts.detach,current_song,target.instrument,target.phrase,reason or "Target eligibility changed")
@@ -1186,7 +1177,7 @@ function M.new(options)
           mutation_recording_failed_song=current_song
         end
         transitions:transition("blocker")
-        invalidate("Song integrity requires revalidation")
+        invalidate("ACID cannot safely update this song")
       end
       return false,stored and detail or write_result or "Phrase label was not saved"
     end
@@ -1226,346 +1217,6 @@ function M.new(options)
     return compute_musical_eligibility(self,token)
   end
 
-  function context:independence_eligibility()
-    if not current_song or not opened then return nil,"No current document dialog is open" end
-    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
-    local state=self:integrity_state()
-    if state.blocked then return nil,state.reason end
-    if not self:occupancy_state().available or (active and not active.settled) then return nil,"The writer has not settled" end
-    local ok,undo=pcall(function()
-      if type(current_song.is_undo_redoing)~="function" then error("Undo state is unavailable") end
-      local undo=current_song:is_undo_redoing()
-      assert(type(undo)=="boolean","Undo state is unavailable")
-      return undo
-    end)
-    if not ok or undo then return nil,"Native undo or redo is processing or unavailable" end
-    return require("runtime.eligibility").independence(current_song,self:target_projection())
-  end
-
-  function context:independence_projection()
-    if not current_song or not opened then return nil,"No current document dialog is open" end
-    if mutation_depth>0 or mutation_failed then return nil,"Synchronous mutation is active or requires recovery" end
-    local integrity_state=self:integrity_state()
-    if integrity_state.blocked then return nil,integrity_state.reason end
-    local occupancy=self:occupancy_state()
-    if not occupancy.available or (active and not active.settled) then
-      return nil,"The writer has not settled"
-    end
-    local undo_ok,undo=pcall(function()
-      if type(current_song.is_undo_redoing)~="function" then error("Undo state is unavailable") end
-      local value=current_song:is_undo_redoing()
-      assert(type(value)=="boolean","Undo state is unavailable")
-      return value
-    end)
-    if not undo_ok or undo then return nil,"Native undo or redo is processing or unavailable" end
-    if cached_independence_projection then
-      local value=cached_independence_projection.value
-      if type(value)=="table" then
-        local copy={}
-        for key,item in pairs(value) do copy[key]=item end
-        value=copy
-      end
-      return value,cached_independence_projection.reason
-    end
-    local value,reason=self:independence_eligibility()
-    cached_independence_projection={value=value,reason=reason}
-    if type(value)=="table" then
-      local copy={}
-      for key,item in pairs(value) do copy[key]=item end
-      value=copy
-    end
-    return value,reason
-  end
-
-  local function make_independent(self)
-    if not current_song or not opened then return false,"No current document dialog is open" end
-    local song,action_epoch,action_session=current_song,epoch,session
-    local authorized_revisions=transitions:revision_state()
-    local target=self:target_projection()
-    local initial
-    local function stable()
-      if not rawequal(current_song,song) or not opened or epoch~=action_epoch or session~=action_session then
-        return false,"Document session changed"
-      end
-      local revisions=transitions:revision_state()
-      if revisions.target_revision~=authorized_revisions.target_revision or
-          revisions.edit_revision~=authorized_revisions.edit_revision or
-          revisions.operation_serial~=authorized_revisions.operation_serial or
-          revisions.armed~=authorized_revisions.armed then
-        return false,"Runtime authorization changed before resolution"
-      end
-      return true
-    end
-    local function guard(proof)
-      local unchanged,change_error=stable()
-      if not unchanged then return false,change_error end
-      local current,current_error=ownership.is_current(song)
-      if not current then return false,current_error end
-      if mutation_failed or mutation_finalizing or
-          (mutation_depth>0 and not rawequal(mutation_token,identity_token)) then
-        return false,"Synchronous mutation is active or requires recovery"
-      end
-      local integrity_state=self:integrity_state()
-      if integrity_state.blocked then return false,integrity_state.reason end
-      local occupancy=self:occupancy_state()
-      if not occupancy.available or (active and not active.settled) then
-        return false,occupancy.reason or "The writer has not settled"
-      end
-      local undo_ok,undo=pcall(function() return song:is_undo_redoing() end)
-      if not undo_ok or type(undo)~="boolean" or undo then
-        return false,"Native undo or redo is processing or unavailable"
-      end
-      local current_target=inventory and inventory:target_projection()
-      if not current_target or not rawequal(current_target.instrument,target.instrument) or
-          not rawequal(current_target.phrase,target.phrase) then
-        return false,"Selected phrase changed before resolution"
-      end
-      local still_current,current_error=stable()
-      if not still_current then return false,current_error end
-      if proof then
-        return require("runtime.eligibility").same_independence(initial,proof)
-      end
-      return true
-    end
-    local allowed,reason=guard()
-    if not allowed then return false,reason end
-    initial,reason=self:independence_eligibility()
-    if not initial then return false,reason end
-    allowed,reason=guard()
-    if not allowed then return false,reason end
-    local carry_draft
-    if (editor_draft or editor_dirty) and editor and editor.valid and editor_target and
-        rawequal(editor_target.instrument,target.instrument) and
-        rawequal(editor_target.phrase,target.phrase) then
-      local committed,committed_policy,committed_pb=store.read_entry(song,initial.id)
-      if committed and (not sequencer.same_source(editor.source,committed) or
-          editor.output_policy~=committed_policy or editor.pb_range~=committed_pb) then
-        carry_draft=ownership.copy_snapshot({source=editor.source,
-          output_policy=editor.output_policy,pb_range=editor.pb_range})
-        local metadata_ok,matched,draft_metadata=pcall(drafts.matches_values,song,
-          target.instrument,target.phrase,editor.source,editor.output_policy,editor.pb_range)
-        if metadata_ok and matched then carry_draft.metadata=draft_metadata end
-      end
-    end
-    allowed,reason=guard()
-    if not allowed then return false,reason end
-    if not carry_draft or not carry_draft.metadata then preserve_editor() end
-    allowed,reason=guard()
-    if not allowed then return false,reason end
-    local effects,transition_error=self:transition("independence")
-    local next_revisions=effects and effects.revisions
-    if not effects or not effects.independence_intent or not next_revisions or
-        next_revisions.target_revision~=authorized_revisions.target_revision or
-        next_revisions.edit_revision~=authorized_revisions.edit_revision or
-        next_revisions.armed~=authorized_revisions.armed or
-        next_revisions.operation_serial~=authorized_revisions.operation_serial+OPERATION_SERIAL_INCREMENT then
-      return false,transition_error or "Runtime authorization changed before resolution"
-    end
-    authorized_revisions=next_revisions
-    local changed,result=require("runtime.independence").run(song,target,{
-      guard=guard,
-      mutate=function(action) return self:mutate(identity_token,action) end,
-    })
-    if not changed then return false,result end
-
-    local function block_post_commit(stage,reason)
-      local message="Make Independent committed, but "..stage.." failed: "..
-        reason_text(reason,"runtime state is unavailable")
-      local committed_evidence_ok,committed_evidence,committed_evidence_error=pcall(integrity.capture_committed,
-        integrity,target.instrument,target.phrase,result.baseline,message,identity_recovery_evidence,
-        result.committed_store)
-      if committed_evidence_ok and committed_evidence then
-        local recorded,record_ok,record_error=pcall(integrity.record,integrity,committed_evidence)
-        if not recorded or not record_ok then
-          message=message.."; recovery evidence could not be recorded: "..
-            reason_text(recorded and record_error or record_ok,"unknown evidence error")
-        end
-      else
-        message=message.."; committed recovery evidence is unavailable: "..
-          reason_text(committed_evidence_ok and committed_evidence_error or committed_evidence,
-            "capture failed")
-      end
-      adoption_blocked_reason=message
-      invalidate_target_projection()
-      inventory_dirty=true
-      external_inventory_dirty=true
-      reconciliation_pending=true
-      result.warning=message
-      result.committed=true
-      return true,result
-    end
-
-    local function verify_post_commit_target(projection)
-      if not rawequal(current_song,song) or not opened or epoch~=action_epoch or session~=action_session then
-        return false,"Document session changed after identity commit"
-      end
-      if type(projection)~="table" or projection.kind~="owned" or
-          not rawequal(projection.instrument,target.instrument) or
-          not rawequal(projection.phrase,target.phrase) then
-        return false,"Selected phrase changed or is unavailable after identity commit"
-      end
-      local identity_ok,identity=pcall(ownership.validate_identity,song,target.instrument,target.phrase)
-      if not identity_ok or identity~=result.id then
-        return false,"Committed phrase ownership ID changed after identity commit"
-      end
-      local entry_ok,source,policy,pb_range=pcall(store.read_entry,song,result.id)
-      if not entry_ok or not source or not sequencer.same_source(source,result.source) or
-          policy~=result.output_policy or pb_range~=result.pb_range then
-        return false,"Committed source/settings changed after identity commit"
-      end
-      local snapshot_ok,snapshot=pcall(ownership.snapshot,target.phrase)
-      if not snapshot_ok or not result.baseline or
-          not ownership.compare(snapshot,result.baseline.snapshot) then
-        return false,"Committed target baseline changed after identity commit"
-      end
-      return true
-    end
-
-    local draft_rebound=false
-    local draft_persisted=true
-    local draft_warning
-    if carry_draft and carry_draft.metadata then
-      local committed_target={kind="owned",instrument=target.instrument,phrase=target.phrase,
-        baseline=result.baseline}
-      local rebound_ok,rebound,rebind_error,rebound_metadata=pcall(drafts.rebind,current_song,
-        target.instrument,target.phrase,carry_draft.source,carry_draft.output_policy,
-        carry_draft.pb_range,carry_draft.metadata,draft_options_for_target(committed_target))
-      if not rebound_ok or not rebound then
-        return block_post_commit("draft rebind",rebound_ok and rebind_error or rebound)
-      end
-      carry_draft.metadata=rebound_metadata
-      draft_rebound=true
-      draft_persisted=rebound_metadata.persistent==true
-      draft_warning=rebound_metadata.warning
-    end
-
-    local adopted_ok,adopted,adopt_error=pcall(inventory.adopt,inventory,
-      target.instrument,target.phrase,result.baseline)
-    if not adopted_ok or not adopted then
-      return block_post_commit("runtime adoption",adopted_ok and adopt_error or adopted)
-    end
-    if not rawequal(current_song,song) or not opened or epoch~=action_epoch or session~=action_session then
-      return block_post_commit("runtime reconciliation","document session changed after identity commit")
-    end
-    identity_reconciling=true
-    local refreshed_ok,refreshed,refresh_error=pcall(self.transition,self,"refresh")
-    identity_reconciling=false
-    if not refreshed_ok or not refreshed then
-      return block_post_commit("runtime reconciliation",refreshed_ok and refresh_error or refreshed)
-    end
-    local target_ok,target_error=verify_post_commit_target(refreshed)
-    if not target_ok then return block_post_commit("runtime reconciliation",target_error) end
-    local restored_source,restored_policy,restored_pb=result.source,result.output_policy,result.pb_range
-    if carry_draft then
-      restored_source,restored_policy,restored_pb=carry_draft.source,
-        carry_draft.output_policy,carry_draft.pb_range
-    end
-    if carry_draft and not draft_rebound then
-      local saved_ok,saved,save_error=pcall(drafts.put,current_song,target.instrument,target.phrase,
-        carry_draft.source,carry_draft.output_policy,carry_draft.pb_range,self:draft_options(),
-        carry_draft.label,carry_draft.label_custom)
-      draft_persisted=saved_ok and saved==true
-      draft_warning=(saved_ok and not saved) and save_error or (not saved_ok and saved) or nil
-    end
-    local latest_projection_ok,latest_projection=pcall(inventory.target_projection,inventory)
-    if not latest_projection_ok then
-      return block_post_commit("editor restoration",latest_projection)
-    end
-    target_ok,target_error=verify_post_commit_target(latest_projection)
-    if not target_ok then return block_post_commit("editor restoration",target_error) end
-    local restored_ok,restored,restore_error=pcall(self.transition,self,"programmatic",{source=restored_source,
-      output_policy=restored_policy,pb_range=restored_pb,restore=true,draft=carry_draft~=nil})
-    if not restored_ok or not restored then
-      if carry_draft then
-        editor=ownership.copy_snapshot({source=carry_draft.source,
-          output_policy=carry_draft.output_policy,pb_range=carry_draft.pb_range}) or editor
-        editor_dirty=true
-        editor_draft=true
-      end
-      return block_post_commit("editor restoration",restored_ok and restore_error or restored)
-    end
-    editor_draft=carry_draft~=nil
-    if carry_draft and not draft_persisted then
-      editor_dirty=true
-      editor_draft=true
-      if editor then editor.draft_warning=draft_warning or "Cannot preserve matching object-local draft" end
-    end
-    return true,result
-  end
-
-  function context:make_independent()
-    if identity_running then return false,"Make Independent is already running" end
-    identity_recovery_evidence=nil
-    identity_running=true
-    local called,changed,result=pcall(make_independent,self)
-    identity_running=false
-    identity_recovery_evidence=nil
-    if not called then return false,changed end
-    return changed,result
-  end
-
-  function context:recovery_entries()
-    if not current_song then return {} end
-    local entries,reason=drafts.list(current_song)
-    if not entries then return nil,reason end
-    local result={}
-    for _,entry in ipairs(entries) do
-      result[#result+1]={token=entry.token,revision=entry.revision,
-        labels={instrument=entry.labels and entry.labels.instrument or "Unavailable instrument",
-          phrase=entry.labels and entry.labels.phrase or "Unavailable phrase"},
-        reason=entry.reason or "Draft target changed",session_only=entry.session_only==true}
-    end
-    return result
-  end
-
-  function context:discard_recovery(token,revision)
-    if not current_song then return false,"No current document is attached" end
-    local state=self:integrity_state()
-    if state.blocked then return false,state.reason end
-    if not policies.is_integer(token) or not policies.is_integer(revision) then
-      return false,"Invalid recovery selection"
-    end
-    return drafts.discard(current_song,token,revision)
-  end
-
-  function context:copy_recovery_to_new(token,revision)
-    if not current_song or not opened then return false,"No current document dialog is open" end
-    local state=self:integrity_state()
-    if state.blocked then return false,state.reason end
-    if mutation_depth>0 or mutation_failed then return false,"Synchronous mutation is active or requires recovery" end
-    if not policies.is_integer(token) or not policies.is_integer(revision) then
-      return false,"Invalid recovery selection"
-    end
-    local function selected_entry_is_current()
-      local rows=drafts.list(current_song)
-      if type(rows)~="table" then return false end
-      for _,entry in ipairs(rows) do
-        if entry.token==token and entry.revision==revision then return true end
-      end
-      return false
-    end
-    if not selected_entry_is_current() then return false,"Recovery entry is unavailable or has changed" end
-    local bound=self:target_state()
-    local instrument=bound.instrument
-    if not instrument then return false,bound.reason or "Select an instrument first" end
-    if bound.kind~="new" then
-      local scratch=self:bind_new(instrument)
-      if not scratch or scratch.kind~="new" then return false,scratch and scratch.reason or "Cannot bind New Phrase" end
-    else
-      preserve_editor()
-    end
-    if not selected_entry_is_current() then return false,"Recovery entry changed while preserving the current editor" end
-    local source,output_policy,pb_range,metadata,label,label_custom=drafts.copy_to_new(current_song,instrument,
-      token,revision,self:draft_options())
-    if not source then return false,output_policy end
-    local restored,restore_error=self:transition("programmatic",{source=source,
-      output_policy=output_policy,pb_range=pb_range,label=label,label_custom=label_custom,
-      restore=true,draft=true})
-    if not restored then return false,restore_error end
-    return true,{instrument=instrument,token=token,revision=revision,metadata=metadata,
-      warning=metadata and metadata.warning}
-  end
-
   local function transition_target(kind,values,for_restore)
       values=values or {}
       local state=context:integrity_state()
@@ -1596,7 +1247,6 @@ function M.new(options)
         else target=inventory:bind_phrase_for_restore(values.instrument,values.phrase) end
       elseif kind=="target" and values.kind=="new" then target=inventory:bind_new(values.instrument)
       else target=inventory:bind_phrase(values.instrument,values.phrase) end
-      cached_independence_projection=nil
       local effects=transitions:transition(kind,{instrument=target.instrument,phrase=target.phrase,kind=target.kind,
         semantic_changed=not changed and observed_target~=nil and not same_semantic(observed_target,semantic(target))})
       apply_effects(effects,"Target changed")
@@ -1715,14 +1365,13 @@ function M.new(options)
       local target=inventory:target_state()
       inventory_dirty=false
       external_inventory_dirty=false
-      cached_independence_projection=nil
       local changed=observed_target~=nil and not same_semantic(observed_target,semantic(target))
       if changed then pending_trigger=nil end
       local effects=transitions:transition(kind,{semantic_changed=changed})
       apply_effects(effects,"Target eligibility changed")
       observed_target=semantic(target)
       return target,effects
-    elseif kind=="edit" or kind=="programmatic" or kind=="reset" or kind=="recovery" then
+    elseif kind=="edit" or kind=="programmatic" or kind=="reset" then
       if kind~="edit" then pending_trigger=nil end
       local buffer,copy_error=ownership.copy_snapshot({source=values.source,output_policy=values.output_policy,pb_range=values.pb_range})
       if not buffer then return nil,copy_error end
@@ -1766,7 +1415,7 @@ function M.new(options)
     local effects=transitions:transition(kind,values)
     apply_effects(effects,"Runtime "..kind)
     if kind=="disarm" and pending_trigger=="live" then pending_trigger=nil end
-    if kind=="request" or kind=="independence" or kind=="external" or kind=="undo"
+    if kind=="request" or kind=="external" or kind=="undo"
         or kind=="close" or kind=="blocker" then pending_trigger=nil end
     if effects.reconcile then
       inventory_dirty=true;external_inventory_dirty=true;reconciliation_pending=true
@@ -1912,13 +1561,12 @@ function M.new(options)
   end
 
   local function run_mutation(token,action,cleanup_only)
-    local identity_scope=identity_running and rawequal(token,identity_token)
     local operation_scope=active and active.current and rawequal(active.token,token)
     local cleanup_scope=cleanup_only and active and not active.current and not active.settled and
       not active.rejected and not active.released and active.epoch==epoch and
       rawequal(active.token,token) and not releasing
     local authorized_scope=cleanup_only and cleanup_scope or (not cleanup_only and
-      (identity_scope or operation_scope))
+      operation_scope)
     if type(action)~="function" or not authorized_scope or not current_song or
         (mutation_depth>0 and not rawequal(mutation_token,token)) then
       error("Mutation requires the current operation token",0)
@@ -1944,7 +1592,6 @@ function M.new(options)
       local evidence,reason=integrity:capture_mutation()
       if not evidence then mutation_group_membership=nil;error(reason or "Cannot capture mutation recovery evidence",0) end
       mutation_evidence=evidence
-      if identity_scope then identity_recovery_evidence=evidence end
     end
     mutation_depth=mutation_depth+1
     mutation_token=token
@@ -2011,13 +1658,13 @@ function M.new(options)
         if mutation_failed then
           local recorded,record_result=pcall(integrity.record,integrity,mutation_evidence)
           if not recorded or record_result~=true then
-            mutation_recording_failed_reason="Mutation recovery evidence could not be recorded; release and reattach the document before further work"
+            mutation_recording_failed_reason="ACID cannot safely update this song because mutation evidence could not be recorded"
             mutation_recording_failed_song=current_song
           end
           local transitioned=pcall(transitions.transition,transitions,"blocker")
           if not transitioned then
             mutation_recording_failed_reason=mutation_recording_failed_reason or
-              "Mutation recovery state could not be finalized; release and reattach the document before further work"
+              "ACID cannot safely update this song because mutation state could not be finalized"
             mutation_recording_failed_song=mutation_recording_failed_song or current_song
           end
         elseif ok then
@@ -2027,7 +1674,7 @@ function M.new(options)
       if not finalized then
         mutation_failed=true
         mutation_recording_failed_reason=mutation_recording_failed_reason or
-          "Mutation finalization failed; release and reattach the document before further work"
+          "ACID cannot safely update this song because mutation finalization failed"
         mutation_recording_failed_song=mutation_recording_failed_song or current_song
         ok,failure=false,finalization_error
       end
@@ -2165,7 +1812,6 @@ function M.new(options)
     expected_mutation_inventory_reason="missing-proof"
     inventory_dirty,external_inventory_dirty,reconciliation_pending,mutation_failed=false,false,false,false
     native_revision_pending,editor_revision_pending=false,false
-    cached_independence_projection=nil
     pending_trigger=nil
     last_result,last_commit,last_commit_label=nil,nil,nil
     if inventory then inventory:release() end
@@ -2210,24 +1856,15 @@ function M.new(options)
     expected_mutation_inventory=nil
     expected_mutation_inventory_reason="missing-proof"
     adoption_blocked_reason=nil
-    cached_independence_projection=nil
     local selection_ok,selected_instrument,selected_phrase=pcall(function() return song.selected_instrument,song.selected_phrase end)
     if selection_ok then native_instrument,native_phrase=selected_instrument,selected_phrase end
     inventory = require("runtime.inventory").new(song,writer)
-    local function writer_idle_for_revalidation()
-      local state,reason=inspect_writer(writer)
-      if not state then return false,reason end
-      if state.status~="idle" then return false,"The writer slot is occupied" end
-      if dispatching or (active and not active.settled) then return false,"An accepted operation has not settled" end
-      if mutation_depth>0 then return false,"Synchronous mutation is active" end
-      return true
-    end
     if detached_integrity then
-      local resumed=detached_integrity:resume(song,drafts,writer_idle_for_revalidation)
+      local resumed=detached_integrity:resume(song,drafts)
       if resumed then integrity=detached_integrity
       else detached_integrity:release();detached_integrity=nil end
     end
-    integrity = integrity or require("runtime.integrity").new(song,drafts,writer_idle_for_revalidation)
+    integrity = integrity or require("runtime.integrity").new(song,drafts)
     requests=require("runtime.requests").new({
       current=function(include_target,include_editor,full_target)
         local revisions=transitions:revision_state()
@@ -2354,7 +1991,7 @@ function M.new(options)
     if recorded then
       record.blocker_pending=true
       transitions:transition("blocker")
-      invalidate("Song integrity requires revalidation")
+      invalidate("ACID cannot safely update this song")
     end
     return recorded,reason
   end
@@ -2376,42 +2013,6 @@ function M.new(options)
     return state
   end
 
-  function context:revalidation_status()
-    if observer_error then return {verified=false,blocked=true,reason=observer_error} end
-    if mutation_recording_failed_reason then
-      return {verified=false,blocked=true,reason=mutation_recording_failed_reason}
-    end
-    if not integrity then return {verified=false,blocked=adoption_blocked_reason~=nil,
-      reason=adoption_blocked_reason or "No current document is attached"} end
-    local status,proof=integrity:status()
-    if adoption_blocked_reason then
-      if not status.verified then status.reason=status.reason or adoption_blocked_reason end
-      return status,proof
-    end
-    return status,proof
-  end
-
-  function context:revalidate(proof)
-    if observer_error then return false,observer_error end
-    if mutation_recording_failed_reason then return false,mutation_recording_failed_reason end
-    if not integrity then return false,"No current document is attached" end
-    local cleared,reason=integrity:clear(proof,function()
-      if type(writer.clear_integrity_blocker)=="function" then
-        local writer_cleared,writer_error=pcall(writer.clear_integrity_blocker,current_song)
-        if not writer_cleared or writer_error==false then
-          return false,"Writer integrity blocker could not be cleared after revalidation"
-        end
-      end
-      return true
-    end)
-    if cleared then
-      mutation_failed=false;adoption_blocked_reason=nil;mutation_recording_failed_reason=nil
-      mutation_recording_failed_song=nil
-      invalidate_target_projection()
-    end
-    return cleared,reason
-  end
-
   function context:bind_new(instrument)
     if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
     if not inventory then return {kind="unavailable",reason="No current document is attached"} end
@@ -2427,7 +2028,6 @@ function M.new(options)
   function context:target_state()
     if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
     if not inventory then return {kind="unavailable",reason="No current document is attached"} end
-    cached_independence_projection=nil
     return inventory:target_state()
   end
 

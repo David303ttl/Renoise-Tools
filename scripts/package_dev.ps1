@@ -40,7 +40,7 @@ $toolRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $toolDirectoryNam
 $packageScript = Join-Path $PSScriptRoot 'package.ps1'
 $driverDirectory = Join-Path $repoRoot 'tests/renoise/driver'
 $driverSources = [ordered]@{}
-foreach ($name in @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua', 'recovery_acceptance.lua')) {
+foreach ($name in @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua')) {
   $driverSources[$name] = Join-Path $driverDirectory $name
 }
 $writerRequestSource = Join-Path $repoRoot 'tests/acid/writer_request.lua'

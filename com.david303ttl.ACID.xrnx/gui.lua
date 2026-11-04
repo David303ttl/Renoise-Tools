@@ -10,8 +10,6 @@ local drafts=require("runtime.draft_cache")
 local ownership=require("renoise.phrase_ownership")
 local pattern_store=require("renoise.pattern_store")
 local phrase_writer=require("writers.phrase_writer")
-local inspector=require("renoise.selection_context")
-local sampler=require("renoise.sampler_audit")
 local audition=require("runtime.audition")
 local active_audition
 local active_label_dialog
@@ -122,8 +120,8 @@ local function release_context()
     dialog_session=nil
     pcall(function() stale:close() end)
   end
-  local recovery_warning=phrase_writer.release()
-  if recovery_warning then renoise.app():show_warning(recovery_warning) end
+  local release_warning=phrase_writer.release()
+  if release_warning then renoise.app():show_warning("The phrase update was interrupted.") end
   return listeners_removed
 end
 local function register_lifecycle(observable,label,handler)
@@ -170,8 +168,6 @@ register_lifecycle(tool.tool_will_unload_observable,"Tool unload",unload_notifie
 unload_record=lifecycle_records[#lifecycle_records]
 
 local keys={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}
-local DECODED_ROWS=4
-local DECODED_PAGES=sequencer.MAX_STEPS/DECODED_ROWS
 local RANDOM_SEED_MAX=2147483646
 local RANDOM_WEIGHT_MAX=1000
 local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
@@ -181,7 +177,7 @@ local WORKSPACE_HEIGHT=248
 local FEEDBACK_WIDTH,FEEDBACK_SPACING=820,2
 local FEEDBACK_LINE_HEIGHT,FEEDBACK_PADDING=20,8
 local FEEDBACK_EMPTY_HEIGHT=1
-local FEEDBACK_ISSUE_ORDER={"save","destination","scale","audition","input","generation"}
+local FEEDBACK_ISSUE_ORDER={"save","destination","scale","audition","input","generation","approximation"}
 local SCALE_UI={root_width=65,category_width=155,choice_width=255,
   search_width=165,detail_width=800,import_width=95}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
@@ -191,23 +187,6 @@ local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   warning={0xF2,0x77,0x77}}
 local STAGE_ORIGIN_FIELDS={"song","epoch","session","edit_revision","target_revision",
   "operation_serial","instrument","phrase","kind","id","history_revision"}
-
-local function wrap_lines(text,width)
-  local lines,current={},""
-  for word in tostring(text or ""):gmatch("%S+") do
-    while #word>width do
-      if current~="" then lines[#lines+1]=current;current="" end
-      lines[#lines+1]=word:sub(1,width)
-      word=word:sub(width+1)
-    end
-    if current=="" then current=word
-    elseif #current+#word+1<=width then current=current.." "..word
-    else lines[#lines+1]=current;current=word end
-  end
-  if current~="" then lines[#lines+1]=current end
-  if #lines==0 then lines[1]="" end
-  return lines
-end
 
 function M.show()
   assert(lifecycle_enabled,"ACID lifecycle observers are unavailable")
@@ -229,7 +208,6 @@ function M.show()
   local pattern
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
-  local decoded_page=1
   local workspace_tab=1
   local accepted_pitch_baseline
   local updating=false
@@ -244,7 +222,6 @@ function M.show()
     scale_state.catalog=catalog or builtin
     scale_state.load_error=load_error or parse_error or catalog_error
   end
-  local preview_cycle=1
   local update
   local runtime
   local session
@@ -285,11 +262,15 @@ function M.show()
   if #labels==0 then renoise.app():show_warning("No instruments in song.");return end
   feedback.status=vb:multiline_text{id="acid_status",width=FEEDBACK_WIDTH,
     height=FEEDBACK_EMPTY_HEIGHT,font="bold",visible=false,text=""}
-  feedback.holder=vb:column{id="acid_feedback",spacing=FEEDBACK_SPACING,visible=false,feedback.status}
+  feedback.holder=vb:column{id="acid_feedback",spacing=FEEDBACK_SPACING,visible=false}
+  feedback.status_attached=false
   feedback.message=function(issue)
     local args=issue.args or {}
     if issue.key=="save_failed" then return "Your latest edits could not be saved with the song." end
-    if issue.key=="previous_save_failed" then return "Edits to the previous phrase could not be saved with the song." end
+    if issue.key=="previous_save_failed" then
+      if issue.context then return "Edits to the previous phrase could not be saved with the song." end
+      return "Some edits could not be saved with this song."
+    end
     if issue.key=="draft_load_failed" then return "Saved edits could not be loaded. Check the sequence before generating." end
     if issue.key=="destination_unavailable" then return "This phrase is unavailable for editing. Select another phrase." end
     if issue.key=="integrity_blocked" then return "ACID cannot safely update this song." end
@@ -334,11 +315,21 @@ function M.show()
         messages[#messages+1]=message
       end
     end
-    if feedback.previous_save_warning then append({key="previous_save_failed"}) end
+    if feedback.previous_save_warning then
+      append({key="previous_save_failed",context=feedback.previous_save_context})
+    end
     for _,slot in ipairs(FEEDBACK_ISSUE_ORDER) do append(feedback.issues[slot]) end
     if #messages==0 and feedback.confirmation then append(feedback.confirmation) end
     feedback.status.text=table.concat(messages,"\n")
     feedback.status.height=#messages>0 and #messages*FEEDBACK_LINE_HEIGHT+FEEDBACK_PADDING or FEEDBACK_EMPTY_HEIGHT
+    if #messages>0 and not feedback.status_attached then
+      feedback.holder:add_view(feedback.status)
+      feedback.status_attached=true
+    elseif #messages==0 and feedback.status_attached then
+      feedback.holder:remove_view(feedback.status)
+      feedback.holder.height=FEEDBACK_EMPTY_HEIGHT
+      feedback.status_attached=false
+    end
     feedback.status.visible=#messages>0
     feedback.holder.visible=#messages>0
   end
@@ -386,9 +377,15 @@ function M.show()
     feedback.confirmation={key=key,args=safe_args,context=confirmation_context}
     feedback.render()
   end
+  feedback.clear_confirmation=function()
+    if not feedback.confirmation then return false end
+    feedback.confirmation=nil
+    feedback.render()
+    return true
+  end
   feedback.target_changed=function(before,after)
     if feedback.same_context(before,after) then return false end
-    for _,slot in ipairs({"destination","input","generation"}) do
+    for _,slot in ipairs({"destination","input","generation","approximation"}) do
       local issue=feedback.issues[slot]
       if issue and feedback.same_context(issue.context,before) then feedback.issues[slot]=nil end
     end
@@ -466,16 +463,6 @@ function M.show()
   active_audition=preview
   local function release_audition() preview:release("editor context changed") end
   local audition_button
-  local live_state_view=vb:multiline_text{id="acid_live_edit_state",size={width=820,height=48},font="bold",
-    text="LIVE EDIT DISABLED"}
-  local source_state=vb:text{id="acid_source_state",size={width=820,height=18},font="bold",text=""}
-  local diagnostic=vb:text{id="acid_source_diagnostic",size={width=820,height=18},font="bold",text=""}
-  local navigate_diagnostic
-  local diagnostic_jump=vb:button{text="Go to source error",active=false,notifier=function()
-    if navigate_diagnostic then navigate_diagnostic() end
-  end}
-  local summary=vb:text{id="acid_source_summary",size={width=820,height=18},font="bold",text=""}
-  local map_text=vb:text{id="acid_preview_summary",size={width=820,height=18},font="bold",text=""}
   local length_items={}
   for n=1,sequencer.MAX_STEPS do length_items[n]=tostring(n) end
   local last_step_box=vb:valuebox{id="acid_last_step",width=78,min=1,max=sequencer.MAX_STEPS,steps={1,8},value=sequencer.PAGE_SIZE,
@@ -500,7 +487,7 @@ function M.show()
   local ui={program={pitch_selectors={},time_selectors={},pitch_pages={},time_pages={},
       key_buttons={},octave_buttons={}},
     grid={key_buttons={},octave_buttons={}},time_assignment={},time_names={N="Note",T="Tie",R="Rest"},
-    workspace={panels={},tabs={}},decoded={rows=DECODED_ROWS,pages=DECODED_PAGES},mask={classes={}}}
+    workspace={panels={},tabs={}},mask={classes={}}}
   local program_pitch_summary,program_time_summary
   local program_accent,program_slide,program_c_plus,grid_c_plus
   local pitch_length_popup=vb:popup{items=length_items,width=78,value=sequencer.PAGE_SIZE}
@@ -512,12 +499,6 @@ function M.show()
     pb_range_items[index]=value==0 and "Off" or string.format("±%d",value)
   end
   local pb_range_popup=vb:popup{id="acid_pb_range",items=pb_range_items,width=92,value=1}
-  local preview_popup=vb:popup{items={"Start","Repeating"},width=105,value=1,
-    notifier=function(value)
-      if updating then return end
-      preview_cycle=value
-      update()
-    end}
   local step_division=vb:text{text="Straight 1/16"}
   local pitch_page_buttons,time_page_buttons={},{}
   local pitch_cells,pitch_headers,pitch_columns,time_cells,time_headers={},{},{},{},{}
@@ -634,8 +615,6 @@ function M.show()
     end
     return stage.prepared_resolution
   end
-  local update_live_state
-  local update_actions
   local render
   local rendered=setmetatable({},{__mode="k"})
   local function same_render_value(left,right)
@@ -670,7 +649,6 @@ function M.show()
       feedback.set_issue("save","save_failed",nil,context)
       return false,effects or "Editor state transition failed"
     end
-    render(source_state,"text","SOURCE DIRTY: Generate to apply this draft.")
     if not bound_instrument() then return true,nil,effects end
     local saved=not state.draft_warning
     if saved then
@@ -763,21 +741,6 @@ function M.show()
       render(stage_actions.discard,"active",stage~=nil)
     end
   end
-  local function show_diagnostic(projection)
-    local error_info=projection.error
-    render(diagnostic,"visible",error_info~=nil)
-    render(diagnostic_jump,"visible",error_info~=nil)
-    if error_info then
-      render(diagnostic,"text","ERROR: "..error_info.message..
-        (error_info.step and "  [TIME "..error_info.step.."]" or "")..
-        (error_info.pitch_index and "  [PITCH "..error_info.pitch_index.."]" or ""))
-      render(diagnostic_jump,"active",error_info.step~=nil or error_info.pitch_index~=nil)
-    else
-      render(diagnostic,"text",string.format("VALID: %d NOTE triggers; %s; Start and Repeating previews resolved.",
-        projection.plan.note_count,step_division.text))
-      render(diagnostic_jump,"active",false)
-    end
-  end
   update=function()
     updating=true
     local projection=project()
@@ -808,8 +771,6 @@ function M.show()
     render(pb_range_popup,"active",true)
     if undo_button then render(undo_button,"active",stage~=nil or history:can_undo()) end
     if redo_button then render(redo_button,"active",stage~=nil or history:can_redo()) end
-    render(preview_popup,"value",preview_cycle)
-    render(preview_popup,"active",true)
     render(last_step_box,"value",pattern.length)
     render(last_step_box,"active",true)
     if editor_view==2 then
@@ -933,18 +894,6 @@ function M.show()
       render(panel,"visible",tab==workspace_tab)
       render(ui.workspace.tabs[tab],"color",tab==workspace_tab and colors.selected or colors.idle)
     end
-    if ui.decoded.text then
-      local first=(decoded_page-1)*ui.decoded.rows+1
-      local lines={}
-      for step=first,math.min(first+ui.decoded.rows-1,sequencer.MAX_STEPS) do
-        lines[#lines+1]=string.format("%02d%s  %s",step,
-          step>pattern.length and " *" or "",editor.step_text(projection,step,preview_cycle))
-      end
-      render(ui.decoded.text,"text",table.concat(lines,"\n"))
-      render(ui.decoded.page_label,"text",string.format("TIME %02d-%02d / %d",first,math.min(first+ui.decoded.rows-1,sequencer.MAX_STEPS),sequencer.MAX_STEPS))
-      render(ui.decoded.previous,"active",decoded_page>1)
-      render(ui.decoded.next,"active",decoded_page<ui.decoded.pages)
-    end
     if ui.mask.enabled then
       render(ui.mask.enabled,"value",pattern.scale_mask_enabled)
       render(ui.mask.enabled,"active",stage==nil)
@@ -955,17 +904,6 @@ function M.show()
     end
     if scale_state.refresh then scale_state.refresh() end
     if ui.refresh_random then ui.refresh_random() end
-    local count=0
-    for _ in pairs(projection.used) do count=count+1 end
-    render(summary,"text",string.format(
-      "STEPS %d/32   |   NOTE triggers %d   |   PITCH active %d, stored %d, used %d",
-      pattern.length,projection.note_count,pattern.pitch_length,#pattern.pitch_events,count))
-    render(map_text,"text",string.format("PITCH P%02d %s | TIME %02d%s | Start: %s | Repeating: %s",
-      selected_pitch,pitch_indicator(selected_pitch,projection),
-      selected_step,selected_step>pattern.length and " OUTSIDE LAST STEP" or "",
-      editor.step_text(projection,selected_step,1),
-      editor.step_text(projection,selected_step,2)))
-    show_diagnostic(projection)
     updating=false
   end
   local function choose_pitch(index)
@@ -990,31 +928,13 @@ function M.show()
     time_page=editor.page_for(index)
     update()
   end
-  navigate_diagnostic=function()
-    release_audition()
-    if stage and not valid_stage() then feedback.set_issue("input","entry_unavailable");return end
-    local error_info=(stage and editor.project(stage.candidate,stage_resolution()) or project()).error
-    if not error_info then return end
-    if error_info.pitch_index and (not stage or (stage.memory=="pitch" and
-        error_info.pitch_index<=#stage.target_positions)) then
-      selected_pitch=error_info.pitch_index
-      pitch_page=editor.page_for(selected_pitch)
-    end
-    if error_info.step and (not stage or (stage.memory=="time" and
-        error_info.step<=#stage.target_positions)) then
-      selected_step=error_info.step
-      time_page=editor.page_for(selected_step)
-    end
-    if stage then stage.cursor=stage.memory=="pitch" and selected_pitch or selected_step end
-    update()
-  end
   local function changed(request_live)
     if not history:record(pattern,output_policy,pb_range,phrase_label,phrase_label_custom) then update();return end
-    local saved,_,effects=save_draft(request_live==false and "reset" or "edit")
+    feedback.clear_confirmation()
+    local _,_,effects=save_draft(request_live==false and "reset" or "edit")
     invalidate_projection()
     update()
     clear_resolved_input()
-    update_live_state(saved==true)
     if effects and effects.live_intent and current_session() then
       runtime:flush_pending()
     end
@@ -1291,11 +1211,6 @@ function M.show()
     if not ok then feedback.set_issue("input","input_failed") end
     if ok then changed() else update() end
   end)
-  local inspect=vb:button{text="Inspect selected Renoise pattern (read only)",
-    notifier=function()
-      local message,err=inspector.inspect_selection()
-      feedback.status.text=message or err
-    end}
   local deliver
   if not active_runtime then
     active_runtime=runtime_context.new({writer=phrase_writer,capture=function() return nil,"No editor source" end,
@@ -1382,19 +1297,13 @@ function M.show()
       elseif source_available then
         feedback.clear_issue("destination",feedback.context())
       end
-      render(source_state,"text",(restored.draft or is_new) and
-        "SOURCE DIRTY: Generate to apply this draft." or
-        (source_available and "SOURCE COMMITTED" or "SOURCE UNAVAILABLE"))
     else
       reset_source()
       accepted_pitch_baseline=assert(sequencer.copy_source(pattern))
       feedback.destination_unavailable()
-      render(source_state,"text",is_new and "SOURCE DIRTY: Generate to apply this draft." or
-        "SOURCE UNAVAILABLE")
     end
     history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
     update()
-    if update_live_state then update_live_state() end
   end
   local phrase_names
   phrase_names,phrase_targets=options_for_instrument()
@@ -1497,7 +1406,6 @@ function M.show()
       native_projection_dirty=false
       refresh_native_choices()
       invalidate_projection()
-      if update_actions then update_actions() end
     end
     if target and effects and effects.native_revision_reconciled then
       if target.instrument and not rawequal(instrument_targets[selected_instrument],target.instrument) then
@@ -1575,22 +1483,6 @@ function M.show()
   local target=vb:popup{width=290,items=labels,value=selected_instrument,
     notifier=function(n)if not loading then select_instrument(n) end end}
   instrument_choice=target
-  update_live_state=function(skip_actions)
-    if update_actions and not skip_actions then update_actions() end
-    local state=runtime:generation_state()
-    if not state.armed then
-      render(live_state_view,"text","LIVE EDIT DISABLED")
-      return
-    end
-    local text="LIVE EDIT "..state.status
-    if state.last_commit then
-      local commit=state.last_commit
-      text=text.."\nLAST COMMIT: "..
-        string.upper(tostring(commit.status or "committed")).." | "..
-        tostring(state.last_commit_label or "Verified destination")
-    end
-    render(live_state_view,"text",text)
-  end
   deliver=function(request,result)
     if type(request)~="table" or not current_session() then return end
     local success=result.kind=="success" and result.verified==true
@@ -1631,7 +1523,6 @@ function M.show()
           accepted_pitch_baseline=assert(sequencer.copy_source(committed.source))
           update()
         end
-        render(source_state,"text","SOURCE COMMITTED")
       end
     end
     if not result_current then
@@ -1648,7 +1539,10 @@ function M.show()
       if feedback.same_context(request_context,context) then
         local issue=feedback.issues.generation
         local failure_key=request.operation=="duplicate" and "duplicate_failed" or "generation_failed"
-        if issue and issue.key==failure_key then feedback.clear_issue("generation",context) end
+        if issue and issue.key==failure_key then
+          feedback.clear_issue("generation",context)
+        end
+        feedback.clear_issue("approximation",context)
         local destination_issue=feedback.issues.destination
         if not destination_issue or destination_issue.key~="draft_load_failed" then
           feedback.clear_issue("destination",context)
@@ -1660,8 +1554,8 @@ function M.show()
         feedback.confirm("phrase_duplicated",nil,context)
       elseif result.status=="approximate" or result.approximate==true or
           result.code=="capability.approximate" then
-        feedback.confirm("phrase_approximate",nil,context)
-      else
+        feedback.set_issue("approximation","phrase_approximate",nil,context)
+      elseif request.trigger=="manual" then
         feedback.confirm("phrase_updated",nil,context)
       end
     elseif result.status=="integrity_blocked" or result.integrity_blocked==true or
@@ -1670,7 +1564,6 @@ function M.show()
     else
       feedback.request_failure("generation",request.operation=="duplicate")
     end
-    update_live_state()
   end
   live_checkbox=vb:checkbox{id="acid_live_edit",value=false,notifier=function(value)
     if updating then return end
@@ -1680,10 +1573,8 @@ function M.show()
     if value then
       apply_pending_selected_phrase_selection()
       runtime:transition("arm")
-      update_live_state()
     else
       runtime:transition("disarm")
-      update_live_state()
     end
   end}
   active_live_checkbox=live_checkbox
@@ -1771,7 +1662,7 @@ function M.show()
     label_ui.attempt=nil
     label_ui.close()
     feedback.clear_input("label_save_failed","label_attempt_stale","label_editor_open")
-    update();update_live_state()
+    update()
     feedback.confirm("label_saved")
   end
   local function move_history(direction)
@@ -1793,7 +1684,7 @@ function M.show()
     if not history:commit(proposal) then return end
     invalidate_projection()
     local _,_,effects=save_draft()
-    update();update_live_state()
+    update()
     clear_resolved_input()
     if effects and effects.live_intent and current_session() then runtime:flush_pending() end
   end
@@ -1803,139 +1694,6 @@ function M.show()
   redo_button=vb:button{text="Redo",active=false,notifier=function()
     move_history("redo")
   end}
-  local recovery_entries={}
-  local recovery_choice
-  local copy_recovery,discard_recovery,independent,revalidate
-  local recovery_detail=vb:multiline_text{id="acid_recovery_detail",size={width=820,height=56},text=""}
-  ui.recovery={page=1,lines={""},detail=recovery_detail}
-  local render_recovery_page
-  ui.recovery.previous=vb:button{id="acid_recovery_previous",text="Previous",width=90,
-    notifier=function()
-      release_audition();if ui.recovery.page>1 then ui.recovery.page=ui.recovery.page-1;render_recovery_page() end
-    end}
-  ui.recovery.next=vb:button{id="acid_recovery_next",text="Next",width=90,
-    notifier=function()
-      release_audition();local pages=math.max(1,math.ceil(#ui.recovery.lines/4))
-      if ui.recovery.page<pages then ui.recovery.page=ui.recovery.page+1;render_recovery_page() end
-    end}
-  ui.recovery.page_label=vb:text{id="acid_recovery_page_label",text="1 / 1",font="bold"}
-  local function selected_recovery()
-    return recovery_choice and recovery_entries[recovery_choice.value]
-  end
-  render_recovery_page=function()
-    local page_size=4
-    local pages=math.max(1,math.ceil(#ui.recovery.lines/page_size))
-    ui.recovery.page=math.max(1,math.min(pages,ui.recovery.page))
-    local first=(ui.recovery.page-1)*page_size+1
-    local visible={}
-    for index=first,math.min(first+page_size-1,#ui.recovery.lines) do
-      visible[#visible+1]=ui.recovery.lines[index]
-    end
-    render(ui.recovery.detail,"text",table.concat(visible,"\n"))
-    render(ui.recovery.page_label,"text",string.format("%d / %d",ui.recovery.page,pages))
-    render(ui.recovery.previous,"active",ui.recovery.page>1)
-    render(ui.recovery.next,"active",ui.recovery.page<pages)
-  end
-  local function project_runtime_editor()
-    local state=runtime:editor_state()
-    if not state then return end
-    pattern,output_policy,pb_range=state.source,state.output_policy,state.pb_range
-    phrase_label,phrase_label_custom=state.label or "Untitled",state.label_custom==true
-    accepted_pitch_baseline=assert(sequencer.copy_source(pattern))
-    selected_pitch,selected_step,pitch_page,time_page=1,1,1,1
-    invalidate_projection()
-    history:reset(pattern,output_policy,pb_range,phrase_label,phrase_label_custom)
-    update()
-  end
-  recovery_choice=vb:popup{id="acid_recovery_choice",width=420,items={"No detached drafts"},value=1,
-    notifier=function() release_audition();if not loading and update_actions then update_actions() end end}
-  copy_recovery=vb:button{id="acid_recovery_copy",text="Copy to New",active=false,notifier=function()
-    if guard_stage() then return end
-    if not current_session() then return end
-    local entry=selected_recovery()
-    if not entry then return end
-    local copied,reason=runtime:copy_recovery_to_new(entry.token,entry.revision)
-    if copied then
-      refresh_phrase_choices()
-      project_runtime_editor()
-      render(source_state,"text","SOURCE DIRTY: Generate to apply this recovered draft.")
-      feedback.status.text="Draft copied to New. The original recovery entry stays until this revision is generated or discarded."
-      if type(reason)=="table" and reason.warning then
-        feedback.status.text=feedback.status.text.."\nDRAFT WARNING: "..tostring(reason.warning)
-      end
-    else feedback.status.text="Cannot recover draft: "..tostring(reason) end
-    update_live_state()
-  end}
-  discard_recovery=vb:button{id="acid_recovery_discard",text="Discard",active=false,notifier=function()
-    if guard_stage() then return end
-    if not current_session() then return end
-    local entry=selected_recovery()
-    if not entry then return end
-    local discarded,reason=runtime:discard_recovery(entry.token,entry.revision)
-    feedback.status.text=discarded and "Selected recovery entry discarded." or ("Cannot discard draft: "..tostring(reason))
-    update_live_state()
-  end}
-  independent=vb:button{id="acid_make_independent",text="Make Independent",active=false,notifier=function()
-    if guard_stage() then return end
-    if not current_session() then return end
-    local changed,result=runtime:make_independent()
-    if changed then
-      refresh_phrase_choices(result.phrase)
-      project_runtime_editor()
-      local state=runtime:editor_state()
-      local dirty=state and (not sequencer.same_source(state.source,result.source) or
-        state.output_policy~=result.output_policy or state.pb_range~=result.pb_range)
-      render(source_state,"text",dirty and "SOURCE DIRTY: Generate to apply this draft." or "SOURCE COMMITTED")
-      feedback.status.text="Selected phrase is independent. Its musical content is unchanged."
-      if result.warning then feedback.status.text=feedback.status.text.."\n"..tostring(result.warning) end
-      if state and state.draft_warning then
-        feedback.status.text=feedback.status.text.."\nDRAFT WARNING: "..tostring(state.draft_warning)
-      end
-    else feedback.status.text="Cannot make independent: "..tostring(result) end
-    update_live_state()
-  end}
-  revalidate=vb:button{id="acid_revalidate",text="Revalidate",active=false,notifier=function()
-    if guard_stage() then return end
-    if not current_session() then return end
-    local state,proof=runtime:revalidation_status()
-    if not state.verified then feedback.status.text=state.reason or "Recovery consistency could not be verified."
-    else
-      local cleared,reason=runtime:revalidate(proof)
-      feedback.status.text=cleared and "Recovery verified. Generate or edit explicitly to continue." or tostring(reason)
-    end
-    update_live_state()
-  end}
-  update_actions=function()
-    local previous=selected_recovery()
-    recovery_entries=runtime:recovery_entries() or {}
-    local items,chosen={},1
-    for index,entry in ipairs(recovery_entries) do
-      local names=entry.labels or {}
-      items[index]=(names.instrument or "Unavailable instrument").." / "..(names.phrase or "Draft")
-      if previous and previous.token==entry.token and previous.revision==entry.revision then chosen=index end
-    end
-    if #items==0 then items[1]="No detached drafts" end
-    loading=true
-    render(recovery_choice,"items",items)
-    render(recovery_choice,"value",chosen)
-    loading=false
-    local entry=selected_recovery()
-    render(recovery_choice,"active",entry~=nil)
-    render(copy_recovery,"active",entry~=nil and current_session() and bound_instrument()~=nil)
-    render(discard_recovery,"active",entry~=nil and current_session())
-    local recovery_reason=entry and ("Session only: "..tostring(entry.reason or "Detached draft"))
-      or "No detached recovery draft is selected."
-    local eligible,reason=runtime:independence_projection()
-    render(independent,"active",eligible~=nil and current_session())
-    local detail=eligible and "Resolve this copied-ID collision without changing the music."
-      or tostring(reason or "Select a colliding phrase to make it independent.")
-    local integrity=runtime:integrity_state()
-    render(revalidate,"active",integrity.blocked and current_session())
-    if integrity.blocked then detail=integrity.reason or "Recovery consistency requires revalidation." end
-    local combined="RECOVERY: "..recovery_reason.."\nOWNERSHIP: "..detail
-    ui.recovery.lines=wrap_lines(combined,100)
-    render_recovery_page()
-  end
   local function selector_rows(selectors)
     local first,second=vb:row{spacing=3},vb:row{spacing=3}
     for index,button in ipairs(selectors) do
@@ -1991,19 +1749,7 @@ function M.show()
   local entry_controls=vb:row{spacing=4,
     vb:button{id="acid_program_edit_one",text="Edit One",notifier=function() guard_stage() end},
     vb:button{id="acid_program_reenter_pitch",text="Re-enter PITCH",notifier=function() begin_stage("pitch") end},
-    vb:button{id="acid_program_reenter_time",text="Re-enter TIME",notifier=function() begin_stage("time") end},
-    vb:button{id="acid_program_check",text="Check",notifier=function()
-      release_audition()
-      if stage and not valid_stage() then feedback.set_issue("input","entry_unavailable");return end
-      local projection=stage and editor.project(stage.candidate,stage_resolution()) or project()
-      show_diagnostic(projection)
-      local missing=missing_positions()
-      if projection.error then set_projection_issue(projection.error)
-      elseif #missing>0 then
-        feedback.set_issue("input",stage.memory=="pitch" and "missing_pitch" or "missing_timing",
-          {position=first_missing_position()})
-      end
-    end}}
+    vb:button{id="acid_program_reenter_time",text="Re-enter TIME",notifier=function() begin_stage("time") end}}
   entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
     stage_actions.restart,stage_actions.finish,stage_actions.discard}
   audition_button=vb:button{id="acid_audition",text="Audition PITCH",notifier=function()
@@ -2038,18 +1784,6 @@ function M.show()
       vb:text{text="ACCENT"},accent,vb:text{text="SLIDE"},slide,grid_c_plus},
     vb:text{text="TIME",font="bold"},
     time_pages,time_grid}
-  local decoded_previous_button=vb:button{id="acid_decoded_previous",text="Previous 4",width=100,notifier=function()
-    release_audition();if decoded_page>1 then decoded_page=decoded_page-1;update() end
-  end}
-  local decoded_next_button=vb:button{id="acid_decoded_next",text="Next 4",width=100,notifier=function()
-    release_audition();if decoded_page<ui.decoded.pages then decoded_page=decoded_page+1;update() end
-  end}
-  ui.decoded.previous,ui.decoded.next=decoded_previous_button,decoded_next_button
-  ui.decoded.page_label=vb:text{id="acid_decoded_page_label",text="TIME 01-04 / 32",font="bold"}
-  ui.decoded.text=vb:multiline_text{id="acid_decoded_rows",size={width=820,height=76},text=""}
-  local decoded_panel=vb:column{id="acid_decoded_panel",spacing=4,
-    vb:row{spacing=6,vb:text{text="Decoded view"},preview_popup,decoded_previous_button,
-      ui.decoded.page_label,decoded_next_button},ui.decoded.text}
   clipboard.choice=vb:popup{id="acid_clipboard_scope",items={"PITCH","TIME","Both"},value=1,
     notifier=function() if not updating then release_audition();update() end end}
   clipboard.status=vb:text{id="acid_clipboard_status",text="Clipboard empty"}
@@ -2379,12 +2113,7 @@ function M.show()
     vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
       vb:text{text="PB Range"},pb_range_popup},
     vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."}}
-  local recovery_panel=vb:column{id="acid_recovery_panel",spacing=3,
-    vb:row{spacing=8,independent,revalidate},
-    vb:row{spacing=6,vb:text{text="Recover Draft"},recovery_choice,copy_recovery,discard_recovery},
-    recovery_detail,
-    vb:row{spacing=6,ui.recovery.previous,ui.recovery.page_label,ui.recovery.next}}
-  local tab_names={"Decoded","Pattern / Copy","Extended / Clear","Output","Recovery"}
+  local tab_names={"Pattern / Copy","Extended / Clear","Output"}
   local tab_row=vb:row{spacing=4}
   for index,name in ipairs(tab_names) do
     local tab=index
@@ -2394,21 +2123,15 @@ function M.show()
     end}
     tab_row:add_child(ui.workspace.tabs[index])
   end
-  ui.workspace.panels={decoded_panel,pattern_copy_panel,extended_panel,output_panel,recovery_panel}
+  ui.workspace.panels={pattern_copy_panel,extended_panel,output_panel}
   local workspace=vb:column{spacing=4,tab_row,
     vb:stack{autosize=false,size={width=820,height=WORKSPACE_HEIGHT},views={
-      decoded_panel,pattern_copy_panel,extended_panel,output_panel,recovery_panel}}
+      pattern_copy_panel,extended_panel,output_panel}}
   }
   for _,panel in ipairs(ui.workspace.panels) do
     panel.origin={0,0}
     panel.size={width=820,height=WORKSPACE_HEIGHT}
   end
-  local details=vb:column{id="acid_details_panel",spacing=4,visible=false,
-    summary,map_text,source_state,live_state_view,inspect}
-  local details_button=vb:button{id="acid_details_toggle",text="Show Details",notifier=function()
-    details.visible=not details.visible
-    vb.views.acid_details_toggle.text=details.visible and "Hide Details" or "Show Details"
-  end}
   local content=vb:column{margin=12,spacing=7,
     vb:text{text="ACID  |  PITCH / TIME EDITOR",font="big"},
     vb:row{spacing=6,vb:text{text="Target instrument"},target,
@@ -2430,7 +2153,6 @@ function M.show()
     vb:row{spacing=5,vb:text{text="Assign selected TIME"},
       ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
     workspace,
-    diagnostic,diagnostic_jump,
     vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
       vb:button{text="Retry Live Edit",notifier=function()
         if guard_stage() then return end
@@ -2438,7 +2160,6 @@ function M.show()
           local accepted=runtime:request_generation("live")
           if not accepted then feedback.request_failure("generation",false) end
         end
-        update_live_state()
       end}},
     vb:row{spacing=8,
       vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
@@ -2458,11 +2179,8 @@ function M.show()
         clear_resolved_input()
         local accepted=runtime:request_generation("manual")
         if not accepted then feedback.request_failure("generation",false) end
-      end},
-      vb:button{text="Sampler audit",notifier=function()
-        feedback.status.text=sampler.describe(instrument_targets[selected_instrument])
       end}},
-    details_button,details,feedback.holder}
+    feedback.holder}
   select_instrument(selected_instrument)
   if scale_state.load_error then
     feedback.set_issue("scale","scale_load_failed",nil,false)

@@ -945,13 +945,11 @@ local function test_fixed_native_acceptance_command()
     acceptance_runner = function(case_name, done, json_codec, profile, options)
       assert(type(json_codec) == "table" and type(json_codec.array) == "function",
         "acceptance runner did not receive the shared response codec")
-      assert(case_name == "make-independent" or case_name == "reopen-independent" or
-        case_name == "integrity-observers" or case_name == "writer-recovery" or
+      assert(case_name == "integrity-observers" or case_name == "writer-recovery" or
         case_name == "editor-responsiveness" or case_name == "import-donor" or case_name == "ownership-negatives" or
-        case_name == "independence-undo-fixture" or case_name == "independence-undo-prepare" or case_name == "independence-undo" or
         case_name == "revision-undo-fixture" or case_name == "revision-undo-prepare" or case_name == "revision-undo" or
         case_name == "revision-live-undo-fixture" or case_name == "revision-live-undo-prepare" or case_name == "revision-live-undo" or
-        case_name == "persistence-failures" or case_name == "recovery-labels-prepare" or case_name == "recovery-labels-cold" or
+        case_name == "persistence-failures" or
         case_name == "metadata-undo-prepare" or case_name == "metadata-undo" or
         case_name == "metadata-recovery-prepare" or case_name == "metadata-recovery" or case_name == "metadata-recovery-cold" or
         case_name == "cold-reopen-regenerate" or
@@ -972,9 +970,9 @@ local function test_fixed_native_acceptance_command()
   local client = new_client()
   accept(host, client)
   send_request(host, client, "acceptance-invalid-case", "acid.acceptance.run", {case = "execute"})
-  send_request(host, client, "acceptance-invalid-args", "acid.acceptance.run", {case = "make-independent", command = "arbitrary"})
+  send_request(host, client, "acceptance-invalid-args", "acid.acceptance.run", {case = "integrity-observers", command = "arbitrary"})
   send_request(host, client, "acceptance-profile-invalid-case", "acid.acceptance.run",
-    {case = "make-independent", profile = "Detailed"})
+    {case = "integrity-observers", profile = "Detailed"})
   send_request(host, client, "acceptance-profile-invalid-value", "acid.acceptance.run",
     {case = "editor-responsiveness", profile = "Verbose"})
   fire_idle(host)
@@ -985,7 +983,7 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(invalid, "acceptance-profile-invalid-value").error.code, "invalid_arguments")
   assert_equal(completion, nil, "invalid acceptance command reached its runner")
 
-  local persistence_cases = {"persistence-failures", "recovery-labels-prepare", "recovery-labels-cold",
+  local persistence_cases = {"persistence-failures",
     "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
     "metadata-undo-prepare", "metadata-undo"}
   for _, case_name in ipairs(persistence_cases) do
@@ -1006,7 +1004,7 @@ local function test_fixed_native_acceptance_command()
     {case = "production-latency-8x8", midi_output_device = ""},
     {case = "production-latency-16x8", midi_output_device = "port\nname"},
     {case = "production-latency-8x8", midi_output_device = string.rep("a", 257)},
-    {case = "make-independent", midi_output_device = "test loopback"},
+    {case = "integrity-observers", midi_output_device = "test loopback"},
     {case = "production-session-8x8"},
     {case = "phrase-midi-delivery"},
     {case = "production-stress-16x8", midi_output_device = "test loopback", stage = "unchecked"},
@@ -1053,13 +1051,13 @@ local function test_fixed_native_acceptance_command()
   end
   completion=nil
 
-  send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "make-independent"})
+  send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-run"), nil,
     "asynchronous acceptance returned before its native operation settled")
   assert(completion, "fixed acceptance runner was not called")
   assert_equal(acceptance_profile,nil,"unprofiled acceptance command unexpectedly gained a profile setting")
-  assert(completion({status = "PASS", case = "make-independent", new_id = 12,
+  assert(completion({status = "PASS", case = "integrity-observers", new_id = 12,
     codec_array = acceptance_json_codec.array({"shared-codec-array"})}))
   fire_idle(host)
   local result = find_response(take_responses(client), "acceptance-run")
@@ -1068,12 +1066,12 @@ local function test_fixed_native_acceptance_command()
   assert_equal(result.result.new_id, 12)
   assert_equal(result.result.codec_array[1], "shared-codec-array",
     "acceptance response encoder did not recognize the shared codec's array marker")
-  send_request(host, client, "acceptance-reopen", "acid.acceptance.run", {case = "reopen-independent"})
+  send_request(host, client, "acceptance-reopen", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-reopen"), nil,
     "round-trip acceptance returned before its native operation settled")
   assert(completion, "round-trip acceptance runner was not called")
-  assert(completion({status = "PASS", case = "reopen-independent", new_id = 12}))
+  assert(completion({status = "PASS", case = "integrity-observers", new_id = 12}))
   fire_idle(host)
   local reopened = find_response(take_responses(client), "acceptance-reopen")
   assert(reopened and reopened.ok)
@@ -1137,8 +1135,7 @@ local function test_fixed_native_acceptance_command()
   assert_equal(negatives.result.status, "PASS")
   for _, case_name in ipairs({ "selection-feasibility", "direct-output-feasibility", "source-undo-feasibility",
       "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
-      "persistence-failures", "recovery-labels-prepare", "recovery-labels-cold",
-      "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
+      "persistence-failures", "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
       "metadata-undo-prepare", "metadata-undo",
       "revision-live-undo-fixture", "revision-live-undo-prepare", "revision-live-undo" }) do
     local request_id = "acceptance-" .. case_name
@@ -1157,20 +1154,20 @@ local function test_fixed_native_acceptance_command()
 end
 
 local function test_response_encoding_errors_are_distinct_from_oversized_frames()
-  local result = {status = "PASS", case = "make-independent", value = function() end}
+  local result = {status = "PASS", case = "integrity-observers", value = function() end}
   local host, driver = start_driver({acceptance_runner = function() return result end})
   local client = new_client()
   accept(host, client)
 
-  send_request(host, client, "unsupported-response-value", "acid.acceptance.run", {case = "make-independent"})
+  send_request(host, client, "unsupported-response-value", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
   local unsupported = find_response(take_responses(client), "unsupported-response-value")
   assert(unsupported and not unsupported.ok)
   assert_equal(unsupported.error.code, "response_encoding_failed")
   assert_equal(unsupported.error.message, "response could not be encoded")
 
-  result = {status = "PASS", case = "make-independent", [1] = "untagged numeric table"}
-  send_request(host, client, "untagged-response-array", "acid.acceptance.run", {case = "make-independent"})
+  result = {status = "PASS", case = "integrity-observers", [1] = "untagged numeric table"}
+  send_request(host, client, "untagged-response-array", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
   local untagged = find_response(take_responses(client), "untagged-response-array")
   assert(untagged and not untagged.ok)
@@ -1179,10 +1176,10 @@ local function test_response_encoding_errors_are_distinct_from_oversized_frames(
 
   result = {
     status = "PASS",
-    case = "make-independent",
+    case = "integrity-observers",
     value = string.rep("x", driver._limits().max_response_bytes)
   }
-  send_request(host, client, "oversized-response-frame", "acid.acceptance.run", {case = "make-independent"})
+  send_request(host, client, "oversized-response-frame", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
   local oversized = find_response(take_responses(client), "oversized-response-frame")
   assert(oversized and not oversized.ok)

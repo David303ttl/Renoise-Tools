@@ -77,13 +77,11 @@ do
     phrase_choices = true, draft_options = true, mutate = true, mark_dirty = true,
     matches_mutation_inventory = true, notify_native_change = true,
     reconcile = true, mutation_state = true, occupancy_state = true,
-    record_blocker = true, integrity_state = true, revalidation_status = true,
-     revalidate = true, transition = true, revision_state = true, editor_state = true,
+    record_blocker = true, integrity_state = true, transition = true, revision_state = true, editor_state = true,
      rename_label = true,
-    musical_eligibility = true, independence_eligibility = true, independence_projection = true, editor_recovery = true,
+    musical_eligibility = true, editor_recovery = true,
     validate_checkpoint = true, flush_pending = true, generation_state = true,
-    make_independent = true, recovery_entries = true,
-    copy_recovery_to_new = true, discard_recovery = true, is_temporary = true}
+    is_temporary = true}
   for key, value in pairs(ctx) do
     assert(allowed[key], "context exposes private field " .. tostring(key))
     assert(type(value) == "function")
@@ -887,8 +885,8 @@ do
   if done then done({kind="failure",status="cancelled"}) end
 end
 
--- Failed required observers block every generation trigger and integrity
--- revalidation until a complete native attachment restores protection.
+-- Failed required observers block every generation trigger until a complete
+-- native attachment restores protection.
 do
   local fixture=dofile("tests/acid/runtime_phrase_fixture.lua")
   local song=fixture.fixture()
@@ -909,23 +907,13 @@ do
     local accepted,blocked_reason=ctx:request_generation(trigger)
     assert(accepted==false and blocked_reason==reason,trigger.." request escaped observer block")
   end
-  local status=ctx:revalidation_status()
-  assert(status.blocked and not status.verified and status.reason==reason)
-  local identity,identity_reason=ctx:independence_eligibility()
-  assert(identity==nil and identity_reason==reason,
-    "identity operation eligibility escaped observer block")
-  local independent,identity_error=ctx:make_independent()
-  assert(independent==false and identity_error==reason,
-    "identity operation escaped observer block")
-  local revalidated,revalidation_error=ctx:revalidate(nil)
-  assert(revalidated==false and revalidation_error==reason,
-    "revalidation cleared a failed observer protection block")
+  local state=ctx:integrity_state()
+  assert(state.blocked and state.reason==reason)
   assert(captured==0 and dispatched==0,"blocked requests crossed capture or dispatch")
 
   local observer=require("runtime.observers").new()
   assert(observer:attach(song,ctx),"complete native listener attachment failed")
-  status=ctx:revalidation_status()
-  assert(not status.blocked,
+  assert(not ctx:integrity_state().blocked,
     "successful attachment did not clear the observer protection block")
   assert(ctx:request_generation("manual")==true)
   assert(captured==1 and dispatched==1)

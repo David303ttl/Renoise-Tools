@@ -1,7 +1,8 @@
 # M5 Followup GUI Redesign Playbook
 
-**Status:** Task 2 feedback ownership is implemented. Verification and remaining
-native limits are recorded in [the acceptance record](../tests/acid/acid_gui_redesign_acceptance.md).
+**Status:** Tasks 1–3 are verified within the recorded native and automated
+scope. Results and remaining limits are recorded in
+[the acceptance record](../tests/acid/acid_gui_redesign_acceptance.md).
 Final redesign acceptance remains open.
 
 **Dependency:** Closed M5 editor implementation. This follow-up replaces the
@@ -162,10 +163,10 @@ than automatic recovery, but must not be an undocumented permanent dead end.
 ```text
 ACID
 Instrument [........................................]
-Phrase     [........................] [Rename] [Duplicate] [Reset]
+Phrase     [........................] [Rename] [Duplicate]
 [Accepted phrase name, only if the chooser does not expose it clearly]
 
-Length [...]   Timing [...]   Pitch span [...]
+Length [...]   Timing [...]   [Reset pattern]   Pitch span [...]
 [Program | Grid]   [Undo] [Redo]   [Copy scope...] [Copy] [Paste]
 
 PITCH
@@ -493,7 +494,7 @@ calls a removed API or keeps a production API alive solely for testing.
 **Owners:** Target/phrase construction, `label_ui`, `load_target()`,
 `select_instrument()`, `refresh_phrase_choices()`, reset and duplicate callbacks.
 
-1. Put Instrument first, then Phrase with Rename, Duplicate and Reset. Move the
+1. Put Instrument first, then Phrase with Rename and Duplicate. Move the
    existing widgets/callbacks; do not create a second binding or notifier path.
 2. Preserve New Phrase selection and native instrument/phrase synchronization.
    Preserve pending-entry and pending-rename guards before destination changes.
@@ -503,9 +504,9 @@ calls a removed API or keeps a production API alive solely for testing.
    without changing confirmation or validation policy.
 4. Move Duplicate out of Pattern / Copy, preserving `request_duplicate()`, stale
    completion checks, accepted-source/history synchronization and save failures.
-5. Move Reset out of the editor toolbar and label it Reset. Keep `guard_stage()`,
+5. Place Reset pattern between Timing and Pitch span on the settings row. Keep `guard_stage()`,
    `ui.admit_operation`, `reset_source()` and `changed()` behavior. Add no prompt.
-6. Place Length, Timing and Pitch span immediately above the editor. Rename
+6. Place Length, Timing, Reset pattern and Pitch span immediately above the editor. Rename
    LAST STEP and Active PITCH span. Make Timing choices communicate their
    divisions, then delete `step_division` and its update computations.
 
@@ -682,11 +683,10 @@ the cross-feature matrix. Do not defer a knowingly broken suite until this task.
 | Existing test owner under `../tests/acid/` | Required retained or revised evidence |
 | --- | --- |
 | `acid_gui_views_spec.lua` | Both editors, selection/pages/inactive positions, toolbar, entry, operations, scale controls, generation and construction absence |
-| `acid_gui_independence_spec.lua` | Independent PITCH/TIME selection and non-mutating navigation |
 | `acid_gui_admission_spec.lua` | Stage/label guards, operation admission, invalid destination rejection |
 | `acid_gui_timing_race_spec.lua` | Timing and target races retain stale-write protection |
 | `acid_program_staging_spec.lua` | Entry completeness, candidate isolation, view switching, guards, audition and cleanup; replace removed Check/text probes |
-| `acid_gui_recovery_spec.lua` | Retained safety/lifecycle cases migrated as needed; removed-action tests deleted; no replacement recovery UI |
+| `acid_gui_live_edit_lifecycle_spec.lua` | Retained safety/lifecycle cases; no recovery actions or replacement recovery UI |
 | `acid_editor_spec.lua`, `acid_clipboard_spec.lua` | History, payload scopes, candidate/no-op behavior remain intact |
 | `acid_duplicate_label_spec.lua` | Rename validation, retry failures, duplicate identity and saving |
 | `acid_scales_spec.lua`, `acid_scale_preferences_spec.lua`, `acid_scale_mask_spec.lua` | Scale semantics and load/save failures preserved |
@@ -707,7 +707,7 @@ the cross-feature matrix. Do not defer a knowingly broken suite until this task.
    no false save claims and no unsafe request; include stale completion feedback.
 5. Update all affected builders, not just `gui_host_stub.lua`. Current GUI specs
    also embed their own ViewBuilder implementations. Search `view_builder`,
-   `ViewBuilder` and `add_child` in the six affected specs listed below; introduce
+   `ViewBuilder` and `add_child` in the affected specs listed below; introduce
    `add_view`/`remove_view` membership support before the first production use.
    A removed child must disappear from its parent's children while remaining
    addressable by ID. Reject duplicate parenting. Do not make mocks claim native
@@ -758,10 +758,10 @@ only if isolation makes the failure cases materially clearer.
 | Create each persistent blocker, then Generate/Live Edit/Duplicate and change targets or reopen | Existing mutation gates and blocker lifetimes preserved; no false retry remedy, implicit clearing, adoption or automatic New | 3 |
 | Instantiate the reduced runtime and load retained entry points without retired module stubs | Retired methods absent; retained workflows run through real active dependencies; no compatibility facade or lazy load of removed modules | 3, 11 |
 
-The affected GUI specs requiring a direct obsolete-reference pass are
-`acid_gui_views_spec.lua`, `acid_gui_independence_spec.lua`,
-`acid_gui_admission_spec.lua`, `acid_gui_timing_race_spec.lua`,
-`acid_gui_recovery_spec.lua` and `acid_program_staging_spec.lua`.
+The retained GUI specs requiring a direct obsolete-reference pass are
+`acid_gui_views_spec.lua`, `acid_gui_admission_spec.lua`,
+`acid_gui_timing_race_spec.lua`, `acid_gui_live_edit_lifecycle_spec.lua`
+and `acid_program_staging_spec.lua`.
 Search native probe code too: a probe that invokes a removed button must be
 updated to the retained workflow before its acceptance run. Preserve historical
 reports as evidence of the old interface, not executable current procedures.

@@ -28,14 +28,14 @@ the selected command. Grid pitches show Renoise note names with **ACC** and
 R referenced, M modified from the accepted baseline. Grid shows canonical
 source; Program shows the candidate during re-entry.
 
-**Show Details** reveals source counts, playback mapping, source/Live Edit
-status and pattern inspection. Source errors and generation results remain
-visible with Details collapsed. Entry navigation appears only during re-entry.
+Shared feedback shows unresolved save, destination, scale, audition and output
+issues. Routine successful Live Edit stays quiet; explicit Generate confirms
+completion. Entry navigation appears only during re-entry.
 
 Re-enter starts a detached candidate over the active memory span. Set each value
 and press **Enter and Advance** to mark it entered. Back and Restart Cursor only
-move the stage cursor; changing an entered value clears its marker. **Check**
-reports source problems and missing entries without saving. **Finish** is
+move the stage cursor; changing an entered value clears its marker. Generate
+reports missing entries without applying an incomplete candidate. **Finish** is
 available only after every position is entered and applies one undoable edit;
 **Discard** abandons the candidate. Neither action automatically resumes a
 blocked navigation or command: invoke that action again. Closing the dialog or
@@ -95,8 +95,7 @@ Choose any instrument slot and an existing unchanged ACID-owned phrase or
 **New Phrase**. **Repeat** is the default output policy. **Play Once** renders
 one traversal with an explicit final release. Changing this policy changes the
 owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
-instrument's global phrase trigger settings. The decoded Start/Repeating
-preview is read-only.
+instrument's global phrase trigger settings.
 
 The Destination phrase control binds ACID to an exact instrument and phrase.
 Selecting an ACID-owned phrase in Renoise's Phrase Editor loads its source and
@@ -123,7 +122,8 @@ the XRNS. A successful write clears only the exact draft revision it commits;
 later edits remain dirty. If a draft has an ambiguous destination or persistence
 fails, it remains available in the open session and ACID reports the unsaved
 state. Give a new draft's instrument a unique name or generate its phrase before
-closing the song. Detached recovery entries are session-only. ACID protects
+closing the song. Detached drafts are session-only and have no manual recovery
+interface. ACID protects
 foreign or modified phrases and uses ownership checks, source persistence and
 verified rollback when updating an owned phrase in place. The persisted source
 schema is `ACID-PITCH-TIME-2`. Only empty song tool data or strict schema 2
@@ -131,23 +131,9 @@ is accepted. Unsupported or corrupt data blocks writes and retains its bytes;
 ACID offers no conversion or reset. With Live Edit off, the source remains dirty until
 a successful Generate applies the draft.
 
-Native copies with the same ACID ID block every holder of that ID. Select the
-particular copied phrase in Destination phrase and use **Make Independent**.
-The action requires every holder to match its saved committed source/settings,
-compatible output, and unchanged phrase content. It assigns a fresh ID only to
-the selected phrase and clones its committed source/settings without rendering
-or changing its music. Other holders keep their IDs and any remaining collision
-stays blocked until resolved explicitly. Missing or incompatible source and
-changed content prevent resolution. ACID never automatically re-keys a copy or
-adopts an import.
-
-**Recover Draft** lists detached drafts with their captured instrument/phrase
-labels and reason. **Copy to New** restores the selected source and settings to
-the current instrument's New scratch, preserving any occupied scratch as another
-recovery entry. Copying and discarding do not render, even with Live Edit armed.
-The original recovery entry remains until that exact copied revision creates a
-phrase or you explicitly discard it. Detached recovery entries are session-only;
-save or generate wanted drafts before closing the song.
+Native copies with the same ACID ID block every holder of that ID. ACID does
+not re-key copies or adopt imports. Select another valid destination or New
+explicitly; selection cannot clear a song-wide integrity blocker.
 
 Create needs one free phrase slot under Renoise's 126-phrase instrument limit;
 it inserts the final destination. Regenerate updates the exact existing phrase
@@ -159,12 +145,12 @@ rows remain in the song so native Undo and Redo can restore matching music,
 source and settings. The revision number in the phrase name changes while its
 position and native phrase object stay the same. This increases stored source
 data with committed revisions.
-If cleanup or rollback cannot be verified,
-ACID blocks further writes and retains recovery evidence. **Revalidate** checks
-consistency without rendering, repairing ownership or deleting recovery objects.
-It requires the writer to be idle and recorded recovery objects to
-be absent. Use native undo or a known-good saved song when consistency cannot be
-established, then explicitly Generate or edit after successful revalidation.
+If cleanup, rollback or committed-source adoption cannot be verified, ACID
+blocks further mutations and retains integrity evidence. These states have no
+repair action in ACID. Changing targets, reopening the dialog or reattaching
+the same song does not establish safety or clear a persistent song blocker.
+Existing phrase content and saved data remain protected; failed draft saving
+is still reported separately. Do not rely on retry or reopening as a repair.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE

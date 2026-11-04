@@ -244,45 +244,16 @@ do
  assert(ctx:editor_state().label==before.label,"failed label was installed in the editor")
  assert(not ctx:rename_label("Blocked",true) and writes==1)
  assert(not ctx:request_generation("manual") and log.sinks==0)
- assert(not ctx:revalidation_status().verified)
  song.tool_data=raw
- local status,proof=ctx:revalidation_status()
- assert(status.verified and proof,"restored label storage could not be revalidated")
- assert(ctx:integrity_state().blocked,"inspection cleared the label blocker")
- assert(ctx:revalidate(proof))
- store.update_label=update_label
- assert(ctx:rename_label("Verified",true))
- assert(not ctx:integrity_state().blocked)
+ ctx:close_dialog();ctx:open_dialog()
+ assert(ctx:integrity_state().blocked,"dialog reopen cleared the label blocker")
+ assert(not ctx:rename_label("Still blocked",true) and writes==1)
+ assert(not ctx:request_generation("manual") and log.sinks==0)
  store.update_label=function()error("Interrupted metadata write")end
  assert(not ctx:rename_label("Interrupted",true))
  store.update_label=update_label
  assert(ctx:integrity_state().blocked,"interrupted persistence did not block writes")
- local interrupted_status,interrupted_proof=ctx:revalidation_status()
- assert(interrupted_status.verified and ctx:revalidate(interrupted_proof))
-end
-
-do
- local ctx,log,song,instrument,phrase,_,source=fixture()
- local recovered_label='Recovered bass'
- assert(ctx:rename_label(recovered_label,true))
- local recovered=copy_edit(source,FIRST_COMMITTED_NOTE)
- assert(ctx:transition('edit',values(recovered)))
- assert(cache.detach(song,instrument,phrase,'Changed target'))
- local entry=assert(ctx:recovery_entries())[1]
- assert(entry and ctx:copy_recovery_to_new(entry.token,entry.revision))
- local editor=ctx:editor_state()
- assert(seq.same_source(editor.source,recovered) and editor.label==recovered_label and editor.label_custom,
-   'recovery copy lost source label metadata')
- local edited=copy_edit(recovered,NEWER_EDIT_NOTE)
- assert(ctx:transition('edit',values(edited)))
- local draft,_,_,label,label_custom=store.read_draft(song,instrument,nil)
- assert(seq.same_source(draft,edited) and label==recovered_label and label_custom,
-   'editing recovery copy replaced its durable label metadata')
- assert(ctx:request_generation('manual'))
- local request=log.requests[1]
- assert(request.label==recovered_label and request.label_custom,
-   'generation replaced recovered label metadata')
- assert(ctx:editor_state().label==recovered_label and ctx:editor_state().label_custom)
+ assert(not ctx:request_generation("manual") and log.sinks==0)
 end
 
 do
@@ -322,11 +293,11 @@ do
  assert(writes==1,"blocked edit or target switch persisted a draft")
  assert(not ctx:request_generation("manual") and log.sinks==0)
  assert(not ctx:rename_label("Still blocked",true) and writes==1)
- local status,proof=ctx:revalidation_status()
- assert(status.verified and ctx:integrity_state().blocked)
- assert(ctx:revalidate(proof))
- assert(ctx:bind_new(instrument))
- assert(ctx:rename_label("Revalidated label",true) and writes>1)
+ assert(ctx:release_document())
+ ctx:attach_document(song);ctx:open_dialog()
+ assert(ctx:integrity_state().blocked and not ctx:request_generation("manual"),
+   "same-song reattachment cleared an uncertain label-write blocker")
+ assert(writes==1,"same-song reattachment rewrote uncertain label metadata")
 end
 
 local function verify_create_transfer(failure)
@@ -490,7 +461,6 @@ do
  ctx:transition('arm')
  assert(log.sinks==0,'arming generated music')
  ctx:transition('reset',values(changed))
- ctx:transition('recovery',values(source))
  ctx:transition('programmatic',values(changed))
  assert(log.sinks==0,'guarded source load generated music')
  local revision=ctx:revision_state().edit_revision
@@ -670,10 +640,12 @@ do
  song.instruments[2]=other
  ctx:refresh_inventory()
  assert(not ctx:musical_eligibility())
- assert(ctx:independence_eligibility(),'matching collision should permit explicit resolution proof')
+ assert(ctx:bind_phrase(instrument,phrase).kind~='owned','duplicate ownership ID became writable')
+ assert(not ctx:request_generation('manual'),'colliding ownership ID passed Generate admission')
  assert(log.sinks==0)
  copied.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns].delay_value=1
- assert(not ctx:independence_eligibility(),'modified collision holder qualified for resolution')
+ assert(ctx:bind_phrase(instrument,phrase).kind~='owned','modified collision holder became writable')
+ assert(not ctx:request_generation('manual'),'modified collision holder passed Generate admission')
  assert(log.sinks==0)
 end
 do

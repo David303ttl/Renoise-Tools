@@ -19,7 +19,7 @@ $testRoot = Join-Path $repoTempRoot ('renoise-package-dev-spec-日本語-' + [gu
 $sourceToolName = 'com.david303ttl.ACID.xrnx'
 $runtimeExtensions = @('.lua', '.xml', '.txt', '.json', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.wav', '.aif', '.aiff', '.flac', '.ogg', '.bin')
 $bootstrapMarker = '-- ACID development bootstrap'
-$driverNames = @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua', 'recovery_acceptance.lua')
+$driverNames = @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua')
 . (Join-Path $repoRoot 'scripts/lua_interpreter.ps1')
 $luaCommandInfo = Resolve-LuaInterpreter -LuaCommand $LuaCommand
 
@@ -593,7 +593,7 @@ try {
     $moduleRepo = New-FixtureRepository -Root (Join-Path $testRoot $moduleCase)
     $moduleRoot = Join-Path $moduleRepo 'tests/renoise/driver'
     if ($moduleCase -eq 'missing-acceptance') {
-      Remove-Item -LiteralPath (Join-Path $moduleRoot 'recovery_acceptance.lua')
+      Remove-Item -LiteralPath (Join-Path $moduleRoot 'metadata_recovery_acceptance.lua')
     }
     else {
       [IO.File]::WriteAllText((Join-Path $moduleRoot 'unexpected.lua'), 'return {}')

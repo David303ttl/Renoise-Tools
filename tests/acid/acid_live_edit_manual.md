@@ -12,7 +12,7 @@ Executed checks and remaining limits are recorded in
    song and compare draft and committed source separately.
 2. Return to the clean fixture. Enable **Live Edit** without editing. Compare
    phrase cells, inventory and persisted source: arming alone must not write.
-   Switch Program/Grid, pages, preview cycle, workspace and targets. Navigation
+   Switch Program/Grid, pages, workspace and targets. Navigation
    must not generate; returning to a dirty target restores its own draft.
 3. Edit PITCH, octave, ACCENT, SLIDE, TIME and output settings individually.
    Each accepted musical edit uses the guarded synchronous writer and updates
@@ -34,5 +34,6 @@ Executed checks and remaining limits are recorded in
    values without automatic generation.
 7. Execute the safe failure cases in canonical 13.4/13.7 on disposable copies.
    Preserve byte/preimage evidence, unsaved draft and independent blockers;
-   record Retry and recovery behavior without inferring durable success from
-   status text alone.
+   distinguish ordinary Generate retry from persistent unavailable outcomes.
+   Target switching and dialog reopening must not clear a song integrity
+   blocker. Do not infer durable success from status text alone.

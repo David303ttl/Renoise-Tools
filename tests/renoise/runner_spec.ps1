@@ -20,8 +20,8 @@ $warmProfile = Resolve-AcidAcceptanceProfile -AcceptanceCase 'editor-responsiven
 $detailedProfile = Resolve-AcidAcceptanceProfile -AcceptanceCase 'multi-instrument-workflow' -Profile Detailed -Explicit
 Assert ($warmProfile.Applies -and $warmProfile.Profile -ceq 'Warm') 'editor responsiveness did not default to Warm instrumentation'
 Assert ($detailedProfile.Applies -and $detailedProfile.Profile -ceq 'Detailed') 'Detailed profile did not resolve for multi-instrument workflow'
-Assert (-not (Resolve-AcidAcceptanceProfile -AcceptanceCase 'make-independent').Applies) 'profile selection applied to an unrelated acceptance case'
-Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'make-independent' -Profile Detailed -Explicit } 'only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow'
+Assert (-not (Resolve-AcidAcceptanceProfile -AcceptanceCase 'ownership-negatives').Applies) 'profile selection applied to an unrelated acceptance case'
+Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'ownership-negatives' -Profile Detailed -Explicit } 'only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow'
 Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'editor-responsiveness' -Profile Verbose -Explicit } 'Warm|Detailed'
 $metadataReads = [pscustomobject]@{ Count = 0 }
 $metadataStart = [datetime]::UtcNow
@@ -639,22 +639,13 @@ Assert ($reportLine.Count -eq 1) 'runner failed to emit a report'
 $runReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($runReport.status -eq 'ERROR' -and $runReport.error -match 'TestEnvironment.Keyboard.ShowShortcut') 'missing shortcut did not fail clearly'
 Assert ($runReport.keyboard.negative_cases[0].name -eq 'missing_mapping' -and $runReport.keyboard.negative_cases[0].input_sent -eq $false) 'missing mapping guard did not report a no-input negative case'
-$coldPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase make-independent -ColdProcessRoundTrip -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
-Assert ($LASTEXITCODE -ne 0) 'cold-process run accepted a selected Renoise PID'
-$coldPidReportLine = @($coldPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-Assert ($coldPidReportLine.Count -eq 1) 'cold-process PID rejection did not emit a report'
-$coldPidReport = Get-Content -LiteralPath $coldPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
-Assert ($coldPidReport.error -match 'requires the runner to launch and own') 'cold-process PID rejection was not explicit'
-$recoveryPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase recovery-labels-prepare -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
-Assert ($LASTEXITCODE -ne 0) 'recovery-label cold reopen accepted a selected Renoise PID'
-$recoveryPidReportLine = @($recoveryPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-Assert ($recoveryPidReportLine.Count -eq 1) 'recovery-label PID rejection did not emit a report'
-$recoveryPidReport = Get-Content -LiteralPath $recoveryPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
-Assert ($recoveryPidReport.error -match 'requires a runner-owned process' -and
-    @($recoveryPidReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
-    'recovery-label cold reopen did not reject an unowned PID before starting Renoise'
+$retiredCaseInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase make-independent -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'retired Make Independent acceptance case remained enabled'
+$retiredCaseReportLine = @($retiredCaseInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($retiredCaseReportLine.Count -eq 1) 'retired-case rejection did not emit a report'
+$retiredCaseReport = Get-Content -LiteralPath $retiredCaseReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($retiredCaseReport.error -match 'Unsupported native acceptance case') 'retired-case rejection was not explicit'
 $metadataPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
     -Suite Native -AcceptanceCase metadata-recovery -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
 Assert ($LASTEXITCODE -ne 0) 'metadata recovery cold reopen accepted a selected Renoise PID'
@@ -665,7 +656,7 @@ Assert ($metadataPidReport.error -match 'requires a runner-owned process' -and
     @($metadataPidReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
     'metadata recovery did not reject an unowned PID before starting Renoise'
 $profileRejectedInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase make-independent -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
+    -Suite Native -AcceptanceCase ownership-negatives -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
 Assert ($LASTEXITCODE -ne 0) 'runner accepted a profile option for an unrelated native case'
 $profileRejectedReportLine = @($profileRejectedInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
 Assert ($profileRejectedReportLine.Count -eq 1) 'profile rejection did not emit a run report'
@@ -692,13 +683,13 @@ $coldAcceptanceFunction = $runnerAst.Find({ param($node)
 }, $true)
 Assert ($null -ne $coldAcceptanceFunction -and $coldAcceptanceFunction.Extent.Text -match "Invoke-RenoiseDriverBootstrap" -and
     $coldAcceptanceFunction.Extent.Text -match "Assert-RenoiseProcessIdentity") 'cold-process flow does not bootstrap and identity-check the newly launched host'
-Assert ($runnerAst.Extent.Text -match "-Case 'cold-reopen-regenerate'" -and $runnerAst.Extent.Text -match "-Case 'cold-reopen-verify'") 'cold-process round trip does not regenerate and reopen its saved generation'
-Assert ($runnerAst.Extent.Text -match "'independence-undo-prepare'" -and
+Assert ($runnerAst.Extent.Text -match 'Invoke-ColdProcessAcceptance -SongPath \$recoverySongPath -Case \$coldRecoveryCase') 'metadata cold-process verification is not run against its saved fixture'
+Assert ($runnerAst.Extent.Text -notmatch "'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-live-undo-prepare'" -and
     $runnerAst.Extent.Text -match 'case = \$undoPrepareCase' -and
     $runnerAst.Extent.Text -match "-Keys '\{Enter\}'" -and
-    $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
+    $runnerAst.Extent.Text -notmatch 'undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
 Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
 & {

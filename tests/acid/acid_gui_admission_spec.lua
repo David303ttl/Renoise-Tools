@@ -16,15 +16,28 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local parent_by_child={}
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child;parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then table.remove(parent.views,index);parent_by_child[child]=nil;return end
+    end
+    error("view is not a child")
+  end
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
     for key,value in pairs(properties or {}) do
-      if type(key)=="number" then node.views[#node.views+1]=value
+      if type(key)=="number" then add_view(node,value)
       else node[key]=value end
     end
     if node.id then builder.views[node.id]=node end
     builder.nodes[#builder.nodes+1]=node
-    function node:add_child(child) self.views[#self.views+1]=child end
+    function node:add_view(child) add_view(self,child) end
+    function node:remove_view(child) remove_view(self,child) end
+    node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
     function node:fire(value)
       self.value=value
@@ -120,11 +133,7 @@ package.loaded["renoise.phrase_ownership"]={
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
-  matches_recovery=function(_,token)return type(token)=="table" end,
-  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
-package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
-package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 local active_request
 local sync_next_result
@@ -316,11 +325,10 @@ local admission_count=#admissions
 builder,dialog=open_gui()
 assert(#contexts==1,"reopening retains the same runtime authority")
 assert(#admissions==admission_count,"reopen and draft restoration request nothing")
-local state_before=builder.views.acid_source_state.text
 local target_before=popup(builder,360).value
 complete(2)
-assert(builder.views.acid_source_state.text==state_before and popup(builder,360).value==target_before,
-  "old-session completion must not update reopened widgets or destination")
+assert(popup(builder,360).value==target_before,
+  "old-session completion must not update the reopened destination")
 phrase_popup=popup(builder,360)
 
 local context=contexts[#contexts]
@@ -355,13 +363,14 @@ do
   local succeeded_b=#tool.writer_calls+1
   button(builder,"Generate / Regenerate ACID Phrase"):fire()
   assert(#tool.writer_calls==succeeded_b,"target B Generate was not admitted")
-  complete(succeeded_b,"committed")
+  complete(succeeded_b,"approximate")
   assert(not status.text:find("Couldn't update the phrase. Try again.",1,true) and
     require("model.sequencer").same_source(context:editor_state().source,
       tool.writer_calls[succeeded_b].request.source),
     "verified target B success adopts B's source and clears A's generation failure")
-  assert(status.text==load_failure.."\n"..duplicate_failure,
-    "successful generation cannot clear unrelated draft-load or Duplicate failures")
+  assert(status.text==load_failure.."\n"..duplicate_failure..
+    "\nPhrase updated with a musical approximation.",
+    "approximation warning coexists with unresolved draft-load and Duplicate failures")
   phrase_popup:fire(1)
 end
 do
@@ -406,21 +415,8 @@ local status_view=builder.views.acid_status
 assert(not fail_next_edit_transition and status_view and
   status_view.text=="Your latest edits could not be saved with the song.",
   "a failed editor transition must not report a saved draft: "..tostring(status_view and status_view.text))
-assert(not builder.views.acid_preview_summary.text:find("NOTE P01 RAW 37 RES 37",1,true),
-  "a failed editor transition must not keep displaying the pre-edit projection: "..
-    builder.views.acid_preview_summary.text)
-assert(builder.views.acid_source_diagnostic.text:find("ERROR",1,true),
-  "a source that diverges from the runtime resolution snapshot reports the diagnostic: "..
-    builder.views.acid_source_diagnostic.text)
 fail_next_edit_transition=true
 button(builder,"Undo"):fire()
-assert(builder.views.acid_preview_summary.text:find("NOTE P01 RAW 37 RES 37",1,true) and
-  not builder.views.acid_preview_summary.text:find("NOTE P01 RAW 38 RES 38",1,true),
-  "a failed undo draft save still refreshes the displayed projection: "..
-    builder.views.acid_preview_summary.text)
-assert(builder.views.acid_source_diagnostic.text:find("VALID",1,true),
-  "restoring the source that matches the runtime snapshot projects valid again: "..
-    builder.views.acid_source_diagnostic.text)
 local timing=builder.views.acid_timing
 timing:fire(timing.value==1 and 2 or 1)
 assert(not builder.views.acid_status.text:find(
@@ -536,10 +532,10 @@ local stale_request=#tool.writer_calls+1
 button(builder,"Generate / Regenerate ACID Phrase"):fire()
 assert(#tool.writer_calls==stale_request)
 pitch_key(builder,5):fire()
-local dirty_state=builder.views.acid_source_state.text
+local dirty_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
 assert(not tool.writer_calls[stale_request].options.token:is_current(),"real edits revoke a prior manual request")
 complete(stale_request)
-assert(builder.views.acid_source_state.text==dirty_state and
+assert(require("model.sequencer").same_source(dirty_source,context:editor_state().source) and
   require("runtime.draft_cache").get(song,instrument,original),
   "same-session stale completion preserves current widgets and newer draft")
 
