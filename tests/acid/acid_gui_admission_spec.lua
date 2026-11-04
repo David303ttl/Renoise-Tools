@@ -285,6 +285,15 @@ end
 local builder,dialog=open_gui()
 assert(#contexts==1,"GUI must install one runtime context")
 assert(#admissions==0 and #tool.writer_calls==0,"opening must not request generation")
+assert(builder.views.acid_generate and builder.views.acid_generate.text=="Generate",
+  "the output action uses one Generate control")
+assert(builder.views.acid_pb_range.tooltip:find("receiver uses the same range",1,true) and
+  builder.views.acid_pb_range.tooltip:find("entire MIDI channel",1,true) and
+  builder.views.acid_pb_range.tooltip:find("isolated monophonic routing",1,true),
+  "bend range tooltip explains receiver assumptions and channel routing")
+for _,node in ipairs(builder.nodes) do
+  assert(node.text~="Retry Live Edit","Live Edit has no retry button")
+end
 local phrase_popup=popup(builder,360)
 local live=live_control(builder)
 live:fire(true)
@@ -298,7 +307,7 @@ assert(#admissions==0 and #tool.writer_calls==0,
   "arming, target/source restoration, view navigation and no-op edits must make zero requests")
 
 sync_next_result="error"
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==1 and #admissions==1 and admissions[1].trigger=="manual",
   "manual Generate must enter runtime admission: "..tostring(admissions[#admissions] and admissions[#admissions].reason))
 local manual=tool.writer_calls[1]
@@ -336,7 +345,7 @@ do
   local phrase_popup=popup(builder,360)
   local status=builder.views.acid_status
   local failed_a=#tool.writer_calls+1
-  button(builder,"Generate / Regenerate ACID Phrase"):fire()
+  button(builder,"Generate"):fire()
   assert(#tool.writer_calls==failed_a,"target A Generate was not admitted: "..tostring(admissions[#admissions].reason))
   complete(failed_a,"error","target A failure detail")
   assert(status.text:find("Couldn't update the phrase. Try again.",1,true),
@@ -361,7 +370,7 @@ do
   assert(status.text==load_failure.."\n"..duplicate_failure and #tool.writer_calls==writer_count,
     "a rejected duplicate publishes its own failure without writing or raw details")
   local succeeded_b=#tool.writer_calls+1
-  button(builder,"Generate / Regenerate ACID Phrase"):fire()
+  button(builder,"Generate"):fire()
   assert(#tool.writer_calls==succeeded_b,"target B Generate was not admitted")
   complete(succeeded_b,"approximate")
   assert(not status.text:find("Couldn't update the phrase. Try again.",1,true) and
@@ -377,7 +386,7 @@ do
   local phrase_popup=popup(builder,360)
   local status=builder.views.acid_status
   local writer_count=#tool.writer_calls
-  button(builder,"Generate / Regenerate ACID Phrase"):fire()
+  button(builder,"Generate"):fire()
   local stale_success=#tool.writer_calls
   assert(stale_success==writer_count+1 and
     tool.writer_calls[stale_success].request.phrase==phrase_one)
@@ -395,7 +404,7 @@ do
     status.text==b_feedback and not status.text:find("Phrase updated.",1,true),
     "stale success for A cannot change B source, history or feedback")
   phrase_popup:fire(1)
-  button(builder,"Generate / Regenerate ACID Phrase"):fire()
+  button(builder,"Generate"):fire()
   local stale_failure=#tool.writer_calls
   assert(stale_failure==stale_success+1 and
     tool.writer_calls[stale_failure].request.phrase==phrase_one)
@@ -485,12 +494,12 @@ end
 local original=instrument.phrases[1]
 local writer_count=#tool.writer_calls
 instrument.phrases[1]={id=91,name="replacement",foreign=true}
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==writer_count,"removed same-index target must reject without append")
 instrument.phrases[1]=original
 popup(builder,290):fire(2)
 popup(builder,360):fire(2)
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==writer_count,"foreign manual destination must reject without append")
 live_control(builder):fire(true)
 pitch_key(builder,3):fire()
@@ -498,7 +507,7 @@ assert(#tool.writer_calls==writer_count,"foreign Live Edit must reject without a
 
 local new_request_base=#tool.writer_calls
 popup(builder,360):fire(3)
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 local create_request=#tool.writer_calls
 assert(create_request==new_request_base+1 and tool.writer_calls[create_request].target==3,
   "only explicitly selected New authorizes append")
@@ -507,7 +516,7 @@ complete(create_request,"error","new target failure")
 assert(builder.views.acid_status.text:find("Couldn't update the phrase. Try again.",1,true),
   "a failed New Phrase generation is scoped to the New target")
 local create_retry=#tool.writer_calls+1
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(create_retry==#tool.writer_calls and tool.writer_calls[create_retry].target==3,
   "retry retains the selected New destination")
 local created_phrase={id=31,name="ACID created phrase"}
@@ -529,7 +538,7 @@ live_control(builder):fire(false)
 popup(builder,290):fire(1)
 popup(builder,360):fire(1)
 local stale_request=#tool.writer_calls+1
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==stale_request)
 pitch_key(builder,5):fire()
 local dirty_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
@@ -570,7 +579,7 @@ end
 
 popup(builder,360):fire(#popup(builder,360).items)
 local blocker_request=#tool.writer_calls+1
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==blocker_request,"New destination admits blocker fixture request")
 assert(context:record_blocker(tool.writer_calls[blocker_request].options.token,{reason="fixture recovery evidence"}))
 complete(blocker_request,"error")
@@ -591,7 +600,7 @@ assert(builder.views.acid_status.text:find("ACID cannot safely update this song.
   not builder.views.acid_status.text:find("Check the sequence before generating.",1,true),
   "a draft-load failure cannot conceal the current song blocker or offer generation as a remedy")
 local blocked_count=#tool.writer_calls
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==blocked_count,"a reopened integrity blocker still rejects generation")
 
 -- A new document warns about volatile drafts from the tracked old song, and a

@@ -12,7 +12,7 @@ Executed checks and remaining limits are recorded in
    song and compare draft and committed source separately.
 2. Return to the clean fixture. Enable **Live Edit** without editing. Compare
    phrase cells, inventory and persisted source: arming alone must not write.
-   Switch Program/Grid, pages, workspace and targets. Navigation
+   Switch Program/Grid, pages and targets. Navigation
    must not generate; returning to a dirty target restores its own draft.
 3. Edit PITCH, octave, ACCENT, SLIDE, TIME and output settings individually.
    Each accepted musical edit uses the guarded synchronous writer and updates
@@ -22,7 +22,7 @@ Executed checks and remaining limits are recorded in
 4. Make several successive edits and switch targets between settled callbacks.
    Verify each target's source/output association and no stale write to another
    target. Disable Live Edit, edit again and verify unchanged output until
-   **Regenerate**. Check ACID Undo/Redo with Live Edit both off and on; record
+   **Generate**. Check ACID Undo/Redo with Live Edit both off and on; record
    native host Undo separately, including metadata-only limitations.
 5. Select **New Phrase**, edit with Live Edit off, then explicitly **Generate**.
    Only the selected New destination permits creation. Select a foreign,

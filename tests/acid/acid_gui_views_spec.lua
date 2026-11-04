@@ -406,7 +406,17 @@ end
 local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
 local view=builder.views.acid_editor_view
-assert(program.visible and not grid.visible)
+local editor_holder=assert(builder.views.acid_editor_view_holder)
+local entry_holder=assert(builder.views.acid_entry_holder)
+assert(#editor_holder.views==1 and rawequal(editor_holder.views[1],program) and
+  rawequal(builder.parent_of(program),editor_holder) and builder.parent_of(grid)==nil,
+  "Program is mounted alone in the content-sized editor holder")
+assert(#entry_holder.views==1 and
+  rawequal(entry_holder.views[1],builder.parent_of(builder.views.acid_program_reenter_pitch)),
+  "Program entry controls are mounted while Program is selected")
+assert(builder.views.acid_output_panel and builder.views.acid_workspace==nil and
+  builder.views.acid_workspace_tabs==nil,
+  "Output is part of the root without workspace navigation")
 assert(builder.views.acid_program_pitch_summary==nil and builder.views.acid_program_time_summary==nil,
   "selected-position summary rows are not constructed")
 assert(builder.views.acid_scale_detail==nil,
@@ -483,8 +493,9 @@ local function navigation_snapshot()
     redo=button("Redo").active,drafts=draft_writes}
 end
 local navigation=navigation_snapshot()
-assert(not control("acid_program_stage_status").visible,
-  "idle entry does not show staging feedback")
+local stage_controls=builder.parent_of(control("acid_program_stage_status"))
+assert(stage_controls and builder.parent_of(stage_controls)==nil,
+  "idle entry keeps staging feedback detached from the root")
 control("acid_program_select_time_02"):fire()
 local initial_time_label=control("acid_program_select_time_02").text
 for _,assignment in ipairs({{"TIE","Tie"},{"REST","Rest"}}) do
@@ -502,11 +513,44 @@ assert(control("acid_program_select_time_02").text==initial_time_label,
 control("acid_program_select_time_01"):fire()
 navigation=navigation_snapshot()
 view:fire(2)
+assert(#editor_holder.views==1 and rawequal(editor_holder.views[1],grid) and
+  builder.parent_of(program)==nil and rawequal(builder.parent_of(grid),editor_holder) and
+  #entry_holder.views==0 and entry_holder.size.width==1 and entry_holder.size.height==1,
+  "Grid selection detaches Program and collapses the inactive entry row")
 assert(selection_snapshot()==initial)
-assert_navigation_neutral(navigation,"workspace view navigation")
+assert_navigation_neutral(navigation,"editor view navigation")
 view:fire(1)
+assert(#editor_holder.views==1 and rawequal(editor_holder.views[1],program) and
+  builder.parent_of(grid)==nil and #entry_holder.views==1,
+  "Program selection remounts its panel and entry controls exactly once")
 assert(selection_snapshot()==initial)
-assert_navigation_neutral(navigation,"return workspace navigation")
+assert_navigation_neutral(navigation,"return editor view navigation")
+local function membership_counts()
+  local child_count,notifier_count=0,0
+  for _,node in ipairs(builder.nodes) do
+    child_count=child_count+#node.views
+    notifier_count=notifier_count+#node.notifiers
+  end
+  return #builder.nodes,child_count,notifier_count
+end
+local EDITOR_SWITCH_CYCLES=8
+local stable_nodes,stable_children,stable_notifiers=membership_counts()
+for _=1,EDITOR_SWITCH_CYCLES do
+  view:fire(2)
+  assert(#editor_holder.views==1 and rawequal(editor_holder.views[1],grid) and
+    builder.parent_of(program)==nil and rawequal(builder.parent_of(grid),editor_holder) and
+    #entry_holder.views==0,
+    "repeated Grid selection keeps one editor and no entry row")
+  view:fire(1)
+  assert(#editor_holder.views==1 and rawequal(editor_holder.views[1],program) and
+    builder.parent_of(grid)==nil and rawequal(builder.parent_of(program),editor_holder) and
+    #entry_holder.views==1,
+    "repeated Program selection keeps one editor and one entry row")
+  local current_nodes,current_children,current_notifiers=membership_counts()
+  assert(current_nodes==stable_nodes and current_children==stable_children and
+    current_notifiers==stable_notifiers,
+    "editor switching does not grow widgets, child arrays or notifiers")
+end
 local toolbar=control("acid_editor_toolbar")
 local toolbar_controls={view,button("Undo"),button("Redo"),control("acid_clipboard_scope"),
   control("acid_clipboard_copy"),control("acid_clipboard_paste")}
@@ -519,14 +563,32 @@ assert(control("acid_clipboard_copy").active~=false and not control("acid_clipbo
 for _,node in ipairs(builder.nodes) do
   assert(node.text~="Pattern / Copy","retired Pattern / Copy tab is not constructed")
 end
-text_control("Output"):fire()
-assert(control("acid_output_panel").visible and builder.views.acid_extended_panel==nil,
-  "the remaining workspace tab selects Output")
+assert(builder.parent_of(control("acid_output_panel"))==dialog.content and
+  builder.views.acid_extended_panel==nil,
+  "Output is attached directly to the content column")
 assert(control("acid_operation_open") and control("acid_mask_enabled"),
   "operations and MASK are available outside the workspace tabs")
 assert(control("acid_output_policy").active and control("acid_pb_range").active,
   "Output provides active phrase policy and PB Range controls")
-assert_navigation_neutral(navigation,"retained workspace tab navigation")
+assert_navigation_neutral(navigation,"retained output controls")
+local function child_index(parent,child)
+  for index,item in ipairs(parent.views) do
+    if rawequal(item,child) then return index end
+  end
+end
+local root=dialog.content
+assert(child_index(root,editor_holder)<child_index(root,control("acid_time_assignment")) and
+  child_index(root,control("acid_time_assignment"))<child_index(root,entry_holder) and
+  child_index(root,entry_holder)<child_index(root,control("acid_scale_panel")) and
+  child_index(root,control("acid_scale_panel"))<child_index(root,control("acid_operations_panel")) and
+  child_index(root,control("acid_operations_panel"))<child_index(root,control("acid_output_panel")),
+  "the root follows editor, TIME assignment, entry, SCALE, OPERATIONS and OUTPUT order")
+assert(root.size==nil and editor_holder.size==nil and program.size==nil and grid.size==nil and
+  control("acid_output_panel").size==nil,
+  "content-sized sections have no fixed dimensions")
+for _,node in ipairs(builder.nodes) do
+  assert(node.kind~="stack","fixed-height workspace stack is absent")
+end
 for _=1,20 do tool.app_idle_observable:fire() end
 assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
 
@@ -938,7 +1000,7 @@ assert(not button("Redo").active,"new edits discard the redo branch")
 phrase_popup:fire(1)
 control("acid_clipboard_copy"):fire()
 assert(control("acid_clipboard_paste").active==true,"matching clipboard is eligible before generation")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 assert(generation_request.target_index==1,"the first owned phrase can be generated in place")
 assert(control("acid_clipboard_paste").active==false,"pending generation disables Paste immediately")
 generation_callback(terminal_result(generation_request,"committed","Phrase 01 generated."))
@@ -958,7 +1020,7 @@ assert(rebound_projections>before_settings+3,"phrase rebinding invalidates the p
 builder.views.acid_editor_view:fire(1)
 assert(projection_calls==rebound_projections,"rebound projection is reused during navigation")
 assert(pb_range_popup.value==4,"phrase selection restores its stored PB Range")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 assert(generation_request and generation_request.instrument_index==1)
 assert(generation_request.target_index==2,
   "generation must pass the selected phrase index")
@@ -982,7 +1044,7 @@ phrase_popup:fire(3)
 assert(pb_range_popup.value==1,"a new phrase starts with PB Range Off")
 pb_range_popup:fire(4)
 program_key(3):fire()
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 assert(generation_request.target_index==3,"new phrase generation targets append slot")
 assert(generation_request.options.pb_range==24,"new phrase render captures its selected PB Range")
 pb_range_popup:fire(5)
@@ -1186,7 +1248,7 @@ live_checkbox:fire(true)
 select_native_phrase(2)
 assert(render_calls==before_queued_generate and phrase_popup.value==1,
   "arming and queued native selection remain read-only")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 assert(render_calls==before_queued_generate+1 and generation_request.target_index==2,
   "explicit Generate applies queued native selection and renders while Live Edit is armed")
 generation_callback(terminal_result(generation_request,"committed","Queued destination generated."))
@@ -1203,7 +1265,7 @@ assert(#control("acid_feedback").views==0 and
 phrase_popup:fire(2)
 assert(#control("acid_feedback").views==0,
   "repeated target refreshes leave the empty holder detached")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 generation_callback(terminal_result(generation_request,"committed","Explicit edit confirmation fixture."))
 assert(control("acid_status").text:find("Phrase updated.",1,true),
   "manual Generate presents a confirmation before a later source edit")
@@ -1212,21 +1274,21 @@ local timing_control=control("acid_timing")
 timing_control:fire(timing_control.value==1 and 2 or 1)
 assert(not control("acid_status").text:find("Phrase updated.",1,true),
   "a later ordinary source edit clears the superseded Generate confirmation")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 generation_callback(terminal_result(generation_request,"committed","Confirmation before Undo."))
 assert(control("acid_status").text:find("Phrase updated.",1,true),
   "manual Generate confirms before Undo")
 button("Undo"):fire()
 assert(not control("acid_status").text:find("Phrase updated.",1,true),
   "Undo clears the superseded Generate confirmation")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 generation_callback(terminal_result(generation_request,"committed","Confirmation before Redo."))
 assert(control("acid_status").text:find("Phrase updated.",1,true),
   "manual Generate confirms before Redo")
 button("Redo"):fire()
 assert(not control("acid_status").text:find("Phrase updated.",1,true),
   "Redo clears the superseded Generate confirmation")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 generation_callback(terminal_result(generation_request,"failed","Injected generation failure."))
 assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
   "a failed Generate keeps its retryable error")
@@ -1236,7 +1298,7 @@ assert(control("acid_status").text:find("Couldn't update the phrase. Try again."
 button("Redo"):fire()
 assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
   "Redo retains unresolved generation failure feedback")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 generation_callback(terminal_result(generation_request,"approximate","Approximation fixture."))
 assert(control("acid_status").text:find("Phrase updated with a musical approximation.",1,true),
   "an approximate Generate keeps its warning")
@@ -1325,7 +1387,7 @@ program_key(committed_key==0 and 2 or 1):fire()
 assert(not sequencer.same_source(saved_draft(),committed_entries[21].source),
   "precondition: edited source differs from the verified phrase source")
 local source_before_missing_identity=assert(sequencer.copy_source(saved_draft()))
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 local missing_phrase_result=terminal_result(generation_request,"committed",
   "verified completion without destination identity")
 assert(missing_phrase_result.kind=="success" and missing_phrase_result.verified,
@@ -1637,12 +1699,21 @@ do
     assert(not control("acid_operation_"..name).active,"staging disables inline parameter: "..name)
   end
   assert(not control("acid_random_repeat").active,"staging disables Repeat last")
+  local stage_controls=builder.parent_of(control("acid_program_stage_status"))
+  local entry_controls=builder.parent_of(control("acid_program_reenter_pitch"))
+  assert(#entry_holder.views==1 and rawequal(entry_holder.views[1],stage_controls) and
+    builder.parent_of(entry_controls)==nil,
+    "active entry mounts status and navigation once and detaches entry launch controls")
   before=navigation_snapshot()
   control("acid_operation_open"):fire()
   assert(draft_writes==before.drafts and render_calls==before.writes and
     control("acid_program_discard").active,"random Apply respects pending stage guard")
   app.show_prompt=function()return "Cancel"end
   control("acid_program_discard"):fire()
+  assert(#entry_holder.views==1 and
+    rawequal(entry_holder.views[1],builder.parent_of(control("acid_program_reenter_pitch"))) and
+    builder.parent_of(stage_controls)==nil,
+    "canceling entry restores the launch row and detaches staging controls")
   local main_dialog=dialog
   control("acid_label_rename"):fire()
   writes=draft_writes
@@ -1681,15 +1752,14 @@ do
   for index,name in ipairs(operation_names) do
     assert(operation.items[index]==name,"operation selector order matches its operation ID")
   end
-  local output_tab_count=0
   for _,node in ipairs(builder.nodes) do
     if node.kind=="button" then
       assert(node.text~="Extended / Clear","retired operations tab remains")
-      if node.text=="Output" then output_tab_count=output_tab_count+1 end
+      assert(node.text~="Output","workspace navigation button remains")
     end
   end
-  assert(builder.views.acid_extended_panel==nil and output_tab_count==1,
-    "only Output remains in the temporary workspace tab")
+  assert(builder.views.acid_extended_panel==nil and builder.views.acid_workspace_tabs==nil,
+    "workspace navigation and its alternate panel are absent")
   assert(contains(scale_panel,control("acid_scale_root")) and
     contains(scale_panel,control("acid_scale_category")) and
     contains(scale_panel,control("acid_scale_choice")) and

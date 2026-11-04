@@ -16,7 +16,8 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
    summaries or source-interpretation diagnostics. Each view has Audition
    beside its PITCH controls; Note/Tie/Rest sit below its TIME positions.
 5. Confirm Enter pitches/Enter timing appear in Program during normal editing.
-   During entry, launch controls disappear and Back, Enter and advance, Restart,
+   The launch row follows the TIME assignment controls. During entry, launch
+   controls disappear and Back, Enter and advance, Restart,
    Finish and Cancel appear with cursor progress. Restart preserves entered
    markers; Cancel requires confirmation and leaves source/history unchanged.
    Switch to Grid and back: progress and Finish/Cancel remain reachable, Grid
@@ -29,7 +30,9 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
    remain readable. Successful Live Edit stays quiet; a new edit clears an old
    explicit success confirmation while unresolved warnings remain visible.
 7. Compare dialog height, spacing and text clipping in both views at the
-   display scaling used for normal work, including every workspace tab.
+   display scaling used for normal work. Confirm no workspace tabs or blank
+   reserved area remain. Expand entry, random parameters and multiline feedback;
+   controls must stay reachable and inactive rows must collapse.
 8. Confirm Instrument precedes Phrase, Rename and Duplicate. Select New Phrase
    and an owned phrase; confirm native selection and the accepted name agree.
    Attempt destination changes during entry and an unresolved rename attempt;
@@ -69,3 +72,12 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
     shows seed/range; only Randomize TIME shows seed/weights. Apply with seed A,
     change the field to B and Repeat last: it uses A with current settings and
     leaves B displayed. Repeated parameter changes must leave no blank rows.
+
+16. Confirm OUTPUT follows OPERATIONS: Mode and Bend range, then Live Edit and
+    Generate. Hover Bend range for receiver matching, channel-wide bend and
+    isolated monophonic routing guidance, including Off behavior. No Retry Live
+    Edit button remains. Arm Live Edit and navigate without writing; edit once,
+    then verify one protected write. After an ordinary write failure, Generate
+    retries through normal admission. New Phrase creates once; subsequent
+    Generate updates that exact owned phrase. Stale or blocked targets must
+    never append, reroute or clear safeguards.

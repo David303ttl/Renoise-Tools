@@ -514,6 +514,15 @@ render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnost
 assert(status.text:find("Couldn't update the phrase. Try again.",1,true) and
   not status.text:find(long_diagnostic,1,true),
   "current generation failure uses a safe message instead of request diagnostics")
+assert(live_checkbox.value,"a failed Live Edit leaves the user-armed setting enabled")
+local manual_retry=#tool.writer_calls+1
+button(builder,"Generate"):fire()
+assert(#tool.writer_calls==manual_retry and tool.writer_calls[manual_retry].request.trigger=="manual",
+  "Generate explicitly retries a failed Live Edit through manual admission")
+render_callbacks[manual_retry](terminal_result(tool.writer_calls[manual_retry],"committed","manual retry"))
+assert(committed_entries[safety_append.id] and
+  status.text=="Edits to the previous phrase could not be saved with the song.",
+  "manual Generate retries the write while preserving the unresolved save warning")
 
 local before_reset=#render_callbacks
 pitch_key(builder,3):fire()

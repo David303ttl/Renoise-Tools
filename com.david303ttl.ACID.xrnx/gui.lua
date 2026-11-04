@@ -173,7 +173,7 @@ local RANDOM_WEIGHT_MAX=1000
 local RANDOM_NOTE_MIN,RANDOM_NOTE_MAX=24,60
 local RANDOM_FIELD_WIDTH=90
 local TIMING_CHOICE_WIDTH=125
-local WORKSPACE_HEIGHT=248
+local SECTION_SPACING,OUTPUT_CONTROL_SPACING=4,8
 local FEEDBACK_WIDTH,FEEDBACK_SPACING=820,2
 local FEEDBACK_LINE_HEIGHT,FEEDBACK_PADDING=20,8
 local FEEDBACK_EMPTY_HEIGHT=1
@@ -209,7 +209,6 @@ function M.show()
   local pattern
   local pitch_page,time_page=1,1
   local selected_pitch,selected_step=1,1
-  local workspace_tab=1
   local updating=false
   local scale_state={root=0,follow=false}
   local feedback={issues={},confirmation=nil,previous_save_warning=false,previous_save_context=nil}
@@ -484,11 +483,13 @@ function M.show()
       end
       update()
     end}
-  local program_panel,grid_panel
+  local program_panel,grid_panel,editor_panel_holder,entry_holder
+  local mounted_editor_panel,mounted_entry_view
+  local refresh_layout
   local ui={program={pitch_selectors={},time_selectors={},pitch_pages={},time_pages={},
       key_buttons={},octave_buttons={}},
     grid={key_buttons={},octave_buttons={}},time_assignment={},time_names={N="Note",T="Tie",R="Rest"},
-    workspace={panels={},tabs={}},mask={classes={}}}
+    mask={classes={}}}
   local program_accent,program_slide,program_c_plus,grid_c_plus
   local pitch_length_popup=vb:popup{id="acid_pitch_length",items=length_items,width=78,value=sequencer.PAGE_SIZE}
   local timing_popup=vb:popup{id="acid_timing",items={"Straight (1/16)","Triplet (1/8)"},width=TIMING_CHOICE_WIDTH,value=1}
@@ -498,7 +499,8 @@ function M.show()
   for index,value in ipairs(pb_range_values) do
     pb_range_items[index]=value==0 and "Off" or string.format("±%d",value)
   end
-  local pb_range_popup=vb:popup{id="acid_pb_range",items=pb_range_items,width=92,value=1}
+  local pb_range_popup=vb:popup{id="acid_pb_range",items=pb_range_items,width=92,value=1,
+    tooltip="Off retains receiver-controlled portamento. A selected range assumes the receiver uses the same range. Pitch bend affects the entire MIDI channel; use isolated monophonic routing. ACID cannot configure or detect the receiver range."}
   local pitch_page_buttons,time_page_buttons={},{}
   local pitch_cells,pitch_headers,pitch_columns,time_cells,time_headers={},{},{},{},{}
   local accent=vb:checkbox{value=false}
@@ -720,8 +722,6 @@ function M.show()
     if program_audition_button then render(program_audition_button,"active",audition_active) end
     if grid_audition_button then render(grid_audition_button,"active",audition_active) end
     if stage_status then
-      render(stage_status,"visible",stage~=nil)
-      render(entry_navigation,"visible",stage~=nil)
       render(stage_status,"text",stage and ((stage.memory=="pitch" and "Pitch" or "Timing").." "..
         tostring(stage.cursor).." of "..tostring(#stage.target_positions)..(editor_view==2 and
         "; return to Program to edit or reveal a missing position" or "")) or "")
@@ -730,8 +730,8 @@ function M.show()
       render(stage_actions.restart,"active",stage~=nil)
       render(stage_actions.finish,"active",stage~=nil and first_missing_position()==nil)
       render(stage_actions.cancel,"active",stage~=nil)
-      render(entry_controls,"visible",stage==nil and editor_view==1)
     end
+    if refresh_layout then refresh_layout() end
   end
   local function refresh_clipboard()
     if clipboard.choice then
@@ -748,8 +748,6 @@ function M.show()
     local projection=project()
     refresh_stage()
     refresh_clipboard()
-    if program_panel then render(program_panel,"visible",editor_view==1) end
-    if grid_panel then render(grid_panel,"visible",editor_view==2) end
     render(pitch_length_popup,"value",pattern.pitch_length or sequencer.PAGE_SIZE)
     render(pitch_length_popup,"active",true)
     render(timing_popup,"value",pattern.timing_mode=="triplet" and 2 or 1)
@@ -870,10 +868,6 @@ function M.show()
         and colors.selected or colors.idle)
       render(button,"active",selected_step<=pattern.length and (not stage or
         (editor_view==1 and stage.memory=="time" and selected_step<=#stage.target_positions)))
-    end
-    for tab,panel in ipairs(ui.workspace.panels) do
-      render(panel,"visible",tab==workspace_tab)
-      render(ui.workspace.tabs[tab],"color",tab==workspace_tab and colors.selected or colors.idle)
     end
     if ui.mask.enabled then
       render(ui.mask.enabled,"value",pattern.scale_mask_enabled)
@@ -1719,7 +1713,7 @@ function M.show()
     program_octave_row:add_child(ui.program.octave_buttons[index])
     grid_octave_row:add_child(ui.grid.octave_buttons[index])
   end
-  stage_status=vb:text{id="acid_program_stage_status",size={width=820,height=18},text="",font="bold"}
+  stage_status=vb:text{id="acid_program_stage_status",text="",font="bold"}
   local function stage_navigation(action)
     if not stage then return end
     if not valid_stage() then report_stale_stage();return end
@@ -1765,7 +1759,6 @@ function M.show()
   program_audition_button=vb:button{id="acid_audition",text="Audition",notifier=audition_pitch}
   grid_audition_button=vb:button{id="acid_grid_audition",text="Audition",notifier=audition_pitch}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
-    entry_controls,
     vb:text{text="PITCH",font="bold"},
     program_pitch_page_row,selector_rows(ui.program.pitch_selectors),
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},program_keyboard},
@@ -1782,6 +1775,27 @@ function M.show()
       vb:text{text="ACCENT"},accent,vb:text{text="SLIDE"},slide,grid_c_plus,grid_audition_button},
     vb:text{text="TIME",font="bold"},
     time_pages,time_grid}
+  editor_panel_holder=vb:column{id="acid_editor_view_holder",spacing=SECTION_SPACING,program_panel}
+  mounted_editor_panel=program_panel
+  local stage_controls=vb:column{spacing=SECTION_SPACING,stage_status,entry_navigation}
+  entry_holder=vb:column{id="acid_entry_holder",spacing=SECTION_SPACING}
+  refresh_layout=function()
+    local next_panel=editor_view==1 and program_panel or grid_panel
+    if not rawequal(next_panel,mounted_editor_panel) then
+      editor_panel_holder:remove_view(mounted_editor_panel)
+      editor_panel_holder:add_view(next_panel)
+      mounted_editor_panel=next_panel
+    end
+    local next_entry=stage and stage_controls or (editor_view==1 and entry_controls or nil)
+    if not rawequal(next_entry,mounted_entry_view) then
+      if mounted_entry_view then entry_holder:remove_view(mounted_entry_view) end
+      if next_entry then entry_holder:add_view(next_entry) end
+      mounted_entry_view=next_entry
+      if not mounted_entry_view then
+        entry_holder.size={width=EMPTY_HOLDER_WIDTH,height=EMPTY_HOLDER_HEIGHT}
+      end
+    end
+  end
   clipboard.choice=vb:popup{id="acid_clipboard_scope",items={"PITCH","TIME","Both"},value=1,
     notifier=function() if not updating then release_audition();update() end end}
   local copy_button=vb:button{id="acid_clipboard_copy",text="Copy",notifier=function()
@@ -2115,29 +2129,30 @@ function M.show()
     vb:text{text="OPERATIONS",font="bold"},
     vb:row{spacing=6,operation_choice,operation_scope,operation_button},parameter_holder}
   end
-  local output_panel=vb:column{id="acid_output_panel",spacing=4,
+  local generate_button=vb:button{id="acid_generate",text="Generate",notifier=function()
+    if guard_stage() then return end
+    if not current_session() then
+      feedback.set_issue("destination","document_changed",nil,feedback.song_context());return
+    end
+    apply_pending_selected_phrase_selection()
+    local projection=project()
+    if projection.error then
+      local e=projection.error
+      if e.step then choose_time(e.step) end
+      if e.pitch_index then choose_pitch(e.pitch_index) end
+      set_projection_issue(e)
+      return
+    end
+    clear_resolved_input()
+    local accepted=runtime:request_generation("manual")
+    refresh_clipboard()
+    if not accepted then feedback.request_failure("generation",false) end
+  end}
+  local output_panel=vb:column{id="acid_output_panel",spacing=SECTION_SPACING,
     vb:text{text="OUTPUT",font="bold"},
-    vb:row{spacing=8,vb:text{text="Phrase output"},playback_popup,
-      vb:text{text="PB Range"},pb_range_popup},
-    vb:text{text="Assumes the receiver's matching bend range; pitch bend is channel-wide. Use isolated monophonic routing."}}
-  local tab_names={"Output"}
-  local tab_row=vb:row{spacing=4}
-  for index,name in ipairs(tab_names) do
-    local tab=index
-    ui.workspace.tabs[index]=vb:button{width=150,text=name,notifier=function()
-      release_audition();workspace_tab=tab
-      update()
-    end}
-    tab_row:add_child(ui.workspace.tabs[index])
-  end
-  ui.workspace.panels={output_panel}
-  local workspace=vb:column{spacing=4,tab_row,
-    vb:stack{autosize=false,size={width=820,height=WORKSPACE_HEIGHT},views={output_panel}}
-  }
-  for _,panel in ipairs(ui.workspace.panels) do
-    panel.origin={0,0}
-    panel.size={width=820,height=WORKSPACE_HEIGHT}
-  end
+    vb:row{spacing=OUTPUT_CONTROL_SPACING,vb:text{text="Mode"},playback_popup,
+      vb:text{text="Bend range"},pb_range_popup},
+    vb:row{spacing=OUTPUT_CONTROL_SPACING,vb:text{text="Live Edit"},live_checkbox,generate_button}}
   local reset_button=vb:button{id="acid_pattern_reset",text="Reset pattern",notifier=function()
     if guard_stage() then return end
     if not ui.admit_operation() then return end
@@ -2161,38 +2176,10 @@ function M.show()
     vb:row{id="acid_editor_toolbar",spacing=8,
       vb:text{text="Editor"},view_popup,undo_button,redo_button,
       vb:text{text="Copy scope"},clipboard.choice,copy_button,clipboard.paste_button},
-    stage_status,program_panel,grid_panel,entry_navigation,
-    vb:row{spacing=5,ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
-    scale_panel,operations_panel,workspace,
-    vb:row{spacing=8,vb:text{text="Live Edit (automatic regeneration)"},live_checkbox,
-      vb:button{text="Retry Live Edit",notifier=function()
-        if guard_stage() then return end
-        if runtime:revision_state().armed then
-          local accepted=runtime:request_generation("live")
-          refresh_clipboard()
-          if not accepted then feedback.request_failure("generation",false) end
-        end
-      end}},
-    vb:row{spacing=8,
-      vb:button{text="Generate / Regenerate ACID Phrase",notifier=function()
-        if guard_stage() then return end
-        if not current_session() then
-          feedback.set_issue("destination","document_changed",nil,feedback.song_context());return
-        end
-        apply_pending_selected_phrase_selection()
-        local projection=project()
-        if projection.error then
-          local e=projection.error
-          if e.step then choose_time(e.step) end
-          if e.pitch_index then choose_pitch(e.pitch_index) end
-          set_projection_issue(e)
-          return
-        end
-        clear_resolved_input()
-        local accepted=runtime:request_generation("manual")
-        refresh_clipboard()
-        if not accepted then feedback.request_failure("generation",false) end
-      end}},
+    editor_panel_holder,
+    vb:row{id="acid_time_assignment",spacing=5,
+      ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
+    entry_holder,scale_panel,operations_panel,output_panel,
     feedback.holder}
   select_instrument(selected_instrument)
   if scale_state.load_error then

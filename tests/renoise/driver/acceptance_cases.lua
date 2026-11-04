@@ -982,7 +982,7 @@ local function run_revision_undo_prepare(done, action_mode)
   end
   local key_view = state.controls.acid_program_key_01
   local key_callback = state.callbacks.acid_program_key_01
-  local generate_callback = state.callbacks["Generate / Regenerate ACID Phrase"]
+  local generate_callback = state.callbacks.acid_generate
   local live_control = state.controls.acid_live_edit
   local live_callback = state.callbacks.acid_live_edit
   local phrase_choice = state.callbacks.acid_phrase_choice
@@ -2953,13 +2953,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       elseif name=="button" then
         if properties.text=="Undo" then return "acid_undo" end
         if properties.text=="Redo" then return "acid_redo" end
-        for index,label in ipairs({"Output"}) do
-          if properties.text==label then return "acid_workspace_tab_"..index end
-        end
         if properties.text=="Previous TIME" then return "acid_previous_time" end
         if properties.text=="Next TIME" then return "acid_next_time" end
-        if properties.text=="Retry Live Edit" then return "acid_retry_live" end
-        if properties.text=="Generate / Regenerate ACID Phrase" then return "acid_generate" end
         if properties.text=="NOTE" then return "acid_time_command_note" end
         if properties.text=="TIE" then return "acid_time_command_tie" end
         if properties.text=="REST" then return "acid_time_command_rest" end
@@ -4187,7 +4182,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     if not selected_time_ok then return nil,selected_time_error end
     actions[#actions+1]="time-position"
     local grid_ok,grid_error=run_value("grid-view","acid_editor_view",2,phrase,function()
-      return controls.acid_grid_panel.visible==true,"Grid view did not update panel visibility"
+      return rawequal(controls.acid_editor_view_holder.views[1],controls.acid_grid_panel),"Grid view did not mount its panel"
     end,false)
     if not grid_ok then return nil,grid_error end
     local grid_width_before=controls.acid_grid_panel.width
@@ -4271,26 +4266,18 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if not controls[id] then return nil,"Editor toolbar control is missing: "..id end
     end
     metrics.gui_toolbar_verified=true
-    local workspace_panels={"acid_output_panel"}
-    for index,panel_id in ipairs(workspace_panels) do
-      local tab_ok,tab_error=run_button("workspace-tab-"..index,"acid_workspace_tab_"..index,function()
-        return controls[panel_id].visible==true,"Workspace tab did not reveal "..panel_id
-      end)
-      if not tab_ok then return nil,tab_error end
-      if controls.acid_grid_panel.width~=grid_width_before then
-        return nil,"Grid panel width changed after workspace tab selection"
-      end
+    if not controls.acid_output_panel or controls.acid_output_panel.visible~=true then
+      return nil,"Output section is unavailable"
     end
-    metrics.gui_workspace_tabs_verified=#workspace_panels
     metrics.gui_output_controls_available=controls.acid_output_policy.active~=false and
       controls.acid_pb_range.active~=false
     if not metrics.gui_output_controls_available then
-      return nil,"Output tab controls are unavailable"
+      return nil,"Output controls are unavailable"
     end
     local grid_pitch_ok,grid_pitch_error=run_button("grid-pitch-cell","acid_grid_pitch_02")
     if not grid_pitch_ok then return nil,grid_pitch_error end
     local program_view_ok,program_view_error=run_value("program-view","acid_editor_view",1,phrase,function()
-      return controls.acid_program_panel.visible==true,"Program view did not update panel visibility"
+      return rawequal(controls.acid_editor_view_holder.views[1],controls.acid_program_panel),"Program view did not mount its panel"
     end,false)
     if not program_view_ok then return nil,program_view_error end
     local pitch_page_reselect_ok,pitch_page_reselect_error=select_grid_position("pitch",2,2)
@@ -4621,7 +4608,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         local navigation_data=song.tool_data
         local navigation_phrase=assert(ownership.snapshot(phrase))
         for _,id in ipairs({"acid_pitch_page_2","acid_pitch_page_1","acid_time_page_2",
-            "acid_time_page_1","acid_workspace_tab_1"}) do callbacks[id]() end
+            "acid_time_page_1"}) do callbacks[id]() end
         value("acid_editor_view",2);value("acid_editor_view",1)
         value("acid_phrase_choice",new_phrase_choice_index)
         value("acid_phrase_choice",phrase_index)
@@ -7230,6 +7217,7 @@ local function run_production_session(done,case_name,options,json)
     assert(not context:integrity_state().blocked,"runtime integrity blocked after "..id)
   end
   local function alias(kind,p)
+    if p.id=="acid_generate" then return "generate" end
     if p.id then return p.id end
     if kind=="valuebox" then return "last_step" end
     if kind=="popup" then
@@ -7238,7 +7226,6 @@ local function run_production_session(done,case_name,options,json)
       if p.items and #p.items==32 and p.items[1]=="1" then return "pitch_span" end
       if p.items and p.items[1]=="Play Once" then return "policy" end
     end
-    if kind=="button" and p.text=="Generate / Regenerate ACID Phrase" then return "generate" end
     if kind=="button" then
       for index,key_name in ipairs({"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}) do
         if p.text==key_name then return "acid_grid_key_button_"..index end
@@ -7328,7 +7315,7 @@ local function run_production_session(done,case_name,options,json)
     assert(context and dialog and dialog.visible,"production GUI capture failed")
     selected_color=controls.acid_program_pitch_page_1.color
     invoke("acid_editor_view",2)
-    assert(controls.acid_grid_panel.visible==true,"production GUI did not enter Grid view")
+    assert(rawequal(controls.acid_editor_view_holder.views[1],controls.acid_grid_panel),"production GUI did not enter Grid view")
   end
   local function select_target(target)
     local raw=song.tool_data

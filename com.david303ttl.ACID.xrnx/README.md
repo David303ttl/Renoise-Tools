@@ -108,12 +108,14 @@ PB Range into ACID. Navigation and restoring a saved draft never generate music.
 Native instrument and phrase changes refresh the choices without inferring
 that a copied phrase belongs to ACID.
 
-Manual Generate and Regenerate remain available. Live Edit optionally applies
-each valid source/settings edit immediately through the single serialized,
+In **OUTPUT**, Mode and Bend range precede Live Edit and **Generate**.
+Generate creates a New Phrase or updates the selected owned phrase. Live Edit
+optionally applies each valid source/settings edit through the single serialized,
 synchronous writer. The write finishes inside the initiating user action; if a
 writer job is already active, only the latest pending trigger is retained.
 Undo and Redo cover source edits and phrase output policy and PB Range. A failed
-Live Edit remains armed; correct the source or use Retry Live Edit. Enabling
+Live Edit remains armed; resolve the reported issue, then use **Generate**
+to retry through the usual admission checks. Enabling
 Live Edit arms subsequent edits without writing.
 Label-only changes use ACID Undo/Redo without rendering, source dirtying or a
 phrase revision. Native host Undo for label metadata is not guaranteed.

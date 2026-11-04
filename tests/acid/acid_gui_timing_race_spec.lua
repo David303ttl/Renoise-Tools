@@ -264,7 +264,7 @@ end
 
 local builder,dialog=open_gui()
 local timing=builder.views.acid_timing
-local generate=button(builder,"Generate / Regenerate ACID Phrase")
+local generate=button(builder,"Generate")
 generate:fire()
 local manual=tool.writer_calls[#tool.writer_calls]
 assert(manual.pattern.timing_mode=="straight" and manual.options.token:is_current(),

@@ -294,9 +294,9 @@ button("Undo"):fire()
 assert(current().pitch_events[1].note==40,"Undo requires a fresh invocation")
 begin("pitch")
 answer="Cancel"
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 assert(writes==write_count,"Cancel must abandon Generate")
-button("Generate / Regenerate ACID Phrase"):fire()
+button("Generate"):fire()
 assert(writes==write_count+1,"Generate requires a fresh invocation")
 write_count=writes
 
@@ -312,9 +312,8 @@ local actions={
   function()control("popup",360):fire(2)end,
   function()fire("acid_program_reenter_pitch")end,
   function()fire("acid_program_reenter_time")end,
-  function()button("Generate / Regenerate ACID Phrase"):fire()end,
-  function()fire("acid_live_edit",true)end,
-  function()button("Retry Live Edit"):fire()end
+  function()button("Generate"):fire()end,
+  function()fire("acid_live_edit",true)end
 }
 for _,complete in ipairs({false,true})do
   for _,decision in ipairs({"Stay","Cancel","Finish"})do
@@ -432,7 +431,7 @@ do
   assert(view("acid_program_stage_status").text=="Pitch 18 of 20",
     "progress follows the cursor after skipping an unentered target")
   answer="Stay"
-  button("Generate / Regenerate ACID Phrase"):fire()
+  button("Generate"):fire()
   assert(view("acid_program_select_pitch_05").color[1]==SELECTED_COLOR and
     view("acid_program_stage_status").text=="Pitch 5 of 20" and
     view("acid_program_pitch_page_1").color[1]==SELECTED_COLOR,
@@ -442,7 +441,7 @@ do
   assert(view("acid_program_stage_status").text:find("return to Program",1,true),
     "Grid feedback directs the user to Program while retaining stage progress")
   answer="Stay"
-  button("Generate / Regenerate ACID Phrase"):fire()
+  button("Generate"):fire()
   assert(view("acid_editor_view").value==2 and view("acid_program_stage_status").text:find("return to Program",1,true),
     "blocked Grid Generate stays in Grid and explains where to edit")
   unchanged(canonical,revision_before,saves_before,writes_before)
@@ -505,7 +504,7 @@ cancel_stage("Cancel")
     end
   end
   answer="Stay"
-  button("Generate / Regenerate ACID Phrase"):fire()
+  button("Generate"):fire()
   assert(view("acid_program_select_time_05").color[1]==SELECTED_COLOR and
     view("acid_program_stage_status").text=="Timing 5 of 5" and
     view("acid_program_time_page_1").color[1]==SELECTED_COLOR,
@@ -542,7 +541,7 @@ do
   end
   fresh(source)
   local write_count,save_count,revision=writes,saves,history.revision
-  button("Generate / Regenerate ACID Phrase"):fire()
+  button("Generate"):fire()
   local missing="Cannot generate: choose a pitch for step 1."
   assert(view("acid_status").text==missing and writes==write_count and saves==save_count,
     "projection failure blocks generation before a writer or save")

@@ -306,6 +306,43 @@ Native Scale/Operations layout, import and musical checks in
 unverified for this change. Runtime file layout and package inputs are unchanged;
 no package rebuild is required.
 
+## Task 9 Output and generation
+
+OUTPUT contains Mode, Bend range, Live Edit and one Generate action. Receiver
+range matching, channel-wide bend, isolated monophonic routing and Off guidance
+are in the bend-range tooltip. Permanent Live Edit Retry is removed. Generate
+retains manual admission, entry resolution, current-song and exact-target checks,
+and projection validation. Arming Live Edit does not write.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1 |
+| Failed Live Edit then Generate | Manual request admitted through the retained owner; unresolved save feedback preserved |
+| Destination and lifecycle fixtures | New binding, stale targets, foreign targets and persistent blockers remain protected |
+
+Native output, receiver and Live Edit checks remain unverified for this change.
+
+## Task 10 Content-sized layout
+
+The root contains the header, sequence settings, toolbar, selected editor,
+TIME assignment, entry, SCALE, OPERATIONS, OUTPUT and shared feedback.
+Workspace navigation, panel arrays, fixed origins and the fixed-height stack
+are removed. Editor and entry membership changes reuse existing widgets;
+inactive entry, parameter and feedback holders use the named empty sizes.
+All menu and keybinding callbacks in `main.lua` reach the same `gui.show()`.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1 |
+| Construction and membership | Program/Grid, active entry, random parameters and feedback fixtures passed; repeated editor cycles preserve widget, child and notifier counts |
+| Independent second-pass review | Generation guards, root order, single parenting, holder reset behavior, callbacks and native probe consumers checked; no unresolved defects |
+| Lua 5.1 syntax and `git diff --check` | Passed |
+| Removed references | No workspace state, tab constructors, fixed stack, retired report refreshers or Live Edit Retry in GUI; executable native probes use current controls |
+
+Native screen fit, scaling, expanded-row resizing and playback checks remain
+unverified. Runtime file layout and package inputs are unchanged; no package
+rebuild was required. `gui.lua` is 13 lines smaller than before Tasks 9-10.
+
 ## Baseline
 
 | Item | Evidence |
