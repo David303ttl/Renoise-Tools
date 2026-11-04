@@ -320,18 +320,20 @@ builder,dialog=open_gui()
 phrase_choice=popup(builder,360)
 assert(saved_pitch(11,1).key==1,
   "closing and reopening the editor recovers the phrase one draft")
-assert(builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
-  "reopening establishes the accepted PITCH baseline for the restored source")
 local recovered_status=builder.views.acid_status
 assert(recovered_status.text=="",
   "successful draft restoration leaves shared feedback empty: "..tostring(recovered_status.text))
+builder.views.acid_program_select_pitch_01:fire()
+assert(builder.views.acid_program_select_pitch_01.tooltip:find("key C#",1,true),
+  "reopened Program control reflects the restored pitch")
 pitch_key(builder,3):fire()
-assert(builder.views.acid_program_pitch_summary.tooltip:find("MODIFIED",1,true) and
-  not builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
-  "a post-reopen edit differs from the newly established baseline")
+assert(saved_pitch(11,1).key==2 and
+  builder.views.acid_program_select_pitch_01.tooltip:find("key D",1,true),
+  "a post-reopen pitch edit updates the saved draft and Program control")
 pitch_key(builder,2):fire()
-assert(builder.views.acid_program_pitch_summary.tooltip:find("UNMODIFIED",1,true),
-  "editing the restored draft back to its reopened baseline clears modified")
+assert(saved_pitch(11,1).key==1 and
+  builder.views.acid_program_select_pitch_01.tooltip:find("key C#",1,true),
+  "editing back to the restored pitch updates the saved draft and Program control")
 assert(pb_range_popup(builder).value==2,
   "closing and reopening the editor recovers the phrase one's PB Range")
 tool.app_release_document_observable:fire()

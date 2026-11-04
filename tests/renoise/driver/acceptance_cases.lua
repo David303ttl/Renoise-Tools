@@ -73,6 +73,16 @@ local function same_native_selection(left, right)
     left.instrument_index == right.instrument_index and left.phrase_index == right.phrase_index
 end
 
+local function same_native_color(left, right)
+  if left == nil or right == nil then return false end
+  if type(left) ~= type(right) then return false end
+  if type(left) ~= "table" then return left == right end
+  for index, value in ipairs(left) do
+    if value ~= right[index] then return false end
+  end
+  return #left == #right
+end
+
 local function production_output_matches(snapshot,expected)
   if #snapshot.lines~=#expected.lines then return false,"line inventory" end
   for field,value in pairs(expected.properties) do
@@ -3325,9 +3335,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     phrase_profile_enabled=false
     metrics.gui_phrase_selection_elapsed_ms=(os.clock()-phrase_select_started)*1000
     publish_phrase_profile("gui_phrase_initial_profile")
-    if not controls.acid_program_pitch_summary or not controls.acid_program_time_summary then
+    if not controls.acid_program_select_pitch_01 or not controls.acid_program_select_time_01 then
       close_test_gui()
-      return nil,"GUI Program PITCH/TIME readouts were not captured"
+      return nil,"GUI Program PITCH/TIME selectors were not captured"
     end
     local drafts=require("runtime.draft_cache")
     local persisted=require("renoise.pattern_store")
@@ -3376,7 +3386,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     select_first_pitch_page()
     select_first_pitch()
-    if not tostring(controls.acid_program_pitch_summary.text):find("P01",1,true) then
+    if not same_native_color(controls.acid_program_select_pitch_01.color,
+        controls.acid_program_pitch_page_1.color) then
       close_test_gui()
       return nil,"GUI Program first PITCH selection was not verified"
     end
@@ -3416,8 +3427,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         metrics["gui_"..kind.."_button_color_after"]=type(button_color)=="table" and
           table.concat(button_color,",") or tostring(button_color or "unavailable")
         metrics["gui_"..kind.."_button_text_after"]=control and control.text or "unavailable"
-        metrics["gui_"..kind.."_pitch_readout_after"]=controls.acid_program_pitch_summary.text
-        metrics["gui_"..kind.."_time_readout_after"]=controls.acid_program_time_summary.text
         metrics["gui_"..kind.."_phrase_choice_after"]=controls.acid_phrase_choice.value
         metrics["gui_"..kind.."_instrument_choice_after"]=controls.acid_instrument_choice.value
         metrics["gui_"..kind.."_instrument_native_index_after"]=song.selected_instrument_index
@@ -3515,18 +3524,21 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         suppress_captured_notifiers=false
         callbacks.acid_editor_view(1)
       end
-      local selected=(page-1)*16+cell
-      local readout=kind=="pitch" and controls.acid_program_pitch_summary.text or
-        controls.acid_program_time_summary.text
-      local expected=string.format(kind=="pitch" and "P%02d" or "TIME %02d",selected)
       if previous_view~=1 then
         suppress_captured_notifiers=true
         controls.acid_editor_view.value=previous_view
         suppress_captured_notifiers=false
         callbacks.acid_editor_view(previous_view)
       end
-      if not readout:find(expected,1,true) then
-        return nil,"GUI "..kind.." selector did not update the Program readout"
+      local selector_id=string.format(kind=="pitch" and "acid_program_select_pitch_%02d" or
+        "acid_program_select_time_%02d",cell)
+      local selector=controls[selector_id]
+      if not selector then return nil,"GUI "..kind.." selector was not captured" end
+      local program_page_id=(kind=="pitch" and "acid_program_pitch_page_" or
+        "acid_program_time_page_")..page
+      if not controls[program_page_id] or
+          not same_native_color(selector.color,controls[program_page_id].color) then
+        return nil,"GUI "..kind.." selected position is not highlighted with its page"
       end
       return true
     end
@@ -3538,9 +3550,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         current_key=value-1
         if updated.pitch_events[note_pitch_index].key~=current_key then
           return false,"GUI note callback did not update the source pitch"
-        end
-        if not controls.acid_program_pitch_summary.tooltip:find("/"..tostring(current_key),1,true) then
-          return false,"GUI note callback did not refresh the selected PITCH readout"
         end
         return true
       end)
@@ -3554,9 +3563,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         current_octave=octave_map[value]
         if updated.pitch_events[note_pitch_index].octave~=current_octave then
           return false,"GUI octave callback did not update the source pitch"
-        end
-        if not controls.acid_program_pitch_summary.tooltip:find(string.format("%+d",current_octave),1,true) then
-          return false,"GUI octave callback did not refresh the selected PITCH readout"
         end
         return true
       end)
@@ -3575,10 +3581,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         current_command=expected
         if updated.time_events[2]~=current_command then
           return false,"GUI command callback did not update the source timing"
-        end
-        local command_name=({N="Note",T="Tie",R="Rest"})[current_command]
-        if not controls.acid_program_time_summary.text:find(command_name,1,true) then
-          return false,"GUI command callback did not refresh the selected TIME readout"
         end
         return true
       end)
@@ -7111,6 +7113,7 @@ local function run_production_session(done,case_name,options,json)
   local context_module=require("runtime.context")
   local controls,callbacks,targets,foreign={},{},{},{}
   local context,dialog,suppress,settled,key_handler,midi_input,expected_native_selection
+  local selected_color
   local trace=json.array()
   local original_builder,original_app=renoise.ViewBuilder,renoise.app
   local original_context_new=context_module.new
@@ -7201,8 +7204,7 @@ local function run_production_session(done,case_name,options,json)
   local function invoke(id,value)
     local view,callback=assert(controls[id],"missing control: "..id),assert(callbacks[id],"missing callback: "..id)
     assert(view.active~=false,"inactive control: "..id.."; length="..
-      tostring(controls.last_step and controls.last_step.value).."; time="..
-      tostring(controls.acid_program_time_summary and controls.acid_program_time_summary.text))
+      tostring(controls.last_step and controls.last_step.value))
     local before=native_selection(song)
     expected_native_selection=expected_native_selection or before
     assert(same_native_selection(expected_native_selection,before),
@@ -7252,10 +7254,13 @@ local function run_production_session(done,case_name,options,json)
     invoke(kind=="pitch" and ("acid_pitch_page_"..page) or ("acid_time_page_"..page))
     invoke(string.format(kind=="pitch" and "acid_grid_pitch_%02d" or
       "acid_grid_select_time_%02d",cell))
-    local readout=kind=="pitch" and controls.acid_program_pitch_summary.text or
-      controls.acid_program_time_summary.text
-    local expected=string.format(kind=="pitch" and "P%02d" or "TIME %02d",index)
-    assert(readout:find(expected,1,true),"GUI "..kind.." selection readout mismatch")
+    local selector_id=string.format(kind=="pitch" and "acid_grid_pitch_%02d" or
+      "acid_grid_select_time_%02d",cell)
+    local page_id=(kind=="pitch" and "acid_pitch_page_" or "acid_time_page_")..page
+    assert(controls[selector_id] and controls[page_id] and selected_color and
+      tostring(controls[page_id].text):find("[*]",1,true) and
+      same_native_color(controls[selector_id].color,selected_color),
+      "GUI "..kind.." selection is not highlighted with its page")
   end
   local function capture(id,callback)
     callbacks[id]=callback
@@ -7321,6 +7326,7 @@ local function run_production_session(done,case_name,options,json)
     context_module.new=original_context_new
     assert(ok,err)
     assert(context and dialog and dialog.visible,"production GUI capture failed")
+    selected_color=controls.acid_program_pitch_page_1.color
     invoke("acid_editor_view",2)
     assert(controls.acid_grid_panel.visible==true,"production GUI did not enter Grid view")
   end
@@ -7496,7 +7502,6 @@ local function run_production_session(done,case_name,options,json)
           result.undo_expected_source=canonical_baseline(expected)
           result.undo_actual_source=state and canonical_baseline(state.source) or "pending"
           result.gui_state=require("gui").get_ui_state()
-          result.gui_key=controls.acid_program_pitch_summary.text
           result.selected_instrument_index=song.selected_instrument_index
           result.selected_phrase_index=song.selected_phrase_index
           error("GUI source did not follow native Undo/Redo",0)
@@ -7714,9 +7719,6 @@ local function run_production_session(done,case_name,options,json)
     assert(sequence.same_source(draft,expected) and policy==target.policy and pb==target.pb,
       "dirty draft lost across instrument switches")
     assert(ownership.id(target.phrase)==old_id,"unarmed draft navigation regenerated a phrase")
-    assert(controls.acid_grid_pitch_01.tooltip:find(
-      "key="..expected.pitch_events[1].key,1,true),
-      "GUI did not restore the dirty draft PITCH readout")
     invoke(string.format("acid_grid_key_button_%02d",target.source.pitch_events[1].key+1))
     result.phases.drafts="PASS"
   end

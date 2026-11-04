@@ -24,11 +24,11 @@ sequence. Reducing Length keeps hidden TIME entries available if the length
 is increased again; inactive TIME positions remain inspectable but cannot be
 edited directly. All 32 PITCH entries remain stored and editable.
 
-TIME buttons show **Note**, **Tie** or **Rest**; assignment controls highlight
-the selected command. Grid pitches show Renoise note names with **ACC** and
-**SLD** when enabled. Hover for raw pitch values and source markers: S stored,
-R referenced, M modified from the accepted baseline. Grid shows canonical
-source; Program shows the candidate during re-entry.
+TIME buttons show **Note**, **Tie** or **Rest**; assignment controls below the
+active editor's TIME positions highlight the selected command. Grid pitches
+show Renoise note names with **ACC** and **SLD** when enabled. Pitch tooltips
+identify musical notes. Grid shows canonical source; Program shows the
+candidate during re-entry.
 
 Shared feedback shows unresolved save, destination, scale, audition and output
 issues. Routine successful Live Edit stays quiet; explicit Generate confirms
@@ -43,10 +43,10 @@ available only after every position is entered and applies one undoable edit;
 blocked navigation or command: invoke that action again. Closing the dialog or
 changing song drops the candidate and retains the canonical draft best effort.
 
-**Audition PITCH** previews the selected resolved pitch or PITCH-stage candidate
-through the selected native instrument and non-send track. TIME-stage audition
-is disabled. It changes no source or phrase. Release is nominally scheduled
-after 120 ms, subject to host load; cleanup is best effort if captured host
+**Audition** in each view's PITCH controls previews the selected resolved pitch
+or PITCH-stage candidate through the selected native instrument and non-send
+track. TIME-stage audition is disabled. It changes no source or phrase. Release
+is nominally scheduled after 120 ms, subject to host load; cleanup is best effort if captured host
 objects disappear. ACID never substitutes a replacement object at a reused index.
 
 Timing selects straight sixteenth steps or 1/8 triplet steps. Straight uses

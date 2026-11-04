@@ -226,6 +226,34 @@ Native toolbar fit and clipboard/history checks in
 `acid_editor_presentation_manual.md` remain unverified. Runtime file layout and
 package inputs are unchanged; no package rebuild is required.
 
+## Task 6 Program and Grid
+
+Program and Grid retain independent PITCH/TIME selections and pages. Selected
+position summaries, repeated editor headings and source-interpretation tooltips
+are removed with their presentation-only baseline state. Musical pitch tooltips,
+resolved-pitch audition, referenced-position highlighting and projection caches
+remain. Each editor owns its audition button; both use one callback and share
+eligibility. One shared Note/Tie/Rest row follows the active editor's TIME positions.
+
+Native Program/Grid probes use retained selection controls and source values
+instead of removed readouts. Current user documentation and the presentation
+manual describe the retained controls.
+
+GUI fixtures cover unequal PITCH/TIME lengths with P17 edited while TIME01
+remains selected, navigation without saves/writes/history, inactive positions,
+C+, canonical Grid display during Program entry, masked audition from both
+views, shared audition eligibility and release-failure feedback.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 77/77 specs passed; Lua 5.1; 99.65 s |
+| Second-pass review | Source, selection, parenting, audition lifecycle and native probes reviewed; fixtures assert exact accepted/candidate notes and reject missing color observations; existing length constants reused |
+| `git diff --check` | Passed |
+
+Native presentation, playback and lifecycle checks remain unverified for this
+change. Runtime file layout and package inputs are unchanged; no package rebuild
+is required.
+
 ## Baseline
 
 | Item | Evidence |

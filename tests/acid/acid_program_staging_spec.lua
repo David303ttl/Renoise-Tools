@@ -3,6 +3,8 @@ local seq=require("model.sequencer")
 local store=require("renoise.pattern_store")
 local editor=require("model.editor_state")
 local PITCH_COUNT,TIME_COUNT=3,4
+local SELECTED_COLOR=0xF0
+local ACCEPTED_PITCH_NAME,CANDIDATE_PITCH_NAME="C#3","E3"
 local song,instrument=fixture.fixture()
 local source=seq.new_pattern(TIME_COUNT)
 source.pitch_length=PITCH_COUNT
@@ -186,7 +188,9 @@ assert(not view("acid_program_finish").active)
 fire("acid_program_select_time_02")
 button("REST"):fire()
 fire("acid_program_select_pitch_04")
-assert(view("acid_program_pitch_summary").text:find("P01",1,true),"out-of-scope selector must be inert")
+assert(view("acid_program_select_pitch_01").text=="P01" and
+  view("acid_program_select_pitch_01").color[1]==SELECTED_COLOR,
+  "out-of-scope selector must leave the selected PITCH position unchanged")
 fire("acid_program_finish")
 unchanged(before,revision,save_count,write_count)
 fire("acid_program_select_pitch_03")
@@ -210,8 +214,11 @@ unchanged(before,revision,save_count,write_count)
 fire("acid_editor_view",2)
 assert(#prompts==prompt_count,"view navigation must not prompt")
 assert(not view("acid_grid_key_02").active,"Grid editing is blocked while staging")
-assert(view("acid_grid_pitch_01").tooltip:find("note="..before.pitch_events[1].note.." ",1,true),
-  "Grid must display canonical source while Program has a candidate")
+assert(seq.same_source(current(),before) and
+  view("acid_grid_pitch_01").text:find(ACCEPTED_PITCH_NAME,1,true) and
+  view("acid_grid_pitch_01").tooltip:find(ACCEPTED_PITCH_NAME,1,true) and
+  view("acid_program_select_pitch_01").tooltip:find(CANDIDATE_PITCH_NAME,1,true),
+  "Grid displays the resolved accepted pitch while Program has a different candidate")
 view("acid_grid_key_02"):fire()
 unchanged(before,revision,save_count,write_count)
 fire("acid_editor_view",1)
@@ -634,12 +641,12 @@ for _,memory in ipairs({"pitch","time"})do
     fire("acid_grid_select_time_03")
   end
   fire("acid_editor_view",1)
-  local summary=view(memory=="pitch" and "acid_program_pitch_summary" or "acid_program_time_summary")
-  assert(summary.text:find(memory=="pitch" and "P02" or "TIME 02",1,true),
-    "returning to Program must restore staged cursor and page")
+  local selector=view("acid_program_select_"..memory.."_02")
+  assert(selector.color[1]==SELECTED_COLOR,
+    "returning to Program must restore the staged cursor and page")
   fire("acid_program_enter")
-  assert(summary.text:find(memory=="pitch" and "P03" or "TIME 03",1,true),
-    "Enter after Grid navigation must advance from displayed staged cursor")
+  assert(view("acid_program_select_"..memory.."_03").color[1]==SELECTED_COLOR,
+    "Enter after Grid navigation must advance the staged cursor")
 end
 fresh()
 begin("pitch")
@@ -709,8 +716,29 @@ function song:trigger_instrument_note_on(i,t,n,v)note_calls[#note_calls+1]={kind
 function song:trigger_instrument_note_off(i,t,n)note_calls[#note_calls+1]={kind="off",note=n}end
 fire("acid_audition")
 assert(note_calls[#note_calls].note==38 and note_calls[#note_calls].kind=="on")
+local function contains(parent,target)
+  for _,child in ipairs(parent.views or {})do
+    if rawequal(child,target) or contains(child,target)then return true end
+  end
+  return false
+end
+local program_audition,grid_audition=view("acid_audition"),view("acid_grid_audition")
+local audition_constructors=0
+for _,node in ipairs(builder.nodes)do
+  if node.id=="acid_audition" or node.id=="acid_grid_audition"then audition_constructors=audition_constructors+1 end
+end
+assert(audition_constructors==2 and contains(view("acid_program_panel"),program_audition) and
+  contains(view("acid_grid_panel"),grid_audition) and
+  rawequal(program_audition.notifier,grid_audition.notifier) and
+  program_audition.active and grid_audition.active,
+  "Program and Grid audition controls share one callback and belong to their own views")
 fire("acid_editor_view",2)
 assert(note_calls[#note_calls].kind=="off","view navigation releases audition")
+fire("acid_grid_audition")
+assert(note_calls[#note_calls].kind=="on" and note_calls[#note_calls].note==38,
+  "Grid audition resolves the masked pitch to the same Renoise note")
+fire("acid_editor_view",1)
+assert(note_calls[#note_calls].kind=="off","returning to Program releases Grid audition")
 fire("acid_editor_view",1)
 fire("acid_audition")
 fire("acid_program_pitch_page_2")
@@ -728,9 +756,11 @@ assert(note_calls[#note_calls].kind=="off","Discard releases before its prompt")
 fire("acid_audition")
 assert(note_calls[#note_calls].note==38,"canonical audition resolves mask")
 begin("time")
-assert(not view("acid_audition").active,"TIME staging disables audition")
+assert(not view("acid_audition").active and not view("acid_grid_audition").active,
+  "TIME staging disables audition in both views")
 local calls_before_time=#note_calls
 fire("acid_audition")
+fire("acid_grid_audition")
 assert(#note_calls==calls_before_time,"TIME-stage notifier cannot trigger audition")
 answer="Discard";fire("acid_program_discard")
 local function releases(action,label)

@@ -407,6 +407,8 @@ local program=builder.views.acid_program_panel
 local grid=builder.views.acid_grid_panel
 local view=builder.views.acid_editor_view
 assert(program.visible and not grid.visible)
+assert(builder.views.acid_program_pitch_summary==nil and builder.views.acid_program_time_summary==nil,
+  "selected-position summary rows are not constructed")
 for _,id in ipairs({"acid_program_pitch_position","acid_program_time_position",
     "acid_program_key_popup","acid_program_octave_popup"}) do
   assert(builder.views[id]==nil,"removed memory dropdown remains: "..id)
@@ -421,11 +423,24 @@ local function assert_direct_memory_controls(node)
 end
 assert_direct_memory_controls(program)
 assert_direct_memory_controls(grid)
-local function display_snapshot()
-  return table.concat({builder.views.acid_program_pitch_summary.tooltip,
-    builder.views.acid_program_time_summary.text,builder.views.acid_status.text},"|")
+local SELECTED_COLOR=0xF0
+local function selected_ids(prefix,count)
+  local selected={}
+  for index=1,count do
+    local item=assert(builder.views[string.format(prefix,index)])
+    if item.color[1]==SELECTED_COLOR then
+      selected[#selected+1]=tostring(index)
+    end
+  end
+  return table.concat(selected,",")
 end
-local initial=display_snapshot()
+local function selection_snapshot()
+  return table.concat({selected_ids("acid_program_select_pitch_%02d",sequencer.PAGE_SIZE),
+    selected_ids("acid_program_select_time_%02d",sequencer.PAGE_SIZE),
+    selected_ids("acid_program_pitch_page_%d",editor.MAX_PAGES),
+    selected_ids("acid_program_time_page_%d",editor.MAX_PAGES),builder.views.acid_status.text},"|")
+end
+local initial=selection_snapshot()
 local initial_projections=projection_calls
 local initial_classifications=classification_calls
 local function button(text)
@@ -470,9 +485,8 @@ control("acid_program_select_time_02"):fire()
 local initial_time_label=control("acid_program_select_time_02").text
 for _,assignment in ipairs({{"TIE","Tie"},{"REST","Rest"}}) do
   button(assignment[1]):fire()
-  assert(control("acid_program_select_time_02").text=="02 "..assignment[2] and
-    control("acid_program_time_summary").text=="TIME 02: "..assignment[2],
-    "Program TIME displays the assigned command in plain language")
+  assert(control("acid_program_select_time_02").text=="02 "..assignment[2],
+    "Program TIME selector displays the assigned command")
   view:fire(2)
   assert(control("acid_grid_select_time_02").text=="02 "..assignment[2],
     "Grid TIME uses the same command label")
@@ -484,10 +498,10 @@ assert(control("acid_program_select_time_02").text==initial_time_label,
 control("acid_program_select_time_01"):fire()
 navigation=navigation_snapshot()
 view:fire(2)
-assert(display_snapshot()==initial)
+assert(selection_snapshot()==initial)
 assert_navigation_neutral(navigation,"workspace view navigation")
 view:fire(1)
-assert(display_snapshot()==initial)
+assert(selection_snapshot()==initial)
 assert_navigation_neutral(navigation,"return workspace navigation")
 local toolbar=control("acid_editor_toolbar")
 local toolbar_controls={view,button("Undo"),button("Redo"),control("acid_clipboard_scope"),
@@ -527,29 +541,35 @@ view:fire(2)
 control("acid_pitch_page_2"):fire()
 control("acid_grid_pitch_01"):fire()
 view:fire(1)
-assert(control("acid_program_pitch_summary").tooltip:find("P17",1,true),
+assert(control("acid_program_select_pitch_01").text=="P17" and
+  control("acid_program_select_pitch_01").color[1]==SELECTED_COLOR,
   "PITCH page two selects P17")
-assert(control("acid_program_time_summary").text:find("TIME 01",1,true),
+assert(control("acid_program_select_time_01").text:find("01",1,true) and
+  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
   "PITCH selection leaves the independent TIME cursor unchanged")
 control("acid_time_page_2"):fire()
 control("acid_grid_select_time_01"):fire()
-assert(control("acid_program_time_summary").text:find("TIME 17",1,true),
+assert(control("acid_program_select_time_01").text:find("17",1,true) and
+  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
   "TIME page two selects TIME17")
-assert(control("acid_program_pitch_summary").tooltip:find("P17",1,true),
+assert(control("acid_program_select_pitch_01").text=="P17" and
+  control("acid_program_select_pitch_01").color[1]==SELECTED_COLOR,
   "TIME selection leaves the independent PITCH cursor unchanged")
 assert_navigation_neutral(nav_before,"independent cursor and page navigation")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
 assert(control("acid_grid_pitch_header_02").text=="P02" and
-  control("acid_grid_pitch_02").tooltip:find("36/12%-1") and
-  control("acid_grid_pitch_02").tooltip:find("36/12%-1"),
-  "the visible cell header and button preserve raw (36,12,-1) and active flags")
+  saved_draft().pitch_events[2].note==36 and saved_draft().pitch_events[2].key==12 and
+  saved_draft().pitch_events[2].octave==-1 and control("acid_grid_pitch_02").active,
+  "the visible cell and source preserve raw (36,12,-1) and active flags")
 control("acid_pitch_page_1"):fire()
 assert(control("acid_grid_pitch_header_03").text=="P03" and
-  control("acid_grid_pitch_03").tooltip:find("48/12+0",1,true),
+  saved_draft().pitch_events[3].note==48 and saved_draft().pitch_events[3].key==12 and
+  saved_draft().pitch_events[3].octave==0 and control("acid_grid_pitch_03").active,
   "the visible cell preserves raw (48,12,0) and inactive flags")
 assert(control("acid_grid_pitch_header_04").text=="P04" and
-  control("acid_grid_pitch_04").tooltip:find("60/12+1",1,true),
+  saved_draft().pitch_events[4].note==60 and saved_draft().pitch_events[4].key==12 and
+  saved_draft().pitch_events[4].octave==1 and control("acid_grid_pitch_04").active,
   "the visible cell preserves the MIDI-60 encoding and inactive flags")
 control("acid_grid_pitch_03"):fire()
 view:fire(1)
@@ -559,7 +579,8 @@ assert(raw48_edit.note==37 and raw48_edit.key==1 and raw48_edit.octave==0,
   "a genuine edit canonicalizes raw (48,12,0) through keyboard mapping")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_03").tooltip:find("37/1+0",1,true),
+assert(saved_draft().pitch_events[3].note==37 and saved_draft().pitch_events[3].key==1 and
+  saved_draft().pitch_events[3].octave==0,
   "the visible cell preserves the canonicalized raw-48 pitch and flags")
 control("acid_grid_pitch_04"):fire()
 view:fire(1)
@@ -569,20 +590,21 @@ assert(raw60_edit.note==48 and raw60_edit.key==0 and raw60_edit.octave==1,
   "a genuine edit canonicalizes loaded raw (60,12,1) through keyboard mapping")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
-assert(control("acid_grid_pitch_04").tooltip:find("48/0+1",1,true),
+assert(saved_draft().pitch_events[4].note==48 and saved_draft().pitch_events[4].key==0 and
+  saved_draft().pitch_events[4].octave==1,
   "the visible cell preserves the canonicalized loaded endpoint and flags")
 view:fire(1)
 view:fire(2)
 control("acid_pitch_page_1"):fire()
 control("acid_grid_pitch_01"):fire()
 view:fire(1)
-assert(control("acid_program_pitch_summary").tooltip:find("STORED | REFERENCED | UNMODIFIED",1,true),
-  "default C is stored, referenced by canonical TIME, and clean against load baseline")
+assert(saved_draft().pitch_events[1].note==36 and saved_draft().time_events[1]=="N",
+  "PITCH and TIME source retain their independent stored values")
 view:fire(2)
 control("acid_grid_pitch_02"):fire()
 view:fire(1)
-assert(control("acid_program_pitch_summary").tooltip:find("STORED | NOT REFERENCED | UNMODIFIED",1,true),
-  "a nondefault but unconsumed PITCH slot remains stored and clean")
+assert(saved_draft().pitch_events[2].note==36 and saved_draft().pitch_events[2].key==12,
+  "an unconsumed PITCH slot remains stored without changing source interpretation")
 local all_page_navigation=navigation_snapshot()
 for page=1,2 do
   control("acid_pitch_page_"..page):fire()
@@ -651,11 +673,14 @@ assert(#control("acid_feedback").views==0,
 local pitch_cell=control("acid_grid_pitch_01")
 local pitch_header=control("acid_grid_pitch_header_01")
 local old_grid_label=pitch_cell.text
+local pitch_before_grid_edit=assert(sequencer.copy_source(saved_draft()))
 control("acid_grid_key_03"):fire()
 assert(pitch_cell.text~=old_grid_label and
   pitch_cell.text:match("^D%d") and pitch_header.text=="P01" and
-  pitch_cell.tooltip:find("SRM",1,true),
-  "Grid pitch edits show note names and retain source diagnostics in tooltips")
+  pitch_cell.tooltip:find(pitch_cell.text,1,true) and
+  not pitch_cell.tooltip:find("STORED",1,true) and
+  not pitch_cell.tooltip:find("REFERENCED",1,true),
+  "Grid pitch identifies the note without source-interpretation diagnostics")
 assert(control("acid_grid_pitch_column_01").size.height==38 and
   control("acid_grid_pitch_header_01").size.height==18 and pitch_cell.size.height==20,
   "the position header and raw-pitch button fit the original 38-pixel cell height")
@@ -664,18 +689,16 @@ for index,entry in ipairs(bounded_views) do
     "Grid pitch edits preserve explicit width constraint "..index)
 end
 view:fire(1)
-assert(control("acid_program_pitch_summary").tooltip:find("MODIFIED",1,true),
-  "a genuine PITCH edit differs from the accepted baseline")
+local edited_pitch_source=assert(sequencer.copy_source(saved_draft()))
 button("Undo"):fire()
-assert(control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "undo recomputes the baseline-relative indicator")
+assert(sequencer.same_source(pitch_before_grid_edit,saved_draft()),
+  "Undo restores the exact accepted PITCH source")
 button("Redo"):fire()
-assert(control("acid_program_pitch_summary").tooltip:find("MODIFIED",1,true) and
-  not control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "redo recomputes the baseline-relative indicator")
+assert(sequencer.same_source(edited_pitch_source,saved_draft()),
+  "Redo restores the exact edited PITCH source")
 program_key(1):fire()
-assert(control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "editing back to the loaded baseline clears modified")
+assert(saved_draft().pitch_events[1].note==36 and saved_draft().pitch_events[1].key==0,
+  "editing back to the original pitch preserves the keyboard's canonical encoding")
 assert(render_calls==edit_neutral.writes,"PITCH edits with Live Edit disabled make no request")
 local c_plus=control("acid_program_c_plus")
 assert(not c_plus.active,"C+ is unavailable unless the selected PITCH octave is UP")
@@ -714,8 +737,10 @@ assert(endpoint_draft.pitch_events[1].note==60 and
 view:fire(2)
 control("acid_pitch_page_1"):fire()
 assert(control("acid_grid_pitch_header_01").text=="P01" and
-  control("acid_grid_pitch_01").tooltip:find("60/12+1",1,true),
-  "navigating away and back retains the visible MIDI-60 encoding and flags")
+  saved_draft().pitch_events[1].note==60 and saved_draft().pitch_events[1].key==12 and
+  saved_draft().pitch_events[1].octave==1 and
+  control("acid_grid_pitch_01").tooltip:find("key C+",1,true),
+  "navigating away and back retains the MIDI-60 encoding and identifies C+ in the tooltip")
 view:fire(1)
 program_key(1):fire()
 control("acid_program_octave_normal"):fire()
@@ -734,9 +759,10 @@ control("acid_grid_select_time_01"):fire()
 button("REST"):fire()
 assert(projection_calls>initial_projections,"a TIME edit refreshes the canonical projection")
 assert(render_calls==0)
-local shared_view_snapshot=display_snapshot()
+local shared_view_source=assert(sequencer.copy_source(saved_draft()))
 view:fire(2)
-assert(display_snapshot()==shared_view_snapshot,"Program and Grid project the same canonical source")
+assert(sequencer.same_source(shared_view_source,saved_draft()),
+  "Program and Grid show the same canonical source")
 assert(render_calls==0)
 view:fire(1)
 
@@ -781,13 +807,15 @@ for index,event in ipairs(before_time_resize.pitch_events) do
 end
 control("acid_time_page_2"):fire()
 control("acid_grid_select_time_01"):fire()
-assert(control("acid_program_time_summary").text:find("TIME 17",1,true))
+assert(control("acid_program_select_time_01").text:find("17",1,true) and
+  control("acid_program_select_time_01").color[1]==SELECTED_COLOR)
 button("TIE"):fire()
 local inactive_time=saved_draft().time_events[17]
 assert(inactive_time=="T","TIME17 accepts an edit while within LAST STEP")
 last_step:fire("8")
-assert(control("acid_program_time_summary").text:find("TIME 17",1,true),
-  "shrinking LAST STEP retains the TIME17 cursor")
+assert(control("acid_program_select_time_01").text:find("17",1,true) and
+  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
+  "shrinking LAST STEP retains the TIME17 selection")
 assert(not button("TIE").active and not button("REST").active and not button("NOTE").active,
   "shared TIME assignment controls disable while the cursor is inactive")
 local inactive_history={undo=button("Undo").active,redo=button("Redo").active,
@@ -797,6 +825,53 @@ assert(saved_draft().time_events[17]==inactive_time and
   button("Undo").active==inactive_history.undo and button("Redo").active==inactive_history.redo and
   draft_writes==inactive_history.drafts,
   "inactive TIME17 cannot be edited or persisted after shrink")
+
+local saved_time_length,saved_pitch_length=last_step.value,pitch_length.value
+last_step:fire(tostring(sequencer.PAGE_SIZE))
+pitch_length:fire(sequencer.MAX_STEPS)
+view:fire(2)
+control("acid_pitch_page_2"):fire()
+control("acid_grid_pitch_01"):fire()
+control("acid_time_page_1"):fire()
+control("acid_grid_select_time_01"):fire()
+assert(control("acid_grid_pitch_01").color[1]==SELECTED_COLOR and
+  control("acid_grid_select_time_01").color[1]==SELECTED_COLOR,
+  "unequal PITCH and TIME lengths allow independent P17 and TIME01 selection")
+local p17_before=assert(sequencer.copy_source(saved_draft()))
+local p17_before_navigation=navigation_snapshot()
+control("acid_grid_key_05"):fire()
+local p17_after=assert(sequencer.copy_source(saved_draft()))
+assert(not sequencer.same_source(p17_before,p17_after) and
+  not (p17_before.pitch_events[17].note==p17_after.pitch_events[17].note and
+    p17_before.pitch_events[17].key==p17_after.pitch_events[17].key and
+    p17_before.pitch_events[17].octave==p17_after.pitch_events[17].octave) and
+  p17_before.time_events[1]==p17_after.time_events[1],
+  "editing P17 changes its pitch while leaving TIME01 untouched")
+local after_p17_edit=navigation_snapshot()
+view:fire(1)
+assert(control("acid_program_select_pitch_01").text=="P17" and
+  control("acid_program_select_pitch_01").color[1]==SELECTED_COLOR and
+  control("acid_program_select_time_01").text:find("01",1,true) and
+  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
+  "Program restores independent P17 and TIME01 selections")
+view:fire(2)
+assert(sequencer.same_source(p17_after,saved_draft()) and
+  control("acid_grid_pitch_01").color[1]==SELECTED_COLOR and
+  control("acid_grid_select_time_01").color[1]==SELECTED_COLOR,
+  "Grid restores independent P17 and TIME01 selections without changing source")
+assert_navigation_neutral(after_p17_edit,"P17/TIME01 view switching")
+assert(p17_before_navigation.writes==after_p17_edit.writes and
+  p17_before_navigation.drafts+1==after_p17_edit.drafts,
+  "the P17 edit saves once without writing; the subsequent view switches do neither")
+button("Undo"):fire()
+assert(sequencer.same_source(p17_before,saved_draft()),
+  "one Undo after view switching reverts the P17 edit")
+button("Redo"):fire()
+assert(sequencer.same_source(p17_after,saved_draft()),
+  "one Redo restores the P17 edit after view switching")
+last_step:fire(tostring(saved_time_length))
+pitch_length:fire(saved_pitch_length)
+view:fire(1)
 
 local output_popup
 local pb_range_popup
@@ -835,7 +910,7 @@ local timing_popup=builder.views.acid_timing
 timing_popup:fire(2)
 assert(timing_popup.value==2)
 local before_reset_source=assert(sequencer.copy_source(saved_draft()))
-local reset_pitch=builder.views.acid_program_pitch_summary.tooltip
+local reset_selection=selection_snapshot()
 app.show_prompt=function() error("Reset must not prompt") end
 control("acid_pattern_reset"):fire()
 app.show_prompt=function() return "Cancel" end
@@ -849,8 +924,8 @@ button("Undo"):fire()
 assert(timing_popup.value==2,"Undo restores the previous timing")
 assert(sequencer.same_source(before_reset_source,saved_draft()),"Undo restores the exact pre-reset source")
 builder.views.acid_editor_view:fire(1)
-assert(builder.views.acid_program_pitch_summary.tooltip==reset_pitch,
-  "undo restores selected PITCH without changing selection")
+assert(selection_snapshot()==reset_selection,
+  "undo restores source without changing either editor selection")
 assert(output_popup.value==1,"Undo restores the previous output policy")
 assert(pb_range_popup.value==3,"Undo restores the prior PB Range")
 assert(button("Redo").active)
@@ -872,8 +947,9 @@ generation_callback(terminal_result(generation_request,"committed","Phrase 01 ge
 assert(control("acid_clipboard_paste").active==true,"completed generation restores Paste eligibility")
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
   "manual regeneration accepts structural selection changes without altering playback")
-assert(control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "verified generation establishes the accepted PITCH baseline")
+assert(sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
+  generation_request.source),
+  "verified generation commits the exact selected writer source")
 
 local classifications_before_rebind=classification_calls
 phrase_popup:fire(2)
@@ -1036,8 +1112,9 @@ generation_callback(terminal_result(generation_request,"committed","Phrase regen
 assert(song.selected_phrase==nil and instrument.phrase_program==2,
   "the fresh synchronous regeneration preserves the changed playback program")
 view:fire(1)
-assert(control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "verified generation establishes the accepted PITCH baseline")
+assert(sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
+  generation_request.source),
+  "verified generation commits the exact accepted PITCH/TIME source")
 instrument.phrase_program=1
 instrument.phrase_program_observable:fire()
 assert(instrument.phrase_program==1 and phrase_popup.value==2 and render_calls==live_render_base+4,
@@ -1057,9 +1134,8 @@ view:fire(1)
 live_checkbox:fire(true)
 assert(render_calls==live_render_base+4,"rearming Live Edit does not request a render")
 control("acid_program_octave_up"):fire()
-assert(control("acid_program_pitch_summary").tooltip:find("MODIFIED",1,true) and
-  not control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "in-flight request source differs from accepted P1 baseline")
+assert(not sequencer.same_source(generation_request.source,saved_draft()),
+  "an edit after arming creates a source distinct from the in-flight request")
 tool.app_idle_observable:fire()
 assert(render_calls==live_render_base+5 and generation_request.target_index==1,
   "an edit after rearming targets the selected phrase 01")
@@ -1245,12 +1321,12 @@ view:fire(2)
 control("acid_pitch_page_1"):fire()
 control("acid_grid_pitch_01"):fire()
 view:fire(1)
-local committed_key=tonumber(control("acid_program_pitch_summary").tooltip:match("/(%d+)"))
-assert(committed_key,"selected pitch summary does not expose its canonical key")
+local committed_key=saved_draft().pitch_events[1].key
+assert(type(committed_key)=="number","selected pitch source retains its canonical key")
 program_key(committed_key==0 and 2 or 1):fire()
-assert(control("acid_program_pitch_summary").tooltip:find("MODIFIED",1,true) and
-  not control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "precondition: source is modified against the verified commit baseline")
+assert(not sequencer.same_source(saved_draft(),committed_entries[21].source),
+  "precondition: edited source differs from the verified phrase source")
+local source_before_missing_identity=assert(sequencer.copy_source(saved_draft()))
 button("Generate / Regenerate ACID Phrase"):fire()
 local missing_phrase_result=terminal_result(generation_request,"committed",
   "verified completion without destination identity")
@@ -1258,9 +1334,9 @@ assert(missing_phrase_result.kind=="success" and missing_phrase_result.verified,
   "fixture supplies a verified successful completion before removing phrase identity")
 missing_phrase_result.phrase=nil
 generation_callback(missing_phrase_result)
-assert(control("acid_program_pitch_summary").tooltip:find("MODIFIED",1,true) and
-  not control("acid_program_pitch_summary").tooltip:find("UNMODIFIED",1,true),
-  "verified completion without the bound phrase does not reset the modified baseline")
+assert(sequencer.same_source(source_before_missing_identity,saved_draft()) and
+  rawequal(generation_request.request.phrase,instrument.phrases[1]),
+  "completion without destination identity preserves current source and exact target binding")
 
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")
@@ -1684,8 +1760,8 @@ do
     "Follow toggle updates session state before chromatic entry")
   view:fire(1)
   control("acid_program_select_pitch_05"):fire()
-  assert(control("acid_program_pitch_summary").text:find("P05",1,true),
-    "Program selects P05 before editing: "..control("acid_program_pitch_summary").text)
+  assert(control("acid_program_select_pitch_05").color[1]==SELECTED_COLOR,
+    "Program selects P05 before editing")
   assert(program_key(5).active,
     "Program key is active before Follow-off entry: "..control("acid_status").text)
   program_key(5):fire()

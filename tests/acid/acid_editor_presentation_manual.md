@@ -12,7 +12,9 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
    and inactive steps cannot be assigned. Re-enter TIME and check labels show
    candidate assignments; discard restores the accepted assignments.
 4. Confirm Grid pitches show Renoise note names, ACC and SLD only when enabled,
-   and raw pitch values and source markers remain available on hover.
+   with musical note identification on hover. Neither view shows selected-position
+   summaries or source-interpretation diagnostics. Each view has Audition
+   beside its PITCH controls; Note/Tie/Rest sit below its TIME positions.
 5. Confirm staging navigation appears during re-entry and disappears after
    Finish or Discard. Switch to Grid during staging and back to Program.
 6. Attempt Generate with incomplete entry and verify missing-position feedback
@@ -39,3 +41,15 @@ Use Renoise 3.5 / API 6.2 and a disposable song.
     Repeat with TIME and Both. Copy, scope selection and editor switching must
     not save or generate. During entry or an unresolved rename, Paste remains
     inactive. Undo/Redo save failures remain visible without a success paragraph.
+12. Set Pitch span 32 and Length 16. Select P17 with TIME 01 selected, edit its
+    key/octave, C+, accent and slide, then switch views. PITCH and TIME selections
+    and pages remain independent. Check positions 16, 17 and 32 in each memory;
+    inactive TIME stays inspectable without accepting assignments. View/page
+    changes must not save, generate or add history.
+13. Enable a scale mask and audition from each view: the resolved note must
+    agree with the selected pitch. Confirm release on position/page/view changes,
+    editing, destination changes and dialog close. During PITCH entry check both
+    audition controls share eligibility; during TIME entry both are disabled.
+    Check song release/unload cleanup; unresolved release failures must remain
+    in shared feedback. Injected failure coverage is in
+    `acid_audition_lifecycle_spec.lua` and `acid_program_staging_spec.lua`.

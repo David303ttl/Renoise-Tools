@@ -6,6 +6,7 @@ local helpers = assert(loadstring(prefix .. [[
   return {
     selection_trace_passes = selection_trace_passes,
     same_native_selection = same_native_selection,
+    same_native_color = same_native_color,
     production_output_matches = production_output_matches,
     editor_fixture_passes = editor_fixture_passes,
     draft_values_preserved = draft_values_preserved,
@@ -19,6 +20,12 @@ local helpers = assert(loadstring(prefix .. [[
     canonical_baseline = canonical_baseline,
   }
 ]]))()
+
+local SELECTED_COLOR,IDLE_COLOR={0xF0,0xC0,0x40},{0x40,0x40,0x40}
+assert(helpers.same_native_color(SELECTED_COLOR,{unpack(SELECTED_COLOR)}))
+assert(not helpers.same_native_color(SELECTED_COLOR,IDLE_COLOR))
+assert(not helpers.same_native_color(nil,nil) and not helpers.same_native_color(SELECTED_COLOR,nil),
+  "missing native color observations cannot verify selection highlighting")
 
 local codec=dofile("tests/renoise/driver/json.lua")
 local expected_output={properties={lpb=16},lines={},empty_note={},empty_effect={}}
