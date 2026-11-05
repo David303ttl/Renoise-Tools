@@ -181,6 +181,8 @@ local EMPTY_HOLDER_WIDTH,EMPTY_HOLDER_HEIGHT=1,1
 local FEEDBACK_ISSUE_ORDER={"save","destination","scale","audition","input","generation","approximation"}
 local SCALE_UI={root_width=65,category_width=155,choice_width=255,
   search_width=165,import_width=95}
+local MEMORY_CELL={program_pitch_width=76,program_time_width=94,program_height=22,
+  reference_height=18,grid_width=98,grid_pitch_height=24,grid_time_height=30,context_steps=8}
 local octave_names={"DOWN (-1)","NORMAL (0)","UP (+1)"}
 local colors={selected={0xF0,0x70,0x70},used={0x55,0xAA,0x75},
   idle={0x49,0x4B,0x55},inactive={0x30,0x32,0x39},note={0xBD,0x5B,0x5B},
@@ -490,6 +492,12 @@ function M.show()
       key_buttons={},octave_buttons={}},
     grid={key_buttons={},octave_buttons={}},time_assignment={},time_names={N="Note",T="Tie",R="Rest"},
     mask={classes={}}}
+  ui.cells=require("views.memory_cells").new(vb)
+  ui.program.pitch_frames={}
+  ui.program.time_frames={}
+  ui.program.time_references={}
+  ui.selection_memory="time"
+  ui.mapping=vb:text{id="acid_selection_mapping",width=CONTENT_WIDTH,text=""}
   local program_accent,program_slide,program_c_plus,grid_c_plus
   local pitch_length_popup=vb:popup{id="acid_pitch_length",items=length_items,width=78,value=sequencer.PAGE_SIZE}
   local timing_popup=vb:popup{id="acid_timing",items={"Straight (1/16)","Triplet (1/8)"},width=TIMING_CHOICE_WIDTH,value=1}
@@ -611,6 +619,8 @@ function M.show()
   local function stage_resolution()
     if not stage.prepared_resolution then
       stage.prepared_resolution=assert(sequencer.prepare_resolution(stage.candidate))
+      stage.projection=editor.project(stage.candidate,stage.prepared_resolution)
+      stage.projection.resolved_records=stage.prepared_resolution.resolved_records
     end
     return stage.prepared_resolution
   end
@@ -669,28 +679,38 @@ function M.show()
     return left and right and left.note==right.note and left.key==right.key and
       left.octave==right.octave and left.accent==right.accent and left.slide==right.slide
   end
-  local function pitch_tooltip(index,p,records)
+  local function pitch_tooltip(index,p,records,projection)
     if index>#pattern.pitch_events then return string.format("P%02d | Unavailable",index) end
     local _,octave=sequencer.pitch_controls(p)
     local note=records and records[index] and records[index].note
     local pitch_name=note and (keys[note%scales.PITCH_CLASSES+1]..
       tostring(math.floor(note/scales.PITCH_CLASSES))) or "Unavailable"
     local key_name=p.key==scales.PITCH_CLASSES and "C+" or keys[p.key+1] or "?"
-    local inactive=index>pattern.pitch_length and " | inactive" or ""
-    return string.format("P%02d | %s | key %s | octave %s | accent %s | slide %s%s",index,
+    local inactive=index>pattern.pitch_length and " | outside Pitch span" or
+      (projection and not projection.error and not projection.used[index] and " | unused in this pattern" or "")
+    local text=string.format("P%02d | %s | key %s | octave %s | accent %s | slide %s%s",index,
       pitch_name,key_name,octave and ((octave<0 and "-" or "+")..math.abs(octave)) or "?",
       p.accent and "on" or "off",p.slide and "on" or "off",inactive)
+    if projection then
+      local repeat_enabled=output_policy=="repeat"
+      local links=editor.slide_selection(projection,"pitch",index,repeat_enabled)
+      for _,description in ipairs(links.descriptions) do text=text.."\n"..description end
+      if p.slide and editor.slide_marker(projection,index,repeat_enabled)=="SLD" then
+        text=text.."\n"..editor.slide_block_reason(projection,index,repeat_enabled)
+      end
+    end
+    return text
   end
   local function grid_pitch_header(index)
     return string.format("P%02d%s",index,index>pattern.pitch_length and " (inactive)" or "")
   end
-  local function grid_pitch_value(index,p)
+  local function grid_pitch_value(index,p,projection)
     if index>#pattern.pitch_events then return "--" end
     local records=project().resolved_records
     local note=records and records[index] and records[index].note
     return string.format("%s%s%s",note and
       (keys[note%12+1]..tostring(math.floor(note/12))) or "--",
-      p.accent and " ACC" or "",p.slide and " SLD" or "")
+      p.accent and " ACC" or "",p.slide and (" "..editor.slide_marker(projection,index,output_policy=="repeat")) or "")
   end
   render=function(view,property,value)
     local cacheable=property~="value" and not (rawequal(view,feedback.status) and property=="text")
@@ -736,6 +756,78 @@ function M.show()
   update=function()
     updating=true
     local projection=project()
+    if stage and editor_view==1 then
+      stage_resolution()
+      projection=stage.projection
+    end
+    local source=stage and editor_view==1 and stage.candidate or pattern
+    local slide_selection=editor.slide_selection(projection,ui.selection_memory,
+      ui.selection_memory=="pitch" and selected_pitch or selected_step,output_policy=="repeat")
+    local selected_event=projection.mapping[selected_step]
+    local linked_pitch=ui.selection_memory=="time" and selected_event and selected_event.pitch_index
+    if not stage and linked_pitch and selected_pitch~=linked_pitch then
+      selected_pitch=linked_pitch
+      pitch_page=editor.page_for(selected_pitch)
+    end
+    local function pitch_selected(index)
+      return slide_selection.pitches[index] or
+        index==(ui.selection_memory=="pitch" and selected_pitch or linked_pitch)
+    end
+    local function time_selected(index)
+      local event=projection.mapping[index]
+      return slide_selection.times[index] or
+        ui.selection_memory=="pitch" and event and event.pitch_index==selected_pitch or
+        (ui.selection_memory=="time" and index==selected_step) or false
+    end
+    local function pitch_color(index)
+      return index>source.pitch_length and colors.inactive or
+        (projection.used[index] and colors.used or colors.idle)
+    end
+    local function time_color(index,command)
+      return index>source.length and colors.inactive or
+        (projection.error and projection.error.step==index and colors.warning) or
+        (command=="N" and colors.note or command=="T" and colors.tie or colors.rest)
+    end
+    local function time_tooltip(index)
+      if index>source.length then return string.format("T%02d | inactive: beyond Length",index) end
+      local text=editor.mapping_text(projection,index)
+      local links=editor.slide_selection(projection,"time",index,output_policy=="repeat")
+      for _,description in ipairs(links.descriptions) do text=text.."\n"..description end
+      return text
+    end
+    local context=selected_step>source.length and time_tooltip(selected_step) or
+      editor.mapping_text(projection,selected_step)
+    if ui.selection_memory=="pitch" then
+      local steps={}
+      for step,event in ipairs(projection.mapping) do
+        if event.pitch_index==selected_pitch then steps[#steps+1]=string.format("T%02d",step) end
+      end
+      context=string.format("P%02d → %s",selected_pitch,#steps>0 and table.concat(steps,", ") or
+        (selected_pitch>source.pitch_length and "outside Pitch span" or "unused in this pattern"))
+      render(ui.mapping,"tooltip",context)
+      if #steps>MEMORY_CELL.context_steps then
+        context=string.format("P%02d → %s (+%d steps)",selected_pitch,
+          table.concat(steps,", ",1,MEMORY_CELL.context_steps),#steps-MEMORY_CELL.context_steps)
+      end
+    else
+      render(ui.mapping,"tooltip",time_tooltip(selected_step))
+    end
+    if #slide_selection.descriptions>0 then
+      context=slide_selection.descriptions[1]
+      render(ui.mapping,"tooltip",table.concat(slide_selection.descriptions,"\n"))
+      if #slide_selection.descriptions>1 then
+        context=context..string.format(" (+%d connections)",#slide_selection.descriptions-1)
+      end
+    else
+      local pitch=source.pitch_events[ui.selection_memory=="pitch" and selected_pitch or
+        (selected_event and selected_event.pitch_index) or 0]
+      if pitch and pitch.slide then
+        context=context.." · "..editor.slide_block_reason(projection,
+          ui.selection_memory=="pitch" and selected_pitch or selected_event.pitch_index,output_policy=="repeat")
+        render(ui.mapping,"tooltip",context)
+      end
+    end
+    render(ui.mapping,"text",context)
     refresh_stage()
     refresh_clipboard()
     render(pitch_length_popup,"value",pattern.pitch_length or sequencer.PAGE_SIZE)
@@ -767,22 +859,21 @@ function M.show()
       local b=pitch_cells[cell]
       render(b,"active",true)
       render(pitch_headers[cell],"text",grid_pitch_header(i))
-      render(b,"text",grid_pitch_value(i,p))
-      render(b,"tooltip",pitch_tooltip(i,p,projection.resolved_records))
-      render(b,"color",i==selected_pitch and colors.selected or
-        (i>pattern.pitch_length and colors.inactive or
-          (projection.used[i] and colors.used or colors.idle)))
+      render(b,"text",grid_pitch_value(i,p,projection))
+      render(b,"tooltip",pitch_tooltip(i,p,projection.resolved_records,projection))
+      render(b,"color",pitch_color(i))
+      ui.cells.select(b,pitch_selected(i))
       local step=editor.index_on_page(time_page,cell)
       local time=time_cells[cell]
       local time_header=time_headers[cell]
       local cmd=pattern.time_events[step]
       render(time,"active",true)
-      render(time,"text",string.format("%02d %s%s",step,ui.time_names[cmd],
-        step>pattern.length and " *" or ""))
-      render(time,"color",projection.error and projection.error.step==step
-        and colors.warning or (step==selected_step and colors.selected)
-        or (cmd=="N" and colors.note or cmd=="T" and colors.tie or colors.rest))
-      render(time_header,"text",step>pattern.length and "INACTIVE" or "TIME")
+      render(time,"text",string.format("%02d %s",step,ui.time_names[cmd]))
+      render(time,"color",time_color(step,cmd))
+      render(time,"tooltip",time_tooltip(step))
+      ui.cells.select(time,time_selected(step))
+      render(time_header,"text",step>pattern.length and "INACTIVE" or
+        editor.time_reference(projection,step,true,output_policy=="repeat"))
       render(time_header,"style",step>pattern.length and "disabled" or "strong")
     end end
     if editor_view==2 then
@@ -810,22 +901,30 @@ function M.show()
     if editor_view==1 then
       for cell,button in ipairs(ui.program.pitch_selectors) do
         local index=editor.index_on_page(pitch_page,cell)
-        render(button,"text",string.format("P%02d%s",index,
+        render(button,"text",string.format("P%02d%s%s",index,
+          pitch_at(index).slide and (" "..editor.slide_marker(projection,index,output_policy=="repeat")) or "",
           stage and stage.memory=="pitch" and stage.entered[index] and " +" or ""))
         render(button,"active",not stage or stage.memory~="pitch" or index<=#stage.target_positions)
-        render(button,"color",index==selected_pitch and colors.selected or colors.idle)
-        render(button,"tooltip",pitch_tooltip(index,pitch_at(index),records))
+        render(button,"color",pitch_color(index))
+        ui.cells.select(button,pitch_selected(index))
+        render(button,"tooltip",pitch_tooltip(index,pitch_at(index),records,projection))
       end
       for cell,button in ipairs(ui.program.time_selectors) do
         local index=editor.index_on_page(time_page,cell)
         local command=(stage and stage.candidate or pattern).time_events[index]
         render(button,"text",string.format("%02d %s%s",index,ui.time_names[command],
           stage and stage.memory=="time" and stage.entered[index] and " +" or
-          (index>pattern.length and " *" or "")))
+          ""))
         render(button,"active",not stage or stage.memory~="time" or index<=#stage.target_positions)
-        render(button,"color",index==selected_step and colors.selected or
-          (index>pattern.length and colors.inactive or
-            (command=="N" and colors.note or command=="T" and colors.tie or colors.rest)))
+        render(button,"color",time_color(index,command))
+        render(button,"tooltip",time_tooltip(index))
+        ui.cells.select(button,time_selected(index))
+        local reference=ui.program.time_references[cell]
+        render(reference,"text",index>source.length and "" or
+          editor.time_reference(projection,index,false,output_policy=="repeat"))
+        render(reference,"color",time_color(index,command))
+        render(reference,"active",button.active)
+        render(reference,"tooltip",time_tooltip(index))
       end
       for page=1,editor.MAX_PAGES do
         render(ui.program.pitch_pages[page],"color",page==pitch_page and colors.selected or colors.idle)
@@ -879,6 +978,7 @@ function M.show()
       stage.cursor=index
     end
     selected_pitch=index
+    ui.selection_memory=stage and stage.memory or "pitch"
     pitch_page=editor.page_for(index)
     update()
   end
@@ -890,7 +990,15 @@ function M.show()
       stage.cursor=index
     end
     selected_step=index
+    ui.selection_memory=stage and stage.memory or "time"
     time_page=editor.page_for(index)
+    if not stage then
+      local event=project().mapping[index]
+      if event and event.pitch_index then
+        selected_pitch=event.pitch_index
+        pitch_page=editor.page_for(selected_pitch)
+      end
+    end
     update()
   end
   local function reveal_missing_position(position)
@@ -1107,6 +1215,13 @@ function M.show()
     ui.program.time_selectors[cell]=vb:button{id=string.format("acid_program_select_time_%02d",cell),width=94,text="TIME",notifier=function()
       choose_time(editor.index_on_page(time_page,position))
     end}
+    ui.program.time_references[cell]=vb:button{id=string.format("acid_program_time_reference_%02d",cell),
+      height=MEMORY_CELL.reference_height,text="",notifier=function() choose_time(editor.index_on_page(time_page,position)) end}
+    ui.program.pitch_frames[cell]=ui.cells.wrap(string.format("acid_program_select_pitch_%02d",cell),
+      ui.program.pitch_selectors[cell],MEMORY_CELL.program_pitch_width,MEMORY_CELL.program_height)
+    ui.program.time_frames[cell]=ui.cells.wrap(string.format("acid_program_select_time_%02d",cell),
+      ui.program.time_selectors[cell],MEMORY_CELL.program_time_width,MEMORY_CELL.program_height,
+      ui.program.time_references[cell])
   end
   for page=1,editor.MAX_PAGES do
     local selected_page=page
@@ -1156,14 +1271,19 @@ function M.show()
         size={width=98,height=20},text="--",notifier=function()
         choose_pitch(editor.index_on_page(pitch_page,cell)) end}
       pitch_columns[cell]=vb:column{id=string.format("acid_grid_pitch_column_%02d",cell),
-        size={width=98,height=38},spacing=0,pitch_headers[cell],pitch_cells[cell]}
-      time_headers[cell]=vb:text{size={width=98,height=22},text="TIME"}
+        size={width=98,height=42},spacing=0,pitch_headers[cell],
+        ui.cells.wrap(string.format("acid_grid_pitch_%02d",cell),pitch_cells[cell],
+          MEMORY_CELL.grid_width,MEMORY_CELL.grid_pitch_height)}
+      time_headers[cell]=vb:text{id=string.format("acid_grid_mapping_%02d",cell),
+        size={width=98,height=22},text=""}
       time_cells[cell]=vb:button{id=string.format("acid_grid_select_time_%02d",cell),
         size={width=98,height=30},text="--",notifier=function()
           choose_time(editor.index_on_page(time_page,cell))
       end}
       p_row:add_child(pitch_columns[cell])
-      t_row:add_child(vb:column{spacing=2,time_headers[cell],time_cells[cell]})
+      t_row:add_child(vb:column{spacing=2,time_headers[cell],
+        ui.cells.wrap(string.format("acid_grid_select_time_%02d",cell),time_cells[cell],
+          MEMORY_CELL.grid_width,MEMORY_CELL.grid_time_height)})
     end
     pitch_grid:add_child(p_row)
     time_grid:add_child(t_row)
@@ -1750,13 +1870,13 @@ function M.show()
   grid_audition_button=vb:button{id="acid_grid_audition",text="Audition",notifier=audition_pitch}
   program_panel=vb:column{id="acid_program_panel",spacing=4,
     vb:text{text="PITCH",width=CONTENT_WIDTH,font="bold"},
-    program_pitch_page_row,selector_rows(ui.program.pitch_selectors),
+    program_pitch_page_row,selector_rows(ui.program.pitch_frames),
     vb:row{spacing=4,vb:text{text="RESOLVED PITCH CLASS"},program_keyboard},
     vb:row{spacing=4,vb:text{text="OCTAVE"},program_octave_row,
       vb:text{text="ACCENT"},program_accent,vb:text{text="SLIDE"},program_slide,program_c_plus,
       program_audition_button},
     vb:text{text="TIME",font="bold"},
-    program_time_page_row,selector_rows(ui.program.time_selectors)}
+    program_time_page_row,selector_rows(ui.program.time_frames)}
   grid_panel=vb:column{id="acid_grid_panel",spacing=4,
     vb:text{text="PITCH",width=CONTENT_WIDTH,font="bold"},
     pitch_pages,pitch_grid,
@@ -2172,6 +2292,7 @@ function M.show()
     editor_panel_holder,
     vb:row{id="acid_time_assignment",spacing=5,
       ui.time_assignment[1],ui.time_assignment[2],ui.time_assignment[3]},
+    ui.mapping,
     entry_holder,scale_panel,operations_panel,output_panel,
     feedback.holder}
   select_instrument(selected_instrument)

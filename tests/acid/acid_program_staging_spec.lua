@@ -82,6 +82,11 @@ renoise.ViewBuilder=function()
     function node:remove_view(child)remove_view(self,child)end
     node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(fn)self.notifiers[#self.notifiers+1]=fn end
+    function node:update()
+      assert(self.kind=="canvas")
+      self.outlined=false
+      self.render({size=self.size,stroke_rect=function() self.outlined=true end})
+    end
     function node:fire(value)
       if value~=nil then self.value=value end
       if self.notifier then self.notifier(value)end
@@ -217,7 +222,7 @@ fire("acid_program_select_time_02")
 button("REST"):fire()
 fire("acid_program_select_pitch_04")
 assert(view("acid_program_select_pitch_01").text=="P01" and
-  view("acid_program_select_pitch_01").color[1]==SELECTED_COLOR,
+  view("acid_program_select_pitch_01".."_selection").outlined,
   "out-of-scope selector must leave the selected PITCH position unchanged")
 fire("acid_program_finish")
 unchanged(before,revision,save_count,write_count)
@@ -440,7 +445,7 @@ do
     "progress follows the cursor after skipping an unentered target")
   answer="Stay"
   button("Generate"):fire()
-  assert(view("acid_program_select_pitch_05").color[1]==SELECTED_COLOR and
+  assert(view("acid_program_select_pitch_05".."_selection").outlined and
     view("acid_program_stage_status").text=="Pitch 5 of 20" and
     view("acid_program_pitch_page_1").color[1]==SELECTED_COLOR,
     "blocked Program Generate returns to page one and reveals the first missing position")
@@ -454,7 +459,7 @@ do
     "blocked Grid Generate stays in Grid and explains where to edit")
   unchanged(canonical,revision_before,saves_before,writes_before)
   fire("acid_editor_view",1)
-  assert(view("acid_program_select_pitch_05").color[1]==SELECTED_COLOR and
+  assert(view("acid_program_select_pitch_05".."_selection").outlined and
     view("acid_program_stage_status").text=="Pitch 5 of 20",
     "returning to Program restores the missing cursor")
   assert(not view("acid_program_finish").active)
@@ -513,7 +518,7 @@ cancel_stage("Cancel")
   end
   answer="Stay"
   button("Generate"):fire()
-  assert(view("acid_program_select_time_05").color[1]==SELECTED_COLOR and
+  assert(view("acid_program_select_time_05".."_selection").outlined and
     view("acid_program_stage_status").text=="Timing 5 of 5" and
     view("acid_program_time_page_1").color[1]==SELECTED_COLOR,
     "blocked TIME Generate reveals the first missing position: "..
@@ -791,10 +796,10 @@ for _,memory in ipairs({"pitch","time"})do
       "Grid callbacks preserve entered markers")
   end
   local selector=view("acid_program_select_"..memory.."_02")
-  assert(selector.color[1]==SELECTED_COLOR,
+  assert(view(selector.id.."_selection").outlined,
     "returning to Program must restore the staged cursor and page")
   fire("acid_program_enter")
-  assert(view("acid_program_select_"..memory.."_03").color[1]==SELECTED_COLOR,
+  assert(view("acid_program_select_"..memory.."_03_selection").outlined,
     "Enter after Grid navigation must advance the staged cursor")
   local count=memory=="pitch" and current().pitch_length or current().length
   for _=3,count do fire("acid_program_enter") end
@@ -839,6 +844,164 @@ end
 fire("acid_editor_view",2)
 highlighted("acid_grid_key_",0)
 assert(seq.same_source(current(),alternate),"resolved highlight cannot rewrite raw source")
+do
+  local source=seq.new_pattern(8)
+  source.pitch_length=16
+  source.time_events[2]="T"
+  source.pitch_events[1]=seq.new_pitch(4,-1)
+  source.pitch_events[2]=seq.new_pitch(4,1)
+  source.length=4
+  fresh(source)
+  fire("acid_last_step",8)
+  assert(view("acid_program_time_reference_01").text=="P01")
+  assert(view("acid_program_time_reference_02").text=="P01 hold")
+  assert(view("acid_program_time_reference_03").text=="P02")
+  assert(view("acid_program_time_reference_08").text=="P07")
+  assert(view("acid_program_time_reference_09").text=="")
+  assert(view("acid_program_select_time_09").text=="09 Note")
+  assert(view("acid_program_select_pitch_07").color[1]==0x55 and
+    view("acid_program_select_pitch_08").color[1]==0x49 and
+    view("acid_program_select_time_09").color[1]==0x30,
+    "used pitch slots and inactive time positions retain distinct fills")
+  local before,revision,save_count,write_count=seq.copy_source(current()),history.revision,saves,writes
+  fire("acid_program_select_time_03")
+  assert(view("acid_program_select_time_03_selection").outlined and
+    view("acid_program_select_pitch_02_selection").outlined and
+    view("acid_selection_mapping").text=="T03 → P02 · E4")
+  assert(view("acid_program_select_time_03").color[1]==0xBD,
+    "selection keeps the NOTE event color")
+  fire("acid_program_select_pitch_01")
+  assert(view("acid_program_select_time_01_selection").outlined and
+    view("acid_program_select_time_02_selection").outlined and
+    not view("acid_program_select_time_03_selection").outlined,
+    "pitch selection links both its attack and held time steps")
+  fire("acid_editor_view",2)
+  assert(view("acid_grid_mapping_01").text=="P01 · E2" and
+    view("acid_grid_mapping_02").text=="P01 hold" and
+    view("acid_grid_mapping_03").text=="P02 · E4")
+  assert(view("acid_grid_select_time_02_selection").outlined and
+    view("acid_grid_select_time_09").color[1]==0x30 and
+    view("acid_grid_mapping_09").text=="INACTIVE")
+  fire("acid_grid_select_time_03")
+  assert(view("acid_grid_pitch_02_selection").outlined and
+    view("acid_grid_select_time_03_selection").outlined)
+  fire("acid_editor_view",1)
+  unchanged(before,revision,save_count,write_count)
+  fire("acid_program_select_time_02")
+  button("REST"):fire()
+  assert(view("acid_program_time_reference_02").text=="--" and
+    not view("acid_program_select_pitch_01_selection").outlined and
+    view("acid_selection_mapping").text=="T02 · Rest")
+  button("Undo"):fire()
+  assert(view("acid_program_time_reference_02").text=="P01 hold" and
+    view("acid_program_select_pitch_01_selection").outlined,
+    "Undo restores both mapping and linked selection")
+  begin("time")
+  fire("acid_program_select_time_02")
+  button("REST"):fire()
+  assert(view("acid_program_time_reference_02").text=="--" and
+    current().time_events[2]=="T","Program maps its pending timing candidate")
+  fire("acid_editor_view",2)
+  assert(view("acid_grid_mapping_02").text=="P01 hold",
+    "Grid maps canonical timing during staged entry")
+  fire("acid_editor_view",1)
+  cancel_stage("Cancel")
+  assert(view("acid_program_time_reference_02").text=="P01 hold")
+
+  source=seq.new_pattern(4)
+  source.pitch_length=32
+  fresh(source)
+  fire("acid_last_step",32)
+  before,revision,save_count,write_count=seq.copy_source(current()),history.revision,saves,writes
+  fire("acid_program_time_page_2")
+  fire("acid_program_select_time_01")
+  assert(view("acid_program_select_pitch_01").text=="P17" and
+    view("acid_program_select_pitch_01_selection").outlined and
+    view("acid_selection_mapping").text=="T17 → P17 · C3",
+    "TIME selection reveals a linked pitch on the other page")
+  unchanged(before,revision,save_count,write_count)
+  source.pitch_length=2
+  fresh(source)
+  fire("acid_last_step",32)
+  fire("acid_program_select_pitch_01")
+  assert(view("acid_program_select_time_01_selection").outlined and
+    view("acid_program_select_time_03_selection").outlined and
+    not view("acid_program_select_time_02_selection").outlined,
+    "wrapped pitches link all corresponding notes")
+  fire("acid_program_time_page_2")
+  assert(view("acid_program_select_time_01_selection").outlined and
+    view("acid_program_time_reference_01").text=="P01",
+    "pitch links extend across timing pages")
+end
+do
+  local source=seq.new_pattern(4)
+  source.pitch_length=3
+  source.pitch_events[1]=seq.new_pitch(4,0)
+  source.pitch_events[2]=seq.new_pitch(7,0)
+  source.time_events[2]="T"
+  fresh(source)
+  fire("acid_program_select_pitch_01")
+  fire("acid_program_slide",true)
+  assert(view("acid_program_select_pitch_01").text=="P01 SLD→")
+  assert(view("acid_program_time_reference_01").text=="P01 →" and
+    view("acid_program_time_reference_02").text=="P01 hold →" and
+    view("acid_program_time_reference_03").text=="↗ P02")
+  local before,revision,save_count,write_count=seq.copy_source(current()),history.revision,saves,writes
+  fire("acid_program_select_time_03")
+  assert(view("acid_program_select_pitch_01_selection").outlined and
+    view("acid_program_select_pitch_02_selection").outlined and
+    view("acid_program_select_time_01_selection").outlined and
+    view("acid_program_select_time_02_selection").outlined and
+    view("acid_program_select_time_03_selection").outlined and
+    not view("acid_program_select_time_04_selection").outlined)
+  assert(view("acid_selection_mapping").text==
+    "Slide: T01 / P01 E3 → T03 / P02 G3 · via T02")
+  assert(not view("acid_program_slide").value,
+    "the incoming slide still edits the destination pitch controls")
+  fire("acid_editor_view",2)
+  assert(view("acid_grid_pitch_01").text=="E3 SLD→" and
+    view("acid_grid_mapping_01").text=="P01 · E3 →" and
+    view("acid_grid_mapping_02").text=="P01 hold →" and
+    view("acid_grid_mapping_03").text=="↗ P02 · G3")
+  assert(view("acid_grid_pitch_01_selection").outlined and
+    view("acid_grid_pitch_02_selection").outlined and
+    view("acid_grid_select_time_02_selection").outlined)
+  fire("acid_editor_view",1)
+  unchanged(before,revision,save_count,write_count)
+  fire("acid_program_select_time_02")
+  button("REST"):fire()
+  assert(view("acid_program_select_pitch_01").text=="P01 SLD" and
+    view("acid_program_time_reference_01").text=="P01" and
+    view("acid_program_time_reference_03").text=="P02",
+    "REST keeps the stored flag visible without claiming a connection")
+  fire("acid_program_select_pitch_01")
+  assert(view("acid_selection_mapping").text:find("Slide: blocked by T02 Rest",1,true))
+  button("Undo"):fire()
+  assert(view("acid_program_select_pitch_01").text=="P01 SLD→" and
+    view("acid_program_time_reference_03").text=="↗ P02")
+  begin("time")
+  fire("acid_program_select_time_02")
+  button("REST"):fire()
+  assert(view("acid_program_time_reference_03").text=="P02")
+  fire("acid_editor_view",2)
+  assert(view("acid_grid_mapping_03").text=="↗ P02 · G3")
+  fire("acid_editor_view",1)
+  cancel_stage("Cancel")
+  assert(view("acid_program_time_reference_03").text=="↗ P02")
+
+  fire("acid_program_select_pitch_03")
+  fire("acid_program_slide",true)
+  fire("acid_output_policy",2)
+  assert(view("acid_program_time_reference_01").text=="↗↻ P01 →" and
+    view("acid_program_time_reference_04").text=="P03 →↻")
+  fire("acid_program_select_time_04")
+  assert(view("acid_selection_mapping").text:find("next cycle T01",1,true))
+  fire("acid_output_policy",1)
+  assert(view("acid_program_time_reference_01").text=="P01 →" and
+    view("acid_program_time_reference_04").text=="P03" and
+    view("acid_selection_mapping").text:find("Slide: ends at pattern boundary",1,true),
+    "Play Once removes seam arrows and describes the stored terminal Slide flag")
+end
 local masked=seq.new_pattern(TIME_COUNT)
 masked.scale_mask_enabled=true
 for index=1,12 do masked.scale_mask[index]=index==1 or index==3 end

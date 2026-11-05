@@ -15,7 +15,7 @@ ready immediately: 32 C pitch entries, 32 NOTE commands, Length 16 and a
 Pitch span of 16. Change Length and Pitch span independently as needed.
 The header places Instrument first, then Phrase with Rename and Duplicate.
 Length, Timing, Reset pattern and Pitch span sit above the editor.
-Program and Grid have independent PITCH and TIME cursors and pages. Grid
+Program and Grid share PITCH and TIME selections with separate memory pages. Grid
 selects sixteen positions per page for direct editing with shared pitch and
 NOTE/TIE/REST controls. Program offers direct editing and **Enter pitches**
 or **Enter timing**. Both views
@@ -24,9 +24,31 @@ sequence. Reducing Length keeps hidden TIME entries available if the length
 is increased again; inactive TIME positions remain inspectable but cannot be
 edited directly. All 32 PITCH entries remain stored and editable.
 
-TIME buttons show **Note**, **Tie** or **Rest**; assignment controls below the
-active editor's TIME positions highlight the selected command. Grid pitches
-show Renoise note names with **ACC** and **SLD** when enabled. Pitch tooltips
+TIME buttons show **Note**, **Tie** or **Rest**. Program shows a pitch reference
+below each active TIME command; Grid shows the reference and resolved note above
+it. Ties identify the pitch they hold; rests have no pitch reference. Amber
+outlines link a selected TIME step to its PITCH slot, revealing the pitch page
+when necessary. Selecting a PITCH slot outlines every TIME step that plays or
+holds it, including repeated uses after pitch wrapping. The context line lists
+the relationship; its tooltip includes all linked steps. These links describe
+the compiled pattern, not a playback cursor.
+
+Slide belongs to the source PITCH entry and connects it to the next NOTE,
+continuing through TIEs. Both views show **SLD→** on a pitch with an outgoing
+connection; **SLD** alone is a stored flag without an active connection. TIME
+references show **→** on the source and carried ties, and **↗** on the destination.
+Selecting either endpoint or a carried tie outlines both pitches and the connected
+TIME steps. The context identifies source, destination and ties; tooltips list
+additional connections. A REST breaks the connection and the context names the
+blocking REST. **↻** and **next cycle** identify connections across the pattern
+boundary in Repeat mode; Play Once omits these connections. Arrows describe
+musical slide intent; target capabilities and output approximations still apply.
+
+Used PITCH slots are green. Unused slots remain dim and editable; their tooltips
+distinguish unused pitches from pitches outside Pitch span. TIME positions beyond
+Length are dim, retain their stored command, and have no pitch reference.
+Assignment controls below the active editor highlight the selected command. Grid pitches
+show Renoise note names with **ACC** and the Slide marker when enabled. Pitch tooltips
 identify musical notes. Grid shows canonical source; Program shows the
 pending edits during sequential entry.
 

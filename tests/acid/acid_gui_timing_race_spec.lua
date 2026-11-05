@@ -47,6 +47,10 @@ local function view_builder()
     function node:remove_view(child) remove_view(self,child) end
     node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
+    function node:update()
+      assert(self.kind=="canvas")
+      self.render({size=self.size,stroke_rect=function() end})
+    end
     function node:fire(value)
       self.value=value
       if self.notifier then self.notifier(value) end

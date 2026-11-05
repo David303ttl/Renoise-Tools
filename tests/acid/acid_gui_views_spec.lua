@@ -79,6 +79,14 @@ local function view_builder()
     node.add_child=node.add_view
     node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
+    function node:update()
+      assert(self.kind=="canvas")
+      self.outlined=false
+      self.render({size=self.size,stroke_rect=function(_,x,y,width,height)
+        assert(x==1 and y==1 and width==self.size.width-2 and height==self.size.height-2)
+        self.outlined=true
+      end})
+    end
     function node:fire(value)
       self.value=value
       if self.notifier then self.notifier(value) end
@@ -473,7 +481,8 @@ local function selected_ids(prefix,count)
   local selected={}
   for index=1,count do
     local item=assert(builder.views[string.format(prefix,index)])
-    if item.color[1]==SELECTED_COLOR then
+    if (builder.views[item.id.."_selection"] and builder.views[item.id.."_selection"].outlined) or
+        item.color[1]==SELECTED_COLOR then
       selected[#selected+1]=tostring(index)
     end
   end
@@ -616,7 +625,9 @@ assert(rawget(root,"size")==nil and rawget(editor_holder,"size")==nil and
   rawget(control("acid_output_panel"),"size")==nil,
   "content-sized sections have no fixed dimensions")
 for _,node in ipairs(builder.nodes) do
-  assert(node.kind~="stack","fixed-height workspace stack is absent")
+  if node.kind=="stack" then
+    assert(node.views[1].kind=="canvas","only individual selection frames use stacks")
+  end
 end
 for _=1,20 do tool.app_idle_observable:fire() end
 assert(classification_calls==initial_classifications,"unchanged idle ticks must not rescan native phrase content")
@@ -631,19 +642,19 @@ control("acid_pitch_page_2"):fire()
 control("acid_grid_pitch_01"):fire()
 view:fire(1)
 assert(control("acid_program_select_pitch_01").text=="P17" and
-  control("acid_program_select_pitch_01").color[1]==SELECTED_COLOR,
+  control("acid_program_select_pitch_01".."_selection").outlined,
   "PITCH page two selects P17")
 assert(control("acid_program_select_time_01").text:find("01",1,true) and
-  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
-  "PITCH selection leaves the independent TIME cursor unchanged")
+  not control("acid_program_select_time_01_selection").outlined,
+  "unused PITCH selection does not highlight an unrelated TIME step")
 control("acid_time_page_2"):fire()
 control("acid_grid_select_time_01"):fire()
 assert(control("acid_program_select_time_01").text:find("17",1,true) and
-  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
+  control("acid_program_select_time_01".."_selection").outlined,
   "TIME page two selects TIME17")
 assert(control("acid_program_select_pitch_01").text=="P17" and
-  control("acid_program_select_pitch_01").color[1]==SELECTED_COLOR,
-  "TIME selection leaves the independent PITCH cursor unchanged")
+  not control("acid_program_select_pitch_01_selection").outlined,
+  "inactive TIME selection does not highlight an unrelated PITCH slot")
 assert_navigation_neutral(nav_before,"independent cursor and page navigation")
 view:fire(2)
 control("acid_pitch_page_1"):fire()
@@ -710,7 +721,7 @@ local function inspect_pitch_rows(node)
     local cells=0
     for _,child in ipairs(node.views or {}) do
       for _,candidate in ipairs(child.views or {child}) do
-        if type(candidate.id)=="string" and candidate.id:match("^acid_grid_pitch_%d%d$") then
+        if type(candidate.id)=="string" and candidate.id:match("^acid_grid_pitch_header_%d%d$") then
           cells=cells+1
         end
       end
@@ -728,7 +739,7 @@ local function inspect_time_rows(node)
     for _,child in ipairs(node.views or {}) do
       local candidates=child.views or {child}
       for _,candidate in ipairs(candidates) do
-        if type(candidate.id)=="string" and candidate.id:match("^acid_grid_select_time_%d%d$") then
+        if type(candidate.id)=="string" and candidate.id:match("^acid_grid_mapping_%d%d$") then
           cells=cells+1
         end
       end
@@ -744,7 +755,7 @@ control("acid_grid_pitch_01"):fire()
 local edit_neutral=navigation_snapshot()
 view:fire(2)
 local bounded_views={
-  {control("acid_grid_pitch_01"),98},
+  {control("acid_grid_pitch_01"),94},
   {control("acid_grid_pitch_header_01"),98},
   {control("acid_grid_pitch_column_01"),98}
 }
@@ -770,9 +781,9 @@ assert(pitch_cell.text~=old_grid_label and
   not pitch_cell.tooltip:find("STORED",1,true) and
   not pitch_cell.tooltip:find("REFERENCED",1,true),
   "Grid pitch identifies the note without source-interpretation diagnostics")
-assert(control("acid_grid_pitch_column_01").size.height==38 and
+assert(control("acid_grid_pitch_column_01").size.height==42 and
   control("acid_grid_pitch_header_01").size.height==18 and pitch_cell.size.height==20,
-  "the position header and raw-pitch button fit the original 38-pixel cell height")
+  "the header and outlined pitch button fit the bounded cell height")
 for index,entry in ipairs(bounded_views) do
   assert(entry[1].size.width==widths[index],
     "Grid pitch edits preserve explicit width constraint "..index)
@@ -897,13 +908,13 @@ end
 control("acid_time_page_2"):fire()
 control("acid_grid_select_time_01"):fire()
 assert(control("acid_program_select_time_01").text:find("17",1,true) and
-  control("acid_program_select_time_01").color[1]==SELECTED_COLOR)
+  control("acid_program_select_time_01".."_selection").outlined)
 button("TIE"):fire()
 local inactive_time=saved_draft().time_events[17]
 assert(inactive_time=="T","TIME17 accepts an edit while within LAST STEP")
 last_step:fire("8")
 assert(control("acid_program_select_time_01").text:find("17",1,true) and
-  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
+  control("acid_program_select_time_01".."_selection").outlined,
   "shrinking LAST STEP retains the TIME17 selection")
 assert(not button("TIE").active and not button("REST").active and not button("NOTE").active,
   "shared TIME assignment controls disable while the cursor is inactive")
@@ -923,9 +934,11 @@ control("acid_pitch_page_2"):fire()
 control("acid_grid_pitch_01"):fire()
 control("acid_time_page_1"):fire()
 control("acid_grid_select_time_01"):fire()
-assert(control("acid_grid_pitch_01").color[1]==SELECTED_COLOR and
-  control("acid_grid_select_time_01").color[1]==SELECTED_COLOR,
-  "unequal PITCH and TIME lengths allow independent P17 and TIME01 selection")
+control("acid_pitch_page_2"):fire()
+control("acid_grid_pitch_01"):fire()
+assert(control("acid_grid_pitch_01".."_selection").outlined and
+  not control("acid_grid_select_time_01_selection").outlined,
+  "an unused P17 remains editable without highlighting unrelated TIME01")
 local p17_before=assert(sequencer.copy_source(saved_draft()))
 local p17_before_navigation=navigation_snapshot()
 control("acid_grid_key_05"):fire()
@@ -939,15 +952,15 @@ assert(not sequencer.same_source(p17_before,p17_after) and
 local after_p17_edit=navigation_snapshot()
 view:fire(1)
 assert(control("acid_program_select_pitch_01").text=="P17" and
-  control("acid_program_select_pitch_01").color[1]==SELECTED_COLOR and
+  control("acid_program_select_pitch_01".."_selection").outlined and
   control("acid_program_select_time_01").text:find("01",1,true) and
-  control("acid_program_select_time_01").color[1]==SELECTED_COLOR,
-  "Program restores independent P17 and TIME01 selections")
+  not control("acid_program_select_time_01_selection").outlined,
+  "Program restores P17 selection without linking unrelated TIME01")
 view:fire(2)
 assert(sequencer.same_source(p17_after,saved_draft()) and
-  control("acid_grid_pitch_01").color[1]==SELECTED_COLOR and
-  control("acid_grid_select_time_01").color[1]==SELECTED_COLOR,
-  "Grid restores independent P17 and TIME01 selections without changing source")
+  control("acid_grid_pitch_01".."_selection").outlined and
+  not control("acid_grid_select_time_01_selection").outlined,
+  "Grid restores P17 selection without changing source or linking TIME01")
 assert_navigation_neutral(after_p17_edit,"P17/TIME01 view switching")
 assert(p17_before_navigation.writes==after_p17_edit.writes and
   p17_before_navigation.drafts+1==after_p17_edit.drafts,
@@ -1973,7 +1986,7 @@ do
     "Follow toggle updates session state before chromatic entry")
   view:fire(1)
   control("acid_program_select_pitch_05"):fire()
-  assert(control("acid_program_select_pitch_05").color[1]==SELECTED_COLOR,
+  assert(control("acid_program_select_pitch_05".."_selection").outlined,
     "Program selects P05 before editing")
   assert(program_key(5).active,
     "Program key is active before Follow-off entry: "..control("acid_status").text)
