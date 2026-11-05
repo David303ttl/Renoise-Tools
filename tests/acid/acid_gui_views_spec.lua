@@ -175,10 +175,10 @@ end
 
 local render_calls=0
 local writer_releases=0
-local synchronous_writes=false
 local next_revision_id=100
-local generation_request,generation_callback
+local generation_request
 local active_request
+local next_writer_status,next_writer_message
 local committed_entries={}
 local sequencer=require("model.sequencer")
 local function store_entry(id,source,policy,pb_range)
@@ -192,6 +192,14 @@ local function read_entry(_,id)
 end
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
+  if success and call.kind=="create" then
+    next_revision_id=next_revision_id+1
+    local created={id=next_revision_id,name="Generated phrase"}
+    call.options.phrase_mutation(function()
+      table.insert(call.request.instrument.phrases,created)
+      return created
+    end)
+  end
   local phrase=call.phrase or call.request.phrase
   if success and call.request.kind=="regenerate" then
     next_revision_id=next_revision_id+1
@@ -260,15 +268,13 @@ local function start(kind,request,done)
     assert(song.selected_phrase==nil)
   end
   active_request=request
-  generation_callback=function(result)
-    active_request=nil
-    done(result)
-    tool.app_idle_observable:fire()
-  end
-  if synchronous_writes then
-    synchronous_writes=false
-    generation_callback(terminal_result(call,"committed","Synchronous Live Edit committed."))
-  end
+  local status=next_writer_status or "committed"
+  local message=next_writer_message or "Synchronous phrase write completed."
+  next_writer_status,next_writer_message=nil,nil
+  local result=terminal_result(call,status,message)
+  active_request=nil
+  done(result)
+  tool.app_idle_observable:fire()
   return true
 end
 package.loaded["writers.phrase_writer"]={
@@ -278,9 +284,7 @@ package.loaded["writers.phrase_writer"]={
     return active_request and "busy" or "idle",active_request and active_request.token or nil
   end,
   is_temporary=function()return false end,
-  cancel=function(token)
-    return active_request~=nil and rawequal(active_request.token,token)
-  end,
+  cancel=function()return false end,
   release=function() writer_releases=writer_releases+1 end
 }
 
@@ -1049,14 +1053,15 @@ assert(not button("Redo").active,"new edits discard the redo branch")
 
 phrase_popup:fire(1)
 control("acid_clipboard_copy"):fire()
-assert(control("acid_clipboard_paste").active==true,"matching clipboard is eligible before generation")
+assert(control("acid_clipboard_paste").active==true,
+  "matching clipboard is eligible before generation")
 button("Generate"):fire()
-assert(generation_request.target_index==1,"the first owned phrase can be generated in place")
-assert(control("acid_clipboard_paste").active==false,"pending generation disables Paste immediately")
-generation_callback(terminal_result(generation_request,"committed","Phrase 01 generated."))
-assert(control("acid_clipboard_paste").active==true,"completed generation restores Paste eligibility")
+assert(generation_request.target_index==1 and active_request==nil,
+  "manual generation completes synchronously for the selected phrase")
+assert(control("acid_clipboard_paste").active==true,
+  "completed generation keeps a matching clipboard eligible")
 assert(song.selected_phrase==nil and instrument.phrase_program==1,
-  "manual regeneration accepts structural selection changes without altering playback")
+  "manual regeneration preserves the playback program")
 assert(sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
   generation_request.source),
   "verified generation commits the exact selected writer source")
@@ -1071,16 +1076,11 @@ builder.views.acid_editor_view:fire(1)
 assert(projection_calls==rebound_projections,"rebound projection is reused during navigation")
 assert(pb_range_popup.value==4,"phrase selection restores its stored PB Range")
 button("Generate"):fire()
-assert(generation_request and generation_request.instrument_index==1)
-assert(generation_request.target_index==2,
-  "generation must pass the selected phrase index")
-assert(generation_request.options.pb_range==24,
-  "manual generation receives the selected phrase's PB Range")
-assert(phrase_popup.value==2,
-  "successful generation must keep the selected destination phrase")
-generation_callback(terminal_result(generation_request,"committed","Phrase generated."))
-assert(song.selected_phrase==nil and instrument.phrase_program==1,
-  "manual generation leaves host selection unchanged after staging")
+assert(generation_request.instrument_index==1 and generation_request.target_index==2 and
+  generation_request.options.pb_range==24,
+  "manual generation captures the selected phrase and PB Range")
+assert(phrase_popup.value==2 and song.selected_phrase==nil and instrument.phrase_program==1,
+  "manual generation keeps the selected destination without changing playback")
 local draft_warning
 for _,node in ipairs(builder.nodes) do
   if type(node.text)=="string" and node.text:find("DRAFT WARNING",1,true) then
@@ -1093,193 +1093,70 @@ assert(not draft_warning,
 phrase_popup:fire(3)
 assert(pb_range_popup.value==1,"a new phrase starts with PB Range Off")
 pb_range_popup:fire(4)
-program_key(3):fire()
 button("Generate"):fire()
-assert(generation_request.target_index==3,"new phrase generation targets append slot")
-assert(generation_request.options.pb_range==24,"new phrase render captures its selected PB Range")
-pb_range_popup:fire(5)
-program_key(4):fire()
+assert(generation_request.target_index==3 and generation_request.kind=="create" and
+  generation_request.options.pb_range==24,
+  "New Phrase synchronously appends with its selected PB Range")
+assert(#instrument.phrases==3 and phrase_popup.value==3,
+  "a successful New Phrase becomes the selected destination")
+
+local live_render_base=render_calls
+local live_checkbox=builder.views.acid_live_edit
+assert(live_checkbox,"Live Edit checkbox was not created")
+live_checkbox:fire(true)
+assert(render_calls==live_render_base,"arming Live Edit does not request a write")
+local armed_projections=projection_calls
+builder.views.acid_editor_view:fire(2)
+assert(render_calls==live_render_base and projection_calls==armed_projections,
+  "armed view navigation reuses the projection without writing")
+builder.views.acid_editor_view:fire(1)
+program_key(2):fire()
+assert(render_calls==live_render_base+1 and active_request==nil and
+  generation_request.target_index==3,
+  "a musical edit synchronously updates the selected phrase")
+assert(sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
+  generation_request.source),"Live Edit commits the exact accepted musical source")
+tool.app_idle_observable:fire()
+assert(render_calls==live_render_base+1,
+  "idle does not duplicate a completed Live Edit")
+
+instrument.phrase_program=2
+instrument.phrase_program_observable:fire()
+assert(phrase_popup.value==3 and render_calls==live_render_base+1,
+  "playback-program notifications do not redirect the ACID destination or write")
+select_native_phrase(2)
+tool.app_idle_observable:fire()
+assert(phrase_popup.value==2 and pb_range_popup.value==4,
+  "native phrase selection rebinds the editor on idle")
+assert(render_calls==live_render_base+1 and song.selected_phrase==instrument.phrases[2],
+  "switching to a saved phrase does not regenerate or disturb its selection")
+phrase_popup:fire(1)
+assert(phrase_popup.value==1 and song.selected_phrase==instrument.phrases[2],
+  "choosing an ACID destination leaves native selection unchanged")
+phrase_popup:fire(2)
+assert(phrase_popup.value==2 and song.selected_phrase==instrument.phrases[2],
+  "choosing the selected phrase in Destination does not alter native selection")
+program_key(5):fire()
+assert(render_calls==live_render_base+2 and generation_request.target_index==2,
+  "a musical edit after native selection updates the ACID destination")
+assert(sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
+  generation_request.source),"the selected phrase receives the exact Live Edit source")
+live_checkbox:fire(false)
+
 local target_popup
 for _,node in ipairs(builder.nodes) do
   if node.kind=="popup" and node.width==290 then target_popup=node end
 end
 assert(target_popup,"target instrument selector was not created")
+local writes_before_target_change=render_calls
 target_popup:fire(2)
-local created_phrase={id=23,name="Generated phrase"}
-instrument.phrases[3]=created_phrase
-generation_callback(terminal_result(generation_request,"committed","Phrase generated."))
-local recovered,recovered_policy,recovered_pb_range=draft_cache.get(song,instrument,nil)
-assert(recovered and recovered.pitch_events[1].key==3 and recovered_policy=="repeat" and
-  recovered_pb_range==48,
-  "stale create completion preserves the newest New Phrase draft at its original target")
-assert(not draft_cache.get(song,instrument,created_phrase),
-  "stale create completion cannot associate newer edits with an unverified destination")
-assert(not draft_cache.get(song,instrument_two,instrument_two.phrases[1]),
-  "completion never attaches an in-flight source draft to the current foreign target")
-
+assert(render_calls==writes_before_target_change,
+  "changing destination instruments does not write")
 target_popup:fire(1)
-phrase_popup:fire(4)
-local live_render_base=render_calls
-local live_checkbox=builder.views.acid_live_edit
-assert(live_checkbox,"Live Edit checkbox was not created")
-live_checkbox:fire(true)
-assert(render_calls==live_render_base,"arming Live Edit does not request a render")
-local armed_projections=projection_calls
-builder.views.acid_editor_view:fire(2)
-assert(render_calls==live_render_base and projection_calls==armed_projections,
-  "armed view navigation reuses projection without rendering")
-program_key(2):fire()
-tool.app_idle_observable:fire()
-assert(render_calls==live_render_base+1 and generation_request.target_index==4,
-  "an edit after arming appends the selected new phrase")
-local appended={id=24,name="Live appended phrase"}
-generation_request.options.phrase_mutation(function()
-  instrument.phrases[4]=appended
-  return appended
-end)
-generation_callback(terminal_result(generation_request,"committed","Live append committed."))
-assert(phrase_popup.value==4,"Live Edit binds the newly appended owned phrase")
-assert(not control("acid_status").text:find("Phrase updated.",1,true),
-  "a verified Live Edit does not publish a routine success confirmation")
-synchronous_writes=true
-program_key(5):fire()
-assert(not control("acid_status").text:find("Phrase updated.",1,true),
-  "a new source edit clears any obsolete success confirmation immediately")
-assert(render_calls==live_render_base+2 and active_request==nil,
-  "a synchronous writer completes inside the native source-edit callback")
-tool.app_idle_observable:fire()
-assert(render_calls==live_render_base+2 and generation_request.target_index==4,
-  "the idle callback does not duplicate the same in-place Live Edit write")
-assert(#instrument.phrases==4,"subsequent Live Edit does not append a duplicate phrase")
+assert(render_calls==writes_before_target_change,
+  "returning to the target instrument does not write")
 
-do
-  local before_policy=output_popup.value
-  local changed_policy=before_policy==1 and 2 or 1
-  local policies={"play_once","repeat"}
-  local writes=render_calls
-  live_checkbox:fire(true)
-  synchronous_writes=true
-  output_popup:fire(changed_policy)
-  assert(render_calls==writes+1 and active_request==nil and
-    generation_request.request.output_policy==policies[changed_policy],
-    "armed output edit commits synchronously: "..control("acid_status").text.." writes "..render_calls.."/"..writes)
-  local edited_source=assert(sequencer.copy_source(generation_request.source))
-  synchronous_writes=true
-  button("Undo"):fire()
-  assert(render_calls==writes+2 and active_request==nil and
-    generation_request.request.output_policy==policies[before_policy] and
-    sequencer.same_source(edited_source,generation_request.source),
-    "armed Undo synchronously restores output policy with exact musical source")
-  synchronous_writes=true
-  button("Redo"):fire()
-  assert(render_calls==writes+3 and active_request==nil and
-    generation_request.request.output_policy==policies[changed_policy] and
-    sequencer.same_source(edited_source,generation_request.source),
-    "armed Redo synchronously restores output policy with exact musical source")
-  synchronous_writes=true
-  button("Undo"):fire()
-  live_render_base=live_render_base+4
-end
-
-instrument.phrase_program=2
-instrument.phrase_program_observable:fire()
-instrument.phrase_program=1
-assert(phrase_popup.value==4 and render_calls==live_render_base+2,
-  "playback-program notifications alone do not redirect the ACID edit destination")
-select_native_phrase(2)
-assert(phrase_popup.value==4 and render_calls==live_render_base+2,
-  "native phrase selection defers ACID view changes until the idle callback")
-tool.app_idle_observable:fire()
-assert(phrase_popup.value==2 and pb_range_popup.value==4,
-  "native Phrase Editor selection rebinds ACID to that phrase on idle")
-assert(render_calls==live_render_base+2 and song.selected_phrase==instrument.phrases[2],
-  "switching to a saved phrase does not regenerate or disturb its selection")
-phrase_popup:fire(1)
-assert(phrase_popup.value==1 and render_calls==live_render_base+2 and song.selected_phrase==instrument.phrases[2],
-  "choosing an ACID destination leaves native selection unchanged without regenerating")
-phrase_popup:fire(2)
-assert(phrase_popup.value==2 and render_calls==live_render_base+2 and song.selected_phrase==instrument.phrases[2],
-  "choosing phrase 02 in Destination stays selected without regenerating")
-program_key(5):fire()
-tool.app_idle_observable:fire()
-assert(render_calls==live_render_base+3 and generation_request.target_index==2,
-  "an edit after a native phrase switch targets the selected phrase")
-assert(generation_request.options.token:is_current(),
-  "the request is current before the playback-program change")
-local pending_revision_id=generation_request.request.phrase.id
-instrument.phrase_program=2
-instrument.phrase_program_observable:fire()
-assert(not generation_request.options.token:is_current(),
-  "a playback-program change revokes an in-flight phrase mutation")
-generation_callback(terminal_result(generation_request,"suspended","playback program changed"))
-assert(generation_request.request.phrase.id==pending_revision_id and instrument.phrase_program==2,
-  "a revoked request leaves the phrase revision untouched and keeps the playback program")
-program_key(6):fire()
-tool.app_idle_observable:fire()
-assert(render_calls==live_render_base+4 and generation_request.target_index==2,
-  "a fresh edit still targets the ACID-selected phrase after playback changes")
-generation_callback(terminal_result(generation_request,"committed","Phrase regenerated with program 02 selected."))
-assert(song.selected_phrase==nil and instrument.phrase_program==2,
-  "the fresh synchronous regeneration preserves the changed playback program")
-view:fire(1)
-assert(sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
-  generation_request.source),
-  "verified generation commits the exact accepted PITCH/TIME source")
-instrument.phrase_program=1
-instrument.phrase_program_observable:fire()
-assert(instrument.phrase_program==1 and phrase_popup.value==2 and render_calls==live_render_base+4,
-  "a playback-program notification alone preserves the ACID destination without writing")
-assert(#instrument.phrases==4,"native phrase selection must not create another destination")
-
-live_checkbox:fire(false)
-instrument.phrase_program_observable:fire()
-select_native_phrase(2)
-phrase_popup:fire(1)
-tool.app_idle_observable:fire()
-assert(phrase_popup.value==1,"an explicit ACID destination beats a queued native selection")
-view:fire(2)
-control("acid_pitch_page_1"):fire()
-control("acid_grid_pitch_01"):fire()
-view:fire(1)
-live_checkbox:fire(true)
-assert(render_calls==live_render_base+4,"rearming Live Edit does not request a render")
-control("acid_program_octave_up"):fire()
-assert(not sequencer.same_source(generation_request.source,saved_draft()),
-  "an edit after arming creates a source distinct from the in-flight request")
-tool.app_idle_observable:fire()
-assert(render_calls==live_render_base+5 and generation_request.target_index==1,
-  "an edit after rearming targets the selected phrase 01")
-
-generation_request.options.phrase_mutation(function()
-  select_native_phrase(2)
-end)
-generation_callback(terminal_result(generation_request,"committed","Live phrase 01 regenerated."))
-tool.app_idle_observable:fire()
-assert(phrase_popup.value==1 and generation_request.target_index==1,
-  "ACID generation cannot redirect its selected phrase through native phrase notifications")
-assert(song.selected_phrase==instrument.phrases[2] and song.selected_phrase_index==2 and instrument.phrase_program==1,
-  "regenerating ACID phrase 01 leaves native structural selection unchanged")
-
--- Cancelling an active Live Edit render must not block native selection.
-control("acid_program_octave_down"):fire()
-tool.app_idle_observable:fire()
-assert(render_calls==live_render_base+6 and generation_request.target_index==1,
-  "a fresh PITCH edit starts the render used by the cancellation check")
-local cancelled_request=generation_request
-live_checkbox:fire(false)
-assert(not cancelled_request.options.token:is_current(),
-  "disarming Live Edit revokes the in-flight request")
-select_native_phrase(1)
-tool.app_idle_observable:fire()
-assert(phrase_popup.value==1,"native phrase selection advances while the cancelled render settles")
-select_native_phrase(2)
-tool.app_idle_observable:fire()
-assert(phrase_popup.value==2 and render_calls==live_render_base+6,
-  "cancelled render does not queue a replacement on native selection")
-generation_callback(terminal_result(cancelled_request,"suspended","cancelled render cleaned"))
 local before_native_selection=render_calls
-
--- Passive selection of a foreign phrase must never start a new render.
 instrument.phrases[3].foreign=true
 package.loaded["renoise.phrase_ownership"].status=function(phrase)
   return phrase.foreign and "foreign" or "owned"
@@ -1291,55 +1168,30 @@ assert(render_calls==before_native_selection and phrase_popup.value==3,
 instrument.phrases[3].foreign=nil
 select_native_phrase(1)
 tool.app_idle_observable:fire()
-assert(phrase_popup.value==1,"owned phrase selection still synchronizes after cancellation")
+assert(phrase_popup.value==1,"owned phrase selection still synchronizes")
 
-local before_queued_generate=render_calls
 live_checkbox:fire(true)
-select_native_phrase(2)
-assert(render_calls==before_queued_generate and phrase_popup.value==1,
-  "arming and queued native selection remain read-only")
+local writes_before_feedback=render_calls
 button("Generate"):fire()
-assert(render_calls==before_queued_generate+1 and generation_request.target_index==2,
-  "explicit Generate applies queued native selection and renders while Live Edit is armed")
-generation_callback(terminal_result(generation_request,"committed","Queued destination generated."))
-assert(control("acid_status").text:find("Phrase updated.",1,true),
-  "an explicit Generate keeps its useful success confirmation")
+assert(render_calls==writes_before_feedback+1 and
+  control("acid_status").text:find("Phrase updated.",1,true),
+  "manual Generate confirms a synchronous success")
 assert(#control("acid_feedback").views==1 and
   rawequal(control("acid_feedback").views[1],control("acid_status")) and
   builder.views.acid_status==control("acid_status"),
   "feedback attaches the status view once and keeps its ID lookup")
-phrase_popup:fire(1)
+phrase_popup:fire(2)
 assert(#control("acid_feedback").views==0 and
   builder.views.acid_status==control("acid_status"),
   "a target refresh detaches obsolete confirmation and retains its ID lookup")
-phrase_popup:fire(2)
-assert(#control("acid_feedback").views==0,
-  "repeated target refreshes leave the empty holder detached")
-button("Generate"):fire()
-generation_callback(terminal_result(generation_request,"committed","Explicit edit confirmation fixture."))
-assert(control("acid_status").text:find("Phrase updated.",1,true),
-  "manual Generate presents a confirmation before a later source edit")
+phrase_popup:fire(1)
 live_checkbox:fire(false)
 local timing_control=control("acid_timing")
 timing_control:fire(timing_control.value==1 and 2 or 1)
 assert(not control("acid_status").text:find("Phrase updated.",1,true),
-  "a later ordinary source edit clears the superseded Generate confirmation")
+  "a later source edit clears the superseded Generate confirmation")
+next_writer_status,next_writer_message="failed","Injected generation failure."
 button("Generate"):fire()
-generation_callback(terminal_result(generation_request,"committed","Confirmation before Undo."))
-assert(control("acid_status").text:find("Phrase updated.",1,true),
-  "manual Generate confirms before Undo")
-button("Undo"):fire()
-assert(not control("acid_status").text:find("Phrase updated.",1,true),
-  "Undo clears the superseded Generate confirmation")
-button("Generate"):fire()
-generation_callback(terminal_result(generation_request,"committed","Confirmation before Redo."))
-assert(control("acid_status").text:find("Phrase updated.",1,true),
-  "manual Generate confirms before Redo")
-button("Redo"):fire()
-assert(not control("acid_status").text:find("Phrase updated.",1,true),
-  "Redo clears the superseded Generate confirmation")
-button("Generate"):fire()
-generation_callback(terminal_result(generation_request,"failed","Injected generation failure."))
 assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
   "a failed Generate keeps its retryable error")
 button("Undo"):fire()
@@ -1348,14 +1200,13 @@ assert(control("acid_status").text:find("Couldn't update the phrase. Try again."
 button("Redo"):fire()
 assert(control("acid_status").text:find("Couldn't update the phrase. Try again.",1,true),
   "Redo retains unresolved generation failure feedback")
+next_writer_status,next_writer_message="approximate","Approximation fixture."
 button("Generate"):fire()
-generation_callback(terminal_result(generation_request,"approximate","Approximation fixture."))
 assert(control("acid_status").text:find("Phrase updated with a musical approximation.",1,true),
   "an approximate Generate keeps its warning")
 button("Undo"):fire()
 assert(control("acid_status").text:find("Phrase updated with a musical approximation.",1,true),
   "Undo retains unresolved approximation feedback")
-
 -- Instrument inventory notifications refresh the native destination popup on
 -- idle while preserving its bound object and without requesting a render.
 local function popup_with_item(item)
@@ -1436,17 +1287,11 @@ assert(type(committed_key)=="number","selected pitch source retains its canonica
 program_key(committed_key==0 and 2 or 1):fire()
 assert(not sequencer.same_source(saved_draft(),committed_entries[21].source),
   "precondition: edited source differs from the verified phrase source")
-local source_before_missing_identity=assert(sequencer.copy_source(saved_draft()))
 button("Generate"):fire()
-local missing_phrase_result=terminal_result(generation_request,"committed",
-  "verified completion without destination identity")
-assert(missing_phrase_result.kind=="success" and missing_phrase_result.verified,
-  "fixture supplies a verified successful completion before removing phrase identity")
-missing_phrase_result.phrase=nil
-generation_callback(missing_phrase_result)
-assert(sequencer.same_source(source_before_missing_identity,saved_draft()) and
-  rawequal(generation_request.request.phrase,instrument.phrases[1]),
-  "completion without destination identity preserves current source and exact target binding")
+assert(generation_request.target_index==1 and
+  sequencer.same_source(committed_entries[generation_request.request.phrase.id].source,
+    generation_request.source),
+  "synchronous Generate verifies and commits the selected phrase source")
 
 assert(song.selected_phrase_observable:listener_count()==1,
   "ACID watches the Renoise selected phrase")

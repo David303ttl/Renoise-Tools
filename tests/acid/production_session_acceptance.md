@@ -88,7 +88,7 @@ Record callback CPU and wall times, action counts, maximum and adequate-sample q
 
 ## 7. Implementation sequence, run commands and evidence
 
-1. Re-run the **currently supported** `multi-instrument-workflow`, `editor-responsiveness`, `direct-output-feasibility`, revision Undo/Redo and cold-process tests on the same current commit; record their limits. They are prerequisites, not proof of 8x8.
+1. Re-run the **currently supported** `multi-instrument-workflow`, `editor-responsiveness`, revision Undo/Redo and cold-process tests on the same current commit; record their limits. They are prerequisites, not proof of 8x8.
 2. Add deterministic profile fixtures and focused Lua tests for coverage (receiver/timing/policy, N/T/R, slide/seam, LAST STEP 1/16/17/32, source memory and distinct equal-content targets). Verify exact golden outputs independent of writer success.
 3. Generalize **one dev-only** GUI driver to create/edit multiple phrases within a single dialog. Register two new acceptance case names in the existing Lua/Pwsh allowlists; add runner/packaging tests for the new test-only source and rejected combinations. Do not extend the read-only scenario JSON catalog; it cannot express musical writes.
 4. Implement and pass 8x8 P0/P1/P3/P4/P5, before 16x8, recording latency without a ceiling. Fix only established correctness defects in their existing production owner with a failing focused regression first.
@@ -107,7 +107,6 @@ Record callback CPU and wall times, action counts, maximum and adequate-sample q
 ~~~powershell
 ./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase multi-instrument-workflow
 ./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness
-./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase direct-output-feasibility
 ./scripts/run_tests.ps1 -Tool ACID
 ./scripts/run_tests.ps1
 ./scripts/package.ps1 -Tool ACID

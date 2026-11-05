@@ -75,7 +75,7 @@ architecture or public compatibility facade.
 | Canonical source, fixed memories, validation, TIME normalization | `model.sequencer` | Add required mask fields, source operations, shared pitch resolution, validation/copy/equality. |
 | NOTE/TIE/REST traversal and voice/event semantics | `model.cycle_interpreter` | Accept the resolved pitch values without independently quantizing or changing consumption semantics. |
 | Physical gate timeline and successor association | `model.control_signals` | Pass the same resolved records through fallback compilation and successor verification; retain association checks. |
-| Projection and decoded text | `model.editor_state.project`, `step_text` | Project exactly the source/resolution used by compilation and planning. |
+| Projection and decoded text | `model.editor_state.project` | Project exactly the source/resolution used by compilation and planning. |
 | Output layout and capabilities | `model.output_planner`, `renoise.target_capabilities`, `writers.phrase_validator` | Consume the shared resolved event plan and preserve compatibility checks. |
 | Source/output/label history | `model.editor_state` | One linear history, difference classification, label/custom snapshot, undo/redo/reset. |
 | Widgets, navigation, edit admission | `gui.lua` | Shared shell, views, staged transaction controller, guards, clipboard and labels. |

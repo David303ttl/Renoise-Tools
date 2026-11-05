@@ -4,7 +4,6 @@ local ownership=require('renoise.phrase_ownership')
 local planner=require('model.output_planner')
 local store=require('renoise.pattern_store')
 local seq=require('model.sequencer')
-local cache=require('runtime.draft_cache')
 local phrase_fixture=dofile('tests/acid/complete_phrase_fixture.lua')
 local limits={max_lines=20,max_note_columns=2,max_effect_columns=1,number_of_lines=16}
 renoise={InstrumentPhrase={MAX_NUMBER_OF_LINES=limits.max_lines,
@@ -29,7 +28,10 @@ local function phrase(source,id)
    for key,value in pairs(cell)do p.lines[index].effect_columns[column][key]=value end
   end
  end
- p.name=assert(ownership.make_name(p,id))
+ local snapshot=assert(ownership.snapshot(p))
+ local seal_columns={}
+ for column=1,12 do seal_columns[column]=p:column_is_muted(column) end
+ p.name=assert(ownership.make_name_from_verified_snapshot(snapshot,id,seal_columns))
  return setmetatable(p,content_equality)
 end
 local function instrument(phrases)
@@ -42,7 +44,6 @@ end
 local function runtime(song,temporary)
  local ctx=context.new{writer={state=function()return 'idle',nil end,
   is_temporary=function(_,_,p)return p~=nil and rawequal(p,temporary)end},
-  capture=function()error('inventory must not capture')end,
   sink=function()error('inventory must not render')end}
  ctx:attach_document(song);ctx:open_dialog()
  return ctx

@@ -380,7 +380,6 @@ function M.new(access)
         end
         return true
       end
-      request.validate_checkpoint=function(self) return checkpoint(record,self or record.request[1],false) end
       request.validate_authorization_checkpoint=function(self)
         return checkpoint(record,self or record.request[1],false,true,true)
       end
@@ -406,16 +405,6 @@ function M.new(access)
           return false,"Captured request baseline values changed"
         end
         return record.baseline_proof_reference
-      end
-      request.cleanup_authorized=function(_,supplied_token)
-        if not record.access or not rawequal(supplied_token,record.token) then return false end
-        local ok,current=pcall(function()
-          local state=record.access.current()
-          return state and state.epoch==record.values.epoch and rawequal(state.song,record.song)
-            and record.access.cleanup_allowed(record.token)
-            and ownership.is_current(record.song)~=nil
-        end)
-        return ok and current==true
       end
       request.mutate=function(self,supplied_token,action)
         if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) or
@@ -465,13 +454,6 @@ function M.new(access)
         record.expected_revision=revision_id
         return true
       end
-      request.cleanup_mutate=function(self,supplied_token,action)
-        if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) or
-            not self:cleanup_authorized(supplied_token) or type(record.access.cleanup_mutate)~="function" then
-          error("Cleanup mutation is not authorized",0)
-        end
-        return record.access.cleanup_mutate(supplied_token,action)
-      end
       request.record_blocker=function(self,supplied_token,evidence)
         if not rawequal(self,request) or not record.access or not rawequal(supplied_token,record.token) then
           return false,"Invalid blocker token"
@@ -510,8 +492,8 @@ function M.new(access)
         end
         return record.access.record_blocker(supplied_token,normalized)
       end
-      for _,key in ipairs({"is_current","validate_checkpoint","validate_authorization_checkpoint",
-          "retained_baseline_reference","cleanup_authorized","mutate","expect_revision","cleanup_mutate","record_blocker"}) do
+      for _,key in ipairs({"is_current","validate_authorization_checkpoint",
+          "retained_baseline_reference","mutate","expect_revision","record_blocker"}) do
         record.functions[key]=request[key]
       end
       records[request]=record
@@ -521,12 +503,6 @@ function M.new(access)
     end)
     if not ok then return nil,"Cannot capture runtime request" end
     return request,reason
-  end
-
-  function owner:validate_checkpoint(request)
-    local record=records[request]
-    if not record then return false,"Unknown runtime request" end
-    return checkpoint(record,request,false)
   end
 
   function owner:validate_authorization_checkpoint(request)

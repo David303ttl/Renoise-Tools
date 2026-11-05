@@ -28,15 +28,8 @@ local lines=assert(signals.release_lines(tl,4))
 assert(#lines==1 and lines[1]==19)
 assert(not signals.compile(p,{gate_fraction=0}))
 assert(not signals.release_lines(tl,3))
-local gate_writer=require("reference.gate_writer")
-local cells={}
-for i=1,32 do cells[i]={note_value=121} end
-local phrase={}
-function phrase:line(i)return {note_columns={cells[i]}}end
 local operations=assert(planner.plan_gates(tl,tl.semantic,nil,4))
-local result=assert(gate_writer.apply_plan(phrase,operations))
-assert(result.early_releases==1 and cells[19].note_value==120)
-assert(not gate_writer.apply_plan(phrase,operations))
+assert(operations.release_lines[19])
 print("ACID control-signal and gate tests passed")
 
 -- Compare every short valid source to a run-based oracle. A run ends at a

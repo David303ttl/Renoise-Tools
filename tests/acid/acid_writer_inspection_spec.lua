@@ -45,7 +45,6 @@ _G.renoise={InstrumentPhrase={PLAY_SCRIPT=2,PLAY_PATTERN=1,KEY_TRACKING_NONE=1,
   song=function()return song end}
 local writer=require('writers.phrase_writer')
 local writer_request=dofile('tests/acid/writer_request.lua')
-local context=require('runtime.context')
 local seq=require('model.sequencer')
 local pitch=dofile('tests/acid/pitch_fixture.lua')
 local store=require('renoise.pattern_store')
@@ -56,21 +55,6 @@ local pattern=seq.new_pattern(3)
 pattern.pitch_events[1]=pitch(48)
 pattern.pitch_events[2]=pitch(48)
 pattern.time_events[1],pattern.time_events[2],pattern.time_events[3]='N','T','T'
-
-local captured_requests,sink_requests=0,0
-local boundary=context.new{
-  writer=writer,
-  capture=function(_,request_token)
-    captured_requests=captured_requests+1
-    return {token=request_token}
-  end,
-  sink=function(request,done)
-    sink_requests=sink_requests+1
-    assert(request.token:is_current())
-    done({status='committed'})
-    return true
-  end,
-}
 
 local function build(target,options)
   local request,rejection=writer_request.build(renoise.song(),1,pattern,target or 1,
@@ -102,9 +86,6 @@ assert(status and status.kind=='success' and status.status=='committed',
 local created=instrument.phrases[1]
 assert(created and rawequal(instrument.phrases[1],created))
 assert(writer.state()=='idle','synchronous create left writer occupied')
-assert(boundary:request_generation('manual')==true
-  and captured_requests==1 and sink_requests==1,
-  'runtime did not admit the test sink after synchronous writer completion')
 
 local ownership=require('renoise.phrase_ownership')
 local store=require('renoise.pattern_store')

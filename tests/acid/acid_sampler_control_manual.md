@@ -14,8 +14,6 @@ renderer-mode selector. Use a disposable song.
 4. Repeat on plugin-only, MIDI-only, hybrid and empty slots. Record actual
    note-on, velocity, OFF and pitch-bend behavior separately from phrase cells.
 
-The old Baseline/Retrigger/Selective Slide comparisons are retired. Their M3
-measurements remain in the audio evidence records and do not constrain current
-musical editing. For current manual acceptance use
-[acid_m35_s_manual.md](acid_m35_s_manual.md); playback remains unverified until
+For current manual acceptance use
+[acid_regeneration_manual.md](acid_regeneration_manual.md); playback remains unverified until
 each target is actually captured in Renoise.

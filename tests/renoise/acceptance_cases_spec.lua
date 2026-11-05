@@ -9,7 +9,6 @@ local helpers = assert(loadstring(prefix .. [[
     same_native_color = same_native_color,
     production_output_matches = production_output_matches,
     editor_fixture_passes = editor_fixture_passes,
-    draft_values_preserved = draft_values_preserved,
     install_profile_wrapper = install_profile_wrapper,
     callback_latency_acceptance = callback_latency_acceptance,
     resolve_acceptance_profile = resolve_acceptance_profile,
@@ -195,18 +194,4 @@ assert(acceptance_cases.run("editor-responsiveness",function(result) rejected_pr
 assert(rejected_profile_result.status=="ERROR" and rejected_profile_result.reason==invalid_error,
   "M.run did not reject an unsupported profile value")
 
-local expected_source={length=4,pitch_events={{key=3}}}
-local exact_recovery={pattern={length=4,pitch_events={{key=3}}},output_policy="play_once",pb_range=0}
-local function same_source(left,right)
-  return left.length==right.length and left.pitch_events[1].key==right.pitch_events[1].key
-end
-local draft_preserved,retention=helpers.draft_values_preserved(nil,nil,nil,{exact_recovery},
-  expected_source,"play_once",0,same_source)
-assert(draft_preserved and retention=="recovery",
-  "a stale captured revision should remain preserved in recovery after a committed identity change")
-local mismatched_recovery={pattern={length=4,pitch_events={{key=8}}},output_policy="play_once",pb_range=0}
-assert(not helpers.draft_values_preserved(nil,nil,nil,{mismatched_recovery},
-  expected_source,"play_once",0,same_source),
-  "different recovery source values must not satisfy captured draft preservation")
-
-print("Acceptance driver regressions pass: profile modes, record-only latency, recovery, drafts and selection")
+print("Acceptance driver regressions pass: profile modes, record-only latency and selection")

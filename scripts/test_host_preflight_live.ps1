@@ -1,7 +1,6 @@
 #Requires -Version 7.0
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$RenoiseExe, [int]$RenoiseProcessId = 0,
-      [string]$BehaviorEvidencePath, [switch]$RequireSafetyPass)
+param([Parameter(Mandatory)][string]$RenoiseExe, [int]$RenoiseProcessId = 0)
 $ErrorActionPreference = 'Stop'
 Import-Module "$PSScriptRoot/../tests/renoise/host_preflight.psm1" -Force
 $result = Test-RenoiseHostPreflight -Configuration ([pscustomobject]@{

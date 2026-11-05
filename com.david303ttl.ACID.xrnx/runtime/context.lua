@@ -2,27 +2,17 @@
 -- Runtime generation delivery boundary.
 -- Attached contexts with an installed editor use runtime-owned frozen capture,
 -- transition revisions, eligibility, mutation scopes and integrity evidence.
--- The injected capture remains the delivery-conformance seam until an editor
--- is installed. GUI authority cutover uses the same public context methods.
+-- Generation capture and request checkpoints remain owned by runtime.requests.
 --
 -- context.new(options) -> context
 --   options.writer  read-only occupancy source. writer.state() returns a
---                   detached status string and an opaque token:
---                   "idle", nil or "busy", <exact operation token>.
+--                   detached status string and an opaque token: "idle", nil
+--                   or "busy", <exact operation token>.
 --                   No writer job table or writable busy flag is retained.
---   options.capture capture(trigger, token) -> request | nil, reason.
---                   Runtime-owned eligibility and request-capture seam. The
---                   returned request must carry the supplied token as
---                   request.token; the context does not write request values.
 --   options.sink    sink(request, done) -> true | false, reason.
---                   true accepts and eventually calls done exactly once;
---                   false rejects and must not call done. done may run before
---                   the sink returns. The sink is fixed for this context.
---   options.issue_token issue_token() -> opaque token (optional).
---                   Overrides issuance for isolated conformance tests without
---                   exposing the delivery record. The default token exposes
---                   only token:is_current() -> boolean, failing closed on
---                   inspection errors.
+--                   true accepts and calls done exactly once before return;
+--                   false rejects and must not call done. The sink is fixed
+--                   for this context.
 --
 -- Request contract:
 --   Capture owns request values; this context passes them through unchanged
@@ -49,65 +39,43 @@
 --   before the sink returns.
 --
 --   This is the single scheduler entry for manual and armed Live Edit requests.
---   While an accepted request is active, a later request replaces one pending
---   trigger; it is captured and dispatched only after terminal completion.
+--   While the writer slot is occupied, a later request replaces one pending
+--   trigger; it is captured and dispatched after the slot becomes idle.
 --   Disarm drops pending Live Edit but leaves an explicit manual intent queued.
 --
 --   Duplicate completion, completion after rejection, completion followed by
 --   rejection or an invalid return, and thrown starts are diagnosed at most
---   once per delivery record. They never settle twice. A later request may
---   clear a block only after any pending record has retired and a fresh
---   writer.state() inspection reports idle.
---
---   A thrown or non-boolean sink start whose exact issued token is still busy
---   is physically accepted with canceled/uncertain commit authorization:
---   token:is_current() and state.authorization report false, the pending
---   record is retained for its matching done, admission stays blocked, and the
---   call returns accepted-pending (true). It never fabricates a rejection or
---   releases the writer slot. A literal rejection while the writer reports
---   busy is a protocol violation, not a clean rejection.
+--   once per delivery record. They never settle twice. A sink that violates
+--   the synchronous contract blocks dispatch until a fresh writer.state()
+--   inspection reports idle.
 --
 -- Boundary obligations:
---   The sink may call done synchronously before returning acceptance. It calls
---   done only after terminal cleanup/evidence as its final host/GUI side effect;
---   the acceptance return may follow synchronous done.
---   A writer idle reading inside a delivery callback is not admission proof;
---   the runtime guards the full callback. Cancellation is normalized only from
---   verified settlement, never from a boolean acknowledgement alone. A revoked
---   or accepted-pending record stays pending until its matching done; a clean
---   cancellation without a terminal must be normalized to a terminal
---   settlement by the runtime. Diagnostics, blocks, revoke, and idle readings
---   never create a terminal result; an unresolved render remains pending or
---   tombstoned until its own terminal state retires it. Pending-token scrubbing
---   and native writer registry tombstoning remain writer cleanup work.
+--   The sink calls done only after terminal cleanup/evidence as its final
+--   host/GUI side effect. The runtime guards the full callback even though the
+--   writer reports idle before delivery. Cancellation is normalized only from
+--   verified settlement, never from a boolean acknowledgement alone.
 --
 -- context:revoke(token, reason) -> true | false
 --   Raw-identity revocation of the active request. A matching call makes the
 --   token report false for is_current() and removes authorization while
---   retaining the delivery record and writer occupancy. A later matching done
---   retires that record without treating it as a deliverable result.
+--   retaining writer occupancy. The synchronous writer callback retires its
+--   scalar record without treating it as a deliverable result.
 --   Mismatched, already-revoked, rejected, or settled requests return false.
 --
--- context:state() -> detached scalar projection
---   {status="idle"|"pending"|"blocked", token, authorization, blocked,
---    blocked_reason, diagnostic_count, last_diagnostic={code,message} | nil}
---
--- Lifetime seam (optional until the GUI cutover):
+-- Lifetime:
 --   attach_document(song) -> fresh epoch; replaces/releases an attached song.
 --   open_dialog(gui_delivery) -> fresh session; delivery(result) is optional.
 --   close_dialog() -> changed; revokes delivery and requests cancellation.
 --   release_document() -> changed, volatile draft warning; invalidates before
 --     cancel(token, reason), detach(song), and drafts.release(song), then
---     scrubs every retained delivery record. These optional dependency seams
---     never authorize occupancy retirement. Repeated close/release is inert.
+--     scrubs the active delivery record. These dependencies never authorize
+--     occupancy retirement. Repeated close/release is inert.
 --   lifetime_state() -> detached epoch/session/open/song_attached scalars.
--- Before first attach_document, the original delivery-only seam is supported.
--- After attachment, generation requires an attached song and open dialog.
--- Unresolved released records retain only token/scalars/diagnostic strings;
--- late completion can mark only its own terminal flags.
+-- Generation requires an attached song and open dialog. A writer callback
+-- reentered during document release can only retire its scalar record.
 --
 -- The returned context exposes generation, revocation, and lifetime methods.
--- Writer, capture, sink, delivery record, block, diagnostics, and dispatch
+-- Writer, sink, delivery record, block, diagnostics, and dispatch
 -- state remain closure-private.
 local M = {}
 local epoch_serial = 0
@@ -161,7 +129,12 @@ local function inspect_writer(writer)
     if token ~= nil then return nil, "idle writer state returned an operation token" end
     return {status = "idle", token = nil}
   end
-  if status == "busy" then return {status = "busy", token = token} end
+  if status == "busy" then
+    if token == nil or token == false then
+      return nil, "busy writer state did not return an operation token"
+    end
+    return {status = "busy", token = token}
+  end
   return nil, "writer state returned an unknown status"
 end
 
@@ -169,15 +142,10 @@ function M.new(options)
   assert(type(options) == "table", "runtime context options are required")
   assert(type(options.writer) == "table" and type(options.writer.state) == "function",
     "runtime context requires writer.state")
-  assert(type(options.capture) == "function", "runtime context requires request capture")
   assert(type(options.sink) == "function", "runtime context requires a sink")
-  assert(options.issue_token == nil or type(options.issue_token) == "function",
-    "runtime context issue_token must be a function")
 
   local writer = options.writer
-  local capture = options.capture
   local sink = options.sink
-  local issue_token = options.issue_token
   local current_song = nil
   local inventory = nil
   local requests = nil
@@ -189,13 +157,11 @@ function M.new(options)
   local epoch = 0
   local session = 0
   local opened = false
-  local lifecycle = false
   local gui_delivery = nil
   local cancel = options.cancel
   local detach = options.detach
   local drafts = options.drafts or require("runtime.draft_cache")
   local releasing = false
-  local records = setmetatable({}, {__mode = "k"})
   local active = nil
   local dispatching = false
   local blocked = false
@@ -304,30 +270,8 @@ function M.new(options)
     record.current = false
     record.request = nil
     record.gui_delivery = nil
+    record.finish = nil
     if rawequal(active, record) then active = nil end
-  end
-
-  local function context_state()
-    local integrity_state=context:integrity_state()
-    local record = active
-    if record and record.settled then record = nil end
-    local status = "idle"
-    if blocked or integrity_state.blocked then
-      status = "blocked"
-    elseif record and not record.settled then
-      status = "pending"
-    end
-    local last = last_diagnostic
-    return {
-      status = status,
-      pending = pending_trigger ~= nil,
-      token = record and record.token or nil,
-      authorization = record ~= nil and record.current == true and record.settled ~= true,
-      blocked = blocked == true or integrity_state.blocked,
-      blocked_reason = integrity_state.reason or blocked_reason,
-      diagnostic_count = diagnostic_count,
-      last_diagnostic = last and {code = last.code, message = last.message} or nil,
-    }
   end
 
   local function summary(result)
@@ -495,81 +439,53 @@ function M.new(options)
   end
 
 
+  local function fail_sink_contract(record, code, message)
+    record.rejected = true
+    retire(record)
+    block(record, code, message)
+    return false, blocked_reason
+  end
+
   local function uncertain_start(record, failure)
     local state, inspection_error = inspect_writer(writer)
     local detail = reason_text(failure, "the sink failed")
+    local occupancy
     if not state then
-      record.rejected = true
-      retire(record)
-      block(record, "delivery.start_unverified",
-        "Cannot verify writer acceptance after the sink failed: " .. detail ..
-        " (" .. tostring(inspection_error) .. "); dispatch is blocked until writer state is safe")
-      return false, blocked_reason
+      occupancy="writer state unavailable: "..tostring(inspection_error)
+    elseif state.status=="busy" and rawequal(state.token,record.token) then
+      occupancy="the issued operation still owns the writer slot"
+    elseif state.status=="busy" then
+      occupancy="another operation owns the writer slot"
+    else
+      occupancy="the writer reports idle"
     end
-    if state.status == "busy" and record.token ~= nil and rawequal(state.token, record.token) then
-      if record.settled then
-        block(record, "delivery.sink_failed_after_completion",
-          "Sink failed after completing the accepted request: " .. detail ..
-          "; dispatch is blocked until writer state is safe")
-        return true
-      end
-      record.revoked = true
-      record.current = false
-      block(record, "delivery.sink_failed_after_acceptance",
-        "Sink failed after starting the accepted request: " .. detail ..
-        "; commit authorization is revoked and dispatch is blocked until the matching completion retires it")
-      return true
-    end
-    if state.status == "idle" then
-      if record.settled then
-        diagnose(record, "delivery.sink_failed_after_completion",
-          "Sink failed after completing the request: " .. detail)
-        return true
-      end
-      record.rejected = true
-      retire(record)
-      diagnose(record, "delivery.sink_failed_before_acceptance",
-        "Sink failed before acceptance: " .. detail)
-      return false, detail
-    end
-    record.rejected = true
-    retire(record)
-    block(record, "delivery.start_unverified",
-      "Cannot verify writer acceptance after the sink failed: " .. detail ..
-      "; dispatch is blocked until writer state is safe")
-    return false, blocked_reason
+    local phase=record.settled and "after delivering completion" or "before delivering completion"
+    return fail_sink_contract(record,"delivery.sink_failed",
+      "Sink failed "..phase..": "..detail..
+      "; "..occupancy..". Dispatch is blocked until writer state is safe")
   end
 
   local function invalid_acceptance(record)
     local state, state_error = inspect_writer(writer)
-    if state and state.status == "busy" and record.token ~= nil and
-        rawequal(state.token, record.token) then
-      record.revoked = true
-      record.current = false
-      block(record, "delivery.invalid_acceptance",
-        "Sink returned an invalid acceptance result while the writer held the issued token; " ..
-        "commit authorization is revoked and dispatch is blocked until the matching completion retires it")
-      return true
-    end
-    record.rejected = true
-    retire(record)
+    local occupancy
     if state and state.status == "idle" then
-      block(record, "delivery.invalid_acceptance",
-        "Sink returned an invalid acceptance result before acceptance; " ..
-        "dispatch is blocked until writer state is safe")
+      occupancy="the writer reports idle"
+    elseif state and state.status=="busy" and rawequal(state.token,record.token) then
+      occupancy="the issued operation still owns the writer slot"
+    elseif state and state.status=="busy" then
+      occupancy="another operation owns the writer slot"
     else
-      block(record, "delivery.invalid_acceptance",
-        "Sink returned an invalid acceptance result and writer occupancy could not be verified" ..
-        (state_error and (": " .. tostring(state_error)) or "") ..
-        "; dispatch is blocked until writer state is safe")
+      occupancy="writer state unavailable"..(state_error and (": "..tostring(state_error)) or "")
     end
-    return false, blocked_reason
+    return fail_sink_contract(record,"delivery.invalid_acceptance",
+      "Sink returned an invalid acceptance result for the synchronous completion contract; "..
+      occupancy..". Dispatch is blocked until writer state is safe")
   end
 
   local function flush_pending()
     if flushing or not pending_trigger then return false end
     if dispatching or (active and not active.settled) then return false end
-    if releasing or (lifecycle and (current_song == nil or not opened)) then
+    if releasing or current_song == nil or not opened then
       pending_trigger=nil
       return false
     end
@@ -656,7 +572,7 @@ function M.new(options)
       return false,"Synchronous mutation is active or requires recovery"
     end
     if adoption_blocked_reason then return false,adoption_blocked_reason end
-    if releasing or (lifecycle and (current_song == nil or not opened)) then
+    if releasing or current_song == nil or not opened then
       return false, "No current document dialog is open"
     end
     if dispatching then
@@ -746,25 +662,12 @@ function M.new(options)
       revisions = editor and transitions:revision_state() or nil,
       gui_delivery = gui_delivery,
     }
-    records[record] = true
-    local issue_ok, issued_token
-    if issue_token then
-      issue_ok, issued_token = pcall(issue_token)
-    else
-      issue_ok, issued_token = true, new_token(record)
-    end
-    if not issue_ok or issued_token == nil or issued_token == false then
-      dispatching = false
-      retire(record)
-      return false, issue_ok and "Cannot issue a generation token" or
-        reason_text(issued_token, "Cannot issue a generation token")
-    end
-    local token = issued_token
+    local token = new_token(record)
     record.token = token
 
-    local capture_action=capture
-    if editor then capture_action=function(kind,operation_token) return requests:capture(kind,operation_token,operation) end end
-    local captured, request, capture_reason = pcall(capture_action, trigger, token)
+    local captured, request, capture_reason = pcall(function()
+      return requests:capture(trigger,token,operation)
+    end)
     if not captured then
       dispatching = false
       retire(record)
@@ -797,8 +700,8 @@ function M.new(options)
       return false, "Generation capture returned a foreign token"
     end
 
-    if record.released or (lifecycle and
-        (current_song == nil or not opened or epoch ~= record.epoch or session ~= record.session)) then
+    if record.released or current_song == nil or not opened or
+        epoch ~= record.epoch or session ~= record.session then
       dispatching = false
       retire(record)
       return false, "Generation context changed during capture"
@@ -816,8 +719,8 @@ function M.new(options)
       end
     end
     record.finish = function(result)
-      local terminal_current=not lifecycle or (current_song~=nil and opened and
-        not record.released and record.epoch==epoch and record.session==session)
+      local terminal_current=current_song~=nil and opened and not record.released and
+        record.epoch==epoch and record.session==session
       if record.rejected then
         if terminal_current then
           block(record, "delivery.completion_after_rejection",
@@ -967,14 +870,22 @@ function M.new(options)
     end
 
     if accepted == true then
+      if not record.settled then
+        return invalid_acceptance(record)
+      end
+      if record.diagnosed["delivery.duplicate_completion"] or
+          record.diagnosed["delivery.completion_after_rejection"] then
+        return fail_sink_contract(record,"delivery.duplicate_completion",
+          "Sink invoked the terminal callback more than once; dispatch is blocked until writer state is safe")
+      end
+      record.finish=nil
       return true
     end
 
     if accepted == false then
       if record.settled then
-        block(record, "delivery.complete_then_reject",
+        return fail_sink_contract(record,"delivery.complete_then_reject",
           "Sink completed the request and then rejected it; dispatch is blocked until writer state is safe")
-        return false, blocked_reason
       end
       local state, state_error = inspect_writer(writer)
       if not state then
@@ -1024,11 +935,6 @@ function M.new(options)
       return false, reason_text(rejection, "Generation request rejected")
     end
 
-    if record.settled then
-      block(record, "delivery.invalid_acceptance",
-        "Sink completed the request and returned an invalid acceptance result; dispatch is blocked until writer state is safe")
-      return false, blocked_reason
-    end
     return invalid_acceptance(record)
   end
 
@@ -1578,20 +1484,11 @@ function M.new(options)
     if reason then self:mark_dirty(reason) end
   end
 
-  local function run_mutation(token,action,cleanup_only)
+  local function run_mutation(token,action)
     local operation_scope=active and active.current and rawequal(active.token,token)
-    local cleanup_scope=cleanup_only and active and not active.current and not active.settled and
-      not active.rejected and not active.released and active.epoch==epoch and
-      rawequal(active.token,token) and not releasing
-    local authorized_scope=cleanup_only and cleanup_scope or (not cleanup_only and
-      operation_scope)
-    if type(action)~="function" or not authorized_scope or not current_song or
+    if type(action)~="function" or not operation_scope or not current_song or
         (mutation_depth>0 and not rawequal(mutation_token,token)) then
       error("Mutation requires the current operation token",0)
-    end
-    if cleanup_only then
-      local current,current_error=ownership.is_current(current_song)
-      if not current then error(current_error or "Document is no longer current",0) end
     end
     if mutation_depth==0 then
       if type(writer.is_temporary)~="function" then
@@ -1705,7 +1602,7 @@ function M.new(options)
   end
 
   function context:mutate(token,action)
-    return run_mutation(token,action,false)
+    return run_mutation(token,action)
   end
 
   function context:reconcile()
@@ -1773,7 +1670,7 @@ function M.new(options)
     pending_trigger=nil
     transitions:transition("close")
     gui_delivery = nil
-    for record in pairs(records) do record.gui_delivery = nil end
+    if active then active.gui_delivery=nil end
     invalidate("Dialog closed")
     return true
   end
@@ -1842,14 +1739,13 @@ function M.new(options)
     adoption_blocked_reason=nil
     if requests then requests:release() end
     requests = nil
-    for record in pairs(records) do
-      record.request = nil
-      record.gui_delivery = nil
-      record.finish = nil
-      record.released = true
+    if active then
+      active.request = nil
+      active.gui_delivery = nil
+      active.finish = nil
+      active.released = true
     end
-    records = setmetatable({}, {__mode = "k"})
-    -- Released delivery is detached; native occupancy remains writer-owned.
+    -- The native writer owns occupancy through synchronous rollback/settlement.
     active = nil
     blocked = false
     blocked_reason = nil
@@ -1865,7 +1761,6 @@ function M.new(options)
       mutation_recording_failed_reason=nil
       mutation_recording_failed_song=nil
     end
-    lifecycle = true
     epoch_serial = epoch_serial + 1
     epoch = epoch_serial
     current_song = song
@@ -1899,10 +1794,6 @@ function M.new(options)
       end,
       occupancy=function(token) return context:occupancy_state(token) end,
       revoke=function(token,reason) return context:revoke(token,reason) end,
-      cleanup_allowed=function(token)
-        return active~=nil and not active.current and not active.settled and not active.rejected and not active.released
-          and active.epoch==epoch and rawequal(active.token,token)
-      end,
       blocked=function(token)
         if mutation_failed or (mutation_depth>0 and not rawequal(mutation_token,token)) then
           return true,"Synchronous mutation is active or requires recovery"
@@ -1920,7 +1811,6 @@ function M.new(options)
         return context:draft_options()
       end,
       mutate=function(token,action) return context:mutate(token,action) end,
-      cleanup_mutate=function(token,action) return run_mutation(token,action,true) end,
       record_blocker=function(token,evidence) return context:record_blocker(token,evidence) end,
     })
     opened = false
@@ -1950,11 +1840,6 @@ function M.new(options)
     local own=state.status=="busy" and token~=nil and rawequal(state.token,token)
     return {status=state.status,own=own,available=state.status=="idle" or own,
       reason=state.status~="idle" and not own and "The writer slot is occupied" or nil}
-  end
-
-  function context:validate_checkpoint(request)
-    if not requests then return false,"No current request runtime is attached" end
-    return requests:validate_checkpoint(request)
   end
 
   function context:record_blocker(token,evidence)
@@ -2031,18 +1916,6 @@ function M.new(options)
     return state
   end
 
-  function context:bind_new(instrument)
-    if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
-    if not inventory then return {kind="unavailable",reason="No current document is attached"} end
-    return self:transition("target",{instrument=instrument,kind="new"})
-  end
-
-  function context:bind_phrase(instrument,phrase)
-    if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
-    if not inventory then return {kind="unavailable",reason="No current document is attached"} end
-    return self:transition("target",{instrument=instrument,phrase=phrase,kind="existing"})
-  end
-
   function context:target_state()
     if mutation_depth>0 or mutation_failed then return {kind="unavailable",reason="Synchronous mutation is active or requires recovery"} end
     if not inventory then return {kind="unavailable",reason="No current document is attached"} end
@@ -2110,10 +1983,6 @@ function M.new(options)
 
   function context:draft_options()
     return draft_options_for_target(nil)
-  end
-
-  function context:state()
-    return context_state()
   end
 
   return context

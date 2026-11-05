@@ -146,10 +146,11 @@ package.loaded["renoise.phrase_ownership"]={
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
 }
-local render_callbacks={}
 local active_request
 local sync_next_result
-local preserve_target_on_sync_success=false
+local sync_next_message
+local sync_next_phrase
+local sync_record_blocker=false
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
   local phrase=call.phrase or call.request.phrase
@@ -184,7 +185,14 @@ local function start(kind,request,done)
     pb_range=request.pb_range,token_current_at_start=request.token:is_current()}
   call.pattern=request.source
   call.options={token=request.token,pb_range=request.pb_range,
-    phrase_mutation=function(action) return request:mutate(request.token,action) end}
+    phrase_mutation=function(action)
+      local values={n=0}
+      local function packed(...) return {n=select("#",...),...} end
+      local ok,out=pcall(function() return packed(request:mutate(request.token,action)) end)
+      if not ok then error(out,0) end
+      if kind=="create" and type(out[1])=="table" then call.phrase=out[1] end
+      return (unpack or table.unpack)(out,1,out.n)
+    end}
   for index,instrument in ipairs(request.song.instruments) do
     if rawequal(instrument,request.instrument) then call.instrument_index=index;break end
   end
@@ -201,21 +209,30 @@ local function start(kind,request,done)
     assert(request.token:is_current(),"internal selection notification preserves authorization")
   end
   active_request=request
-  local callback_index=#render_callbacks+1
   call.completed=false
-  render_callbacks[callback_index]=function(result)
-    active_request=nil
-    call.completed=true
-    done(result)
+  local status=sync_next_result or "committed"
+  sync_next_result=nil
+  local message=sync_next_message
+  sync_next_message=nil
+  if sync_record_blocker then
+    sync_record_blocker=false
+    local recorded,blocker_error=request:record_blocker(request.token,{reason="fixture recovery evidence"})
+    assert(recorded,blocker_error)
   end
-  if sync_next_result then
-    local status=sync_next_result
-    sync_next_result=nil
-    if status=="committed" and kind=="regenerate" and not preserve_target_on_sync_success then
-      request:mutate(request.token,function() request.phrase.id=request.phrase.id+100 end)
-    end
-    render_callbacks[callback_index](terminal_result(call,status))
+  if status=="committed" and kind=="create" then
+    assert(type(sync_next_phrase)=="table","successful create needs its test destination")
+    local phrase=sync_next_phrase
+    sync_next_phrase=nil
+    call.options.phrase_mutation(function()
+      request.instrument.phrases[#request.instrument.phrases+1]=phrase
+      return phrase
+    end)
   end
+  local result=terminal_result(call,status,message)
+  active_request=nil
+  call.completed=true
+  done(result)
+  tool.app_idle_observable:fire()
   return true
 end
 package.loaded["writers.phrase_writer"]={
@@ -288,12 +305,6 @@ end
 local function live_control(builder)
   return assert(builder.views.acid_live_edit,"missing Live Edit checkbox")
 end
-local function complete(index,status,phrase)
-  local call=tool.writer_calls[index]
-  call.phrase=phrase
-  render_callbacks[index](terminal_result(call,status))
-end
-
 local builder,dialog=open_gui()
 assert(#contexts==1,"GUI must install one runtime context")
 assert(#admissions==0 and #tool.writer_calls==0,"opening must not request generation")
@@ -328,6 +339,7 @@ assert(manual.completed,"manual write and completion finish inside the Generate 
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
 assert(#admissions==1 and manual.completed,
   "a no-op edit neither enqueues a duplicate nor changes completed state")
+sync_next_result="error"
 pitch_key(builder,2):fire()
 assert(#tool.writer_calls==2 and #admissions==2 and admissions[2].trigger=="live",
   "armed edit must enter runtime admission inside the user edit callback")
@@ -336,20 +348,18 @@ assert(#tool.writer_calls==2 and #admissions==2,
   "idle must not start a duplicate admission after the synchronous edit callback")
 assert(rawequal(admissions[1].context,admissions[2].context),"manual and live share one runtime authority")
 local stale=tool.writer_calls[2]
-assert(stale.options.token:is_current() and not rawequal(manual.options.token,stale.options.token),
+assert(stale.token_current_at_start and not rawequal(manual.options.token,stale.options.token) and stale.completed,
   "runtime issues a distinct operation token for each admitted request")
 
 dialog.visible=false
 tool.app_idle_observable:fire()
-assert(not stale.options.token:is_current(),"closing revokes the old runtime request")
 local admission_count=#admissions
 builder,dialog=open_gui()
 assert(#contexts==1,"reopening retains the same runtime authority")
 assert(#admissions==admission_count,"reopen and draft restoration request nothing")
 local target_before=popup(builder,360).value
-complete(2)
 assert(popup(builder,360).value==target_before,
-  "old-session completion must not update the reopened destination")
+  "reopening preserves the destination after synchronous completion")
 phrase_popup=popup(builder,360)
 
 local context=contexts[#contexts]
@@ -357,9 +367,10 @@ do
   local phrase_popup=popup(builder,360)
   local status=builder.views.acid_status
   local failed_a=#tool.writer_calls+1
+  sync_next_result="error"
+  sync_next_message="target A failure detail"
   button(builder,"Generate"):fire()
   assert(#tool.writer_calls==failed_a,"target A Generate was not admitted: "..tostring(admissions[#admissions].reason))
-  complete(failed_a,"error","target A failure detail")
   assert(status.text:find("Couldn't update the phrase. Try again.",1,true),
     "a current target A generation failure gets actionable feedback")
   local restore=context.restore_editor_target
@@ -382,9 +393,9 @@ do
   assert(status.text==load_failure.."\n"..duplicate_failure and #tool.writer_calls==writer_count,
     "a rejected duplicate publishes its own failure without writing or raw details")
   local succeeded_b=#tool.writer_calls+1
+  sync_next_result="approximate"
   button(builder,"Generate"):fire()
   assert(#tool.writer_calls==succeeded_b,"target B Generate was not admitted")
-  complete(succeeded_b,"approximate")
   assert(not status.text:find("Couldn't update the phrase. Try again.",1,true) and
     require("model.sequencer").same_source(context:editor_state().source,
       tool.writer_calls[succeeded_b].request.source),
@@ -394,42 +405,6 @@ do
     "approximation warning coexists with unresolved draft-load and Duplicate failures")
   phrase_popup:fire(1)
 end
-do
-  local phrase_popup=popup(builder,360)
-  local status=builder.views.acid_status
-  local writer_count=#tool.writer_calls
-  button(builder,"Generate"):fire()
-  local stale_success=#tool.writer_calls
-  assert(stale_success==writer_count+1 and
-    tool.writer_calls[stale_success].request.phrase==phrase_one)
-  phrase_popup:fire(2)
-  builder.views.acid_clipboard_paste:fire()
-  assert(status.text:find("Copy a scope before pasting.",1,true),
-    "fixture creates B-scoped feedback before stale success: "..status.text)
-  local b_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
-  local b_revision=context:revision_state().edit_revision
-  local b_feedback=status.text
-  complete(stale_success,"committed")
-  assert(context:target_projection().phrase==phrase_two and
-    context:revision_state().edit_revision==b_revision and
-    require("model.sequencer").same_source(b_source,context:editor_state().source) and
-    status.text==b_feedback and not status.text:find("Phrase updated.",1,true),
-    "stale success for A cannot change B source, history or feedback")
-  phrase_popup:fire(1)
-  button(builder,"Generate"):fire()
-  local stale_failure=#tool.writer_calls
-  assert(stale_failure==stale_success+1 and
-    tool.writer_calls[stale_failure].request.phrase==phrase_one)
-  phrase_popup:fire(2)
-  builder.views.acid_clipboard_paste:fire()
-  b_feedback=status.text
-  complete(stale_failure,"error","stale A failure detail")
-  assert(status.text==b_feedback and not status.text:find("stale A failure detail",1,true) and
-    context:target_projection().phrase==phrase_two,
-    "stale failure for A cannot replace feedback for B")
-  phrase_popup:fire(1)
-end
-
 fail_next_edit_transition=true
 pitch_key(builder,3):fire()
 local status_view=builder.views.acid_status
@@ -519,24 +494,22 @@ assert(#tool.writer_calls==writer_count,"foreign Live Edit must reject without a
 
 local new_request_base=#tool.writer_calls
 popup(builder,360):fire(3)
+sync_next_result="error"
+sync_next_message="new target failure"
 button(builder,"Generate"):fire()
 local create_request=#tool.writer_calls
 assert(create_request==new_request_base+1 and tool.writer_calls[create_request].target==3,
   "only explicitly selected New authorizes append")
-assert(tool.writer_calls[create_request].options.token:is_current(),"New uses runtime-issued authorization")
-complete(create_request,"error","new target failure")
+assert(tool.writer_calls[create_request].token_current_at_start,"New uses runtime-issued authorization")
 assert(builder.views.acid_status.text:find("Couldn't update the phrase. Try again.",1,true),
   "a failed New Phrase generation is scoped to the New target")
 local create_retry=#tool.writer_calls+1
+local created_phrase={id=31,name="ACID created phrase"}
+sync_next_result="committed"
+sync_next_phrase=created_phrase
 button(builder,"Generate"):fire()
 assert(create_retry==#tool.writer_calls and tool.writer_calls[create_retry].target==3,
   "retry retains the selected New destination")
-local created_phrase={id=31,name="ACID created phrase"}
-tool.writer_calls[create_retry].options.phrase_mutation(function()
-  other_instrument.phrases[#other_instrument.phrases+1]=created_phrase
-  return created_phrase
-end)
-complete(create_retry,"committed",created_phrase)
 assert(context:target_projection().phrase==created_phrase and popup(builder,360).value==3 and
   require("model.sequencer").same_source(context:editor_state().source,
     tool.writer_calls[create_retry].request.source) and
@@ -549,34 +522,36 @@ assert(context:target_projection().phrase==created_phrase and popup(builder,360)
 live_control(builder):fire(false)
 popup(builder,290):fire(1)
 popup(builder,360):fire(1)
-local stale_request=#tool.writer_calls+1
+local synchronous_request=#tool.writer_calls+1
+sync_next_result="error"
 button(builder,"Generate"):fire()
-assert(#tool.writer_calls==stale_request)
+assert(#tool.writer_calls==synchronous_request and tool.writer_calls[synchronous_request].completed and
+  not tool.writer_calls[synchronous_request].options.token:is_current(),
+  "manual generation settles before the Generate callback returns")
+local source_before_edit=assert(require("model.sequencer").copy_source(context:editor_state().source))
 pitch_key(builder,5):fire()
-local dirty_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
-assert(not tool.writer_calls[stale_request].options.token:is_current(),"real edits revoke a prior manual request")
-complete(stale_request)
-assert(require("model.sequencer").same_source(dirty_source,context:editor_state().source) and
-  require("runtime.draft_cache").get(song,instrument,original),
-  "same-session stale completion preserves current widgets and newer draft")
+local edited_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
+assert(not require("model.sequencer").same_source(source_before_edit,edited_source) and
+  require("model.sequencer").validate(edited_source),
+  "a real source edit updates the current editor with a valid source")
 
 do
   live_control(builder):fire(true)
   fail_draft_persistence=true
   sync_next_result="committed"
-  preserve_target_on_sync_success=true
   local writer_count,admission_count=#tool.writer_calls,#admissions
   local save_count=draft_save_attempts
   local edit_revision=context:revision_state().edit_revision
   local source_before_edit=assert(require("model.sequencer").copy_source(context:editor_state().source))
   pitch_key(builder,6):fire()
-  preserve_target_on_sync_success=false
   fail_draft_persistence=false
   local completed=tool.writer_calls[#tool.writer_calls]
   local feedback=builder.views.acid_status.text
   assert(#tool.writer_calls==writer_count+1 and #admissions==admission_count+1 and
     draft_save_attempts==save_count+1 and completed.completed and active_request==nil,
-    "failed draft persistence is followed by exactly one synchronous Live Edit write")
+    string.format("failed draft persistence sync: calls %d/%d admissions %d/%d saves %d/%d completed=%s active=%s status=%s",
+      #tool.writer_calls,writer_count,#admissions,admission_count,draft_save_attempts,save_count,
+      tostring(completed.completed),tostring(active_request~=nil),builder.views.acid_status.text))
   assert(context:revision_state().edit_revision>edit_revision and
     require("model.sequencer").same_source(completed.request.source,context:editor_state().source),
     "accepted source and history remain aligned after the output write")
@@ -591,10 +566,10 @@ end
 
 popup(builder,360):fire(#popup(builder,360).items)
 local blocker_request=#tool.writer_calls+1
+sync_record_blocker=true
+sync_next_result="error"
 button(builder,"Generate"):fire()
 assert(#tool.writer_calls==blocker_request,"New destination admits blocker fixture request")
-assert(context:record_blocker(tool.writer_calls[blocker_request].options.token,{reason="fixture recovery evidence"}))
-complete(blocker_request,"error")
 assert(context:integrity_state().blocked)
 dialog.visible=false
 tool.app_idle_observable:fire()

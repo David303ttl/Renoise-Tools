@@ -44,18 +44,13 @@ function Test-RenoiseHostPreflightCore {
     catch { $errors.Add($_.Exception.Message) }
     [pscustomobject]@{
         Passed = $errors.Count -eq 0
-        Mode = $Configuration.Mode
-        # Readiness does not grant permission to replace a song or installation.
-        ExecutionAuthorized = $false
-        InstallReplacementAuthorized = $errors.Count -eq 0
         Errors = @($errors)
     }
 }
 
 function Test-RenoiseHostPreflight {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][pscustomobject]$Configuration,
-          [ValidateSet('Execution','Safety')][string]$Mode = 'Safety')
+    param([Parameter(Mandatory)][pscustomobject]$Configuration)
     try {
         $selectedId = if ($Configuration.PSObject.Properties['RenoiseProcessId']) { [int]$Configuration.RenoiseProcessId } else { 0 }
         $context = Get-HostContext -RenoiseExe $Configuration.RenoiseExe -RenoiseProcessId $selectedId
@@ -63,12 +58,11 @@ function Test-RenoiseHostPreflight {
             RenoiseExe = $Configuration.RenoiseExe
             TemporaryDirectory = $Configuration.TemporaryDirectory
             RenoiseProcessId = $selectedId
-            Mode = $Mode
         }
         Test-RenoiseHostPreflightCore -Configuration $core -Context $context
     }
     catch {
-        [pscustomobject]@{ Passed = $false; Mode = $Mode; ExecutionAuthorized = $false; InstallReplacementAuthorized = $false; Errors = @($_.Exception.Message) }
+        [pscustomobject]@{ Passed = $false; Errors = @($_.Exception.Message) }
     }
 }
 

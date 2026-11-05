@@ -203,7 +203,6 @@ function New-FixtureRepository {
     'tests/renoise/acid/fixtures'
     'tests/renoise/acid/scenarios'
     'tests/renoise/keyboard'
-    'tests/acid/reference'
     'sdk/example'
     'tmp'
     "$sourceToolName/model"
@@ -216,9 +215,6 @@ function New-FixtureRepository {
     Copy-Item -LiteralPath (Join-Path $repoRoot "tests/renoise/driver/$name") -Destination (Join-Path $Root "tests/renoise/driver/$name")
   }
   Copy-Item -LiteralPath (Join-Path $repoRoot 'tests/acid/writer_request.lua') -Destination (Join-Path $Root 'tests/acid/writer_request.lua')
-  foreach ($referenceName in @('pattrns_writer.lua', 'script_runner.lua', 'gate_writer.lua')) {
-    Copy-Item -LiteralPath (Join-Path $repoRoot "tests/acid/reference/$referenceName") -Destination (Join-Path $Root "tests/acid/reference/$referenceName")
-  }
 
   $toolRoot = Join-Path $Root $sourceToolName
   $manifest = @'
@@ -353,9 +349,6 @@ function Test-RealDevelopmentBundle {
     $expectedPaths = @($sourceFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
     $expectedPaths += @($driverNames | ForEach-Object { "__dev/$_" })
     $expectedPaths += '__dev/writer_request.lua'
-    $expectedPaths += '__dev/reference/pattrns_writer.lua'
-    $expectedPaths += '__dev/reference/script_runner.lua'
-    $expectedPaths += '__dev/reference/gate_writer.lua'
     $actualPaths = @(Get-ChildItem -LiteralPath $devTool -File -Recurse | ForEach-Object {
       Get-RelativePath -Root $devTool -Path $_.FullName
     } | Sort-Object)
@@ -436,9 +429,6 @@ try {
   $expectedDevPaths = @($sourcePayloadFiles | ForEach-Object { Get-RelativePath -Root $toolRoot -Path $_.FullName })
   $expectedDevPaths += @($driverNames | ForEach-Object { "__dev/$_" })
   $expectedDevPaths += '__dev/writer_request.lua'
-  $expectedDevPaths += '__dev/reference/pattrns_writer.lua'
-  $expectedDevPaths += '__dev/reference/script_runner.lua'
-  $expectedDevPaths += '__dev/reference/gate_writer.lua'
   $actualDevPaths = @(Get-ChildItem -LiteralPath $devToolOne -File -Recurse | ForEach-Object { Get-RelativePath -Root $devToolOne -Path $_.FullName } | Sort-Object)
   $expectedDevPaths = @($expectedDevPaths | Sort-Object)
   Assert-True (($actualDevPaths -join '|') -ceq ($expectedDevPaths -join '|')) 'Development bundle contains an unexpected or missing file.'
@@ -522,11 +512,6 @@ try {
   }
   $requestDevPath = Join-Path $devToolOne '__dev/writer_request.lua'
   Assert-True ((Get-FileHash -LiteralPath (Join-Path $fixture 'tests/acid/writer_request.lua') -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $requestDevPath -Algorithm SHA256).Hash) 'Development request factory differs from source.'
-  foreach ($referenceName in @('pattrns_writer.lua', 'script_runner.lua', 'gate_writer.lua')) {
-    $referenceDevPath = Join-Path $devToolOne "__dev/reference/$referenceName"
-    $referenceSourcePath = Join-Path $fixture "tests/acid/reference/$referenceName"
-    Assert-True ((Get-FileHash -LiteralPath $referenceSourcePath -Algorithm SHA256).Hash -ceq (Get-FileHash -LiteralPath $referenceDevPath -Algorithm SHA256).Hash) "Development test reference '$referenceName' differs from source."
-  }
   Assert-True (-not (Test-Path -LiteralPath (Join-Path $devToolOne 'acid-test-session.conf'))) 'Session test secrets were copied into the tool bundle.'
 
   $sessionTextOne = [System.IO.File]::ReadAllText($sessionPathOne)

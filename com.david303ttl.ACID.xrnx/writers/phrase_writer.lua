@@ -155,8 +155,7 @@ end
 
 local function token_current(request)
   local ok, value = pcall(function()
-    if type(request.is_current) == "function" then return request:is_current() end
-    return request.token:is_current()
+    return request:is_current()
   end)
   return ok and value == true
 end
@@ -833,7 +832,6 @@ end
 function M.release()
   local job = current
   if not job then return nil end
-  job.released = true
   job.cancel_requested = true
   job.cancel_reason = "Document released"
   return "The synchronous phrase operation will roll back before it settles."

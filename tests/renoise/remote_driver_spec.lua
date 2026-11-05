@@ -956,8 +956,6 @@ local function test_fixed_native_acceptance_command()
         case_name == "metadata-recovery-prepare" or case_name == "metadata-recovery" or case_name == "metadata-recovery-cold" or
         case_name == "cold-reopen-regenerate" or
         case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow" or
-        case_name == "selection-feasibility" or case_name == "direct-output-feasibility" or
-        case_name == "source-undo-feasibility" or
         case_name == "production-latency-8x8" or case_name == "production-latency-16x8" or
         case_name == "production-session-8x8" or case_name == "production-stress-16x8" or
         case_name == "phrase-midi-delivery",
@@ -1180,8 +1178,7 @@ local function test_fixed_native_acceptance_command()
   local negatives = find_response(take_responses(client), "acceptance-ownership-negatives")
   assert(negatives and negatives.ok)
   assert_equal(negatives.result.status, "PASS")
-  for _, case_name in ipairs({ "selection-feasibility", "direct-output-feasibility", "source-undo-feasibility",
-      "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
+  for _, case_name in ipairs({ "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
       "persistence-failures", "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
       "metadata-undo-prepare", "metadata-undo",
       "revision-live-undo-fixture", "revision-live-undo-prepare", "revision-live-undo" }) do

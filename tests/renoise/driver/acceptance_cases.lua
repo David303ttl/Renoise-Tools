@@ -12,7 +12,6 @@ local ACCEPTANCE_INDEPENDENT_NOTE = 5
 local ACCEPTANCE_REGENERATED_NOTE = 6
 local ACCEPTANCE_NOTE_VALUE_LOW = 48
 local ACCEPTANCE_NOTE_VALUE_HIGH = 49
-local COLD_SENTINEL_PHRASE_NAME = "Imported sentinel"
 local FIRST_PHRASE_POSITION = 1
 local FIRST_NOTE_LINE = 1
 local FIRST_NOTE_COLUMN = 1
@@ -146,19 +145,6 @@ local function editor_fixture_passes(prerequisites, result)
     result.editor_fixture_native_selection_restored == true
 end
 
-local function draft_values_preserved(current_source,current_policy,current_pb,recoveries,
-    expected_source,expected_policy,expected_pb,same_source)
-  local function matches(source,policy,pb)
-    return source~=nil and same_source(source,expected_source) and
-      policy==expected_policy and pb==expected_pb
-  end
-  if matches(current_source,current_policy,current_pb) then return true,"current" end
-  for _,entry in ipairs(recoveries or {}) do
-    if matches(entry.pattern,entry.output_policy,entry.pb_range) then return true,"recovery" end
-  end
-  return false
-end
-
 local function install_profile_wrapper(profile_mode,target,key,wrap)
   if profile_mode~="Detailed" or type(target)~="table" or type(target[key])~="function" then
     return nil,false
@@ -262,7 +248,6 @@ local function context_for(song)
   local writer = require("writers.phrase_writer")
   local context = context_module.new({
     writer = writer,
-    capture = function() return nil, "native acceptance does not generate through the context" end,
     sink = function() return false, "native acceptance does not use the musical sink" end
   })
   context:attach_document(song)
@@ -272,7 +257,7 @@ end
 
 local function classify_write_eligibility(song, instrument, phrase)
   local context = context_for(song)
-  local bound = context:bind_phrase(instrument, phrase)
+  local bound = context:transition("target", {instrument=instrument,phrase=phrase,kind="existing"})
   local target = context:target_state()
   local eligible, reason = context:musical_eligibility()
   local result = {
@@ -387,37 +372,6 @@ local function save_independent_fixture(song, fixture_name)
   return { fixture = name, bytes = size }
 end
 
-local function add_cold_foreign_sentinel(song, source_phrase)
-  local ownership = require("renoise.phrase_ownership")
-  for instrument_index, instrument in ipairs(song.instruments) do
-    if not rawequal(instrument, song.instruments[song.selected_instrument_index]) and
-        #instrument.phrases == 0 then
-      local phrase
-      local created, create_error = pcall(function()
-        phrase = instrument:insert_phrase_at(FIRST_PHRASE_POSITION)
-        phrase:copy_from(source_phrase)
-        phrase.name = COLD_SENTINEL_PHRASE_NAME
-      end)
-      if not created then
-        if phrase then pcall(instrument.delete_phrase_at, instrument, FIRST_PHRASE_POSITION) end
-        return nil, tostring(create_error)
-      end
-      local snapshot = ownership.snapshot(phrase)
-      if not snapshot or ownership.id(phrase) or ownership.status(phrase) ~= "foreign" then
-        pcall(instrument.delete_phrase_at, instrument, FIRST_PHRASE_POSITION)
-        return nil, "Cold foreign sentinel did not remain source-less"
-      end
-      return {
-        instrument = instrument,
-        instrument_index = instrument_index,
-        phrase = phrase,
-        snapshot = snapshot,
-      }
-    end
-  end
-  return nil, "Cold fixture has no empty instrument for the foreign sentinel"
-end
-
 local function writer_rejects_regeneration_without_mutation(song, instrument_index, source,
     phrase, factory, writer, ownership)
   local instrument = song.instruments[instrument_index]
@@ -510,9 +464,15 @@ local function run_ownership_negatives(done, donor_only)
       local donor_path = renoise.tool().bundle_path .. "\\__dev\\import-donor.xrni"
       if donor_only then
         local donor_id = 42
-        local name = ownership.make_name(original, donor_id)
+        local snapshot, snapshot_error = ownership.snapshot(original)
+        local name, name_error
+        if snapshot then
+          name, name_error = ownership.make_name_from_verified_snapshot(snapshot, donor_id)
+        else
+          name_error = snapshot_error
+        end
         local saved_source = store.save(song, donor_id, source, request.output_policy, request.pb_range)
-        original.name = assert(name)
+        original.name = assert(name, name_error)
         song.selected_instrument_index = instrument_index
         local exported = saved_source and renoise.app():save_instrument(donor_path)
         finish(exported == true, { donor_phrase = canonical_baseline(ownership.snapshot(original)),
@@ -1542,7 +1502,6 @@ local function run_integrity_observers(done)
   local attached,context_or_error=pcall(function()
     context=require("runtime.context").new({
       writer=writer,
-      capture=function() return nil,"The attached runtime owns request capture" end,
       sink=function(request,completion)
         sink_calls=sink_calls+1
         if request.kind=="create" then return writer.create(request,completion) end
@@ -1569,7 +1528,7 @@ local function run_integrity_observers(done)
   end
   song.transport.lpb=16
   song.transport.groove_enabled=false
-  local bound=context:bind_new(instrument)
+  local bound=context:transition("target",{instrument=instrument,kind="new"})
   if not bound or bound.kind~="new" then
     context:release_document()
     done({status="FAIL",case="integrity-observers",reason="New Phrase target could not be selected"})
@@ -1602,7 +1561,7 @@ local function run_integrity_observers(done)
     end
     context:close_dialog()
     context:open_dialog(function() end)
-    local rebound=context:bind_new(instrument)
+    local rebound=context:transition("target",{instrument=instrument,kind="new"})
     local generation_accepted=context:request_generation("manual")
     local duplicate_accepted=context:request_duplicate()
     local persisted=context:integrity_state().blocked and sink_calls==1 and
@@ -1687,7 +1646,6 @@ local function run_writer_recovery(done)
     next_source.pitch_events[1]=sequence.new_pitch(5,0,true,false)
     next_source.time_events[1]="N"
     context=require("runtime.context").new({writer=writer,
-      capture=function() return nil,"Native acceptance installs the source directly" end,
       cancel=writer.cancel,drafts=require("runtime.draft_cache"),
       sink=function(value,completion)
         sink_calls=sink_calls+1
@@ -1698,7 +1656,7 @@ local function run_writer_recovery(done)
       end})
     context:attach_document(song)
     context:open_dialog(function(result) terminal=result end)
-    if not context:bind_phrase(instrument,destination) or
+    if not context:transition("target",{instrument=instrument,phrase=destination,kind="existing"}) or
         not context:transition("edit",{source=next_source,output_policy="play_once",pb_range=0}) or
         not context:request_generation("manual") then
       finish(false,"Native regeneration fixture could not be dispatched")
@@ -1724,7 +1682,7 @@ local function run_writer_recovery(done)
       local phrase_count=#instrument.phrases
       context:close_dialog()
       context:open_dialog(function() end)
-      local rebound=context:bind_phrase(instrument,destination)
+      local rebound=context:transition("target",{instrument=instrument,phrase=destination,kind="existing"})
       local reopen_bytes_unchanged=song.tool_data==committed_bytes
       local reopen_snapshot_unchanged=ownership.compare(committed_native,assert(ownership.snapshot(destination)))
       local generation_accepted=context:request_generation("manual")
@@ -2480,7 +2438,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   local original_classify=validator.classify
   local original_classify_against=validator.classify_against
   local captured_baseline_is_opaque
-  local capture_calls,sink_calls=0,0
+  local sink_calls=0
   local captured_root_view
   local finished=false
   local metrics={}
@@ -2882,13 +2840,13 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if not detailed_profile then return end
       for _,name in ipairs({"snapshot","copy_snapshot","compare","classify","classify_against",
           "classify_verified_postimage","classify_against_reference",
-          "matches_snapshot","snapshot_index","ownership_status","make_name",
+          "matches_snapshot","snapshot_index","ownership_status",
           "capture_recovery","make_name_from_verified_snapshot",
           "preflight_destination","store_allocate","store_prepare_revision","store_commit",
           "materializer_apply","materializer_verify","materializer_restore",
           "context_adopt","runtime_request_guard","runtime_inventory_guard",
-          "plan","restore_editor_target","transition","render_project","render_step_text",
-          "request_new","request_capture","request_checkpoint","writer_create","writer_regenerate",
+          "plan","restore_editor_target","transition","render_project",
+          "request_new","request_capture","writer_create","writer_regenerate",
           "ownership_inventory","ownership_validate_identity","ownership_membership",
           "ownership_is_current","capabilities_inspect","store_read_entry"}) do
         local item=phrase_profile[name] or {calls=0,elapsed_ms=0}
@@ -2937,7 +2895,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       request_module.new=function(access)
         local owner=original_requests_new(access)
         profile_function(owner,"capture","request_capture")
-        profile_function(owner,"validate_checkpoint","request_checkpoint")
         return owner
       end
       phrase_profile_restore[#phrase_profile_restore+1]={target=request_module,key="new",original=original_requests_new}
@@ -2966,7 +2923,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     profile_function(ownership,"validate_identity","ownership_validate_identity")
     profile_function(ownership,"membership","ownership_membership")
     profile_function(ownership,"is_current","ownership_is_current")
-    profile_function(ownership,"make_name","make_name")
     profile_function(ownership,"capture_recovery","capture_recovery")
     profile_function(ownership,"make_name_from_verified_snapshot","make_name_from_verified_snapshot")
     profile_function(validator,"classify","classify")
@@ -2985,12 +2941,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     profile_function(planner,"plan","plan")
     profile_function(planner,"plan_for_materialization","plan")
     profile_function(editor,"project","render_project")
-    profile_function(editor,"step_text","render_step_text")
-    local function same_items(actual,expected)
-      if type(actual)~="table" or #actual~=#expected then return false end
-      for index,value in ipairs(expected) do if actual[index]~=value then return false end end
-      return true
-    end
     local function control_alias(name,properties)
       if not properties then return nil end
       if properties.id then return properties.id end
@@ -3401,7 +3351,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     local drafts=require("runtime.draft_cache")
     local persisted=require("renoise.pattern_store")
-    local stored,stored_policy,stored_pb=drafts.get(song,instrument,phrase)
+    local stored,stored_policy,stored_pb=drafts.restore(song,instrument,phrase)
     if not stored or stored.length~=32 then
       close_test_gui()
       return nil,"GUI callback target did not load the representative 32-step phrase"
@@ -4156,9 +4106,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         for step,event in ipairs(projection.mapping) do
           if event.kind=="note" then
             assert(event.note%12==0,"C-only mask produced another pitch class")
-            local text=editor.step_text(projection,step)
-            assert(text:find("RAW ",1,true) and text:find("RES "..event.note,1,true),
-              "Decoded omitted raw/resolved pitch")
+            local reference=editor.pitch_reference(projection,step,true)
+            assert(reference:find(string.format("P%02d",event.pitch_index),1,true),
+              "C-only projection lost its active PITCH reference")
           end
         end
         raw=song.tool_data
@@ -5030,14 +4980,11 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   end
   local function create_test_context()
     if context then context:release_document() end
-    capture_calls=0
     captured_baseline_is_opaque=nil
     context=require("runtime.context").new({
       writer=writer,
-      capture=function() return nil,"The editor request-capture path is required" end,
       sink=function(request,completion)
         sink_calls=sink_calls+1
-        capture_calls=capture_calls+1
         captured_baseline_is_opaque=type(request.baseline)=="table" and
           request.baseline.id==request.id and rawget(request.baseline,"snapshot")==nil
         if request.kind=="regenerate" then return writer.regenerate(request,completion) end
@@ -5049,7 +4996,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     local attached,attach_error=pcall(function() context:attach_document(song) end)
     if not attached then return nil,tostring(attach_error) end
     context:open_dialog()
-    local bound=context:bind_phrase(instrument,phrase)
+    local bound=context:transition("target",{instrument=instrument,phrase=phrase,kind="existing"})
     if not bound or bound.kind~="owned" then
       return nil,bound and bound.reason or "long phrase could not be bound"
     end
@@ -5150,8 +5097,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
         fail(reconcile_error or "unchanged target projection/reconciliation changed identity");return
       end
       for step=1,32 do
-        editor.step_text(render,step,1)
-        editor.step_text(render,step,2)
+        editor.time_reference(render,step,true,false)
+        editor.mapping_text(render,step)
       end
     end
     local elapsed_ms=(os.clock()-started)*1000
@@ -5210,8 +5157,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     local profile_render_started=detailed_profile and os.clock() or nil
     local profiled_projection=editor.project(source)
     for step=1,32 do
-      editor.step_text(profiled_projection,step,1)
-      editor.step_text(profiled_projection,step,2)
+      editor.time_reference(profiled_projection,step,true,false)
+      editor.mapping_text(profiled_projection,step)
     end
     if detailed_profile then
       metrics.profiled_edit_render_elapsed_ms=(os.clock()-profile_render_started)*1000
@@ -5268,8 +5215,8 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local render_started=os.clock()
       local edited_projection=editor.project(source)
       for step=1,32 do
-        editor.step_text(edited_projection,step,1)
-        editor.step_text(edited_projection,step,2)
+        editor.time_reference(edited_projection,step,true,false)
+        editor.mapping_text(edited_projection,step)
       end
       edit_render_elapsed_ms=edit_render_elapsed_ms+(os.clock()-render_started)*1000
       edit_sample_ms[sample]=(os.clock()-sample_started)*1000
@@ -5342,7 +5289,6 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     local stale_request,stale_reason=context:request_generation("manual")
     metrics.stale_metadata_request_rejected=not stale_request
-    metrics.stale_metadata_capture_calls=capture_calls
     if stale_request or sink_calls~=0 or not stale_reason then
       phrase:set_column_name(1,old_name)
       fail(stale_reason or "changed metadata reached the generation sink");return
@@ -5390,7 +5336,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       local scan_count=idle_scans
       cleanup()
       local passed=editor_fixture_passes(
-        committed and preserved and capture_calls==1 and sink_calls==1,metrics)
+        committed and preserved and sink_calls==1,metrics)
       metrics.phrase_lines=generated_lines
       metrics.unchanged_snapshot_scans=scan_count
       metrics.stale_metadata_request_rejected=true
@@ -5517,7 +5463,7 @@ local function inspect_cold_song(expected_target_note, case_name)
   local target_snapshot = ownership.snapshot(target_phrase)
   if not old_snapshot or not target_snapshot then return nil, "Saved phrase snapshots are unavailable" end
   local context = context_for(song)
-  local bound = context:bind_phrase(instrument, target_phrase)
+  local bound = context:transition("target", {instrument=instrument,phrase=target_phrase,kind="existing"})
   local classification = context:target_state()
   local eligible, eligibility_error = context:musical_eligibility()
   local restored = context:restore_editor_target(instrument, target_phrase)
@@ -5579,7 +5525,9 @@ local function prepare_cold_negative_fixture(state, target_source)
     return phrase
   end
   local function set_identity(phrase, id)
-    local name, name_error = ownership.make_name(phrase, id)
+    local snapshot, snapshot_error = ownership.snapshot(phrase)
+    if not snapshot then return false, snapshot_error end
+    local name, name_error = ownership.make_name_from_verified_snapshot(snapshot, id)
     if not name then return false, name_error end
     phrase.name = name
     return true
@@ -5912,1033 +5860,6 @@ local function run_cold_reopen_verify(done)
     primary_instrument_phrase_count = #state.instrument.phrases,
     no_load_or_inspection_mutation = unchanged == true,
     reason = inspect_error })
-  return true
-end
-
-local function run_selection_feasibility(done, json)
-  local song = renoise.song()
-  local instrument = song and song.selected_instrument
-  if not instrument or song.transport.playing or #instrument.phrases + 2 >
-      renoise.Instrument.MAX_NUMBER_OF_PHRASES then
-    done({ status = "FAIL", case = "selection-feasibility",
-      reason = "Stop playback and select an instrument with capacity for two temporary phrases" })
-    return true
-  end
-  local instrument_index = song.selected_instrument_index
-  local original_phrases = {}
-  for index, phrase in ipairs(instrument.phrases) do original_phrases[index] = phrase end
-  local original_count = #original_phrases
-  local data_before = song.tool_data
-  local created, observations = {}, { trace = json.array() }
-  local idle = renoise.tool().app_idle_observable
-  local notifier
-  local settled = false
-
-  local function remove_notifier()
-    if notifier and idle:has_notifier(notifier) then idle:remove_notifier(notifier) end
-    notifier = nil
-  end
-
-  local function phrase_index(target)
-    for index, phrase in ipairs(instrument.phrases) do
-      if rawequal(phrase, target) then return index end
-    end
-  end
-
-  local function cleanup()
-    remove_notifier()
-    if not rawequal(renoise.song(), song) or not rawequal(song.instruments[instrument_index], instrument) then
-      return false, "song or instrument changed; disposable probe phrases may need manual cleanup"
-    end
-    for index = #created, 1, -1 do
-      local phrase = created[index]
-      local current_index = phrase_index(phrase)
-      if current_index then
-        local ok, err = pcall(function() instrument:delete_phrase_at(current_index) end)
-        if not ok then return false, tostring(err) end
-      end
-    end
-    local preserved = #instrument.phrases == original_count
-    for index, phrase in ipairs(original_phrases) do
-      if not rawequal(instrument.phrases[index], phrase) then preserved = false end
-    end
-    return preserved and song.tool_data == data_before,
-      "phrase inventory or song tool_data changed during probe cleanup"
-  end
-
-  local function finish(ok, reason)
-    if settled then return end
-    settled = true
-    local cleaned, cleanup_error = cleanup()
-    ok = ok and cleaned
-    done({ status = ok and "PASS" or "FAIL", case = "selection-feasibility",
-      reason = reason or (not cleaned and cleanup_error or nil), observations = observations,
-      setter_existing_stable = observations.setter_existing_stable == true,
-      setter_zero_stable = observations.setter_zero_stable == true,
-      cleanup_verified = cleaned == true })
-  end
-
-  local function validate_context()
-    assert(rawequal(renoise.song(), song), "active song changed")
-    assert(not song.transport.playing, "playback started")
-    assert(song.selected_instrument_index == instrument_index and
-      rawequal(song.instruments[instrument_index], instrument), "selected instrument changed")
-  end
-
-  local function wait_idle_pair(label, next_step)
-    local count = 0
-    notifier = function()
-      local ok, err = pcall(function()
-        validate_context()
-        count = count + 1
-        observations.trace[#observations.trace + 1] = { label = label, idle = count,
-          selected_phrase_index = song.selected_phrase_index, phrase_count = #instrument.phrases }
-        if count == 2 then
-          remove_notifier()
-          next_step()
-        end
-      end)
-      if not ok then finish(false, tostring(err)) end
-    end
-    idle:add_notifier(notifier)
-  end
-
-  local function perform(label, action, next_step)
-    local ok, err = pcall(function()
-      validate_context()
-      action()
-      observations.trace[#observations.trace + 1] = { label = label, immediate = true,
-        selected_phrase_index = song.selected_phrase_index, phrase_count = #instrument.phrases }
-    end)
-    if not ok then finish(false, label .. ": " .. tostring(err)); return end
-    wait_idle_pair(label, next_step)
-  end
-
-  local function locate_created(target)
-    local index = phrase_index(target)
-    assert(index, "probe phrase identity is missing")
-    return index
-  end
-
-  local function structural_pair(label, next_step)
-    perform("insert after " .. label, function()
-      assert(#instrument.phrases == original_count + 1 and
-        rawequal(instrument.phrases[original_count + 1], created[1]),
-        "phrase inventory changed unexpectedly")
-      local phrase = instrument:insert_phrase_at(original_count + 2)
-      assert(phrase and rawequal(instrument.phrases[original_count + 2], phrase),
-        "inserted phrase identity is unavailable")
-      created[#created + 1] = phrase
-    end, function()
-      perform("delete after " .. label, function()
-        assert(#instrument.phrases == original_count + 2, "phrase inventory changed unexpectedly")
-        instrument:delete_phrase_at(locate_created(created[2]))
-      end, function()
-        created[2] = nil
-        next_step()
-      end)
-    end)
-  end
-
-  local function set_zero()
-    local ok, err = pcall(function() song.selected_phrase_index = 0 end)
-    observations.setter_zero_pcall = ok
-    observations.setter_zero_error = not ok and tostring(err) or nil
-    local immediate = song.selected_phrase_index
-    observations.setter_zero_immediate = immediate
-    wait_idle_pair("set index 0", function()
-      local trace = observations.trace
-      local first = trace[#trace - 1].selected_phrase_index
-      local second = trace[#trace].selected_phrase_index
-      observations.setter_zero_stable = immediate == 0 and first == 0 and second == 0
-      structural_pair("index 0", function()
-        perform("delete seed", function()
-        assert(#instrument.phrases == original_count + 1, "phrase inventory changed unexpectedly")
-          instrument:delete_phrase_at(locate_created(created[1]))
-        end, function()
-          created[1] = nil
-          finish(#instrument.phrases == original_count, "selection feasibility sequence completed")
-        end)
-      end)
-    end)
-  end
-
-  local function set_existing()
-    local ok, err = pcall(function() song.selected_phrase_index = 1 end)
-    observations.setter_existing_pcall = ok
-    observations.setter_existing_error = not ok and tostring(err) or nil
-    local immediate = song.selected_phrase_index
-    observations.setter_existing_immediate = immediate
-    wait_idle_pair("set existing index 1", function()
-      local trace = observations.trace
-      local first = trace[#trace - 1].selected_phrase_index
-      local second = trace[#trace].selected_phrase_index
-      observations.setter_existing_stable = immediate == 1 and first == 1 and second == 1
-      structural_pair("index 1", set_zero)
-    end)
-  end
-
-  perform("insert seed", function()
-    local phrase = instrument:insert_phrase_at(original_count + 1)
-    assert(phrase and rawequal(instrument.phrases[original_count + 1], phrase),
-      "seed phrase identity is unavailable")
-    created[1] = phrase
-  end, set_existing)
-  return true
-end
-
-local function run_direct_output_feasibility(done, json)
-  local song = renoise.song()
-  local instrument = song and song.selected_instrument
-  if not instrument or song.transport.playing or #instrument.phrases + 2 >
-      renoise.Instrument.MAX_NUMBER_OF_PHRASES then
-    done({ status = "FAIL", case = "direct-output-feasibility",
-      reason = "Stop playback and select an instrument with capacity for two temporary phrases" })
-    return true
-  end
-  local instrument_index = song.selected_instrument_index
-  local data_before = song.tool_data
-  local before_count = #instrument.phrases
-  local original_phrases = {}
-  for index, phrase in ipairs(instrument.phrases) do original_phrases[index] = phrase end
-  local created, matrix = {}, json.array()
-  local rollback_exact = false
-  local source_transaction_verified = false
-  local materializer_apply_calls = 0
-  local materializer_apply_total_ms = 0
-  local materializer_apply_max_ms = 0
-  local materializer_phase_names = { "snapshot", "snapshot_index", "matches_snapshot",
-    "compare", "copy_snapshot" }
-  local materializer_profile_total = {}
-  for _, name in ipairs(materializer_phase_names) do
-    materializer_profile_total[name .. "_calls"] = 0
-    materializer_profile_total[name .. "_ms"] = 0
-  end
-  local settled = false
-  local function phrase_index(target)
-    for index, phrase in ipairs(instrument.phrases) do
-      if rawequal(phrase, target) then return index end
-    end
-  end
-  local function cleanup()
-    if not rawequal(renoise.song(), song) or not rawequal(song.instruments[instrument_index], instrument) then
-      return false, "song or probe instrument changed; created phrases may need manual cleanup"
-    end
-    for index = #created, 1, -1 do
-      local current_index = phrase_index(created[index])
-      if current_index then
-        local ok, err = pcall(function() instrument:delete_phrase_at(current_index) end)
-        if not ok then return false, tostring(err) end
-      end
-    end
-    local preserved = #instrument.phrases == before_count
-    for index, phrase in ipairs(original_phrases) do
-      if not rawequal(instrument.phrases[index], phrase) then preserved = false end
-    end
-    return preserved and song.tool_data == data_before,
-      "phrase inventory or song tool_data changed during cleanup"
-  end
-  local function finish(ok, reason)
-    if settled then return end
-    settled = true
-    local clean, cleanup_error = cleanup()
-    local profile_total_ms = 0
-    for _, name in ipairs(materializer_phase_names) do
-      profile_total_ms = profile_total_ms + materializer_profile_total[name .. "_ms"]
-    end
-    materializer_profile_total.residual_ms = materializer_apply_total_ms - profile_total_ms
-    done({ status = ok and clean and "PASS" or "FAIL", case = "direct-output-feasibility",
-      reason = reason or (not clean and cleanup_error or nil), cases = matrix,
-      rollback_exact = rollback_exact, source_transaction_verified = source_transaction_verified,
-      materializer_apply_calls = materializer_apply_calls,
-      materializer_apply_total_ms = materializer_apply_total_ms,
-      materializer_apply_max_ms = materializer_apply_max_ms,
-      materializer_profile = materializer_profile_total,
-      cleanup_verified = clean == true,
-      phrase_count = #instrument.phrases })
-  end
-
-  local loaded, planner, sequence, emitter, ownership, runner_module, gate_writer, store, materializer = pcall(function()
-    return require("model.output_planner"), require("model.sequencer"),
-      dofile(renoise.tool().bundle_path .. "\\__dev\\reference\\pattrns_writer.lua"),
-      require("renoise.phrase_ownership"),
-      dofile(renoise.tool().bundle_path .. "\\__dev\\reference\\script_runner.lua"),
-      dofile(renoise.tool().bundle_path .. "\\__dev\\reference\\gate_writer.lua"),
-      require("renoise.pattern_store"), require("writers.phrase_materializer")
-  end)
-  if not loaded then finish(false, tostring(planner)); return true end
-  local api = renoise.InstrumentPhrase
-  local capacities = { max_lines = api.MAX_NUMBER_OF_LINES,
-    max_note_columns = api.MAX_NUMBER_OF_NOTE_COLUMNS,
-    max_effect_columns = api.MAX_NUMBER_OF_EFFECT_COLUMNS,
-    play_pattern = api.PLAY_PATTERN, key_tracking_none = api.KEY_TRACKING_NONE }
-  local capabilities = { sample = false, plugin = false, midi = false, alias = false }
-  local note_fields = { "note_value", "instrument_value", "volume_value", "panning_value",
-    "delay_value", "effect_number_value", "effect_amount_value" }
-  local effect_fields = { "number_value", "amount_value" }
-
-  local function context_valid()
-    assert(rawequal(renoise.song(), song), "active song changed")
-    assert(not song.transport.playing, "playback started")
-    assert(song.selected_instrument_index == instrument_index and
-      rawequal(song.instruments[instrument_index], instrument), "selected instrument changed")
-  end
-
-  local function set_properties(phrase, properties, visibility)
-    phrase.looping = false
-    phrase.loop_start = 1
-    phrase.loop_end = 2
-    phrase.number_of_lines = properties.number_of_lines
-    for key, value in pairs(properties) do
-      if key ~= "looping" and key ~= "loop_start" and key ~= "loop_end" and
-          key ~= "number_of_lines" then phrase[key] = value end
-    end
-    phrase.loop_end = properties.loop_end
-    phrase.loop_start = properties.loop_start
-    phrase.looping = properties.looping
-    for key, value in pairs(visibility) do phrase[key] = value end
-  end
-
-  local function write_expected(phrase, output, fail_after, failure_tag)
-    local writes = 0
-    for line_index = 1, capacities.max_lines do
-      local line = phrase:line(line_index)
-      local expected = output.expected.lines[line_index]
-      for column = 1, capacities.max_note_columns do
-        local cell = line:note_column(column)
-        for _, field in ipairs(note_fields) do
-          cell[field] = expected.note_columns[column][field]
-          writes = writes + 1
-          if fail_after and writes == fail_after then
-            error("injected direct write failure:" .. tostring(failure_tag), 0)
-          end
-        end
-      end
-      for column = 1, capacities.max_effect_columns do
-        local cell = line:effect_column(column)
-        for _, field in ipairs(effect_fields) do
-          cell[field] = expected.effect_columns[column][field]
-          writes = writes + 1
-          if fail_after and writes == fail_after then
-            error("injected direct write failure:" .. tostring(failure_tag), 0)
-          end
-        end
-      end
-    end
-  end
-
-  local function assert_expected(phrase, output, before)
-    local snapshot = assert(ownership.snapshot(phrase, capacities))
-    for key, expected in pairs(output.expected.properties) do
-      assert(snapshot.properties[key] == expected, "property mismatch: " .. key)
-    end
-    for key, expected in pairs(output.required_visibility) do
-      local wanted = expected
-      if before then
-        local old = before.properties[key]
-        if type(expected) == "number" then wanted = math.max(old, expected)
-        elseif type(expected) == "boolean" then wanted = old or expected end
-      end
-      assert(snapshot.properties[key] == wanted, "visibility mismatch: " .. key)
-    end
-    for line_index = 1, capacities.max_lines do
-      local actual, expected = snapshot.lines[line_index], output.expected.lines[line_index]
-      for column = 1, capacities.max_note_columns do
-        for _, field in ipairs(note_fields) do
-          assert(actual.notes[column][field] == expected.note_columns[column][field],
-            string.format("note mismatch at line %d column %d field %s", line_index, column, field))
-        end
-      end
-      for column = 1, capacities.max_effect_columns do
-        for _, field in ipairs(effect_fields) do
-          assert(actual.effects[column][field] == expected.effect_columns[column][field],
-            string.format("effect mismatch at line %d column %d field %s", line_index, column, field))
-        end
-      end
-    end
-    return snapshot
-  end
-
-  local function apply_materialized(phrase, output, before)
-    local unpack_values = unpack or table.unpack
-    local function pack_values(...)
-      return { n = select("#", ...), ... }
-    end
-    local profile = {}
-    local originals = {}
-    local wrappers = {}
-    for _, name in ipairs(materializer_phase_names) do
-      local original = ownership[name]
-      if type(original) == "function" then
-        originals[name] = original
-        profile[name .. "_calls"] = 0
-        profile[name .. "_ms"] = 0
-        wrappers[#wrappers + 1] = name
-      end
-    end
-    for _, name in ipairs(wrappers) do
-      local original = originals[name]
-      ownership[name] = function(...)
-        local started = os.clock()
-        local values = pack_values(pcall(original, ...))
-        profile[name .. "_calls"] = profile[name .. "_calls"] + 1
-        profile[name .. "_ms"] = profile[name .. "_ms"] +
-          (os.clock() - started) * MILLISECONDS_PER_SECOND
-        if not values[1] then error(values[2], 0) end
-        return unpack_values(values, 2, values.n)
-      end
-    end
-    local started = os.clock()
-    local values = pack_values(pcall(materializer.apply,
-      phrase, output.expected, output.required_visibility, before, capacities))
-    local elapsed = (os.clock() - started) * MILLISECONDS_PER_SECOND
-    for index = #wrappers, 1, -1 do
-      local name = wrappers[index]
-      pcall(function() ownership[name] = originals[name] end)
-      local calls_key, time_key = name .. "_calls", name .. "_ms"
-      materializer_profile_total[calls_key] = materializer_profile_total[calls_key] + profile[calls_key]
-      materializer_profile_total[time_key] = materializer_profile_total[time_key] + profile[time_key]
-    end
-    local phase_total_ms = 0
-    for _, name in ipairs(materializer_phase_names) do
-      profile[name .. "_calls"] = profile[name .. "_calls"] or 0
-      profile[name .. "_ms"] = profile[name .. "_ms"] or 0
-      phase_total_ms = phase_total_ms + profile[name .. "_ms"]
-    end
-    profile.residual_ms = elapsed - phase_total_ms
-    materializer_apply_calls = materializer_apply_calls + 1
-    materializer_apply_total_ms = materializer_apply_total_ms + elapsed
-    if elapsed > materializer_apply_max_ms then materializer_apply_max_ms = elapsed end
-    if not values[1] then error(values[2], 0) end
-    return values[2], values[3], values[4], elapsed, profile
-  end
-
-  local function seed_detached_preimage(phrase)
-    phrase.looping = false
-    phrase.loop_start = 1
-    phrase.number_of_lines = capacities.max_lines
-    phrase.loop_end = capacities.max_lines
-    phrase.visible_note_columns = capacities.max_note_columns
-    if capacities.max_effect_columns > 0 then
-      phrase.visible_effect_columns = capacities.max_effect_columns
-    end
-    local lines = { 1, math.min(17, capacities.max_lines), capacities.max_lines }
-    local note_columns = { 1, capacities.max_note_columns }
-    for line_slot, line_index in ipairs(lines) do
-      local line = phrase:line(line_index)
-      for column_slot, column_index in ipairs(note_columns) do
-        local cell = line:note_column(column_index)
-        cell.note_value = 48 + line_slot + column_slot
-        cell.instrument_value = column_slot
-        cell.volume_value = 70 + line_slot
-        cell.panning_value = 20 + column_slot
-        cell.delay_value = line_slot
-        cell.effect_number_value = 1 + column_slot
-        cell.effect_amount_value = 10 + line_slot
-      end
-      if capacities.max_effect_columns > 0 then
-        local effect_columns = { 1, capacities.max_effect_columns }
-        for column_slot, column_index in ipairs(effect_columns) do
-          local cell = line:effect_column(column_index)
-          cell.number_value = column_slot
-          cell.amount_value = 30 + line_slot
-        end
-      end
-    end
-    phrase.number_of_lines = math.min(32, capacities.max_lines)
-    phrase.loop_start = 1
-    phrase.loop_end = phrase.number_of_lines
-    phrase.looping = false
-    phrase.visible_note_columns = 1
-    if capacities.max_effect_columns > 0 then phrase.visible_effect_columns = 1 end
-  end
-
-  local function inject_and_restore(phrase, detached, output, tag, fail_after)
-    set_properties(phrase, output.expected.properties, output.required_visibility)
-    local fault_ok, fault_error = pcall(function()
-      if fail_after then
-        write_expected(phrase, output, fail_after, tag)
-      else
-        error("injected direct write failure:" .. tag, 0)
-      end
-    end)
-    assert(not fault_ok and tostring(fault_error):find("injected direct write failure:" .. tag, 1, true),
-      "fault injection did not reach the requested " .. tag .. " point: " .. tostring(fault_error))
-    local restored, restore_error = materializer.restore(phrase, detached, capacities)
-    assert(restored, "materializer rollback failed after " .. tag .. ": " .. tostring(restore_error))
-    local equal, difference = ownership.compare(detached, assert(ownership.snapshot(phrase, capacities)))
-    assert(equal, "full detached rollback mismatch after " .. tag .. ": " .. tostring(difference))
-  end
-
-  local source_ok, source, source_before = pcall(function()
-    local pattern = sequence.new_pattern(4)
-    pattern.pitch_length = 3
-    pattern.pitch_events[1] = sequence.new_pitch(0, 0, false, false)
-    pattern.pitch_events[2] = sequence.new_pitch(4, 0, true, false)
-    pattern.pitch_events[3] = sequence.new_pitch(7, 0, false, false)
-    pattern.time_events[1], pattern.time_events[2] = "N", "T"
-    pattern.time_events[3], pattern.time_events[4] = "N", "R"
-    return pattern, assert(sequence.copy_source(pattern))
-  end)
-  if not source_ok then finish(false, tostring(source)); return true end
-  local cases = json.array()
-  for _, timing_mode in ipairs({ "straight", "triplet" }) do
-    for _, sample in ipairs({ false, true }) do
-      for _, policy in ipairs({ "play_once", "repeat" }) do
-        cases[#cases + 1] = { timing_mode = timing_mode, sample = sample, policy = policy }
-      end
-    end
-  end
-
-  local function run_case(case_index)
-    if settled then return end
-    local case = cases[case_index]
-    if not case then
-      source.timing_mode = source_before.timing_mode
-      finish(sequence.same_source(source, source_before) and song.tool_data == data_before,
-        "planner parity and rollback matrix completed")
-      return
-    end
-    source.timing_mode = case.timing_mode
-    capabilities.sample = case.sample
-    local planned, output, plan_error = pcall(planner.plan, source, case.policy, 0, capacities, capabilities,
-      { pitch_bend_delivery = false })
-    local case_label = case.timing_mode .. "/sample=" .. tostring(case.sample) .. "/" .. case.policy
-    if not planned or not output then finish(false, case_label .. ": " .. tostring(planned and plan_error or output)); return end
-    local emitted, script_source, emit_error = pcall(emitter.emit, output.plan,
-      { unit = output.layout.unit, resolution = output.layout.resolution })
-    if not emitted or not script_source then finish(false, case_label .. ": " .. tostring(emitted and emit_error or script_source)); return end
-    local direct, rendered, apply_elapsed_ms, apply_profile
-    local ok, err = pcall(function()
-      context_valid()
-      direct = instrument:insert_phrase_at(#instrument.phrases + 1)
-      assert(direct, "direct phrase insertion failed")
-      created[#created + 1] = direct
-      rendered = instrument:insert_phrase_at(#instrument.phrases + 1)
-      assert(rendered, "renderer phrase insertion failed")
-      created[#created + 1] = rendered
-      assert(#instrument.phrases == before_count + 2, "phrase list insertion count mismatch")
-      direct.name = "ACID DIRECT OUTPUT PROBE | direct"
-      seed_detached_preimage(direct)
-      direct.base_note = 53
-      direct.autoseek = true
-      direct:set_column_name(1, "preserved column")
-      direct:set_column_is_muted(capacities.max_note_columns, true)
-      local detached = assert(ownership.copy_snapshot(assert(ownership.snapshot(direct, capacities))))
-      local phrase_count = #instrument.phrases
-      if case_index == 1 then
-        local before_transaction = song.tool_data
-        local candidate, transaction_error
-        local transaction_ok, failure = pcall(function()
-          local allocated = assert(store.allocate(song))
-          candidate = assert(store.prepare(song, allocated, source, case.policy, 0,
-            function() return true end))
-          local committed, commit_error = store.commit(song, candidate)
-          assert(committed, "source commit failed: " .. tostring(commit_error))
-          local committed_source = assert(store.read_entry(song, allocated))
-          assert(sequence.same_source(committed_source, source), "committed source did not round-trip")
-          local applied, apply_result = apply_materialized(direct, output, detached)
-          assert(applied and apply_result, "production materializer failed: " .. tostring(apply_result))
-          assert_expected(direct, output, detached)
-          local interrupted, interrupt_error = pcall(function()
-            error("injected post-commit materialization failure", 0)
-          end)
-          assert(not interrupted and tostring(interrupt_error) ==
-            "injected post-commit materialization failure", "transaction fault did not reach injected point")
-          local restored, restore_error = materializer.restore(direct, detached, capacities)
-          assert(restored, "production materializer rollback failed: " .. tostring(restore_error))
-          local phrase_equal, phrase_difference = ownership.compare(detached,
-            assert(ownership.snapshot(direct, capacities)))
-          assert(phrase_equal, "phrase restore failed after committed-source rollback: " ..
-            tostring(phrase_difference))
-          local source_restored, source_restore_error = store.restore(song, candidate)
-          assert(source_restored, "source restore failed after materialization error: " ..
-            tostring(source_restore_error))
-          assert(song.tool_data == before_transaction, "source rollback did not restore exact raw bytes")
-          store.release_candidate(candidate)
-          candidate = nil
-          local rejected_candidate = assert(store.prepare(song, allocated, source, case.policy, 0,
-            function() return false end))
-          local rejected, rejection_error = store.commit(song, rejected_candidate)
-          assert(not rejected and rejection_error and song.tool_data == before_transaction,
-            "rejected source request changed raw song data")
-          store.release_candidate(rejected_candidate)
-        end)
-        if not transaction_ok then
-          transaction_error = tostring(failure)
-          local phrase_restored, phrase_restore_error = pcall(materializer.restore, direct, detached, capacities)
-          if not phrase_restored then transaction_error = transaction_error ..
-            "; phrase cleanup failed: " .. tostring(phrase_restore_error) end
-          if candidate then
-            local source_restored, source_restore_error = pcall(store.restore, song, candidate)
-            if not source_restored then transaction_error = transaction_error ..
-              "; source cleanup failed: " .. tostring(source_restore_error) end
-            store.release_candidate(candidate)
-          end
-          if song.tool_data ~= before_transaction then
-            transaction_error = transaction_error .. "; exact source bytes were not restored"
-          end
-          error(transaction_error, 0)
-        end
-        source_transaction_verified = true
-      end
-      local total_writes = capacities.max_lines *
-        (capacities.max_note_columns * #note_fields + capacities.max_effect_columns * #effect_fields)
-      inject_and_restore(direct, detached, output, "after-properties")
-      inject_and_restore(direct, detached, output, "early-cell", 97)
-      inject_and_restore(direct, detached, output, "late-cell", total_writes - 1)
-      assert(#instrument.phrases == phrase_count, "rollback changed phrase inventory")
-      rollback_exact = true
-      local applied, apply_result, apply_partial
-      applied, apply_result, apply_partial, apply_elapsed_ms, apply_profile =
-        apply_materialized(direct, output, detached)
-      assert(applied and apply_result, "production materializer failed: " .. tostring(apply_result))
-      assert_expected(direct, output, detached)
-      assert(direct.name == "ACID DIRECT OUTPUT PROBE | direct" and direct.base_note == 53 and direct.autoseek,
-        "direct materialization changed preserved phrase metadata")
-      assert(direct:column_name(1) == "preserved column" and
-        direct:column_is_muted(capacities.max_note_columns), "direct materialization changed column metadata")
-      set_properties(rendered, output.expected.properties, output.required_visibility)
-      rendered.playback_mode = api.PLAY_SCRIPT
-      rendered.script.paragraphs = { script_source }
-    end)
-    if not ok then finish(false, case_label .. ": " .. tostring(err)); return end
-
-    local native_runner, runner_error = runner_module.new(rendered.script,
-      { lpb = output.layout.lpb, max_events = output.plan.length }, {
-        done = function(render_error)
-          local completed, completion_error = pcall(function()
-            context_valid()
-            assert(not render_error or render_error == "", "native renderer failed: " .. tostring(render_error))
-            local applied, gate_error = gate_writer.apply_plan(rendered, output.operations)
-            assert(applied, "native gate application failed: " .. tostring(gate_error))
-            set_properties(rendered, output.expected.properties, output.required_visibility)
-            assert_expected(rendered, output)
-            assert(#instrument.phrases == before_count + 2, "native renderer changed phrase inventory")
-            matrix[#matrix + 1] = { timing_mode = case.timing_mode, sample = case.sample,
-              policy = case.policy, parity = true, apply_elapsed_ms = apply_elapsed_ms,
-              apply_profile = apply_profile,
-              planned_lines = output.expected.properties.number_of_lines,
-              semantic_events = output.plan.length, native_capacity_cells = capacities.max_lines *
-                (capacities.max_note_columns + capacities.max_effect_columns) }
-          end)
-          if not completed then finish(false, case_label .. ": " .. tostring(completion_error)); return end
-          for index = #created, 1, -1 do
-            local phrase = created[index]
-            local phrase_position = phrase_index(phrase)
-            if phrase_position then instrument:delete_phrase_at(phrase_position) end
-          end
-          created = {}
-          if #instrument.phrases ~= before_count then
-            finish(false, "probe phrase cleanup did not restore the original count"); return
-          end
-          run_case(case_index + 1)
-        end
-      })
-    if not native_runner then finish(false, tostring(runner_error)); return end
-    local started, start_error = native_runner:start()
-    if not started then finish(false, tostring(start_error)); return end
-  end
-
-  run_case(1)
-  return true
-end
-
-local function run_source_undo_feasibility(done, json)
-  local case_name = "source-undo-feasibility"
-  local song = renoise.song()
-  local instrument = song and song.selected_instrument
-  if not song or not instrument or song.transport.playing then
-    done({ status = "FAIL", case = case_name,
-      reason = "Stop playback and select the instrument for the source undo probe" })
-    return true
-  end
-
-  local instrument_index = song.selected_instrument_index
-  local original_tool_data = song.tool_data
-  local original_phrases = {}
-  for index, existing_phrase in ipairs(instrument.phrases) do
-    original_phrases[index] = existing_phrase
-  end
-  local ownership = require("renoise.phrase_ownership")
-  local phrase
-  local settled = false
-  local variants = json.array()
-  local maximum_history_states = 16
-
-  local function original_inventory_matches()
-    if #instrument.phrases ~= #original_phrases + (phrase and 1 or 0) then return false end
-    for index, original_phrase in ipairs(original_phrases) do
-      if not rawequal(instrument.phrases[index], original_phrase) then return false end
-    end
-    if phrase and not rawequal(instrument.phrases[#original_phrases + 1], phrase) then return false end
-    return true
-  end
-
-  local function context_valid()
-    assert(rawequal(renoise.song(), song), "active song changed")
-    assert(not song.transport.playing, "playback started")
-    assert(song.selected_instrument_index == instrument_index and
-      rawequal(song.instruments[instrument_index], instrument), "selected instrument changed")
-    assert(original_inventory_matches(), "phrase inventory changed during source undo probe")
-  end
-
-  local function phrase_snapshot()
-    if not phrase then return nil end
-    local snapshot, err = ownership.snapshot(phrase)
-    assert(snapshot, err or "could not snapshot the probe phrase")
-    return snapshot
-  end
-
-  local function capture_state()
-    context_valid()
-    return { tool_data = song.tool_data, phrase = phrase_snapshot() }
-  end
-
-  local function state_matches(actual, expected)
-    if actual.tool_data ~= expected.tool_data then return false end
-    if actual.phrase == nil or expected.phrase == nil then
-      return actual.phrase == expected.phrase
-    end
-    return ownership.compare(actual.phrase, expected.phrase) == true
-  end
-
-  local function state_summary(actual, before, after, direction, index)
-    return {
-      direction = direction,
-      index = index,
-      tool_data_matches_before = actual.tool_data == before.tool_data,
-      tool_data_matches_after = actual.tool_data == after.tool_data,
-      phrase_matches_before = actual.phrase == nil and before.phrase == nil or
-        actual.phrase ~= nil and before.phrase ~= nil and
-          ownership.compare(actual.phrase, before.phrase) == true,
-      phrase_matches_after = actual.phrase == nil and after.phrase == nil or
-        actual.phrase ~= nil and after.phrase ~= nil and
-          ownership.compare(actual.phrase, after.phrase) == true,
-      matches_before = state_matches(actual, before),
-      matches_after = state_matches(actual, after),
-    }
-  end
-
-  local function cleanup()
-    if not rawequal(renoise.song(), song) or
-        not rawequal(song.instruments[instrument_index], instrument) then
-      return false, "song or probe instrument changed; manual cleanup may be required"
-    end
-    local ok, err = pcall(function()
-      if phrase then
-        local index
-        for candidate_index, candidate in ipairs(instrument.phrases) do
-          if rawequal(candidate, phrase) then index = candidate_index; break end
-        end
-        if index then instrument:delete_phrase_at(index) end
-      end
-      song.tool_data = original_tool_data
-    end)
-    if not ok then return false, tostring(err) end
-    local inventory_restored = #instrument.phrases == #original_phrases
-    if inventory_restored then
-      for index, original_phrase in ipairs(original_phrases) do
-        if not rawequal(instrument.phrases[index], original_phrase) then
-          inventory_restored = false
-          break
-        end
-      end
-    end
-    return inventory_restored and song.tool_data == original_tool_data,
-      "cleanup did not restore the original phrase identity order and tool_data"
-  end
-
-  local function finish()
-    if settled then return end
-    settled = true
-    local all_grouped, any_undo_state = true, false
-    local missing_undo_variants = json.array()
-    for _, variant in ipairs(variants) do
-      all_grouped = all_grouped and variant.complete_logical_undo_grouped == true
-      any_undo_state = any_undo_state or variant.undo_state_count > 0
-      if variant.undo_state_count == 0 then missing_undo_variants[#missing_undo_variants + 1] = variant.name end
-    end
-    local clean, cleanup_error = cleanup()
-    done({
-      status = all_grouped and clean and "PASS" or "FAIL",
-      case = case_name,
-      reason = not clean and cleanup_error or
-        (not any_undo_state and "No native undo states were exposed to the direct Song API; a real key/menu undo handler may be needed before concluding the behavior is unavailable" or
-          not all_grouped and "At least one variant did not undo and redo phrase plus source as one exact logical action" or nil),
-      variants = variants,
-      variant_count = #variants,
-      maximum_history_states = maximum_history_states,
-      all_variants_one_step = all_grouped,
-      any_native_undo_state = any_undo_state,
-      manual_undo_ui_followup_required = #missing_undo_variants > 0,
-      variants_without_song_api_undo_states = missing_undo_variants,
-      cleanup_verified = clean == true,
-      phrase_count = #instrument.phrases,
-      original_phrase_count = #original_phrases,
-      tool_data_restored = song.tool_data == original_tool_data,
-    })
-  end
-
-  local function add_variant_record(record)
-    variants[#variants + 1] = record
-  end
-
-  local run_variant
-  local variants_spec = {
-    { name = "tool-data-only-describe-undo", description = "ACID source undo probe: tool_data only",
-      method = "describe_undo", mutate_phrase = false, split = false },
-    { name = "phrase-and-source-sync-describe-undo", description = "ACID source undo probe: synchronous pair",
-      method = "describe_undo", mutate_phrase = true, split = false },
-    { name = "phrase-then-source-split-describe-undo", description = "ACID source undo probe: split describe_undo",
-      method = "describe_undo", mutate_phrase = true, split = true },
-    { name = "phrase-then-source-split-batch-once", description = "ACID source undo probe: split batch once",
-      method = "describe_batch_undo_once", mutate_phrase = true, split = true },
-    { name = "phrase-then-source-split-batch-each", description = "ACID source undo probe: split batch each write",
-      method = "describe_batch_undo_each", mutate_phrase = true, split = true },
-  }
-
-  run_variant = function(index)
-    if settled then return end
-    local spec = variants_spec[index]
-    if not spec then finish(); return end
-    local before
-    local record = {
-      name = spec.name,
-      method = spec.method,
-      split_idle = spec.split,
-      status = "RUNNING",
-      history = json.array(),
-      undo_state_count = 0,
-      redo_state_count = 0,
-    }
-    local function next_variant()
-      if index >= #variants_spec then finish() else on_next_idle(function() run_variant(index + 1) end) end
-    end
-    local function fail_variant(err)
-      record.status = "ERROR"
-      record.error = tostring(err)
-      record.complete_logical_undo_grouped = false
-      add_variant_record(record)
-      next_variant()
-    end
-    local function prepare_description()
-      if spec.method == "describe_undo" then
-        assert(type(song.describe_undo) == "function", "Song.describe_undo is unavailable")
-        song:describe_undo(spec.description)
-      elseif spec.method == "describe_batch_undo_once" or spec.method == "describe_batch_undo_each" then
-        assert(type(song.describe_batch_undo) == "function", "Song.describe_batch_undo is unavailable")
-        song:describe_batch_undo(spec.description, 5000)
-      end
-    end
-    local function mutate_phrase()
-      if not spec.mutate_phrase then return end
-      phrase.name = "ACID SOURCE UNDO AFTER " .. tostring(index)
-      phrase:line(1):note_column(1).note_value = 49 + index
-    end
-    local function mutate_source()
-      song.tool_data = "ACID-SOURCE-UNDO-PROBE\n" .. spec.name .. "\n"
-    end
-    local begin_history_walk
-    local function start_action()
-      before = capture_state()
-      record.before_tool_data_present = before.tool_data ~= nil
-      record.before_tool_data_length = before.tool_data and #before.tool_data or 0
-      prepare_description()
-      if spec.split then
-        mutate_phrase()
-        on_next_idle(function()
-          local ok, err = pcall(function()
-            context_valid()
-            if spec.method == "describe_batch_undo_each" then prepare_description() end
-            mutate_source()
-          end)
-          if not ok then fail_variant(err); return end
-          on_next_idle(function()
-            local began, begin_error = pcall(begin_history_walk)
-            if not began then fail_variant(begin_error) end
-          end)
-        end)
-      else
-        mutate_phrase()
-        mutate_source()
-        on_next_idle(function()
-          local began, begin_error = pcall(begin_history_walk)
-          if not began then fail_variant(begin_error) end
-        end)
-      end
-    end
-
-    local function state_now()
-      return capture_state()
-    end
-
-    local function undo_available()
-      local ok, available = pcall(function() return song:can_undo() end)
-      assert(ok and type(available) == "boolean", "Song.can_undo is unavailable")
-      return available
-    end
-
-    local function redo_available()
-      local ok, available = pcall(function() return song:can_redo() end)
-      assert(ok and type(available) == "boolean", "Song.can_redo is unavailable")
-      return available
-    end
-
-    local after
-    local undo_count, redo_count = 0, 0
-    local walk_undo, walk_redo
-
-    local function finish_variant()
-      local current = capture_state()
-      record.undo_state_count = undo_count
-      record.redo_state_count = redo_count
-      record.before_state_restored = record.undo_reached_before == true
-      record.after_state_restored = state_matches(current, after)
-      record.complete_logical_undo_grouped = undo_count == 1 and redo_count == 1 and
-        record.undo_reached_before == true and record.redo_reached_after == true and
-        record.after_state_restored == true
-      record.status = record.complete_logical_undo_grouped and "PASS" or "FAIL"
-      if not record.complete_logical_undo_grouped then
-        record.reason = undo_count == 0 and "No undo state reached the source/phrase action" or
-          undo_count ~= 1 and "Undo split the logical source/phrase action across multiple states" or
-          redo_count ~= 1 and "Redo split the logical source/phrase action across multiple states" or
-          not record.undo_reached_before and "Undo did not restore the exact pre-action phrase and source state" or
-          "Redo did not restore the exact post-action phrase and source state"
-      end
-      add_variant_record(record)
-      next_variant()
-    end
-
-    walk_undo = function(previous)
-      local current = capture_state()
-      if state_matches(current, before) then
-        record.undo_reached_before = true
-        walk_redo()
-        return
-      end
-      if undo_count >= maximum_history_states then
-        record.undo_bound_reached = true
-        walk_redo()
-        return
-      end
-      local available = undo_available()
-      if not available then walk_redo(); return end
-      local called, err = pcall(function() song:undo() end)
-      if not called then fail_variant(err); return end
-      undo_count = undo_count + 1
-      on_next_idle(function()
-        local ok, err = pcall(function()
-          local observed = state_now()
-          record.history[#record.history + 1] = state_summary(observed, before, after,
-            "undo", undo_count)
-          if previous and state_matches(observed, previous) then
-            record.undo_stalled = true
-            walk_redo()
-          else
-            walk_undo(current)
-          end
-        end)
-        if not ok then fail_variant(err) end
-      end)
-    end
-
-    walk_redo = function()
-      local current = capture_state()
-      if state_matches(current, after) then
-        record.redo_reached_after = true
-        finish_variant()
-        return
-      end
-      if redo_count >= maximum_history_states then
-        record.redo_bound_reached = true
-        finish_variant()
-        return
-      end
-      local available = redo_available()
-      if not available then finish_variant(); return end
-      local called, err = pcall(function() song:redo() end)
-      if not called then fail_variant(err); return end
-      redo_count = redo_count + 1
-      on_next_idle(function()
-        local ok, err = pcall(function()
-          local observed = state_now()
-          record.history[#record.history + 1] = state_summary(observed, before, after,
-            "redo", redo_count)
-          walk_redo()
-        end)
-        if not ok then fail_variant(err) end
-      end)
-    end
-
-    begin_history_walk = function()
-      after = capture_state()
-      record.after_tool_data_present = after.tool_data ~= nil
-      record.after_tool_data_length = after.tool_data and #after.tool_data or 0
-      record.history[#record.history + 1] = state_summary(after, before, after, "after_action", 0)
-      walk_undo()
-    end
-
-    local function begin_after_setup()
-      local ok, err = pcall(start_action)
-      if not ok then fail_variant(err) end
-    end
-
-    if spec.mutate_phrase and not phrase then
-      local inserted, returned = pcall(function()
-        return instrument:insert_phrase_at(#original_phrases + 1)
-      end)
-      if not inserted then
-        local addition
-        for _, candidate in ipairs(instrument.phrases) do
-          local was_original = false
-          for _, existing_phrase in ipairs(original_phrases) do
-            if rawequal(candidate, existing_phrase) then was_original = true; break end
-          end
-          if not was_original then
-            if addition then addition = nil; break end
-            addition = candidate
-          end
-        end
-        if addition and #instrument.phrases == #original_phrases + 1 then phrase = addition end
-        fail_variant(returned)
-        return
-      end
-      phrase = returned
-      if not phrase or not rawequal(instrument.phrases[#original_phrases + 1], phrase) or
-          not original_inventory_matches() then
-        fail_variant("probe phrase insertion did not append exactly one phrase to the original inventory")
-        return
-      end
-      local setup_ok, setup_error = pcall(function()
-        phrase.name = "ACID SOURCE UNDO BASELINE"
-        phrase:line(1):note_column(1).note_value = 48
-      end)
-      if not setup_ok then fail_variant(setup_error); return end
-      on_next_idle(begin_after_setup)
-    else
-      begin_after_setup()
-    end
-  end
-
-  local function start_matrix()
-    run_variant(1)
-  end
-
-  local ok, err = pcall(function()
-    assert(type(song.can_undo) == "function" and type(song.can_redo) == "function" and
-      type(song.undo) == "function" and type(song.redo) == "function",
-      "native Song undo/redo API is unavailable")
-    assert(not song:can_undo() and not song:can_redo(),
-      "start from a fresh disposable song with empty undo and redo history")
-    assert(type(json.array) == "function", "JSON array helper is unavailable")
-  end)
-  if not ok then
-    done({ status = "FAIL", case = case_name, reason = tostring(err), variants = variants })
-    return true
-  end
-
-  start_matrix()
   return true
 end
 
@@ -8331,32 +7252,6 @@ function M.run(case_name, done, json, profile_mode, options)
   if case_name == "multi-instrument-workflow" then return run_multi_instrument_workflow(done, json,profile_mode) end
   if case_name == "integrity-observers" then return run_integrity_observers(done) end
   if case_name == "editor-responsiveness" then return run_editor_responsiveness(done,profile_mode) end
-  if case_name == "selection-feasibility" then return run_selection_feasibility(done, json) end
-  if case_name == "direct-output-feasibility" then return run_direct_output_feasibility(done, json) end
-  if case_name == "source-undo-feasibility" then
-    return run_source_undo_feasibility(done, json)
-  end
-  if case_name == "api-probe" then
-    local phrase_api = renoise.InstrumentPhrase
-    local instrument_api = renoise.Instrument
-    local result = {
-      status = "PASS",
-      case = "api-probe",
-      phrase_api_type = type(phrase_api),
-      phrase_api_value = tostring(phrase_api),
-      instrument_api_type = type(instrument_api),
-      instrument_api_value = tostring(instrument_api)
-    }
-    if phrase_api ~= nil then
-      for _, key in ipairs({"MAX_NUMBER_OF_LINES", "MAX_NUMBER_OF_NOTE_COLUMNS",
-          "MAX_NUMBER_OF_EFFECT_COLUMNS", "PLAY_PATTERN", "KEY_TRACKING_NONE"}) do
-        local ok, value = pcall(function() return phrase_api[key] end)
-        result[key:lower()] = ok and value or "unreadable"
-      end
-    end
-    done(result)
-    return true
-  end
   return false, "native acceptance case is not allowlisted"
 end
 

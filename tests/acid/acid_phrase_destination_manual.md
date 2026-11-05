@@ -28,12 +28,6 @@ any phrase. After the action, select another owned phrase in Renoise and confirm
 ACID follows that selection and restores its source and settings. Close ACID and
 confirm later Phrase Editor selections do not trigger edits.
 
-Earlier Renoise 3.5.4 check with the script writer: selecting phrase 01 in Renoise's native map updated ACID's
-destination and restored phrase 01's source. Choosing phrase 02 in ACID left
-Renoise's selection on 01; regenerating 02 kept the count at two and then
-selected 02 as a structural side effect. This is regression evidence for the
-replaced writer, not acceptance of the direct writer.
-
 After a manual Regenerate and after a Live Edit, use Renoise's native Undo and
 Redo. At each settled state, verify the phrase cells, ACID source, output policy,
 PB Range and visible editor controls all match that revision. The phrase object,
@@ -42,6 +36,6 @@ Repeat after saving and reopening the song. An uncommitted draft must remain
 recoverable without replacing the restored revision's editor state.
 
 For the Program/Grid and Repeat/Play Once cutover checks, use the
-[current Renoise checklist](acid_m35_s_manual.md). The current-format
+[current Renoise checklist](acid_regeneration_manual.md). The current-format
 save/reopen and ownership behavior has deterministic Lua coverage; native GUI,
 undo and playback acceptance must be recorded separately.

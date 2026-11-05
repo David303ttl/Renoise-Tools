@@ -1,8 +1,6 @@
 dofile('tests/bootstrap.lua')('acid')
 local timing=require('model.timing')
 local sequencer=require('model.sequencer')
-local compiler=require('model.cycle_interpreter')
-local pattrns=require('reference.pattrns_writer')
 local output_planner=require('model.output_planner')
 
 -- Fixed musical examples: 12 straight steps span three beats, while 32
@@ -55,9 +53,7 @@ for _,mode in ipairs({'straight','triplet'}) do
       pattern.timing_mode=mode
       local plan,output=assert(output_planner.plan_output(pattern,policy,512))
       assert(output.lpb==layout.lpb and output.number_of_lines==layout.number_of_lines)
-      local script=assert(pattrns.emit(plan,{unit=layout.unit,resolution=layout.resolution}))
-      assert(script:find('unit = "'..layout.unit..'"',1,true))
-      assert(script:find('resolution = '..(mode=='straight' and '1' or '2/3'),1,true))
+      assert(output.unit==layout.unit and output.resolution==layout.resolution)
     end
   end
 end

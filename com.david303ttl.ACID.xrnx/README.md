@@ -284,7 +284,7 @@ readiness and mocked tests do not establish sound, timing or GUI behavior.
 
 Max-length timing/layout playback, PB center-reset alignment at LPB 16/12,
 host groove and receiver-dependent audio require the
-[manual checklist](../tests/acid/acid_m35_s_manual.md) and
+[manual checklist](../tests/acid/acid_regeneration_manual.md) and
 [timing checklist](../tests/acid/acid_timing_manual.md). A receiver that ignores
 pitch-bend commands will not produce the intended bend; use PB Off for
 receiver-controlled note overlap. Generation requires LPB transport timing and
@@ -307,7 +307,7 @@ Each Lua spec runs in a separate process. Semantic and mocked tests do not
 establish Renoise audio behavior. ACID's GUI and phrase-writer regression specs
 cover editable LAST STEP, Reset/Undo, selected-phrase regeneration, and sample
 slide commands scheduled before midpoint OFFs. Run the
-[M3.5 manual checklist](../tests/acid/acid_m35_s_manual.md) in Renoise to
+[integrated editor checklist](../tests/acid/acid_regeneration_manual.md) in Renoise to
 verify phrase playback and GUI behavior. The package has `manifest.xml` and
 `main.lua` at its root and excludes development files.
 

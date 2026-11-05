@@ -154,9 +154,9 @@ package.loaded["renoise.phrase_ownership"]={
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
 }
-local render_callbacks={}
 local active_request
 local sync_next_result
+local sync_next_message
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
   local phrase=call.phrase or call.request.phrase
@@ -218,20 +218,16 @@ local function start(kind,request,done)
     end}
   tool.writer_calls[#tool.writer_calls+1]=call
   active_request=request
-  local callback_index=#render_callbacks+1
   call.completed=false
-  render_callbacks[callback_index]=function(result)
-    active_request=nil
-    call.completed=true
-    done(result)
-    tool.app_idle_observable:fire()
-  end
-  if sync_next_result then
-    local status=sync_next_result
-    sync_next_result=nil
-    local result=terminal_result(call,status)
-    render_callbacks[callback_index](result)
-  end
+  local status=sync_next_result or "committed"
+  sync_next_result=nil
+  local message=sync_next_message
+  sync_next_message=nil
+  local result=terminal_result(call,status,message)
+  active_request=nil
+  call.completed=true
+  done(result)
+  tool.app_idle_observable:fire()
   return true
 end
 package.loaded["writers.phrase_writer"]={
@@ -359,190 +355,59 @@ builder.views.acid_editor_view:fire(2)
 builder.views.acid_grid_pitch_02:fire()
 builder.views.acid_editor_view:fire(1)
 
-local live_checkbox
-for _,node in ipairs(builder.nodes) do
-  if node.id=="acid_live_edit" then live_checkbox=node end
-end
+local live_checkbox=builder.views.acid_live_edit
 assert(live_checkbox,"Live Edit checkbox was not created")
-live_checkbox:fire(true)
-assert(#render_callbacks==0,"arming Live Edit does not write")
-pitch_key(builder,5):fire()
-assert(#render_callbacks==1,"source editing starts Live Edit inside the user edit callback")
-tool.app_idle_observable:fire()
-assert(#render_callbacks==1 and tool.writer_calls[1].options.token,
-  "idle does not start a duplicate writer call and Live Edit passes its token")
-assert(tool.writer_calls[1].options.pb_range==12,
-  "Live Edit passes the selected PB Range to the renderer")
-local first_failure=terminal_result(tool.writer_calls[1],"error","temporary render failure")
-first_failure.diagnostics={"temporary render failure"}
-render_callbacks[1](first_failure)
-assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
 local status=builder.views.acid_status
-assert(status.text=="Couldn't update the phrase. Try again.",status.text)
-pitch_key(builder,6):fire()
-tool.app_idle_observable:fire()
-assert(#render_callbacks==2 and tool.writer_calls[2].pattern.pitch_events[2].key==5,
-  "a source edit immediately retries the armed Live Edit: callbacks="..
-    #render_callbacks.." calls="..#tool.writer_calls.." key="..
-    tostring(tool.writer_calls[2] and tool.writer_calls[2].pattern.pitch_events[2].key))
-pitch_key(builder,7):fire()
-assert(#render_callbacks==2 and #tool.writer_calls==2,
-  "rapid edits coalesce while one render is active")
-local long_diagnostic=string.rep("TIME step 05: SLIDE approximated: bend range exceeded; ",40)
-local stale_failure=terminal_result(tool.writer_calls[2],"error",long_diagnostic)
-stale_failure.diagnostics={long_diagnostic}
-render_callbacks[2](stale_failure)
-assert(#render_callbacks==3 and tool.writer_calls[3].pattern.pitch_events[2].key==6,
-  "the in-flight follow-up renders the newest source immediately: P1="..
-    tostring(tool.writer_calls[3].pattern.pitch_events[1].key).." P2="..
-    tostring(tool.writer_calls[3].pattern.pitch_events[2].key))
-assert(not status.text:find(long_diagnostic,1,true), "a superseded request cannot replace current details with a stale error")
-local approximate_result=terminal_result(tool.writer_calls[3],"approximate","recovered with approximation")
-approximate_result.diagnostics={"slide approximated"}
-render_callbacks[3](approximate_result)
-assert(live_checkbox.value,"a recoverable writer error leaves Live Edit armed")
-assert(status.text=="Phrase updated with a musical approximation.",status.text)
-live_checkbox:fire(false)
-local timing=builder.views.acid_timing
-timing:fire(timing.value==1 and 2 or 1)
-assert(status.text=="Phrase updated with a musical approximation.",
-  "an approximation warning remains visible while the source is edited")
+local writer_count=#tool.writer_calls
 live_checkbox:fire(true)
+assert(#tool.writer_calls==writer_count,"arming Live Edit does not write")
 
-
-phrase_choice:fire(2)
-assert(#render_callbacks==3,"destination navigation does not write")
-pitch_key(builder,2):fire()
-tool.app_idle_observable:fire()
-assert(live_checkbox.value and #render_callbacks==4,
-  "editing a destination with a recovered draft resumes Live Edit")
-assert(tool.writer_calls[4].options.pb_range==48,
-  "Live Edit restores and passes the newly selected phrase's PB Range")
-render_callbacks[4](terminal_result(tool.writer_calls[4],"committed","owned phrase rebound"))
-local target_popup=popup(builder,290)
-target_popup:fire(2)
-phrase_choice:fire(1)
-assert(#render_callbacks==4,"instrument navigation does not write")
-pitch_key(builder,2):fire()
-tool.app_idle_observable:fire()
-assert(live_checkbox.value and #render_callbacks==5,
-  "explicit instrument selection rebinds Live Edit to its selected owned phrase")
-render_callbacks[5](terminal_result(tool.writer_calls[5],"committed","instrument rebound"))
-phrase_choice:fire(3)
-assert(#render_callbacks==5,"new phrase navigation does not write")
-pitch_key(builder,2):fire()
-tool.app_idle_observable:fire()
-assert(live_checkbox.value and #render_callbacks==6 and tool.writer_calls[6].target==3,
-  "editing NEW PHRASE starts an append render: "..#render_callbacks.." / "..tostring(tool.writer_calls[#tool.writer_calls].target).." / "..status.text)
-local explicit_append={id=23,name="ACID explicit append"}
-tool.writer_calls[6].options.phrase_mutation(function()
-  other_instrument.phrases[3]=explicit_append
-  return explicit_append
-end)
-pitch_key(builder,9):fire()
-render_callbacks[6](terminal_result(tool.writer_calls[6],"committed","initial append"))
-pitch_key(builder,9):fire()
-
-assert(phrase_choice.value==3 and #render_callbacks==7 and tool.writer_calls[7].target==3,
-  "an edit after accepted create regenerates the returned destination")
-assert(tool.writer_calls[7].pattern.pitch_events[1].key==8,
-  "the follow-up regeneration uses the newest source")
-render_callbacks[7](terminal_result(tool.writer_calls[7],"committed","explicit phrase updated"))
-phrase_choice:fire(2)
-assert(#render_callbacks==7,"foreign phrase navigation does not write")
-pitch_key(builder,2):fire()
-assert(live_checkbox.value and #render_callbacks==7,
-  "foreign phrase edits reject without overwriting or appending")
-assert(other_instrument.phrases[2]==other_foreign)
-phrase_choice:fire(4)
-pitch_key(builder,2):fire()
-tool.app_idle_observable:fire()
-assert(#render_callbacks==8 and tool.writer_calls[8].target==4,
-  "only explicit New selection allows creating a separate phrase")
-local separate_owned={id=24,name="ACID explicit New phrase"}
-tool.writer_calls[8].options.phrase_mutation(function()
-  other_instrument.phrases[4]=separate_owned
-  return separate_owned
-end)
-render_callbacks[8](terminal_result(tool.writer_calls[8],"committed","foreign redirected"))
-assert(phrase_choice.value==4,"successful explicit create binds the returned phrase")
-pitch_key(builder,8):fire()
-tool.app_idle_observable:fire()
-assert(#render_callbacks==9 and tool.writer_calls[9].target==4,
-  "the next edit regenerates the explicit created phrase")
-render_callbacks[9](terminal_result(tool.writer_calls[9],"committed","separate phrase updated"))
-assert(#other_instrument.phrases==4 and other_instrument.phrases[2]==other_foreign,
-  "foreign phrase stays in place and repeated edits do not append duplicates")
-assert(live_checkbox.value and
-  status.text:find("Edits to the previous phrase could not be saved with the song.",1,true) and
-  not status.text:find("Phrase updated.",1,true),status.text)
-pitch_key(builder,8):fire()
-assert(#render_callbacks==9,"an unchanged PITCH value does not render")
-pitch_key(builder,9):fire()
-tool.app_idle_observable:fire()
-other_instrument.phrases[4].foreign=true
-render_callbacks[10](terminal_result(tool.writer_calls[10],"suspended",
-  "target phrase changed during generation"))
-assert(#render_callbacks==10,
-  "a target ownership change during rendering cannot redirect to append")
-assert(other_instrument.phrases[4]==separate_owned)
-phrase_choice:fire(5)
-pitch_key(builder,3):fire()
-tool.app_idle_observable:fire()
-assert(#render_callbacks==11 and tool.writer_calls[11].target==5,
-  "a fresh edit on explicitly selected New can create after blocked target rejection")
-local safety_append={id=25,name="ACID New Phrase"}
-tool.writer_calls[11].options.phrase_mutation(function()
-  other_instrument.phrases[5]=safety_append
-  return safety_append
-end)
-render_callbacks[11](terminal_result(tool.writer_calls[11],"committed","safety append committed"))
-assert(phrase_choice.value==5,"New Phrase creation binds the returned phrase")
-pitch_key(builder,10):fire()
-tool.app_idle_observable:fire()
-assert(#render_callbacks==12 and tool.writer_calls[12].target==5,
-  "edits after New Phrase creation regenerate the created phrase")
-render_callbacks[12](terminal_result(tool.writer_calls[12],"committed","safety phrase updated"))
-pitch_key(builder,8):fire()
-tool.app_idle_observable:fire()
-render_callbacks[13](terminal_result(tool.writer_calls[13],"error",long_diagnostic))
-assert(status.text:find("Couldn't update the phrase. Try again.",1,true) and
+local long_diagnostic=string.rep("TIME step 05: SLIDE approximated; ",40)
+sync_next_result="error"
+sync_next_message=long_diagnostic
+pitch_key(builder,5):fire()
+local first=tool.writer_calls[#tool.writer_calls]
+assert(#tool.writer_calls==writer_count+1 and first.completed and active_request==nil,
+  "Live Edit admission and completion finish inside the source-edit callback")
+assert(first.options.pb_range==12,"Live Edit uses the selected target PB Range")
+assert(live_checkbox.value and status.text=="Couldn't update the phrase. Try again." and
   not status.text:find(long_diagnostic,1,true),
-  "current generation failure uses a safe message instead of request diagnostics")
-assert(live_checkbox.value,"a failed Live Edit leaves the user-armed setting enabled")
-local manual_retry=#tool.writer_calls+1
-button(builder,"Generate"):fire()
-assert(#tool.writer_calls==manual_retry and tool.writer_calls[manual_retry].request.trigger=="manual",
-  "Generate explicitly retries a failed Live Edit through manual admission")
-render_callbacks[manual_retry](terminal_result(tool.writer_calls[manual_retry],"committed","manual retry"))
-assert(committed_entries[safety_append.id] and
-  status.text=="Edits to the previous phrase could not be saved with the song.",
-  "manual Generate retries the write while preserving the unresolved save warning")
-
-local before_reset=#render_callbacks
-pitch_key(builder,3):fire()
+  "a synchronous writer error keeps Live Edit armed and hides raw diagnostics")
 tool.app_idle_observable:fire()
-assert(#render_callbacks==before_reset+1,"a source edit starts the held render")
-local held=render_callbacks[#render_callbacks]
-local held_request=tool.writer_calls[#tool.writer_calls]
-pitch_key(builder,4):fire()
-builder.views.acid_pattern_reset:fire()
-assert(not held_request.options.token:is_current(),"reset invalidates the held render")
-held(terminal_result(held_request,"suspended","source reset"))
-assert(#render_callbacks==before_reset+2 and live_checkbox.value,
-  "reset queues one ordinary render and keeps Live Edit armed")
-render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed","reset settled"))
+assert(#tool.writer_calls==writer_count+1,
+  "idle does not retry a completed Live Edit failure")
+
+sync_next_result="error"
+pitch_key(builder,6):fire()
+local second=tool.writer_calls[#tool.writer_calls]
+assert(#tool.writer_calls==writer_count+2 and second.completed and active_request==nil and
+  not require("model.sequencer").same_source(first.request.source,second.request.source),
+  "a later edit admits one synchronous request with the newer source")
+
+local calls_before_navigation=#tool.writer_calls
+phrase_choice:fire(2)
+assert(#tool.writer_calls==calls_before_navigation and pb_range_popup(builder).value==5,
+  "destination navigation restores its PB Range without generating")
+sync_next_result="error"
 pitch_key(builder,2):fire()
-tool.app_idle_observable:fire()
-assert(#render_callbacks==before_reset+3,"the next real edit renders the reset source")
-assert(tool.writer_calls[#tool.writer_calls].pattern.pitch_events[1].key==1)
+local third=tool.writer_calls[#tool.writer_calls]
+assert(#tool.writer_calls==calls_before_navigation+1 and third.completed and
+  third.options.pb_range==48 and live_checkbox.value,
+  "Live Edit uses the selected owned phrase and remains armed after failure")
 
-render_callbacks[#render_callbacks](terminal_result(tool.writer_calls[#tool.writer_calls],"committed","last edit settled"))
-local before_sync=#render_callbacks
-sync_next_result="committed"
-local next_key=saved_pitch(11,1).key==0 and 2 or 1
-pitch_key(builder,next_key):fire()
-assert(#render_callbacks==before_sync+1 and tool.writer_calls[#tool.writer_calls].completed,
-  "Live Edit write and completion finish before the native edit callback returns")
 live_checkbox:fire(false)
-print("ACID GUI draft lifecycle and Live Edit outcome checks passed")
+local calls_before_disarm_edit=#tool.writer_calls
+pitch_key(builder,3):fire()
+assert(#tool.writer_calls==calls_before_disarm_edit,
+  "disarming Live Edit prevents automatic writes")
+live_checkbox:fire(true)
+assert(#tool.writer_calls==calls_before_disarm_edit,
+  "rearming Live Edit waits for a new source edit")
+sync_next_result="error"
+pitch_key(builder,4):fire()
+assert(#tool.writer_calls==calls_before_disarm_edit+1 and
+  tool.writer_calls[#tool.writer_calls].request.trigger=="live" and
+  tool.writer_calls[#tool.writer_calls].completed,
+  "a new edit starts one current synchronous Live Edit request")
+live_checkbox:fire(false)
+print("ACID GUI synchronous Live Edit lifecycle checks passed")

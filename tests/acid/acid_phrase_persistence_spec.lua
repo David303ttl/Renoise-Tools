@@ -2,27 +2,28 @@ dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local ownership=require("renoise.phrase_ownership")
 local store=require("renoise.pattern_store")
-local function phrase(note)
-  local p={name="",number_of_lines=4,lpb=8,looping=false,loop_start=1,loop_end=4,playback_mode=1,
-    key_tracking=1,visible_note_columns=1,visible_effect_columns=0,
-    instrument_column_visible=false,volume_column_visible=false,
-    panning_column_visible=false,delay_column_visible=false,
-    sample_effects_column_visible=false}
-  local cell={note_value=note or 36,instrument_value=255,
-    volume_value=255,panning_value=255,delay_value=0,
-    effect_number_value=0,effect_amount_value=0}
-  local muted={}
-  function p:line()
-    return {note_columns={cell}}
-  end
-  function p:column_is_muted(column) return muted[column]==true end
-  function p:set_column_is_muted(column,value) muted[column]=value end
+local phrase_limits={max_lines=4,max_note_columns=1,max_effect_columns=0,number_of_lines=4}
+local make_phrase_fixture=dofile("tests/acid/complete_phrase_fixture.lua")
+local function set_identity(p,id)
+  local snapshot=assert(ownership.snapshot(p,phrase_limits))
+  local seal_columns={}
+  for column=1,12 do seal_columns[column]=p:column_is_muted(column) end
+  p.name=assert(ownership.make_name_from_verified_snapshot(snapshot,id,seal_columns))
+end
+local function phrase(note,id)
+  local p=make_phrase_fixture(phrase_limits)
+  p.volume_column_visible=false
+  local cell=p.lines[1].note_columns[1]
+  cell.note_value=note or 36
+  cell.is_empty=false
+  function p:line(index) return self.lines[index or 1] end
+  function p:set_column_is_muted(column,value) self.column_mutes[column]=value end
+  set_identity(p,id or 1)
   return p
 end
 local s={tool_data=nil,instruments={{phrases={}}}}
 local a=phrase()
-a.name=assert(ownership.make_name(a,1))
-assert(a.name=="ACID 0.1 #1 [v3:286369F5]")
+assert(ownership.status(a)=="owned")
 s.instruments[1].phrases[1]=a
 assert(ownership.status(a)=="owned" and ownership.id(a)==1)
 local p=seq.new_pattern(17)
@@ -97,8 +98,7 @@ assert(store.restore(s,candidate) and s.tool_data==candidate.previous_raw)
 s.tool_data="newer independent source"
 assert(not store.restore(s,candidate) and s.tool_data=="newer independent source")
 s.tool_data=candidate.previous_raw
-local b=phrase(40)
-b.name=assert(ownership.make_name(b,2))
+local b=phrase(40,2)
 s.instruments[1].phrases[2]=b
 assert(store.allocate(s)==3)
 local p2=seq.new_pattern(32)
@@ -106,8 +106,7 @@ for i=1,32 do p2.time_events[i]="R" end
 assert(store.save(s,2,p2,"repeat"))
 assert(store.load(s,s.instruments[1],b).length==32)
 assert(store.load(s,s.instruments[1],a).length==17)
-local c=phrase(43)
-c.name=assert(ownership.make_name(c,3))
+local c=phrase(43,3)
 s.instruments[1].phrases[3]=c
 local original=seq.new_pattern()
 for i=1,16 do original.time_events[i]="R" end
@@ -156,7 +155,7 @@ assert(ownership.status(b)=="owned")
 -- A syntactically old seal is foreign and grants no ID or adoption path.
 b.name="ACID 0.1 #2 [00000000]"
 assert(not store.load(s,s.instruments[1],b))
-b.name=assert(ownership.make_name(b,2))
+set_identity(b,2)
 b.loop_end=3
 assert(ownership.status(b)=="modified" and not store.load(s,s.instruments[1],b))
 b.loop_end=4

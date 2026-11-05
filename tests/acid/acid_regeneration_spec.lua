@@ -18,13 +18,14 @@ end
 assert(exit.next_pitch==1 and exit.voice==nil)
 state.time_events[4]=nil
 assert(not interpreter.compile_cycle(state),"incomplete time memory must reject compilation")
-local p={name="",number_of_lines=2,visible_note_columns=1,visible_effect_columns=0,lpb=8,looping=false,loop_start=1,loop_end=2,playback_mode=1,key_tracking=1,lines={}}
-function p:column_is_muted()return false end
-p.lines[1]={note_columns={{note_value=36,instrument_value=255,volume_value=255,panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}}}
-p.lines[2]={note_columns={{note_value=121,instrument_value=255,volume_value=255,panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}}}
-function p:line(i)return self.lines[i] end
+local MAX_LINES=2
+renoise={InstrumentPhrase={MAX_NUMBER_OF_LINES=MAX_LINES,
+  MAX_NUMBER_OF_NOTE_COLUMNS=12,MAX_NUMBER_OF_EFFECT_COLUMNS=8}}
+local p=dofile('tests/acid/complete_phrase_fixture.lua')({max_lines=MAX_LINES,number_of_lines=MAX_LINES})
+p.name=''
+p.lines[1].note_columns[1].note_value=36
 assert(ownership.status(p)=="foreign")
-p.name=assert(ownership.make_name(p,1))
+p.name=assert(ownership.make_name_from_verified_snapshot(assert(ownership.snapshot(p)),1))
 assert(ownership.status(p)=="owned")
 p.lines[1].note_columns[1].note_value=39
 assert(ownership.status(p)=="modified")

@@ -398,8 +398,7 @@ local function valid_args_for_operation(current, request)
     if (args.root ~= "fixtures" and args.root ~= "temp") or not valid_fixture_name(args.name) then return false end
     return validate_timeout(args, LIMITS.default_timeout_ms) ~= nil
   elseif operation == "acid.acceptance.run" then
-    local case_allowed =        args.case == "api-probe" or
-        args.case == "integrity-observers" or args.case == "writer-recovery" or
+    local case_allowed = args.case == "integrity-observers" or args.case == "writer-recovery" or
         args.case == "editor-responsiveness" or args.case == "gui-redesign" or
         args.case == "gui-layout" or args.case == "gui-lifecycle" or
         args.case == "import-donor" or args.case == "ownership-negatives" or
@@ -410,8 +409,7 @@ local function valid_args_for_operation(current, request)
         args.case == "metadata-recovery-prepare" or args.case == "metadata-recovery" or args.case == "metadata-recovery-cold" or
         args.case == "cold-reopen-regenerate" or
         args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow" or
-        args.case == "selection-feasibility" or args.case == "direct-output-feasibility" or
-        args.case == "source-undo-feasibility" or production_latency_cases[args.case] == true
+        production_latency_cases[args.case] == true
     if not case_allowed then return false end
     if args.profile ~= nil and
         (not profiled_acceptance_cases[args.case] or not acceptance_profiles[args.profile]) then
@@ -790,12 +788,6 @@ local function evaluate_condition(current, record)
     }
   end
   return false, nil
-end
-
-local function clear_record_payload(record)
-  record.args = nil
-  record.expected_file = nil
-  record.wait_spec = nil
 end
 
 local function settle_transition(current)

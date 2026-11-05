@@ -25,7 +25,7 @@ local function exercise(state)
   local store = require("renoise.pattern_store")
   local sequence = require("model.sequencer")
   local original_song, original_current, original_capture = renoise.song, ownership.is_current, ownership.capture_recovery
-  local mode, writes, captures, renders, recovery_reads = nil, 0, 0, 0, 0
+  local mode, writes, renders, recovery_reads = nil, 0, 0, 0
   local checks = {}
   local proxy = setmetatable({}, {
     __index = function(_, key)
@@ -46,7 +46,6 @@ local function exercise(state)
     end
     renoise.song = function() return proxy end
     state.context = require("runtime.context").new({writer = require("writers.phrase_writer"),
-      capture = function() captures = captures + 1; error("Label operation requested generation") end,
       sink = function() renders = renders + 1; error("Label operation requested a render") end})
     local context = state.context
     context:attach_document(proxy)
@@ -86,7 +85,7 @@ local function exercise(state)
       assert(context:revision_state().metadata_revision == revision.metadata_revision + 1,
         "Label did not advance metadata revision")
       native_exact()
-      checks[destination .. "_rename_without_phrase_capture"] = true
+      checks[destination .. "_rename_without_render"] = true
       local before, editor = song.tool_data, context:editor_state()
       revision = context:revision_state()
       mode = "third"
@@ -97,7 +96,7 @@ local function exercise(state)
         "Failed metadata advanced accepted state or history")
       local blocked_writes = writes
       assert(not context:rename_label("Blocked", true) and writes == blocked_writes)
-      assert(not context:request_generation("manual") and captures == 0 and renders == 0)
+      assert(not context:request_generation("manual") and renders == 0)
       -- A separate native edit does not authorize clearing the metadata blocker.
       local foreign = state.foreign[2]
       local cell = foreign:line(FOREIGN_LINE):note_column(1)
@@ -119,13 +118,13 @@ local function exercise(state)
     assert(label == "Accepted owned" and custom == true)
     local draft = store.read_draft(proxy, instrument, nil)
     assert(draft == nil, "failed label write created an unrelated New Phrase draft")
-    assert(captures == 0 and renders == 0 and recovery_reads == 0)
+    assert(renders == 0 and recovery_reads == 0)
     checks.zero_generation_and_recovery_reads = true
   end)
   if state.context then pcall(function() state.context:release_document() end); state.context = nil end
   renoise.song, ownership.is_current, ownership.capture_recovery = original_song, original_current, original_capture
   state.action = {status = ok and "PASS" or "FAIL", reason = not ok and tostring(reason) or nil,
-    checks = checks, recovery_reads = recovery_reads, generation_captures = captures, renders = renders,
+    checks = checks, recovery_reads = recovery_reads, renders = renders,
     injection = "synthetic metadata setter and recovery-read faults with native song storage and phrases"}
 end
 
@@ -148,7 +147,6 @@ function M.run(case_name, done, helpers)
       assert(song.instruments[2].phrases[1]:line(FOREIGN_LINE):note_column(1).note_value == FOREIGN_NOTE + 1,
         "Cold reopen lost unrelated native edits")
       context = require("runtime.context").new({writer = require("writers.phrase_writer"),
-        capture = function() error("Cold restore requested generation") end,
         sink = function() error("Cold restore requested a render") end})
       context:attach_document(song); context:open_dialog()
       for _, target in ipairs({"owned"}) do

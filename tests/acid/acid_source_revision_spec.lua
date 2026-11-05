@@ -5,15 +5,21 @@ local store=require("renoise.pattern_store")
 
 local current
 renoise={song=function() return current end}
+local phrase_limits={max_lines=1,max_note_columns=1,max_effect_columns=0,number_of_lines=1}
+local make_phrase_fixture=dofile("tests/acid/complete_phrase_fixture.lua")
+local function set_identity(p,id)
+  local snapshot=assert(own.snapshot(p,phrase_limits))
+  local seal_columns={}
+  for column=1,12 do seal_columns[column]=p:column_is_muted(column) end
+  p.name=assert(own.make_name_from_verified_snapshot(snapshot,id,seal_columns))
+end
 
 local function phrase(id)
-  local p={name="",number_of_lines=1,visible_note_columns=1,visible_effect_columns=0}
-  function p:line()
-    return {note_columns={{note_value=48,instrument_value=255,volume_value=255,
-      panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}}}
-  end
-  function p:column_is_muted() return false end
-  p.name=assert(own.make_name(p,id))
+  local p=make_phrase_fixture(phrase_limits)
+  local cell=p.lines[1].note_columns[1]
+  cell.note_value=48
+  cell.is_empty=false
+  set_identity(p,id)
   return p
 end
 
@@ -42,7 +48,10 @@ local candidate_id=assert(store.allocate(song))
 local candidate=assert(store.prepare_revision(song,candidate_id,seq.new_pattern(9),
   "play_once",2,guard,descriptor(instrument,first)))
 assert(first.name==original_name,"preparation must not mutate the phrase")
-local new_name=assert(own.make_name(first,candidate_id))
+local snapshot=assert(own.snapshot(first,phrase_limits))
+local seal_columns={}
+for column=1,12 do seal_columns[column]=first:column_is_muted(column) end
+local new_name=assert(own.make_name_from_verified_snapshot(snapshot,candidate_id,seal_columns))
 first.name=new_name
 assert(store.commit(song,candidate),"revision commit should remove its unchanged captured draft")
 assert(store.has_drafts(song)==false,"matching captured draft should be cleared")
@@ -67,11 +76,11 @@ candidate=assert(store.prepare_revision(song,candidate_id,seq.new_pattern(9),
 local changed_draft=seq.new_pattern(8)
 assert(store.write_draft(song,instrument,first,changed_draft,"repeat",24))
 local newer_raw=song.tool_data
-first.name=assert(own.make_name(first,candidate_id))
+set_identity(first,candidate_id)
 assert(not store.commit(song,candidate) and song.tool_data==newer_raw,
   "a raw-store change after candidate capture must reject source commit")
 assert(store.has_drafts(song),"the concurrently changed draft must survive the rejected commit")
-first.name=assert(own.make_name(first,1))
+set_identity(first,1)
 assert(store.read_draft(song,instrument,first).length==8,
   "undoing to the old source ID must recover the newer preserved draft")
 
@@ -83,14 +92,14 @@ assert(song.tool_data==before)
 first.name="foreign phrase"
 assert(not store.prepare_revision(song,3,seq.new_pattern(9),"play_once",2,guard,
   descriptor(instrument,first)),"captured old identity must be validated before mutation")
-first.name=assert(own.make_name(first,1))
+set_identity(first,1)
 candidate=assert(store.prepare_revision(song,3,seq.new_pattern(9),"play_once",2,
   guard,descriptor(instrument,first)))
 local unchanged=song.tool_data
-first.name=assert(own.make_name(first,4))
+set_identity(first,4)
 assert(not store.commit(song,candidate) and song.tool_data==unchanged,
   "a changed post-mutation phrase identity must block the source commit")
-first.name=assert(own.make_name(first,3))
+set_identity(first,3)
 assert(not store.prepare_revision(song,3,seq.new_pattern(9),"play_once",2,guard),
   "a revision ID already used by a live phrase must not be reused")
 

@@ -11,7 +11,6 @@ assert(articulation.command_span(119,articulation.MAX_FINITE_RATE)==8)
 assert(articulation.command_span(119,articulation.MAX_RATE)==1)
 local control=require("model.control_signals")
 local planner=require("model.output_planner")
-local gates=require("reference.gate_writer")
 local seq=require("model.sequencer")
 local pitch=dofile("tests/acid/pitch_fixture.lua")
 local pattern=seq.new_pattern(8)
@@ -23,33 +22,10 @@ local commands=assert(articulation.plan(plan,4,0x40))
 assert(#commands==2)
 assert(commands[1].line==9 and commands[1].amount==0x40)
 assert(commands[2].line==10 and commands[2].amount==0)
-local cells={}
-for i=1,32 do cells[i]={
-  note_value=121,effect_number_value=0,effect_amount_value=0
-} end
-cells[1].note_value=36
-cells[9].note_value=43
-cells[13].note_value=120
-cells[17].note_value=39
-cells[21].note_value=120
-local phrase={}
-function phrase:line(i) return {note_columns={cells[i]}} end
 local timeline=assert(control.compile({}, {plan=plan,output_policy="play_once"}))
 local operations=assert(planner.plan_gates(timeline,plan,commands,4))
-local result=assert(gates.apply_plan(phrase,operations))
 assert(commands[1].kind=="glide" and #operations.operations==2)
-assert(cells[9].effect_number_string=="0G")
-assert(cells[9].effect_amount_value==0x40)
-assert(cells[10].effect_number_string=="0G")
-assert(cells[10].effect_amount_value==0)
-assert(cells[13].note_value==120 and cells[21].note_value==120)
--- Validate preflight: if destination already contains foreign content,
--- do not partially change an otherwise valid target.
-cells[9].effect_number_value=0
-cells[9].effect_number_string=nil
-cells[10].effect_number_value=7
-assert(not gates.apply_plan(phrase,operations))
-assert(cells[9].effect_number_value==0)
+assert(operations.effects[9]==0x40 and operations.effects[10]==0)
 assert(not articulation.plan(plan,4,0))
 -- The configured rate needs more command lines than the step can provide.
 local short,why=articulation.plan(plan,4,16)

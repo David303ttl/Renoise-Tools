@@ -38,10 +38,6 @@ local modes = {
     unit=TRIPLET_PULSE_UNIT, resolution=TRIPLET_PULSE_RESOLUTION}
 }
 
-function M.valid_mode(mode)
-  return modes[mode] ~= nil
-end
-
 function M.new(mode, length, output_policy)
   local spec=modes[mode]
   if not spec then return nil,"Invalid timing mode" end

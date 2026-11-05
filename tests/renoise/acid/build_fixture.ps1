@@ -253,7 +253,7 @@ $preflight = Test-RenoiseHostPreflight -Configuration ([pscustomobject]@{
     RenoiseExe = $resolvedExe
     RenoiseProcessId = 0
     TemporaryDirectory = [IO.Path]::GetTempPath()
-}) -Mode Safety
+})
 if (-not $preflight.Passed) { throw "Renoise host preflight failed: $($preflight.Errors -join '; ')" }
 
 $runningRenoise = @(Get-Process -Name 'Renoise' -ErrorAction SilentlyContinue)

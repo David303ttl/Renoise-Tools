@@ -2,7 +2,6 @@ dofile("tests/bootstrap.lua")("acid")
 local seq=require("model.sequencer")
 local editor=require("model.editor_state")
 local interpreter=require("model.cycle_interpreter")
-local pattrns=require("reference.pattrns_writer")
 
 assert(editor.MAX_PAGES==seq.MAX_STEPS/seq.PAGE_SIZE)
 for index=1,seq.MAX_STEPS do
@@ -69,8 +68,6 @@ assert(seq.set_time(seam,1,"N")=="N")
 local seam_view=editor.project(seam)
 assert(seam_view.mapping[1].transition=="attack")
 assert(seam_view.repeat_mapping[1].transition=="slide")
-assert(editor.step_text(seam_view,1,1):find("A",1,true))
-assert(editor.step_text(seam_view,1,2):find("S",1,true))
 local masked=seq.new_pattern(3)
 masked.pitch_length=1
 masked.pitch_events[1]=seq.new_pitch(1,0,true,true)
@@ -81,9 +78,6 @@ masked.time_events[3]="R"
 local prepared=assert(seq.prepare_resolution(masked))
 local masked_view=editor.project(masked,prepared)
 assert(not masked_view.error)
-assert(editor.step_text(masked_view,1)=="NOTE P01 RAW 37 RES 36 ACC OUT ATTACK")
-assert(editor.step_text(masked_view,2)=="TIE P01 RAW 37 RES 36 ACC OUT HOLD")
-assert(editor.step_text(masked_view,3)=="REST --")
 assert(editor.pitch_reference(masked_view,1,true)=="P01 · C3")
 assert(editor.pitch_reference(masked_view,1,false)=="P01")
 assert(editor.pitch_reference(masked_view,2,true)=="P01 hold")
@@ -95,8 +89,8 @@ assert(editor.mapping_text(masked_view,3)=="T03 · Rest")
 assert(editor.mapping_text(masked_view,4)=="T04 · mapping unavailable")
 assert(masked_view.mapping[1].note==interpreter.compile_cycle(masked,nil,prepared).steps[1].note)
 masked.pitch_events[1]=seq.new_pitch(2,0)
-assert(editor.step_text(masked_view,1)=="NOTE P01 RAW 37 RES 36 ACC OUT ATTACK",
-  "decoded raw values belong to the projected snapshot")
+assert(editor.pitch_reference(masked_view,1,true)=="P01 · C3",
+  "pitch references belong to the projected snapshot")
 
 for _,length in ipairs({1,16,17,31,32}) do
   local p=seq.new_pattern(length)
@@ -116,9 +110,7 @@ for _,length in ipairs({1,16,17,31,32}) do
   assert(projection.note_count==math.floor((length+3)/4))
   local plan,err=interpreter.compile_cycle(p)
   assert(plan,err)
-  local src,meta=pattrns.emit(plan)
-  assert(src,meta)
-  assert(meta.steps==length)
+  assert(plan.length==length)
 end
 assert(not pcall(seq.new_pattern,33))
 assert(editor.page_for(1)==1 and editor.page_for(17)==2)
@@ -159,7 +151,6 @@ assert(not preview.error)
 assert(preview.mapping[16].pitch_index==1)
 assert(preview.mapping[17].pitch_index==1)
 assert(preview.mapping[17].kind=="tie")
-assert(editor.step_text(preview,17)=="TIE P01 RAW 36 RES 36 HOLD")
 bad.time_events[17]="N"
 preview=editor.project(bad)
 assert(preview.mapping[17].pitch_index==2)

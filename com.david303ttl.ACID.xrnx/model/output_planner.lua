@@ -166,8 +166,6 @@ local function location(op)
   return string.format("TIME step %02d, cycle %d, phrase line 0x%02X",
     op.time_step or op.step or 1,op.cycle or 1,op.line-1)
 end
-M.location=location
-
 function M.plan_gates(timeline,semantic,commands,lines_per_step)
   if type(lines_per_step)~="number" or lines_per_step%1~=0 or lines_per_step<MIN_LINES_PER_STEP
     or lines_per_step~=lines_per_step then

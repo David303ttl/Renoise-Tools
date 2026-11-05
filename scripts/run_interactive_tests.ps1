@@ -428,7 +428,7 @@ function Get-Preflight {
         RenoiseProcessId = $SelectedId
         TemporaryDirectory = [IO.Path]::GetTempPath()
     }
-    $result = Test-RenoiseHostPreflight -Configuration $configuration -Mode Safety
+    $result = Test-RenoiseHostPreflight -Configuration $configuration
     if (-not $result.Passed) { throw "Renoise host preflight failed: $($result.Errors -join '; ')" }
     return $result
 }
@@ -437,7 +437,7 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('api-probe','integrity-observers','writer-recovery','editor-responsiveness','gui-redesign','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','selection-feasibility','direct-output-feasibility','source-undo-feasibility','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','metadata-undo','metadata-recovery')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('integrity-observers','writer-recovery','editor-responsiveness','gui-redesign','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','metadata-undo','metadata-recovery')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($metadataRecoveryAcceptance -and $RenoiseProcessId -gt 0) {
@@ -616,7 +616,6 @@ try {
     $lastExpected = 'Explicit install consent and a verified restoration path are present'
     if (-not $Install) { throw "ACID installation is required to load this development bundle. Re-run with -Install to authorize a restorable temporary installation under '$toolsPath'." }
     if (Test-Path -LiteralPath $installedToolPath) {
-        if (-not $preflight.InstallReplacementAuthorized) { throw 'Host preflight rejected the existing ACID installation as an unrecognized replacement target.' }
         foreach ($entry in @(Get-ChildItem -LiteralPath $installedToolPath -Force -Recurse)) {
             if (($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Existing ACID installation contains a reparse point; refusing replacement.' }
         }

@@ -38,9 +38,15 @@ try {
     if (Get-Process -Id $result.ProcessId -ErrorAction SilentlyContinue) { throw 'Timed-out spec process survived cancellation.' }
     if ($IsWindows) {
         $wrapper = Join-Path $temporary 'forward interpreter.cmd'
-        [IO.File]::WriteAllText($wrapper, "@echo off`r`ncall `"$($lua.Source)`" %*`r`nexit /b %errorlevel%`r`n")
+        $previousWrappedLua = $env:RENOISE_TEST_WRAPPED_LUA
+        $env:RENOISE_TEST_WRAPPED_LUA = $lua.Source
+        [IO.File]::WriteAllText($wrapper, '@echo off' + "`r`n" + 'call "%RENOISE_TEST_WRAPPED_LUA%" %*' + "`r`n" + 'exit /b %errorlevel%' + "`r`n")
         [IO.File]::WriteAllText($spec, 'io.stdout:write("out"); io.stderr:write("err"); os.exit(7)')
-        $result = Invoke-LuaSpec -LuaSource $wrapper -SpecPath $spec -WorkingDirectory $root -TimeoutSeconds 5
+        try { $result = Invoke-LuaSpec -LuaSource $wrapper -SpecPath $spec -WorkingDirectory $root -TimeoutSeconds 5 }
+        finally {
+            if ($null -eq $previousWrappedLua) { Remove-Item Env:RENOISE_TEST_WRAPPED_LUA -ErrorAction SilentlyContinue }
+            else { $env:RENOISE_TEST_WRAPPED_LUA = $previousWrappedLua }
+        }
         if ($result.TimedOut -or $result.OutputIncomplete -or $result.ExitCode -ne 7 -or $result.Output.Trim() -ne 'out' -or $result.ErrorOutput.Trim() -ne 'err') {
             throw 'Forwarding command wrapper lost arguments, output or exit status.'
         }

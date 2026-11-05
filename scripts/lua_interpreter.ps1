@@ -16,7 +16,7 @@ function Assert-LuaLanguageVersion {
 function Resolve-LuaInterpreter {
     param([string]$LuaCommand = 'lua')
 
-    $command = Get-Command -Name $LuaCommand -CommandType Application -ErrorAction Stop
+    $command = Get-Command -Name $LuaCommand -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $probe = Invoke-LuaSpec -LuaSource $command.Source -Arguments @('-e', 'print(_VERSION)') `
         -WorkingDirectory (Get-Location).Path -TimeoutSeconds 5
     $version = $probe.Output.Trim()

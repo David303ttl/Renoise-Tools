@@ -202,23 +202,16 @@ do
   target.cells[1].note_value=before.lines[1].notes[1].note_value
 end
 
--- A throwing authorization wrapper has no separate cleanup authority while
--- the captured request remains current, so the committed write is blocked.
+-- A throwing mutation wrapper blocks a committed write without obscuring its outcome.
 local throw_request=request(source(57),1)
 local mutate=throw_request.mutate
-local cleanup=throw_request.cleanup_mutate
-local cleanup_calls=0
 function throw_request:mutate(token,action)
   mutate(self,token,action)
   error("injected mutation wrapper failure after action",0)
 end
-function throw_request:cleanup_mutate(token,action)
-  cleanup_calls=cleanup_calls+1
-  return cleanup(self,token,action)
-end
 local throw_ok,throw_rejection,throw_calls,throw_result=run(throw_request)
 assert(throw_ok,throw_rejection and throw_rejection.message)
-assert(throw_calls==1 and cleanup_calls==0 and throw_result.kind=="failure" and
+assert(throw_calls==1 and throw_result.kind=="failure" and
   throw_result.status=="integrity_blocked" and throw_result.committed==true,
   "mutation wrapper exception did not report the committed write without unauthorized cleanup")
 assert(throw_request.blocker and throw_request.blocker.committed==true and

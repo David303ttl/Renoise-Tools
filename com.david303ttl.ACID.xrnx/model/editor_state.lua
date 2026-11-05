@@ -74,8 +74,6 @@ function M.project(pattern,prepared)
     return out
   end
   out.plan=plans[1]
-  out.raw_notes={}
-  for index,pitch in ipairs(pattern.pitch_events) do out.raw_notes[index]=pitch.note end
   for cycle=1,2 do
     local mapping=cycle==1 and out.mapping or out.repeat_mapping
     for step,event in ipairs(plans[cycle].steps) do
@@ -88,22 +86,6 @@ function M.project(pattern,prepared)
   end
   out.slides=M.slide_connections(out)
   return out
-end
-
-function M.step_text(projection, step, cycle)
-  local mapping=cycle==2 and projection.repeat_mapping or projection.mapping
-  local event=mapping and mapping[step]
-  if not event then return "--" end
-  if event.missing_pitch then return "NOTE !PITCH" end
-  if event.kind=="rest" then return "REST --" end
-  if event.kind=="tie" then
-    return event.note and string.format("TIE P%02d RAW %d RES %d%s%s HOLD",event.pitch_index,
-      projection.raw_notes[event.pitch_index],event.note,
-      event.voice.accent and " ACC" or "",event.voice.slide and " OUT" or "") or "TIE (silent)"
-  end
-  return string.format("NOTE P%02d RAW %d RES %d%s%s %s",event.pitch_index,
-    projection.raw_notes[event.pitch_index],event.note,
-    event.accent and " ACC" or "",event.slide and " OUT" or "",string.upper(event.transition))
 end
 
 local PITCH_NAMES={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}
