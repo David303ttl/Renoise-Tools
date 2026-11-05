@@ -624,6 +624,8 @@ function M.show()
     end
     return stage.prepared_resolution
   end
+  -- Staged entry requires PITCH ownership and a target in range. Direct PITCH
+  -- selection is editable independently of timing; TIME selection needs a mapped pitch.
   local function has_pitch_target()
     if stage then
       return stage.memory=="pitch" and selected_pitch<=#stage.target_positions

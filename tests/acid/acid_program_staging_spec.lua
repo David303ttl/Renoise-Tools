@@ -1171,6 +1171,26 @@ do
     assert_unmapped_callbacks_noop()
   end
 
+  fire("acid_program_select_pitch_01")
+  assert(view("acid_program_key_06").active and view("acid_audition").active,
+    "direct PITCH selection remains editable without any mapped TIME pitch")
+  fire("acid_program_key_06")
+  assert(current().pitch_events[1].key==5,
+    "direct PITCH callbacks edit the selected pitch independently of timing")
+
+  begin("pitch")
+  assert(view("acid_audition").active,"in-range staged PITCH permits audition")
+  fire("acid_editor_view",2)
+  fire(string.format("acid_grid_pitch_%02d",PITCH_COUNT+1))
+  assert(not view("acid_grid_audition").active,
+    "a pitch selection beyond staged targets is ineligible for audition")
+  local calls_before=#note_calls
+  fire("acid_grid_audition")
+  assert(#note_calls==calls_before,"out-of-range staged pitch cannot audition through its callback")
+  fire("acid_editor_view",1)
+  assert(view("acid_audition").active,"returning to the staged cursor restores pitch eligibility")
+  cancel_stage("Cancel")
+
   fresh()
   attach_audition_host()
   fire("acid_pitch_length",LONG_ENTRY_COUNT)
