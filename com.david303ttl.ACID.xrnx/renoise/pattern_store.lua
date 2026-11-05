@@ -5,7 +5,10 @@ local sequencer = require("model.sequencer")
 local interpreter = require("model.cycle_interpreter")
 local ownership = require("renoise.phrase_ownership")
 local M = {}
-local MAGIC = "ACID-PITCH-TIME-1"
+M.LABEL_WRITE_UNCHANGED="unchanged"
+M.LABEL_WRITE_UNCERTAIN="uncertain"
+M.LABEL_WRITE_COMMITTED="committed"
+local MAGIC = "ACID-PITCH-TIME-2"
 local MAX_ID = 2147483647
 local candidates=setmetatable({}, {__mode="k"})
 local function synchronous_guard()return true end
@@ -28,10 +31,16 @@ local function encode_pitch(p)
     p.accent and 1 or 0,p.slide and 1 or 0)
 end
 
+local function canonical_integer(token)
+  local value=type(token)=="string" and tonumber(token)
+  return value and token~="-0" and tostring(value)==token and value or nil
+end
+
 local function decode_pitch(token, line)
   local note,key,octave,flags=token:match("^(%d+):(%d+):(-?%d+):([01][01])$")
-  if not note then return nil,"Corrupt pitch at line "..line end
-  return {note=tonumber(note),key=tonumber(key),octave=tonumber(octave),
+  note,key,octave=canonical_integer(note),canonical_integer(key),canonical_integer(octave)
+  if not note or not key or not octave then return nil,"Corrupt pitch at line "..line end
+  return {note=note,key=key,octave=octave,
     accent=flags:sub(1,1)=="1",slide=flags:sub(2,2)=="1"}
 end
 
@@ -40,46 +49,29 @@ local function encode_text(value)
 end
 
 local function decode_text(value)
-  if #value%2~=0 or value:find("[^%x]") then return nil end
+  if #value%2~=0 or value:find("[^0-9A-F]") then return nil end
   return (value:gsub("..",function(pair) return string.char(tonumber(pair,16)) end))
 end
 
-local SOURCE_FIELDS="([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([%d,:%-]+)|([NTR]+)$"
-
-local function parse_entry(line,line_number,entries,drafts)
-  local instrument,phrase,name,source=line:match("^DRAFT|(%d+)|(%d+)|([%x]*)|(.+)$")
-  local output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time
-  local id,key,is_draft
-  if instrument then
-    output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time=source:match("^"..SOURCE_FIELDS)
-    is_draft=output_policy~=nil
-  end
-  if is_draft then
-    instrument,phrase=tonumber(instrument),tonumber(phrase)
-    key=tostring(instrument)..":"..tostring(phrase)
-  else
-    id,output_policy,pb_range,timing_mode,pitch_length,length,pitch_data,time=
-      line:match("^(%d+)|"..SOURCE_FIELDS)
-    id=tonumber(id)
-  end
-  pb_range,pitch_length,length=tonumber(pb_range),tonumber(pitch_length),tonumber(length)
-  local invalid_destination=is_draft and (instrument<1 or phrase<0 or drafts[key]) or
-    (not is_draft and (not id or not valid_id(id) or entries[id]))
-  if invalid_destination or not policies.valid_output_policy(output_policy) or
-      not policies.valid_pb_range(pb_range) or
-      not pitch_length or pitch_length<1 or pitch_length>sequencer.MAX_STEPS or
-      not length or length<1 or length>sequencer.MAX_STEPS or not time or #time~=sequencer.MAX_STEPS then
-    return nil,"Invalid ACID "..(is_draft and "draft" or "snapshot").." header at line "..line_number
-  end
-  return {id=id,key=key,instrument_index=instrument,phrase_id=phrase,instrument_name=name,
-    output_policy=output_policy,pb_range=pb_range,timing_mode=timing_mode,
-    pitch_length=pitch_length,length=length,pitch_data=pitch_data,time=time},is_draft
+local function valid_label(label)
+  if type(label)~="string" or #label<1 or #label>32 or
+      not label:match("^[A-Za-z0-9][A-Za-z0-9 _%.%-]*$") then return false end
+  return true
 end
+M.valid_label=valid_label
 
 local function decode_source(item,is_draft,line_number)
+  if not policies.in_integer_range(item.length,1,sequencer.MAX_STEPS) or
+      not policies.in_integer_range(item.pitch_length,1,sequencer.MAX_STEPS) or
+      (item.timing_mode~="straight" and item.timing_mode~="triplet") or
+      #item.mask~=12 or item.mask:find("[^01]") then
+    return nil,"Invalid ACID "..(is_draft and "draft source" or "source").." at line "..line_number
+  end
   local pattern=sequencer.new_pattern(item.length)
   pattern.pitch_length=item.pitch_length
   pattern.timing_mode=item.timing_mode
+  pattern.scale_mask_enabled=item.mask_enabled
+  for i=1,12 do pattern.scale_mask[i]=item.mask:sub(i,i)=="1" end
   pattern.pitch_events={}
   local tokens={}
   for token in item.pitch_data:gmatch("[^,]+") do
@@ -105,7 +97,10 @@ local function encode_source(pattern)
   local pitches,time={},{}
   for index=1,sequencer.MAX_STEPS do pitches[index]=encode_pitch(pattern.pitch_events[index]) end
   for step=1,sequencer.MAX_STEPS do time[step]=pattern.time_events[step] or "N" end
+  local mask={}
+  for i=1,12 do mask[i]=pattern.scale_mask[i] and "1" or "0" end
   return table.concat({pattern.timing_mode,tostring(pattern.pitch_length),tostring(pattern.length),
+    pattern.scale_mask_enabled and "1" or "0",table.concat(mask),
     table.concat(pitches,","),table.concat(time)},"|")
 end
 
@@ -115,26 +110,76 @@ local function decode(raw)
   local lines={}
   for line in raw:gmatch("(.-)\n") do lines[#lines+1]=line end
   if lines[1]~=MAGIC then return nil,"Unrecognized ACID song data; refusing to replace it" end
-  local entries,drafts={},{}
+  local entries,drafts,labels={},{},{}
+  local phase=1
+  local last_source_id,last_label_id,last_draft_instrument,last_draft_phrase=0,0,0,-1
   for line_number=2,#lines do
     local line=lines[line_number]
     if line=="" then return nil,"Unexpected blank ACID entry at line "..line_number end
-    local item,is_draft=parse_entry(line,line_number,entries,drafts)
-    if not item then return nil,is_draft end
-    local pattern,err=decode_source(item,is_draft,line_number)
-    if not pattern then return nil,err end
-    local entry={pattern=pattern,output_policy=item.output_policy,pb_range=item.pb_range}
-    if is_draft then
-      local name=decode_text(item.instrument_name)
-      if not name then return nil,"Invalid ACID draft instrument identity at line "..line_number end
-      entry.instrument_name=name
-      entry.instrument_index=item.instrument_index
-      entry.phrase_id=item.phrase_id
-      drafts[item.key]=entry
+    if line:match("^LABEL|") then
+      if phase>2 then return nil,"Malformed ACID record order at line "..line_number end
+      phase=2
+      local id,custom,labelhex=line:match("^LABEL|(%d+)|([01])|([%x]+)$")
+      id=canonical_integer(id)
+      local label=labelhex and decode_text(labelhex)
+      if not valid_id(id) or id<=last_label_id or labels[id] or not label or not valid_label(label) then
+        return nil,"Invalid ACID label at line "..line_number
+      end
+      last_label_id=id
+      labels[id]={label=label,label_custom=custom=="1"}
+    elseif line:match("^DRAFT|") then
+      phase=3
+      local instrument,phrase,name,labelhex,custom,source=line:match(
+        "^DRAFT|(%d+)|(%d+)|([%x]*)|([%x]+)|([01])|(.+)$")
+      instrument,phrase=canonical_integer(instrument),canonical_integer(phrase)
+      local label=labelhex and decode_text(labelhex)
+      local policy,pb,timing,pitchlen,length,maskon,mask,pitchdata,time
+      if source then policy,pb,timing,pitchlen,length,maskon,mask,pitchdata,time=
+        source:match("^([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([01])|([01]+)|([%d,:%-]+)|([NTR]+)$") end
+      pb,pitchlen,length=canonical_integer(pb),canonical_integer(pitchlen),canonical_integer(length)
+      local key=instrument and tostring(instrument)..":"..tostring(phrase)
+      if not instrument or instrument<1 or not phrase or phrase<0 or
+          instrument<last_draft_instrument or (instrument==last_draft_instrument and phrase<=last_draft_phrase) or drafts[key] or
+          not label or not valid_label(label) or not policy or type(mask)~="string" or #mask~=12 or
+          type(time)~="string" or #time~=32 or
+          not policies.valid_output_policy(policy) or not policies.valid_pb_range(pb) then
+        return nil,"Invalid ACID draft header at line "..line_number
+      end
+      last_draft_instrument,last_draft_phrase=instrument,phrase
+      local item={length=length,pitch_length=pitchlen,timing_mode=timing,
+        mask_enabled=maskon=="1",mask=mask,pitch_data=pitchdata,time=time}
+      local pattern,err=decode_source(item,true,line_number)
+      if not pattern then return nil,err end
+      local decoded_name=decode_text(name)
+      if not decoded_name then return nil,"Invalid ACID draft instrument identity at line "..line_number end
+      drafts[key]={pattern=pattern,output_policy=policy,pb_range=pb,instrument_name=decoded_name,
+        instrument_index=instrument,phrase_id=phrase,label=label,label_custom=custom=="1"}
     else
-      entries[item.id]=entry
+      if phase>1 then return nil,"Malformed ACID record order at line "..line_number end
+      local id,policy,pb,timing,pitchlen,length,maskon,mask,pitchdata,time=line:match(
+        "^(%d+)|([%w_]+)|(%d+)|([%w_]+)|(%d+)|(%d+)|([01])|([01]+)|([%d,:%-]+)|([NTR]+)$")
+      id,pb,pitchlen,length=canonical_integer(id),canonical_integer(pb),
+        canonical_integer(pitchlen),canonical_integer(length)
+      if not valid_id(id) or id<=last_source_id or entries[id] or not pb or not pitchlen or not length or
+          type(mask)~="string" or #mask~=12 or
+          type(time)~="string" or #time~=32 or
+        not policies.valid_output_policy(policy) or not policies.valid_pb_range(pb) then
+        return nil,"Invalid ACID snapshot header at line "..line_number
+      end
+      last_source_id=id
+      local item={length=length,pitch_length=pitchlen,timing_mode=timing,
+        mask_enabled=maskon=="1",mask=mask,pitch_data=pitchdata,time=time}
+      local pattern,err=decode_source(item,false,line_number)
+      if not pattern then return nil,err end
+      entries[id]={pattern=pattern,output_policy=policy,pb_range=pb}
     end
   end
+  for id,entry in pairs(entries) do
+    local label=labels[id]
+    if not label then return nil,"Missing ACID label for source ID "..id end
+    entry.label,entry.label_custom=label.label,label.label_custom
+  end
+  for id in pairs(labels) do if not entries[id] then return nil,"Orphan ACID label ID "..id end end
   return entries,drafts
 end
 
@@ -153,7 +198,8 @@ local function copy_entry(item)
   if not item then return nil end
   local pattern,err=sequencer.copy_source(item.pattern)
   if not pattern then return nil,err end
-  return {pattern=pattern,output_policy=item.output_policy,pb_range=item.pb_range}
+  return {pattern=pattern,output_policy=item.output_policy,pb_range=item.pb_range,
+    label=item.label,label_custom=item.label_custom==true}
 end
 
 local function copy_entries(entries)
@@ -187,18 +233,37 @@ local function encode_sources(entries)
     if not ok then return nil,"Invalid ACID source: "..err end
     if not policies.valid_output_policy(item.output_policy) then return nil,"invalid phrase output policy" end
     if not policies.valid_pb_range(item.pb_range) then return nil,"invalid PB range" end
+    if not valid_label(item.label) or type(item.label_custom)~="boolean" then
+      return nil,"invalid ACID phrase label metadata"
+    end
     lines[#lines+1]=table.concat({tostring(id),item.output_policy,tostring(item.pb_range),
       encode_source(pattern)},"|")
+  end
+  for _,id in ipairs(ids) do
+    local item=entries[id]
+    lines[#lines+1]=table.concat({"LABEL",tostring(id),item.label_custom and "1" or "0",
+      encode_text(item.label)},"|")
   end
   return table.concat(lines,"\n").."\n"
 end
 
 local function encode_drafts(drafts)
   local lines={}
-  local draft_keys={}
-  for key in pairs(drafts or {}) do draft_keys[#draft_keys+1]=key end
-  table.sort(draft_keys)
-  for _,key in ipairs(draft_keys) do
+  local records={}
+  for key,item in pairs(drafts or {}) do
+    local instrument,phrase=key:match("^(%d+):(%d+)$")
+    instrument,phrase=tonumber(instrument),tonumber(phrase)
+    if not instrument or instrument<1 or not phrase or phrase<0 then
+      return nil,"invalid ACID draft destination"
+    end
+    records[#records+1]={key=key,item=item,instrument=instrument,phrase=phrase}
+  end
+  table.sort(records,function(a,b)
+    if a.instrument~=b.instrument then return a.instrument<b.instrument end
+    return a.phrase<b.phrase
+  end)
+  for _,record in ipairs(records) do
+    local key,item=record.key,record.item
     local instrument,phrase=key:match("^(%d+):(%d+)$")
     local item=drafts[key]
     if not instrument or tonumber(instrument)<1 or tonumber(phrase)<0 then
@@ -209,8 +274,12 @@ local function encode_drafts(drafts)
     if not ok then return nil,"Invalid ACID draft source: "..err end
     if not policies.valid_output_policy(item.output_policy) then return nil,"invalid ACID draft output policy" end
     if not policies.valid_pb_range(item.pb_range) then return nil,"invalid ACID draft PB range" end
+    if not valid_label(item.label) or type(item.label_custom)~="boolean" then
+      return nil,"invalid ACID draft label metadata"
+    end
     lines[#lines+1]=table.concat({"DRAFT",instrument,phrase,encode_text(item.instrument_name),
-      item.output_policy,tostring(item.pb_range),encode_source(pattern)},"|")
+      encode_text(item.label),item.label_custom and "1" or "0",item.output_policy,
+      tostring(item.pb_range),encode_source(pattern)},"|")
   end
   return #lines>0 and table.concat(lines,"\n").."\n" or ""
 end
@@ -295,10 +364,10 @@ function M.read_draft(song,instrument,phrase,...)
     if item.instrument_name~=instrument_name then item=nil end
   end
   return item and sequencer.copy_source(item.pattern) or nil,item and item.output_policy or nil,
-    item and item.pb_range or nil
+    item and item.pb_range or nil,item and item.label or nil,item and item.label_custom or false
 end
 
-local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range,remove)
+local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range,remove,label,label_custom)
   local previous,read_error=raw_data(song)
   if previous==nil and read_error then return nil,read_error end
   local entries,drafts=read_decoded(previous or "")
@@ -308,6 +377,7 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
   if not instrument_index then return nil,phrase_id end
   local key,err=draft_key(instrument_index,phrase_id)
   if not key then return nil,err end
+  local prior=drafts[key]
   if phrase_id==0 and drafts[key] and drafts[key].instrument_name~=instrument_name then
     return nil,"New phrase draft destination changed; preserved its stored draft"
   end
@@ -315,7 +385,7 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
   if phrase_id>0 then
     local item,existing_key,identity_error=saved_phrase_draft(drafts,phrase_id)
     if identity_error then return nil,identity_error end
-    if item then drafts[existing_key]=nil;found=true end
+    if item then prior=item;drafts[existing_key]=nil;found=true end
   end
   if remove then
     if drafts[key] then found=true end
@@ -330,9 +400,22 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
     if not policies.valid_pb_range(pb_range) then return nil,"invalid PB range" end
     local stored_pattern,copy_error=sequencer.copy_source(pattern)
     if not stored_pattern then return nil,copy_error end
+    local committed_label=phrase_id>0 and entries[phrase_id] or nil
+    label=label or (prior and prior.label) or (committed_label and committed_label.label) or "Untitled"
+    if label_custom==nil then
+      label_custom=prior and prior.label_custom or (committed_label and committed_label.label_custom) or false
+    end
+    if not valid_label(label) or type(label_custom)~="boolean" then return nil,"invalid ACID draft label" end
+    if phrase_id>0 then
+      local committed=entries[phrase_id]
+      if not committed then return nil,"ACID source missing from song data" end
+      committed=copy_map(committed)
+      entries[phrase_id]=committed
+      committed.label,committed.label_custom=label,label_custom
+    end
     drafts[key]={pattern=stored_pattern,output_policy=output_policy,pb_range=pb_range,
       instrument_name=tostring(instrument_name or ""),instrument_index=instrument_index,
-      phrase_id=phrase_id}
+      phrase_id=phrase_id,label=label,label_custom=label_custom}
   end
   local next_raw,encode_error=encode(entries,drafts)
   if not next_raw then return nil,encode_error end
@@ -345,6 +428,14 @@ local function write_draft(song,instrument,phrase,pattern,output_policy,pb_range
     return nil,"ACID draft write outcome is uncertain; readback failed: "..verify_error
   end
   if written==next_raw then
+    if not ok then
+      pcall(function()song.tool_data=previous end)
+      local restored,restore_error=raw_data(song)
+      if not restore_error and restored==previous then
+        return nil,"ACID draft setter failed; exact candidate was restored: "..tostring(write_error)
+      end
+      return nil,"ACID draft setter failed; candidate rollback is uncertain"
+    end
     decoded_raw,decoded_entries,decoded_drafts=next_raw,entries,drafts
     return true
   end
@@ -362,9 +453,129 @@ function M.write_draft(song,instrument,phrase,pattern,output_policy,pb_range,...
   return write_draft(song,instrument,phrase,pattern,output_policy,pb_range,false)
 end
 
+function M.write_draft_metadata(song,instrument,phrase,pattern,output_policy,pb_range,label,label_custom)
+  return write_draft(song,instrument,phrase,pattern,output_policy,pb_range,false,label,label_custom)
+end
+
 function M.clear_draft(song,instrument,phrase,...)
   if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
   return write_draft(song,instrument,phrase,nil,nil,nil,true)
+end
+
+function M.update_label(song,instrument,phrase,label,label_custom,expected_raw,pattern,output_policy,pb_range,guard,accept)
+  if not valid_label(label) or type(label_custom)~="boolean" then
+    return nil,"invalid ACID phrase label"
+  end
+  local member,identity
+  if phrase~=nil then
+    identity=ownership.validate_identity(song,instrument,phrase)
+    if not identity then return nil,"Phrase is not a live ACID identity" end
+    member=ownership.membership(song,instrument,phrase)
+    if not member then return nil,"Phrase is not in the captured instrument" end
+  end
+  local previous,read_error=raw_data(song)
+  if previous==nil and read_error then return nil,read_error end
+  if expected_raw~=nil and previous~=expected_raw then return nil,"ACID song data changed before label update" end
+  local entries,drafts=read_decoded(previous or "")
+  if not entries then return nil,drafts end
+  entries,drafts=copy_map(entries),copy_map(drafts)
+  local instrument_index,phrase_id,instrument_name=draft_target(song,instrument,phrase,entries)
+  if not instrument_index then return nil,phrase_id end
+  local pending_key,pending_error=draft_key(instrument_index,phrase_id)
+  if not pending_key then return nil,pending_error end
+  if pattern then
+    local valid,source_error=interpreter.validate_source(pattern)
+    if not valid then return nil,source_error end
+    if phrase_id==0 then
+      output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
+      pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
+    end
+    if not policies.valid_output_policy(output_policy) or not policies.valid_pb_range(pb_range) then
+      return nil,"Invalid pending source settings"
+    end
+  end
+  local pending
+  if phrase_id>0 then
+    local entry=entries[phrase_id]
+    if not entry then return nil,"ACID source missing from song data" end
+    entry=copy_map(entry)
+    entries[phrase_id]=entry
+    entry.label,entry.label_custom=label,label_custom
+    local key,err
+    pending,key,err=saved_phrase_draft(drafts,phrase_id)
+    if err then return nil,err end
+    if pending then pending=copy_map(pending);drafts[key]=pending end
+    if not pending and pattern then
+      if not sequencer.same_source(pattern,entry.pattern) or output_policy~=entry.output_policy or pb_range~=entry.pb_range then
+        pending={instrument_name=instrument_name,instrument_index=instrument_index,
+          phrase_id=phrase_id}
+        drafts[assert(draft_key(instrument_index,phrase_id))]=pending
+      end
+    end
+  else
+    pending=drafts[pending_key]
+    if pending and pending.instrument_name~=instrument_name then
+      return nil,"New phrase draft destination changed"
+    end
+    if pending then pending=copy_map(pending);drafts[pending_key]=pending end
+    if not pending then
+      if not pattern then return nil,"Pending New phrase source is unavailable" end
+      pending={instrument_name=instrument_name,instrument_index=instrument_index,
+        phrase_id=0}
+      drafts[pending_key]=pending
+    end
+  end
+  if pending then
+    if pattern then
+      pending.pattern=assert(sequencer.copy_source(pattern))
+      pending.output_policy,pending.pb_range=output_policy,pb_range
+    end
+    pending.label,pending.label_custom=label,label_custom
+  end
+  local candidate,encode_error=encode(entries,drafts)
+  if not candidate then return nil,encode_error end
+  local current,current_error=raw_data(song)
+  if current==nil and current_error then return nil,current_error end
+  if current~=previous then return nil,"ACID song data changed before label write" end
+  if guard then
+    local guarded,valid=pcall(guard)
+    if not guarded or valid~=true then return nil,"Label authorization changed before write",M.LABEL_WRITE_UNCHANGED end
+  end
+  current,current_error=raw_data(song)
+  if current_error or current~=previous then return nil,"ACID song data changed before label write",M.LABEL_WRITE_UNCHANGED end
+  local ok,write_error=pcall(function()song.tool_data=candidate end)
+  local written,verify_error=raw_data(song)
+  if verify_error then return nil,"ACID label write outcome is uncertain: "..verify_error,M.LABEL_WRITE_UNCERTAIN end
+  if written==candidate then
+    local authorized,accepted=true,true
+    if ok and guard then
+      local called,valid=pcall(guard)
+      authorized=called and valid==true
+    end
+    if ok and authorized and accept then
+      local called,valid=pcall(accept)
+      accepted=called and valid==true
+    end
+    if not ok or not authorized or not accepted then
+      local reason=not ok and tostring(write_error) or "Label authorization changed before acceptance"
+      local rollback_current,rollback_error=raw_data(song)
+      if rollback_error or rollback_current~=candidate then
+        return nil,reason.."; preserved changed storage",M.LABEL_WRITE_UNCERTAIN
+      end
+      pcall(function()song.tool_data=previous end)
+      local after,after_error=raw_data(song)
+      if not after_error and after==previous then
+        return nil,reason.."; exact candidate was restored",M.LABEL_WRITE_UNCHANGED
+      end
+      return nil,reason.."; candidate rollback is uncertain",M.LABEL_WRITE_UNCERTAIN
+    end
+    decoded_raw,decoded_entries,decoded_drafts=candidate,entries,drafts
+    return true,candidate,M.LABEL_WRITE_COMMITTED
+  end
+  if written==previous then
+    return nil,not ok and tostring(write_error) or "ACID label write did not persist",M.LABEL_WRITE_UNCHANGED
+  end
+  return nil,"ACID label write outcome is uncertain; preserved changed storage",M.LABEL_WRITE_UNCERTAIN
 end
 
 function M.has_drafts(song)
@@ -379,13 +590,15 @@ local function copy_draft(item)
   if not item then return nil end
   return {pattern=sequencer.copy_source(item.pattern),output_policy=item.output_policy,
     pb_range=item.pb_range,instrument_name=item.instrument_name,
-    instrument_index=item.instrument_index,phrase_id=item.phrase_id}
+    instrument_index=item.instrument_index,phrase_id=item.phrase_id,
+    label=item.label,label_custom=item.label_custom}
 end
 
 local function same_draft(left,right)
   return left and right and left.output_policy==right.output_policy and
     left.pb_range==right.pb_range and left.instrument_name==right.instrument_name and
     left.instrument_index==right.instrument_index and left.phrase_id==right.phrase_id and
+    left.label==right.label and left.label_custom==right.label_custom and
     sequencer.same_source(left.pattern,right.pattern)
 end
 
@@ -425,7 +638,7 @@ local function capture_removal(song,id,entries,drafts,descriptor,revision)
     draft=copy_draft(item),present=item~=nil}
 end
 
-local function prepare(song,id,pattern,output_policy,pb_range,guard,removal,revision)
+local function prepare(song,id,pattern,output_policy,pb_range,guard,removal,revision,label,label_custom)
   if not valid_id(id) then return nil,"invalid ACID phrase ID" end
   if type(guard)~="function" then return nil,"An ACID request guard is required" end
   local current,current_error=ownership.is_current(song)
@@ -451,26 +664,29 @@ local function prepare(song,id,pattern,output_policy,pb_range,guard,removal,revi
   end
   local captured,removal_error=capture_removal(song,id,entries,drafts,removal,revision)
   if removal_error then return nil,removal_error end
-  local captured_sources,source_error=encode(entries,{})
-  if not captured_sources then return nil,source_error end
-  entries[id]={pattern=copied,output_policy=output_policy,pb_range=pb_range}
+  label=label or "Pattern "..tostring(id)
+  if not valid_label(label) then return nil,"invalid ACID phrase label" end
+  if label_custom==nil then label_custom=false end
+  if type(label_custom)~="boolean" then return nil,"invalid ACID phrase label custom flag" end
+  entries[id]={pattern=copied,output_policy=output_policy,pb_range=pb_range,
+    label=label,label_custom=label_custom}
   local proposed_sources,proposed_error=encode_sources(entries)
   if not proposed_sources then return nil,proposed_error end
   local proposed,encode_error=append_drafts(proposed_sources,drafts)
   if not proposed then return nil,encode_error end
   local candidate={previous_raw=previous,raw=proposed,id=id}
-  candidates[candidate]={song=song,previous_raw=previous,captured_sources=captured_sources,
+  candidates[candidate]={song=song,previous_raw=previous,
     proposed_sources=proposed_sources,guard=guard,removal=captured,
     write_attempted=false,written_verified=false,restore_verified=false,integrity_uncertain=false}
   return candidate
 end
 
-function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal)
-  return prepare(song,id,pattern,output_policy,pb_range,guard,removal,false)
+function M.prepare(song,id,pattern,output_policy,pb_range,guard,removal,label,label_custom)
+  return prepare(song,id,pattern,output_policy,pb_range,guard,removal,false,label,label_custom)
 end
 
-function M.prepare_revision(song,id,pattern,output_policy,pb_range,guard,removal)
-  return prepare(song,id,pattern,output_policy,pb_range,guard,removal,true)
+function M.prepare_revision(song,id,pattern,output_policy,pb_range,guard,removal,label,label_custom)
+  return prepare(song,id,pattern,output_policy,pb_range,guard,removal,true,label,label_custom)
 end
 
 local function candidate_state(song,candidate)
@@ -487,7 +703,8 @@ function M.candidate_status(candidate)
   if not state then return nil,"invalid ACID store candidate" end
   return {write_attempted=state.write_attempted,written_verified=state.written_verified,
     restore_verified=state.restore_verified,integrity_uncertain=state.integrity_uncertain,
-    error=state.error,previous_raw=state.previous_raw,written_raw=state.written_raw}
+    error=state.error,previous_raw=state.previous_raw,written_raw=state.written_raw,
+    draft_removal=state.removal~=nil}
 end
 
 function M.release_candidate(candidate)
@@ -543,11 +760,7 @@ function M.commit(song,candidate)
   if not decoded_entries then return nil,decoded_drafts end
   local entries,drafts=copy_map(decoded_entries),copy_map(decoded_drafts)
   if current~=state.previous_raw then
-    local sources,source_error=encode(entries,{})
-    if not sources then return nil,source_error end
-    if sources~=state.captured_sources then
-      return nil,"ACID song data changed during generation"
-    end
+    return nil,"ACID song data changed during generation"
   end
   local removed,remove_error=remove_captured_draft(song,entries,drafts,removal)
   if not removed then return nil,remove_error end
@@ -649,7 +862,7 @@ function M.read_entry(song,id)
   if not entry then return nil,"ACID source missing from song data" end
   local pattern,copy_error=sequencer.copy_source(entry.pattern)
   if not pattern then return nil,copy_error end
-  return pattern,entry.output_policy,entry.pb_range
+  return pattern,entry.output_policy,entry.pb_range,entry.label,entry.label_custom
 end
 
 function M.load(song,instrument,phrase,...)

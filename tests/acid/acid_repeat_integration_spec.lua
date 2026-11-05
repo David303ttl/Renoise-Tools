@@ -456,12 +456,12 @@ end
 local draft_result,captured_calls
 captured_calls=0
 assert(writer.regenerate(draft_request,function(value)draft_result=value;captured_calls=captured_calls+1 end))
-assert(captured_calls==1 and
-  (draft_result.status=='committed' or draft_result.status=='approximate'))
+assert(captured_calls==1 and (draft_result.status=='failed' or draft_result.status=='integrity_blocked'),
+  'a changed raw draft store must abort the captured source candidate: '..tostring(draft_result and draft_result.status))
 assert(newer_draft_row and song.tool_data:find(newer_draft_row,1,true),
-  'revision commit removed a newer draft bound to the old immutable source ID')
-assert(store.read_draft(song,instrument,draft_target)==nil,
-  'old-revision draft was attached to the phrase’s new immutable ID')
+  'conflicted generation did not preserve the newer draft bytes')
+assert(ownership.id(draft_target)==1,'conflicted generation changed the phrase revision identity: '..
+  tostring(draft_target.name)..' status='..tostring(draft_result.status)..' reason='..tostring(draft_result.reason))
 assert(#instrument.phrases==draft_phrase_count and ownership.status(draft_target)=='owned')
 print('ACID Repeat end-to-end direct output checks passed (playback checked separately in Renoise)')
 

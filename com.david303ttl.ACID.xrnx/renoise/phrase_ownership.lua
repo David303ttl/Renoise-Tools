@@ -13,7 +13,6 @@ local PINNED_MAX_LINES = 512
 local PINNED_NOTE_COLUMNS = 12
 local PINNED_EFFECT_COLUMNS = 8
 local indexed_snapshots=setmetatable({},{__mode="k"})
-local recovery_captures=setmetatable({},{__mode="k"})
 local function hash(phrase)
   local acc=HASH_INITIAL
   local function feed(value)
@@ -498,41 +497,13 @@ function M.snapshot_for_verification(phrase,limits)
   return snapshot_with_mode(phrase,limits,true)
 end
 
-local function valid_recovery_token(token)
-  return type(token)=="table" and getmetatable(token)==nil and next(token)==nil and
-    recovery_captures[token]~=nil
-end
-
-local function compare_recovery_image(image,snapshot,policy)
-  local ok,matches,reason=pcall(M.compare,image,snapshot,policy)
-  if not ok then return false,"Invalid phrase snapshot" end
-  return matches,reason
-end
-
--- Recovery captures are private read-only comparison preimages. Unlike public
--- snapshots, their canonical empty cell tables may be shared within one image.
+-- Validate complete phrase readability before admitting a mutation.
 function M.capture_recovery(phrase,limits)
   local capacities,capacity_error=snapshot_capacities(limits)
   if not capacities then return nil,capacity_error end
   local ok,image=pcall(capture,phrase,capacities,true)
   if not ok then return nil,"Cannot inspect complete phrase: "..tostring(image) end
-  local token={}
-  recovery_captures[token]=image
-  return token
-end
-
-function M.recovery_matches_snapshot(token,snapshot,policy)
-  if not valid_recovery_token(token) then return false,"Invalid recovery capture" end
-  return compare_recovery_image(recovery_captures[token],snapshot,policy)
-end
-
-function M.matches_recovery(phrase,token,policy,limits)
-  if not valid_recovery_token(token) then return false,"Invalid recovery capture" end
-  local capacities,capacity_error=snapshot_capacities(limits)
-  if not capacities then return false,capacity_error end
-  local ok,current=pcall(capture,phrase,capacities,true)
-  if not ok then return false,"Cannot inspect complete phrase: "..tostring(current) end
-  return compare_recovery_image(recovery_captures[token],current,policy)
+  return {}
 end
 
 local function cell_is_default(snapshot,defaults,fields)

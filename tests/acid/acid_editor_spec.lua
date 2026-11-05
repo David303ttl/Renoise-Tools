@@ -71,6 +71,32 @@ assert(seam_view.mapping[1].transition=="attack")
 assert(seam_view.repeat_mapping[1].transition=="slide")
 assert(editor.step_text(seam_view,1,1):find("A",1,true))
 assert(editor.step_text(seam_view,1,2):find("S",1,true))
+local masked=seq.new_pattern(3)
+masked.pitch_length=1
+masked.pitch_events[1]=seq.new_pitch(1,0,true,true)
+masked.scale_mask_enabled=true
+for index=1,12 do masked.scale_mask[index]=index==1 end
+masked.time_events[2]="T"
+masked.time_events[3]="R"
+local prepared=assert(seq.prepare_resolution(masked))
+local masked_view=editor.project(masked,prepared)
+assert(not masked_view.error)
+assert(editor.step_text(masked_view,1)=="NOTE P01 RAW 37 RES 36 ACC OUT ATTACK")
+assert(editor.step_text(masked_view,2)=="TIE P01 RAW 37 RES 36 ACC OUT HOLD")
+assert(editor.step_text(masked_view,3)=="REST --")
+assert(editor.pitch_reference(masked_view,1,true)=="P01 · C3")
+assert(editor.pitch_reference(masked_view,1,false)=="P01")
+assert(editor.pitch_reference(masked_view,2,true)=="P01 hold")
+assert(editor.pitch_reference(masked_view,3,true)=="--")
+assert(editor.pitch_reference(masked_view,4,true)=="--")
+assert(editor.mapping_text(masked_view,1)=="T01 → P01 · C3")
+assert(editor.mapping_text(masked_view,2)=="T02 → P01 hold · C3")
+assert(editor.mapping_text(masked_view,3)=="T03 · Rest")
+assert(editor.mapping_text(masked_view,4)=="T04 · mapping unavailable")
+assert(masked_view.mapping[1].note==interpreter.compile_cycle(masked,nil,prepared).steps[1].note)
+masked.pitch_events[1]=seq.new_pitch(2,0)
+assert(editor.step_text(masked_view,1)=="NOTE P01 RAW 37 RES 36 ACC OUT ATTACK",
+  "decoded raw values belong to the projected snapshot")
 
 for _,length in ipairs({1,16,17,31,32}) do
   local p=seq.new_pattern(length)
@@ -133,7 +159,7 @@ assert(not preview.error)
 assert(preview.mapping[16].pitch_index==1)
 assert(preview.mapping[17].pitch_index==1)
 assert(preview.mapping[17].kind=="tie")
-assert(editor.step_text(preview,17)=="TIE P01")
+assert(editor.step_text(preview,17)=="TIE P01 RAW 36 RES 36 HOLD")
 bad.time_events[17]="N"
 preview=editor.project(bad)
 assert(preview.mapping[17].pitch_index==2)
@@ -176,6 +202,23 @@ local reset=seq.new_pattern()
 assert(timing_history:record(reset,"repeat",0))
 assert(timing_history:undo().timing_mode=="triplet")
 assert(timing_history:redo().timing_mode=="straight")
+
+do
+  local labels=editor.new_history(reset,"repeat",0,"First",true)
+  assert(labels:record(reset,"repeat",0,"Second",true))
+  local proposal=assert(labels:propose("undo"))
+  assert(labels:is_current(proposal))
+  proposal.state.label="Changed"
+  assert(not labels:is_current(proposal) and not labels:commit(proposal),
+    "a modified history proposal cannot authorize metadata persistence")
+  proposal=assert(labels:propose("undo"))
+  assert(labels:record(reset,"repeat",0,"Third",true))
+  assert(not labels:is_current(proposal) and not labels:commit(proposal),
+    "a stale proposal cannot authorize metadata persistence")
+  proposal=assert(labels:propose("undo"))
+  assert(labels:is_current(proposal) and labels:commit(proposal))
+  assert(not labels:is_current(proposal) and not labels:commit(proposal))
+end
 timed.timing_mode=nil
 assert(not seq.validate(timed))
 timed.timing_mode="other"

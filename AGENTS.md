@@ -32,6 +32,10 @@
 
 ## Code naming, comments and documentation
 
+- Keep code simple and DRY. Use named constants for limits and configuration
+  values instead of magic numbers.
+- Keep documentation concise and focused on current behavior and contracts.
+  Do not add historical narratives or progress prose.
 - Name code files, modules, symbols, tests and fixture formats by behavior or
   responsibility. Do not embed roadmap, blueprint, milestone, phase or work-step
   labels such as `M1` or `M2` in names, comments, generated code, diagnostics or

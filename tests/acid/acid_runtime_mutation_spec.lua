@@ -80,7 +80,7 @@ for _,registry in ipairs({'copy','invalid','throws','removed'})do
  assert(ctx:integrity_state().blocked)
 end
 
--- Failed scopes require exact native restoration and explicit proof after settlement.
+-- Failed scopes retain a blocker after settlement and exact native restoration.
 do
  local ctx,log,song,instrument,source=fixture()
  local name,base_note,store=source.name,source.base_note,song.tool_data
@@ -91,22 +91,15 @@ do
   error(sentinel)
  end)end)
  assert(not ok and rawequal(reason,sentinel) and ctx:integrity_state().blocked)
- assert(not ctx:revalidation_status().verified)
  log.done({kind='failed'})
- assert(not ctx:revalidation_status().verified)
  instrument.phrases[2]=nil;source.name=name;source.base_note=base_note
- assert(not ctx:revalidation_status().verified,'changed store was accepted')
+ assert(ctx:integrity_state().blocked,'settlement cleared the mutation blocker')
  song.tool_data=store
- local status,proof=ctx:revalidation_status()
- assert(status.verified and proof and ctx:mutation_state().failed)
- source.name='Changed again'
- assert(not ctx:revalidate(proof),'restoration proof accepted changed phrase')
- source.name=name
- local restored,current=ctx:revalidation_status()
- assert(restored.verified and ctx:revalidate(current))
- assert(not ctx:mutation_state().failed and not ctx:integrity_state().blocked)
+ assert(ctx:mutation_state().failed and ctx:integrity_state().blocked,
+  'exact native restoration cleared the mutation blocker')
+ assert(not ctx:request_generation('manual'),'blocked mutation admitted generation')
  assert(log.captures==1 and log.sinks==1,'recovery retried generation')
- assert(ctx:reconcile().kind=='new')
+ assert(not ctx:reconcile(),'reconciliation cleared a failed synchronous mutation')
 end
 
 -- Recovery recording failures always unwind finalization and fail closed until reattachment.
@@ -130,19 +123,19 @@ for _,mode in ipairs({'returns_false','throws'})do
  local state=ctx:mutation_state()
  assert(state.depth==0 and state.failed,'failed recovery recording left finalization active')
  assert(ctx:integrity_state().blocked,'failed recovery recording did not retain an effective blocker')
- local status=ctx:revalidation_status()
- assert(not status.verified and status.blocked,'failed recovery recording exposed a revalidation route')
- assert(not ctx:revalidate({}),'failed recovery recording accepted a proof')
+ assert(not ctx:request_generation('manual'),'failed recovery recording admitted generation')
  assert(ctx:release_document())
  assert(ctx:mutation_state().depth==0,'release retained mutation finalization')
  ctx:attach_document(song)
  assert(not ctx:mutation_state().failed and ctx:mutation_state().depth==0,
   'reattachment retained failed mutation state')
- assert(ctx:integrity_state().blocked and not ctx:revalidation_status().verified,
+ assert(ctx:integrity_state().blocked,
   'same-document reattachment lost the recording-failure blocker')
+ assert(not ctx:request_generation('manual'),'same-document reattachment admitted generation')
  local _,_,other_song=fixture()
  ctx:attach_document(other_song)
- assert(not ctx:integrity_state().blocked,'different-document attachment retained stale blocker')
+ assert(not ctx:integrity_state().blocked and not ctx:mutation_state().failed,
+  'different-document attachment retained stale mutation failure')
 end
 
 -- Copy/name/list callbacks remain synchronous dirtiness; only neutral outer exit reconciles.

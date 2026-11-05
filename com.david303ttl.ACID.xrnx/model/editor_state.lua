@@ -28,9 +28,9 @@ local function missing_step(pattern)
   end
 end
 
-function M.project(pattern)
+function M.project(pattern,prepared)
   local out={length=type(pattern)=="table" and pattern.length or 0,
-    mapping={},repeat_mapping={},used={},note_count=0,error=nil}
+    mapping={},repeat_mapping={},used={},slides={},note_count=0,error=nil}
   if type(pattern)~="table" then
     out.error={message="pattern must be a table"}
     return out
@@ -55,7 +55,7 @@ function M.project(pattern)
     end
     return out
   end
-  local plans,compile_error=interpreter.compile_cycles(pattern,2)
+  local plans,compile_error=interpreter.compile_cycles(pattern,2,nil,prepared)
   if not plans then
     out.error={message=compile_error}
     local step=tonumber(tostring(compile_error):match("TIME step (%d+)"))
@@ -74,6 +74,8 @@ function M.project(pattern)
     return out
   end
   out.plan=plans[1]
+  out.raw_notes={}
+  for index,pitch in ipairs(pattern.pitch_events) do out.raw_notes[index]=pitch.note end
   for cycle=1,2 do
     local mapping=cycle==1 and out.mapping or out.repeat_mapping
     for step,event in ipairs(plans[cycle].steps) do
@@ -84,6 +86,7 @@ function M.project(pattern)
       end
     end
   end
+  out.slides=M.slide_connections(out)
   return out
 end
 
@@ -94,53 +97,236 @@ function M.step_text(projection, step, cycle)
   if event.missing_pitch then return "NOTE !PITCH" end
   if event.kind=="rest" then return "REST --" end
   if event.kind=="tie" then
-    return event.note and string.format("TIE P%02d",event.pitch_index) or "TIE (silent)"
+    return event.note and string.format("TIE P%02d RAW %d RES %d%s%s HOLD",event.pitch_index,
+      projection.raw_notes[event.pitch_index],event.note,
+      event.voice.accent and " ACC" or "",event.voice.slide and " OUT" or "") or "TIE (silent)"
   end
-  local transition=event.transition=="attack" and " A" or
-    event.transition=="slide" and " S" or " X"
-  return string.format("NOTE P%02d:%d%s%s%s",event.pitch_index,event.note,
-    event.accent and " ACC" or "",event.slide and " OUT" or "",transition)
+  return string.format("NOTE P%02d RAW %d RES %d%s%s %s",event.pitch_index,
+    projection.raw_notes[event.pitch_index],event.note,
+    event.accent and " ACC" or "",event.slide and " OUT" or "",string.upper(event.transition))
+end
+
+local PITCH_NAMES={"C","C#","D","D#","E","F","F#","G","G#","A","A#","B"}
+local function note_name(note)
+  return note and (PITCH_NAMES[note%#PITCH_NAMES+1]..
+    tostring(math.floor(note/#PITCH_NAMES))) or "--"
+end
+
+function M.pitch_reference(projection,step,with_note,cycle)
+  local mapping=cycle==2 and projection.repeat_mapping or projection.mapping
+  local event=mapping and mapping[step]
+  if not event then return "--" end
+  if event.kind=="rest" then return "--" end
+  if not event.pitch_index then return event.kind=="tie" and "silent" or "--" end
+  return string.format("P%02d%s",event.pitch_index,event.kind=="tie" and " hold" or
+    (with_note and (" · "..note_name(event.note)) or ""))
+end
+
+function M.mapping_text(projection,step)
+  local event=projection.mapping[step]
+  if not event then return string.format("T%02d · mapping unavailable",step) end
+  local reference=M.pitch_reference(projection,step,true)
+  local text=string.format("T%02d → %s",step,reference)
+  if event.kind=="tie" and event.note then text=text.." · "..note_name(event.note) end
+  if event.kind=="rest" then text=string.format("T%02d · Rest",step) end
+  local repeated=M.pitch_reference(projection,step,true,2)
+  if repeated~=reference then text=text.." | Repeat: "..repeated end
+  return text
+end
+
+-- A source NOTE owns its outgoing slide; ties carry that voice until NOTE/REST.
+function M.slide_connections(projection)
+  local links={}
+  for step,source in ipairs(projection.mapping) do
+    if source.kind=="note" and source.slide then
+      local times={[step]=true}
+      local ties={}
+      for offset=1,projection.length do
+        local absolute=step+offset
+        local next_cycle=absolute>projection.length
+        local target_step=(absolute-1)%projection.length+1
+        local mapping=next_cycle and projection.repeat_mapping or projection.mapping
+        local target=mapping[target_step]
+        if not target or target.kind=="rest" then break end
+        times[target_step]=true
+        if target.kind=="note" then
+          if target.transition=="slide" then
+            links[#links+1]={from_step=step,from_pitch=source.pitch_index,from_note=source.note,
+              to_step=target_step,to_pitch=target.pitch_index,to_note=target.note,
+              next_cycle=next_cycle,times=times,ties=ties}
+          end
+          break
+        end
+        ties[#ties+1]=target_step
+      end
+    end
+  end
+  return links
+end
+
+function M.slide_text(link)
+  local text=string.format("Slide: T%02d / P%02d %s → %sT%02d / P%02d %s",
+    link.from_step,link.from_pitch,note_name(link.from_note),link.next_cycle and "next cycle " or "",
+    link.to_step,link.to_pitch,note_name(link.to_note))
+  if #link.ties>0 then
+    text=text..string.format(" · via T%02d",link.ties[1])
+    if #link.ties>1 then text=text..string.format("–T%02d",link.ties[#link.ties]) end
+  end
+  return text
+end
+
+function M.slide_selection(projection,memory,index,repeat_enabled)
+  local selection={primary={pitches={},times={}},related={pitches={},times={}},descriptions={}}
+  if memory=="pitch" then
+    selection.primary.pitches[index]=true
+    for step,event in ipairs(projection.mapping) do
+      if event.pitch_index==index then selection.related.times[step]=true end
+    end
+  elseif memory=="time" then
+    selection.primary.times[index]=true
+    local event=projection.mapping[index]
+    if event and event.pitch_index then selection.primary.pitches[event.pitch_index]=true end
+  end
+  for _,link in ipairs(projection.slides) do
+    if (repeat_enabled or not link.next_cycle) and
+        ((memory=="pitch" and (link.from_pitch==index or link.to_pitch==index)) or
+          (memory=="time" and link.times[index])) then
+      if not selection.primary.pitches[link.from_pitch] then
+        selection.related.pitches[link.from_pitch]=true
+      end
+      if not selection.primary.pitches[link.to_pitch] then
+        selection.related.pitches[link.to_pitch]=true
+      end
+      for step in pairs(link.times) do
+        if not selection.primary.times[step] then selection.related.times[step]=true end
+      end
+      selection.descriptions[#selection.descriptions+1]=M.slide_text(link)
+    end
+  end
+  return selection
+end
+
+function M.slide_marker(projection,index,repeat_enabled)
+  for _,link in ipairs(projection.slides) do
+    if link.from_pitch==index and (repeat_enabled or not link.next_cycle) then return "SLD→" end
+  end
+  return "SLD"
+end
+
+function M.time_reference(projection,step,with_note,repeat_enabled)
+  local reference=M.pitch_reference(projection,step,with_note)
+  local incoming,outgoing,incoming_loop,outgoing_loop=false,false,false,false
+  for _,link in ipairs(projection.slides) do
+    if repeat_enabled or not link.next_cycle then
+      incoming=incoming or link.to_step==step
+      outgoing=outgoing or (link.times[step] and link.to_step~=step) or link.from_step==step
+      incoming_loop=incoming_loop or (link.next_cycle and link.to_step==step)
+      outgoing_loop=outgoing_loop or (link.next_cycle and
+        ((link.times[step] and link.to_step~=step) or link.from_step==step))
+    end
+  end
+  return (incoming_loop and "↗↻ " or incoming and "↗ " or "")..reference..
+    (outgoing_loop and " →↻" or outgoing and " →" or "")
+end
+
+function M.slide_block_reason(projection,index,repeat_enabled)
+  if projection.error then return "Slide: mapping unavailable" end
+  for step,event in ipairs(projection.mapping) do
+    if event.kind=="note" and event.pitch_index==index and event.slide then
+      for offset=1,projection.length do
+        local absolute=step+offset
+        if absolute>projection.length and not repeat_enabled then return "Slide: ends at pattern boundary" end
+        local mapping=absolute>projection.length and projection.repeat_mapping or projection.mapping
+        local target_step=(absolute-1)%projection.length+1
+        local target=mapping[target_step]
+        if target and target.kind=="rest" then return string.format("Slide: blocked by T%02d Rest",target_step) end
+        if not target or target.kind=="note" then break end
+      end
+    end
+  end
+  return "Slide: unused pitch"
 end
 
 local copy_source=seq.copy_source
 
 local function same_state(a,b)
   return a.output_policy==b.output_policy and a.pb_range==b.pb_range and
-    seq.same_source(a.pattern,b.pattern)
+    a.label==b.label and a.label_custom==b.label_custom and seq.same_source(a.pattern,b.pattern)
 end
 
-local function snapshot(pattern,output_policy,pb_range)
+local function snapshot(pattern,output_policy,pb_range,label,label_custom)
   return {pattern=copy_source(pattern),output_policy=output_policy,
-    pb_range=checked_pb_range(pb_range)}
+    pb_range=checked_pb_range(pb_range),label=label or "Untitled",label_custom=label_custom==true}
 end
 
-function M.new_history(pattern,output_policy,pb_range)
-  local history={states={snapshot(pattern,output_policy,pb_range)},position=1}
-  function history:record(next_pattern,next_policy,next_pb_range)
-    local next_state=snapshot(next_pattern,next_policy,next_pb_range)
+function M.classify_difference(left,right)
+  if type(left)~="table" or type(right)~="table" then return "mixed" end
+  local musical=not seq.same_source(left.pattern or left.source,right.pattern or right.source) or
+    left.output_policy~=right.output_policy or left.pb_range~=right.pb_range
+  local metadata=(left.label or "Untitled")~=(right.label or "Untitled") or
+    (left.label_custom==true)~=(right.label_custom==true)
+  if musical and metadata then return "mixed" end
+  if musical then return "musical_or_output" end
+  if metadata then return "label_only" end
+  return "unchanged"
+end
+
+function M.new_history(pattern,output_policy,pb_range,label,label_custom)
+  local history={states={snapshot(pattern,output_policy,pb_range,label,label_custom)},position=1,revision=0}
+  local proposals=setmetatable({},{__mode="k"})
+  function history:record(next_pattern,next_policy,next_pb_range,next_label,next_custom)
+    local next_state=snapshot(next_pattern,next_policy,next_pb_range,next_label,next_custom)
     if same_state(self.states[self.position],next_state) then return false end
     for i=#self.states,self.position+1,-1 do self.states[i]=nil end
     self.states[#self.states+1]=next_state
     self.position=#self.states
+    self.revision=self.revision+1
+    return true
+  end
+  function history:propose(direction)
+    local position=self.position+(direction=="undo" and -1 or direction=="redo" and 1 or 0)
+    if position<1 or position>#self.states or position==self.position then return nil end
+    local proposal={position=position,revision=self.revision,state=snapshot(
+      self.states[position].pattern,self.states[position].output_policy,
+      self.states[position].pb_range,self.states[position].label,self.states[position].label_custom)}
+    proposals[proposal]={position=position,revision=self.revision}
+    return proposal
+  end
+  function history:is_current(proposal)
+    local captured=type(proposal)=="table" and proposals[proposal]
+    if not captured or proposal.revision~=self.revision or captured.revision~=self.revision or
+        proposal.position~=captured.position or captured.position<1 or
+        captured.position>#self.states then return false end
+    return type(proposal.state)=="table" and same_state(proposal.state,self.states[captured.position])
+  end
+  function history:commit(proposal)
+    if not self:is_current(proposal) then return false end
+    local captured=proposals[proposal]
+    self.position=captured.position
+    proposals[proposal]=nil
+    self.revision=self.revision+1
     return true
   end
   function history:undo()
     if self.position<=1 then return nil end
     self.position=self.position-1
     local state=self.states[self.position]
-    return copy_source(state.pattern),state.output_policy,state.pb_range
+    self.revision=self.revision+1
+    return copy_source(state.pattern),state.output_policy,state.pb_range,state.label,state.label_custom
   end
   function history:redo()
     if self.position>=#self.states then return nil end
     self.position=self.position+1
     local state=self.states[self.position]
-    return copy_source(state.pattern),state.output_policy,state.pb_range
+    self.revision=self.revision+1
+    return copy_source(state.pattern),state.output_policy,state.pb_range,state.label,state.label_custom
   end
   function history:can_undo() return self.position>1 end
   function history:can_redo() return self.position<#self.states end
-  function history:reset(current_pattern,current_policy,current_pb_range)
-    self.states={snapshot(current_pattern,current_policy,current_pb_range)}
+  function history:reset(current_pattern,current_policy,current_pb_range,current_label,current_custom)
+    self.states={snapshot(current_pattern,current_policy,current_pb_range,current_label,current_custom)}
     self.position=1
+    self.revision=self.revision+1
   end
   return history
 end

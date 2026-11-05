@@ -3,7 +3,7 @@
 local M={}
 
 function M.new()
-  local target_revision,edit_revision,operation_serial=0,0,0
+  local target_revision,edit_revision,metadata_revision,operation_serial=0,0,0,0
   local armed=false
   local instrument,phrase,target_kind=nil,nil,nil
   local active_trigger=nil
@@ -11,7 +11,7 @@ function M.new()
 
   local function state()
     return {target_revision=target_revision,edit_revision=edit_revision,
-      operation_serial=operation_serial,armed=armed}
+      metadata_revision=metadata_revision,operation_serial=operation_serial,armed=armed}
   end
 
   local function invalidate(effects,scope)
@@ -55,7 +55,9 @@ function M.new()
         effects.preserve_draft=true
         effects.live_intent=armed and values.valid==true and values.eligible==true
       end
-    elseif kind=="programmatic" or kind=="reset" or kind=="recovery" then
+    elseif kind=="metadata" then
+      if values.changed==true then metadata_revision=metadata_revision+1 end
+    elseif kind=="programmatic" or kind=="reset" then
       invalidate(effects)
       if values.changed==true then edit_revision=edit_revision+1 end
       effects.preserve_draft=true
@@ -71,9 +73,6 @@ function M.new()
         invalidate(effects)
         active_trigger=values.trigger
       end
-    elseif kind=="independence" then
-      invalidate(effects)
-      effects.independence_intent=true
     elseif kind=="external" or kind=="undo" then
       invalidate(effects)
       effects.reconcile=true
@@ -100,7 +99,7 @@ function M.new()
     instrument,phrase,target_kind=nil,nil,nil
     armed=false
     active_trigger=nil
-    target_revision,edit_revision,operation_serial=0,0,0
+    target_revision,edit_revision,metadata_revision,operation_serial=0,0,0,0
   end
 
   return engine

@@ -110,64 +110,6 @@ assert(cache.put(song,instrument,a,dirty,"repeat",12))
 a.column_names[12]="changed preserved metadata"
 assert(not cache.get(song,instrument,a))
 assert(not cache.get(song,instrument,a),"detached drafts cannot rehydrate against a newer baseline")
-local entries=cache.list(song)
-assert(#entries==1 and entries[1].pattern.length==3 and entries[1].session_only)
-local token=entries[1].token
-local recovery_selection={token=token,revision=entries[1].revision}
-assert(type(recovery_selection.revision)=="number")
-entries[1].pattern.pitch_events[2].accent=false
-assert(cache.list(song)[1].pattern.pitch_events[2].accent)
-local function values_only(value)
-  local kind=type(value)
-  assert(kind=="table" or kind=="number" or kind=="boolean" or kind=="string")
-  if kind=="table" then assert(getmetatable(value)==nil);for _,item in pairs(value)do values_only(item)end end
-end
-values_only(cache.list(song))
-assert(store.write_draft(song,other,nil,seq.new_pattern(6),"repeat",0))
-local occupied_raw=song.tool_data
-local malformed_scratch=occupied_raw:gsub("DRAFT|", "DRAFT|invalid", 1)
-assert(malformed_scratch~=occupied_raw)
-song.tool_data=malformed_scratch
-local rejected_copy,rejected_reason=cache.copy_to_new(song,other,token,recovery_selection.revision)
-assert(not rejected_copy and rejected_reason and song.tool_data==malformed_scratch,
-  "unreadable occupied scratch must block recovery copy without overwriting its bytes")
-assert(#cache.list(song)==1 and cache.list(song)[1].token==token,
-  "an unreadable scratch cannot consume or replace the selected recovery entry")
-song.tool_data=occupied_raw
-assert(store.write_draft(song,other,nil,seq.new_pattern(6),"repeat",0))
-assert(not cache.copy_to_new(song,other,token,recovery_selection.revision+1),
-  "stale chooser revisions cannot copy recovery")
-assert(cache.get(song,other,nil).length==6,"a rejected stale selection leaves the occupied scratch untouched")
-local copied,cp,cb,copy_meta=cache.copy_to_new(song,other,token,recovery_selection.revision)
-assert(copied.length==3 and cp=="repeat" and cb==12 and copy_meta.recovery_token==token)
-assert(#cache.list(song)==2,"occupied scratch remains recoverable")
-assert(cache.get(song,other,nil).length==3)
-local copied_revision=copy_meta.revision
-local forced,_,forced_meta=cache.put(song,other,nil,copied,cp,cb)
-assert(forced and forced_meta.revision==copied_revision,
-  "preserving unchanged New Phrase values keeps the copied recovery revision")
-local create=assert(cache.capture(song,other,nil))
-local create_candidate=assert(store.prepare(song,3,dirty,"repeat",12,
-  function(token,revision)return token==create.token and revision==create.revision and cache.is_current(song,create)end,create))
-assert(store.commit(song,create_candidate))
-assert(cache.compare_and_clear(song,create,true))
-assert(#cache.list(song)==1 and cache.list(song)[1].token~=token,
-  "successful exact copied revision removes only its recovery origin")
-local scratch_token=cache.list(song)[1].token
-local scratch_entry=cache.list(song)[1]
-assert(not cache.discard(song,scratch_token,scratch_entry.revision+1),
-  "stale chooser revisions cannot discard recovery")
-assert(cache.copy_to_new(song,other,scratch_token))
-local old=assert(cache.capture(song,other,nil))
-assert(cache.put(song,other,nil,seq.new_pattern(7),"repeat",0))
-assert(not cache.compare_and_clear(song,old,true))
-assert(#cache.list(song)==1,"superseded create preserves recovery origin")
-local changed=assert(cache.capture(song,other,nil))
-assert(cache.compare_and_clear(song,changed,true))
-assert(#cache.list(song)==1,"a later edited revision cannot consume original recovery")
-assert(cache.discard(song,scratch_token,scratch_entry.revision) and
-  not cache.discard(song,scratch_token,scratch_entry.revision))
-
 -- A fresh session cannot recover a durable phrase draft through either ID holder.
 local isolated_phrase=phrase(COLLISION_ID)
 local isolated_duplicate=phrase(COLLISION_ID)
@@ -213,7 +155,6 @@ assert(select(4,cache.get(song,instrument,b)).token==hydrated_token)
 local compatible=assert(seq.copy_source(committed));compatible.pitch_events[32].accent=true
 assert(store.save(song,2,compatible,"play_once",0))
 assert(not cache.get(song,instrument,b),"source baseline changes detach even when output remains compatible")
-assert(#cache.list(song)==1)
 
 -- A colliding ID never imports or changes the shared durable draft.
 local duplicate=phrase(2)
@@ -234,18 +175,16 @@ assert(not cache.rebind(song,other,duplicate,collision_source,"repeat",0,collisi
   song.tool_data==raw,
   "identity rebind cannot overwrite a durable draft while its ID is ambiguous")
 assert(not cache.get(song,other,duplicate))
-assert(#cache.list(song)==2,"only object-local collision edits enter recovery")
 other.phrases={}
 assert(cache.has_volatile(song))
 local released,warning=cache.release(song)
-assert(released and warning and #cache.list(song)==0 and not cache.has_volatile(song))
+assert(released and warning and not cache.has_volatile(song))
 assert(cache.get(song,instrument,b),"a fresh session can recover unambiguous durable edits")
 
 -- Failed validation preserves local input but cannot seed an accepted baseline.
 local invalid={validate=function()return nil,"unverified"end}
 assert(not cache.put(song,instrument,a,dirty,"repeat",0,invalid))
 assert(not cache.get(song,instrument,a,invalid))
-assert(cache.list(song)[1].reason=="unverified")
 local raw_before_unsealed=song.tool_data
 local calls=0
 local unsealed_proof={source=committed,settings={output_policy="play_once",pb_range=0},
@@ -286,7 +225,6 @@ assert(sealed_calls==2,"sealed baseline identities are revalidated on every acce
 -- False and other invalid existing targets never alias the New Phrase scratch.
 assert(cache.put(song,other,nil,seq.new_pattern(9),"repeat",0))
 assert(not cache.get(song,other,nil,false) and cache.get(song,other,nil).length==9)
-assert(not cache.copy_to_new(song,other,cache.list(song)[1].token,false))
 assert(cache.get(song,other,nil).length==9)
 for _,target in ipairs({false,0,"phrase"}) do
   assert(not cache.put(song,other,target,seq.new_pattern(10),"repeat",0))
@@ -325,7 +263,7 @@ song.instruments={neighbor,scratch}
 scratch.name="Renamed"
 local stable,_,_,stable_meta=cache.get(song,scratch,nil)
 assert(stable.length==5 and not stable_meta.persistent and stable_meta.warning)
-assert(song.tool_data==saved_raw and #cache.list(song)==0)
+assert(song.tool_data==saved_raw)
 assert(not cache.put(song,scratch,nil,seq.new_pattern(6),"repeat",0))
 assert(cache.get(song,scratch,nil).length==6 and song.tool_data==saved_raw)
 assert(cache.release(song))
@@ -333,16 +271,5 @@ assert(not cache.get(song,scratch,nil),"reload cannot reattach an old index/name
 assert(cache.put(song,scratch,nil,seq.new_pattern(7),"repeat",0))
 song.instruments[2]={name="Renamed",phrases={}}
 assert(not cache.get(song,scratch,nil),"same-index replacement does not preserve object association")
-assert(#cache.list(song)==1 and cache.list(song)[1].pattern.length==7)
-local volatile={name="Volatile",phrases={}}
-song={instruments={volatile}}
-local save_draft=store.write_draft
-store.write_draft=function()return nil,"not persisted"end
-assert(not cache.put(song,volatile,nil,seq.new_pattern(2),"repeat",0))
-store.write_draft=save_draft
-local sole=assert(cache.detach(song,volatile,nil,"detached volatile draft"))
-assert(cache.has_volatile(song) and cache.discard(song,sole))
-assert(#cache.list(song)==0 and not cache.has_volatile(song) and not cache.has(song),
-  "a detached tombstone has no editable or volatile payload after discard")
 song=old_song
-print("ACID verified draft baselines and isolated recovery passed")
+print("ACID verified draft baselines and isolated cache lifecycle passed")

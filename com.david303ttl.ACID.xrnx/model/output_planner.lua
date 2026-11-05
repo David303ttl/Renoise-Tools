@@ -10,7 +10,7 @@ local policies=require("model.policies")
 local M={}
 local UNITS_PER_STEP=control.UNITS_PER_STEP
 
-function M.plan_output(pattern, output_policy, max_lines)
+function M.plan_output(pattern, output_policy, max_lines, prepared)
   local valid,err=sequencer.validate(pattern)
   if not valid then return nil,err end
   if type(max_lines)~="number" or max_lines%1~=0 or max_lines<1 then
@@ -20,18 +20,25 @@ function M.plan_output(pattern, output_policy, max_lines)
   if not policies.valid_output_policy(output_policy) then
     return nil,"Invalid phrase output policy"
   end
+  if prepared==nil then
+    prepared,err=sequencer.prepare_resolution(pattern)
+    if not prepared then return nil,err end
+  else
+    local prepared_ok,prepared_error=sequencer.validate_prepared(prepared,pattern)
+    if not prepared_ok then return nil,prepared_error end
+  end
   local layout,layout_error=timing.new(pattern.timing_mode,pattern.length,output_policy)
   if not layout then return nil,layout_error end
   if layout.number_of_lines>max_lines then
     return nil,"phrase output exceeds the native phrase line limit"
   end
   if output_policy == "play_once" then
-    local plan, err=compiler.compile_cycle(pattern)
+    local plan, err=compiler.compile_cycle(pattern,nil,prepared)
     if not plan then return nil,err end
     plan.source_length=plan.length
     return plan,layout
   end
-  local loop,err=compiler.plan_loop(pattern)
+  local loop,err=compiler.plan_loop(pattern,prepared)
   if not loop then return nil,err end
   local cycle_plans={loop.cold,loop.steady}
   if #cycle_plans~=layout.cycle_count then
@@ -413,9 +420,16 @@ local function expected_output(plan,layout,native,operations,capacities,volumes,
 end
 
 local function plan_internal(source,output_policy,pb_range,capacities,capabilities,options,
-    private_materialization)
+    private_materialization,prepared)
   local fixture,source_error=sequencer.copy_source(source)
   if not fixture then return nil,source_error end
+  if prepared==nil then
+    prepared,source_error=sequencer.prepare_resolution(fixture)
+    if not prepared then return nil,source_error end
+  else
+    local prepared_ok,prepared_error=sequencer.validate_prepared(prepared,fixture)
+    if not prepared_ok then return nil,prepared_error end
+  end
   output_policy=output_policy or policies.DEFAULT_OUTPUT_POLICY
   pb_range=pb_range==nil and policies.DEFAULT_PB_RANGE or pb_range
   if not policies.valid_pb_range(pb_range) then return nil,"invalid PB range" end
@@ -428,10 +442,11 @@ local function plan_internal(source,output_policy,pb_range,capacities,capabiliti
   end
   options=options or {}
   if type(options)~="table" then return nil,"invalid planner options" end
-  local plan,layout=M.plan_output(fixture,output_policy,capacities.max_lines)
+  local plan,layout=M.plan_output(fixture,output_policy,capacities.max_lines,prepared)
   if not plan then return nil,layout end
   local timeline,timeline_error=control.compile(fixture,{gate_fraction=control.DEFAULT_GATE_FRACTION,
-    plan=plan,output_policy=output_policy,successor=plan.loop and plan.loop.steady})
+    plan=plan,output_policy=output_policy,successor=plan.loop and plan.loop.steady,
+    prepared=prepared})
   if not timeline then return nil,timeline_error end
   if capabilities~=nil and (type(capabilities)~="table" or getmetatable(capabilities)~=nil) then
     return nil,"a receiver capability value profile is required"
@@ -526,16 +541,16 @@ local function plan_internal(source,output_policy,pb_range,capacities,capabiliti
     approximations=approximations,volumes=volumes,expected=expected,required_visibility=visibility}
 end
 
-function M.plan(source,output_policy,pb_range,capacities,capabilities,options)
-  return plan_internal(source,output_policy,pb_range,capacities,capabilities,options,false)
+function M.plan(source,output_policy,pb_range,capacities,capabilities,options,prepared)
+  return plan_internal(source,output_policy,pb_range,capacities,capabilities,options,false,prepared)
 end
 
 -- The synchronous writer consumes this output privately and never returns it
 -- through request, UI, or completion values. Its expected tree is read-only
 -- after construction; canonical default cells are shared within that tree.
 -- Public plans remain fully mutable with independent cells.
-function M.plan_for_materialization(source,output_policy,pb_range,capacities,capabilities,options)
-  return plan_internal(source,output_policy,pb_range,capacities,capabilities,options,true)
+function M.plan_for_materialization(source,output_policy,pb_range,capacities,capabilities,options,prepared)
+  return plan_internal(source,output_policy,pb_range,capacities,capabilities,options,true,prepared)
 end
 
 return M

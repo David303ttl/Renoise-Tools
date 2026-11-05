@@ -66,12 +66,11 @@ local function labels(instrument,phrase)
 end
 local function metadata(record)
   return {token=record.token,revision=record.revision,recovered=record.recovered==true,
-    persistent=record.persistent==true,warning=record.warning,
-    recovery_token=record.origin and record.origin.token,
-    recovery_revision=record.origin and record.origin.revision}
+    persistent=record.persistent==true,warning=record.warning}
 end
 local function values(record)
-  return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record)
+  return sequencer.copy_source(record.pattern),record.output_policy,record.pb_range,metadata(record),
+    record.label,record.label_custom
 end
 local function proof(song,instrument,phrase,options,previous_baseline,previous_identity,previous_snapshot)
   local ok,result,err=pcall(function()
@@ -194,6 +193,8 @@ function M.detach(song,instrument,phrase,reason,source,output_policy,pb_range)
   local entry=assert(copied({token=next_token(),pattern=copied_pattern,
     output_policy=record and record.output_policy or output_policy,
     pb_range=record and record.pb_range or pb_range,
+    label=record and record.label or "Untitled",
+    label_custom=record and record.label_custom or false,
     baseline=record and record.baseline or nil,
     labels=record and record.labels or labels(instrument,phrase),
     reason=type(reason)=="string" and reason or "Draft target changed",
@@ -228,7 +229,7 @@ function M.detach_for_native_revision(song,phrase,reason,instrument,source,outpu
   return detached
 end
 
-function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
+function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options,label_value,label_custom)
   local valid,target_error=valid_target(song,instrument,phrase)
   if not valid then return nil,target_error end
   local options_valid,options_error=valid_options(options)
@@ -244,6 +245,24 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   local records=bucket(song,instrument,true)
   local previous=records[phrase or NEW]
   if previous and previous.detached then previous=nil end
+  if label_value==nil then
+    if previous then label_value=previous.label or "Untitled"
+    elseif phrase then
+      local id=ownership.validate_identity(song,instrument,phrase)
+      local stored_label
+      if id then local _,_,_,value=store.read_entry(song,id);stored_label=value end
+      label_value=stored_label or "Untitled"
+    else label_value="Untitled" end
+  end
+  if label_custom==nil then
+    if previous then label_custom=previous.label_custom==true
+    elseif phrase then
+      local id=ownership.validate_identity(song,instrument,phrase)
+      local stored_custom
+      if id then local _,_,_,_,value=store.read_entry(song,id);stored_custom=value end
+      label_custom=stored_custom==true
+    else label_custom=false end
+  end
   local retained_baseline=previous and previous.baseline
   local verified,validation_error,verified_identity,verified_snapshot=baseline(song,instrument,phrase,options,
     phrase and previous and previous.baseline or nil,previous and previous.baseline_identity,
@@ -261,10 +280,11 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
     validation_error=validation_error or "Committed draft baseline changed"
   end
   if previous and verified and previous_matches and
-      sequencer.same_source(previous.pattern,source) and
-      previous.output_policy==output_policy and previous.pb_range==pb_range and
-      (phrase~=nil or not scratch_changed(previous.baseline,verified)) then
-    local saved,save_error=store.write_draft(song,instrument,phrase,source,output_policy,pb_range)
+       sequencer.same_source(previous.pattern,source) and
+       previous.output_policy==output_policy and previous.pb_range==pb_range and
+       previous.label==label_value and previous.label_custom==label_custom and
+       (phrase~=nil or not scratch_changed(previous.baseline,verified)) then
+    local saved,save_error=store.write_draft_metadata(song,instrument,phrase,source,output_policy,pb_range,label_value,label_custom)
     if not saved then return nil,save_error,metadata(previous) end
     previous.persistent=true
     previous.warning=nil
@@ -276,7 +296,7 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
   local record={pattern=source,output_policy=output_policy,pb_range=pb_range,
     baseline=phrase==nil and retained_baseline or verified,
     labels=labels(instrument,phrase),token=previous and previous.token or next_token(),
-    revision=revision,persistent=false,baseline_identity=verified_identity,
+    label=label_value,label_custom=label_custom,revision=revision,persistent=false,baseline_identity=verified_identity,
     verified_snapshot=verified_snapshot}
   records[phrase or NEW]=record
   if not verified then return nil,validation_error,metadata(record) end
@@ -284,13 +304,13 @@ function M.put(song,instrument,phrase,pattern,output_policy,pb_range,options)
     record.warning=scratch_warning(verified)
     return nil,record.warning,metadata(record)
   end
-  local saved,save_error=store.write_draft(song,instrument,phrase,source,output_policy,pb_range)
+  local saved,save_error=store.write_draft_metadata(song,instrument,phrase,source,output_policy,pb_range,label_value,label_custom)
   if not saved then return nil,save_error,metadata(record) end
   record.persistent=true
   return true,nil,metadata(record)
 end
 
-function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selection,options)
+function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selection,options,label_value,label_custom)
   local valid,target_error=valid_target(song,instrument,phrase)
   if not valid then return nil,target_error end
   local options_valid,options_error=valid_options(options)
@@ -305,17 +325,14 @@ function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selectio
       record.revision~=selection.revision then
     return nil,"Draft changed before identity rebind"
   end
-  local origin_token=record.origin and record.origin.token
-  local origin_revision=record.origin and record.origin.revision
-  if selection.recovery_token~=origin_token or selection.recovery_revision~=origin_revision then
-    return nil,"Draft recovery origin changed before identity rebind"
-  end
   local source,source_error=sequencer.copy_source(pattern)
   if not source then return nil,source_error end
   if not sequencer.same_source(record.pattern,source) or
       record.output_policy~=output_policy or record.pb_range~=pb_range then
     return nil,"Draft values changed before identity rebind"
   end
+  label_value=label_value or record.label or "Untitled"
+  if label_custom==nil then label_custom=record.label_custom==true end
   local verified,verify_error,verified_identity,verified_snapshot=baseline(song,instrument,phrase,options)
   if not verified then return nil,verify_error end
   if not policies.is_integer(verified.id) or verified.id<MIN_OWNERSHIP_ID then
@@ -325,8 +342,9 @@ function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selectio
   record.baseline_identity=verified_identity
   record.verified_snapshot=verified_snapshot
   record.labels=labels(instrument,phrase)
-  local write_ok,saved,save_error=pcall(store.write_draft,song,instrument,phrase,
-    source,output_policy,pb_range)
+  record.label,record.label_custom=label_value,label_custom
+  local write_ok,saved,save_error=pcall(store.write_draft_metadata,song,instrument,phrase,
+    source,output_policy,pb_range,label_value,label_custom)
   record.persistent=write_ok and saved==true
   if record.persistent then
     record.warning=nil
@@ -336,12 +354,13 @@ function M.rebind(song,instrument,phrase,pattern,output_policy,pb_range,selectio
   return true,record.warning,metadata(record)
 end
 
-function M.matches_values(song,instrument,phrase,pattern,output_policy,pb_range)
+function M.matches_values(song,instrument,phrase,pattern,output_policy,pb_range,label_value,label_custom)
   if not valid_target(song,instrument,phrase) then return false end
   local records=bucket(song,instrument,false)
   local record=records and records[phrase or NEW]
   if not record or record.detached or record.output_policy~=output_policy or
-      record.pb_range~=pb_range or not sequencer.same_source(record.pattern,pattern) then
+      record.pb_range~=pb_range or not sequencer.same_source(record.pattern,pattern) or
+      (label_value~=nil and (record.label~=label_value or record.label_custom~=label_custom)) then
     return false
   end
   return true,metadata(record)
@@ -387,14 +406,15 @@ local function resolve(song,instrument,phrase,options)
   if phrase==nil and not verified.durable then
     return nil,scratch_warning(verified),verified,"absent"
   end
-  local source,policy,pb=store.read_draft(song,instrument,phrase)
+  local source,policy,pb,label_value,label_custom=store.read_draft(song,instrument,phrase)
   if not source then
     if policy then return nil,policy,verified,"error" end
     return nil,policy,verified,"absent"
   end
   local revision=next_token()
   record={pattern=assert(sequencer.copy_source(source)),output_policy=policy,pb_range=pb,
-    baseline=verified,labels=labels(instrument,phrase),token=next_token(),revision=revision,
+    baseline=verified,labels=labels(instrument,phrase),label=label_value or "Untitled",
+    label_custom=label_custom==true,token=next_token(),revision=revision,
     persistent=true,recovered=true,baseline_identity=verified_identity,
     verified_snapshot=verified_snapshot}
   bucket(song,instrument,true)[phrase or NEW]=record
@@ -411,8 +431,42 @@ function M.restore(song,instrument,phrase,options)
   local record,err,verified=resolve(song,instrument,phrase,options)
   if record then return values(record) end
   if not verified or not phrase then return nil,err end
+  local stored_label,stored_custom
+  if verified.id and type(store.read_entry)=="function" then
+    local _,_,_,label_value,label_custom=store.read_entry(song,verified.id)
+    stored_label,stored_custom=label_value,label_custom
+  end
   return sequencer.copy_source(verified.source),verified.settings.output_policy,
-    verified.settings.pb_range,{origin="committed"}
+    verified.settings.pb_range,{origin="committed"},stored_label or "Untitled",stored_custom==true
+end
+
+function M.capture_label(song,instrument,phrase)
+  if not valid_target(song,instrument,phrase) then return nil,"Invalid label draft target" end
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if record and record.detached then return nil,"Label draft is detached" end
+  local token,revision=record and record.token,record and record.revision
+  return function()
+    local current_records=bucket(song,instrument,false)
+    local current=current_records and current_records[phrase or NEW]
+    return current==record and (not current or not current.detached and
+      current.token==token and current.revision==revision)
+  end
+end
+
+function M.accept_label(song,instrument,phrase,label_value,label_custom,guard)
+  if not valid_target(song,instrument,phrase) or type(guard)~="function" or
+      not guard() or not store.valid_label(label_value) or type(label_custom)~="boolean" then return false end
+  local records=bucket(song,instrument,false)
+  local record=records and records[phrase or NEW]
+  if not record then return true end
+  if record.detached then return false end
+  record.label=label_value
+  record.label_custom=label_custom==true
+  record.revision=next_token()
+  record.persistent=true
+  record.warning=nil
+  return true,metadata(record)
 end
 
 local function same_capture_descriptor(descriptor,captured)
@@ -487,10 +541,6 @@ function M.compare_and_clear(song,descriptor,created)
   local records=bucket(song,descriptor.instrument,false)
   local key=descriptor.phrase or NEW
   local record=records[key]
-  if created==true and descriptor.kind=="new" and record.origin and
-      record.origin.revision==record.revision then
-    state(song,true).recovery[record.origin.token]=nil
-  end
   records[key]=nil
   return true
 end
@@ -510,71 +560,6 @@ function M.compare_and_clear_revision(song,descriptor,revision_id)
       record.revision~=captured.revision then return false end
   records[captured.phrase]=nil
   return true
-end
-
-function M.list(song)
-  local session=state(song,false)
-  local result={}
-  for _,entry in pairs(session and session.recovery or {}) do result[#result+1]=assert(copied(entry)) end
-  table.sort(result,function(a,b)return a.token<b.token end)
-  return result
-end
-
-function M.discard(song,token,revision)
-  if type(token)=="table" then
-    if getmetatable(token)~=nil or revision~=nil then return false end
-    revision=token.revision
-    token=token.token
-  end
-  local session=state(song,false)
-  local entry=session and session.recovery[token]
-  if not entry or (revision~=nil and revision~=entry.revision) then return false end
-  session.recovery[token]=nil
-  return true
-end
-
-function M.copy_to_new(song,instrument,selection,revision_or_options,options)
-  local valid,target_error=valid_target(song,instrument,nil)
-  if not valid then return nil,target_error end
-  local token,revision
-  if type(selection)=="table" then
-    if getmetatable(selection)~=nil or options~=nil then return nil,"Invalid recovery selection" end
-    token,revision=selection.token,selection.revision
-    options=revision_or_options
-  else
-    token=selection
-    if type(revision_or_options)=="number" then
-      revision=revision_or_options
-    else
-      options=revision_or_options
-    end
-  end
-  if not policies.is_integer(token) or token<1 or
-      (revision~=nil and (not policies.is_integer(revision) or revision<1)) then
-    return nil,"Invalid recovery selection"
-  end
-  local options_valid,options_error=valid_options(options)
-  if not options_valid then return nil,options_error end
-  local session=state(song,false)
-  local entry=session and session.recovery[token]
-  if not entry or (revision~=nil and revision~=entry.revision) then
-    return nil,"Recovery entry is unavailable or has changed"
-  end
-  local verified,err=scratch_baseline(song,instrument)
-  if not verified then return nil,err end
-  local outgoing,outgoing_error,_,outgoing_state=resolve(song,instrument,nil,options)
-  if not outgoing and outgoing_state=="error" then
-    return nil,outgoing_error or "Cannot preserve the current New Phrase scratch"
-  end
-  if outgoing then M.detach(song,instrument,nil,"Scratch preserved before recovery copy") end
-  local saved,save_error=M.put(song,instrument,nil,entry.pattern,entry.output_policy,entry.pb_range,options)
-  local record=bucket(song,instrument,false)[NEW]
-  if not record then return nil,save_error end
-  record.origin={token=token,revision=record.revision}
-  local source,policy,pb,meta=values(record)
-  meta.recovery_token=token
-  meta.warning=not saved and save_error or nil
-  return source,policy,pb,meta
 end
 
 function M.clear(song,instrument,phrase)

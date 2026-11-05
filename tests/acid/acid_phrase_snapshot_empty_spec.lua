@@ -185,53 +185,25 @@ phrase.line=original_line
 
 local recovery=assert(ownership.capture_recovery(phrase,limits))
 assert(type(recovery)=="table" and next(recovery)==nil,
-  "recovery capture exposed its image through the token")
-assert(ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "fresh recovery capture did not match the native phrase")
-assert(not ownership.recovery_matches_snapshot({},snapshot,"exact"),
-  "forged recovery token was accepted")
-recovery.extra=true
-assert(not ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "mutated recovery token was accepted")
-recovery.extra=nil
-assert(ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "restored recovery token could not be used")
+  "mutation preflight exposed its inspected phrase image")
+fail_hidden_note_access=true
+assert(not ownership.capture_recovery(phrase,limits),
+  "mutation preflight accepted unreadable hidden phrase data")
+fail_hidden_note_access=false
 
 local public=assert(ownership.snapshot(phrase,limits))
 assert(public.lines[2].notes[1]~=public.lines[2].notes[2] and
   public.lines[2].effects[1]~=public.lines[2].effects[2],
   "public snapshot cells unexpectedly share mutable tables")
 public.lines[2].notes[1].note_value=120
-assert(not ownership.recovery_matches_snapshot(recovery,public,"exact"),
-  "mutated public snapshot matched the recovery image")
+assert(public.lines[2].notes[1].note_value==120,
+  "public snapshot did not remain independently mutable")
 public.lines[2].notes[1].note_value=121
-assert(ownership.recovery_matches_snapshot(recovery,public,"exact"),
-  "public snapshot mutation altered the private recovery image")
-
-local saved_name=phrase.name
-phrase.name=saved_name.." changed"
-assert(ownership.matches_recovery(phrase,recovery,"name",limits),
-  "name-excluded recovery comparison rejected a name-only change")
-assert(not ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "exact recovery comparison ignored a phrase name change")
-phrase.name=saved_name
 
 hidden_note_values.panning_value=43
-assert(not ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "recovery comparison missed hidden note data")
+native_match=ownership.matches_snapshot(phrase,snapshot,limits,index)
+assert(native_match==false,"native exact match missed hidden note data")
 hidden_note_values.panning_value=42
-local old_empty_note=renoise.PatternLine.EMPTY_NOTE
-renoise.PatternLine.EMPTY_NOTE=old_empty_note+1
-assert(not ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "recovery comparison missed empty-cell default metadata")
-renoise.PatternLine.EMPTY_NOTE=old_empty_note
-assert(ownership.matches_recovery(phrase,recovery,"exact",limits),
-  "recovery capture did not recover after native values were restored")
-
-fail_hidden_note_access=true
-local recovery_match=ownership.matches_recovery(phrase,recovery,"exact",limits)
-assert(recovery_match==false,"recovery comparison accepted a throwing native getter")
-fail_hidden_note_access=false
 
 phrase.script.paragraphs={"return 1"}
 local scripted=assert(ownership.snapshot(phrase,limits))

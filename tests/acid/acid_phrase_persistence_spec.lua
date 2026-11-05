@@ -40,7 +40,7 @@ assert(store.commit(s,initial) and s.tool_data==initial.raw)
 assert(store.restore(s,initial) and s.tool_data==nil)
 assert(store.allocate(s)==2)
 assert(store.save(s,1,p,"play_once",12))
-assert(s.tool_data:match("^ACID%-PITCH%-TIME%-1\n"))
+assert(s.tool_data:match("^ACID%-PITCH%-TIME%-2\n"))
 local expected_pitches={}
 local expected_time={}
 for i=1,32 do
@@ -53,9 +53,10 @@ expected_time[16]="T"
 expected_time[17]="R"
 expected_time[32]="T"
 local expected_source=table.concat({
-  "ACID-PITCH-TIME-1",
-  table.concat({"1","play_once","12","triplet","3","17",
-    table.concat(expected_pitches,","),table.concat(expected_time)},"|")
+  "ACID-PITCH-TIME-2",
+  table.concat({"1","play_once","12","triplet","3","17","0","111111111111",
+    table.concat(expected_pitches,","),table.concat(expected_time)},"|"),
+  "LABEL|1|0|5061747465726E2031"
 },"\n").."\n"
 assert(s.tool_data==expected_source,"committed source wire format changed")
 local restored,output_policy,pb_range=store.load(s,s.instruments[1],a)
@@ -69,6 +70,8 @@ assert(restored.pitch_events[2].accent and restored.pitch_events[2].slide)
 assert(restored.pitch_events[32].note==40 and restored.pitch_events[32].accent)
 assert(restored.time_events[16]=="T" and restored.time_events[17]=="R")
 assert(restored.time_events[32]=="T")
+local _,_,_,committed_label,committed_custom=store.read_entry(s,1)
+assert(committed_label=="Pattern 1" and not committed_custom)
 restored.length=16
 assert(store.save(s,1,restored,"repeat"))
 local shortened,_,shortened_pb=store.load(s,s.instruments[1],a)

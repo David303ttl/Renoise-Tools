@@ -4,8 +4,15 @@ local seq=require('model.sequencer')
 local store=require('renoise.pattern_store')
 local cache=require('runtime.draft_cache')
 local unreachable=dofile('tests/assert_unreachable.lua')
-local function fixture(new)
+local NATIVE_PHRASE_ID=101
+local OTHER_NATIVE_PHRASE_ID=102
+local function fixture(new,native_phrases)
  local song,instrument,phrase,other,source=helper.fixture(new and 'new')
+ if native_phrases then
+  phrase,other=helper.phrase(source,NATIVE_PHRASE_ID),helper.phrase(source,OTHER_NATIVE_PHRASE_ID)
+  phrase.name,other.name="Native phrase","Other native phrase"
+  instrument.phrases={phrase,other}
+ end
  local writer={status='idle'}
  function writer:state()return self.status,self.token end
  function writer:is_temporary()return false end
@@ -351,7 +358,7 @@ do
  ctx:release_document()
 end
 do
- local ctx,log,_,_,_,phrase=fixture()
+  local ctx,log,_,_,_,phrase=fixture()
  local cell=phrase.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns]
  cell.delay_value=1
  local valid,reason=log.request:validate_checkpoint()
@@ -360,6 +367,25 @@ do
  cell.delay_value=0
  assert(not log.request:validate_checkpoint(),'restoring external data resurrected failed operation')
  assert(not log.request:is_current(),'failed checkpoint did not revoke cheap authorization')
- assert(not log.request.token:is_current(),'failed checkpoint retained writer token authorization')
+  assert(not log.request.token:is_current(),'failed checkpoint retained writer token authorization')
+end
+do
+  local ctx,log=fixture(true,true)
+  local before=ctx:revision_state()
+  assert(ctx:rename_label("Custom",true))
+  local after=ctx:revision_state()
+  assert(after.edit_revision==before.edit_revision and
+    after.metadata_revision==before.metadata_revision+1)
+  assert(not log.request:validate_checkpoint(),"metadata drift must invalidate the captured request")
+end
+for _,tamper in ipairs({"source","record","provenance"}) do
+  local ctx,log=fixture()
+  local prepared=log.request.prepared_resolution
+  if tamper=="source" then prepared.source.length=prepared.source.length==32 and 31 or prepared.source.length+1
+  elseif tamper=="record" then prepared.resolved_records[1].note=999
+  else prepared.provenance={} end
+  assert(not seq.validate_prepared(prepared,log.request.source),"test did not alter prepared authority")
+  assert(not log.request:validate_checkpoint(),"request accepted mutated prepared "..tamper)
+  ctx:release_document()
 end
 print('ACID frozen runtime request and checkpoint guards passed')

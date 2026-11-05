@@ -114,6 +114,8 @@ local sink_calls=0
 local fail_next_adoption=false
 local probe_terminal_reentry=false
 local before_prepare_mutation
+local before_terminal_delivery
+local last_writer_terminal
 local sink=function(request,done)
   sink_calls=sink_calls+1
   if before_prepare_mutation then
@@ -122,6 +124,12 @@ local sink=function(request,done)
     mutate(request)
   end
   local function complete(result)
+    last_writer_terminal=result
+    if before_terminal_delivery then
+      local action=before_terminal_delivery
+      before_terminal_delivery=nil
+      action(result)
+    end
     if probe_terminal_reentry then
       probe_terminal_reentry=false
       local nested_calls=0
@@ -208,6 +216,11 @@ assert_success(results[1],phrase,"initial create")
 assert(#instrument.phrases==1 and rawequal(instrument.phrases[1],phrase))
 assert(materializer_calls==1,"create did not apply exactly one phrase image")
 local created_id=assert(ownership.id(phrase))
+local _,_,_,created_label,created_custom=store.read_entry(song,created_id)
+assert(created_label=="Pattern "..created_id and created_custom==false,
+  "New phrase did not derive its default label from the allocated stable ID")
+assert(ctx:editor_state().label==created_label and ctx:editor_state().label_custom==false,
+  "committed New default label was not adopted into editor/history state")
 local target=ctx:target_state()
 assert(target.kind=="owned" and rawequal(target.phrase,phrase)
   and target.baseline and target.baseline.id==created_id,
@@ -219,6 +232,7 @@ assert(drafts.get(song,instrument,phrase)==nil,
 assert(store.read_draft(song,instrument,phrase)==nil,
   "create retained the durable draft")
 assert(drafts.has(song)==false,"create left a draft behind")
+assert(ctx:rename_label("Explicit",true))
 
 -- Capture may use the cached light target, but the writer must still reject
 -- a native phrase edit that lands before its fresh prepare classification.
@@ -251,6 +265,9 @@ assert(phrase.cells[1].note_value==52)
 local first_revision_id=assert(ownership.id(phrase))
 assert(first_revision_id~=created_id,"first regeneration reused the immutable phrase ID")
 assert(store.read_entry(song,created_id),"first regeneration removed the old source row")
+local _,_,_,first_label,first_custom=store.read_entry(song,first_revision_id)
+assert(first_label=="Explicit" and first_custom==true,
+  "regeneration did not preserve accepted custom label metadata")
 local saved=assert(store.load(song,instrument,phrase))
 assert(first_note(saved)==52,"first regenerate did not persist its source")
 local adopted=ctx:target_state()
@@ -436,199 +453,6 @@ assert(writer.state()=="idle" and #instrument.phrases==phrase_count_before_sync,
 
 instrument.insert_phrase_at=original_insert
 instrument.delete_phrase_at=original_delete
--- Resolve one explicitly selected member of a three-way same-instrument ID
--- collision, then save and reopen its unique ID while the other two remain
--- blocked together. The selected owner remains regenerable throughout.
-do
-  local selected=instrument.phrases[#instrument.phrases]
-  local old_id=assert(ownership.id(selected))
-  local old_source=assert(store.read_entry(song,old_id))
-  local selected_before=assert(ownership.snapshot(selected))
-  local function duplicate_phrase()
-    local duplicate=instrument:insert_phrase_at(#instrument.phrases+1)
-    duplicate:copy_from(selected)
-    duplicate.script.paragraphs={}
-    for index,value in ipairs(selected.script.paragraphs) do
-      duplicate.script.paragraphs[index]=value
-    end
-    duplicate.script.parameters={}
-    for index,value in ipairs(selected.script.parameters) do
-      duplicate.script.parameters[index]={name=value.name,value=value.value}
-    end
-    duplicate.script.pending_changes=selected.script.pending_changes
-    duplicate.script.editor_visible=selected.script.editor_visible
-    return duplicate
-  end
-  local second,third=duplicate_phrase(),duplicate_phrase()
-  assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(second))))
-  assert(ownership.compare(assert(ownership.snapshot(selected)),assert(ownership.snapshot(third))))
-
-  -- Identity work is excluded for the full synchronous mutation scope.
-  local identity_ctx=new_context()
-  identity_ctx:attach_document(song)
-  identity_ctx:open_dialog()
-  identity_ctx:bind_phrase(instrument,selected)
-  local holder_names={selected.name,second.name,third.name}
-  local dispatch_before_mutation=sink_calls
-  cold_ctx:bind_new(instrument)
-  edit(cold_ctx,source(52))
-  during_mutation=function()
-    assert(writer.state()=="busy","writer did not reserve the operation during mutation")
-    local eligible,reason=identity_ctx:independence_eligibility()
-    assert(not eligible and tostring(reason):find("writer",1,true),
-      "active writer did not reject identity eligibility: "..tostring(reason))
-    local changed,occupied_reason=identity_ctx:make_independent()
-    assert(not changed and tostring(occupied_reason):find("writer",1,true),
-      "active writer admitted identity work: "..tostring(occupied_reason))
-  end
-  local store_bytes=song.tool_data
-  dispatch(cold_ctx)
-  during_mutation=nil
-  assert(#cold>=1 and cold[#cold].kind=="success",
-    "identity probe request did not reach a successful terminal result")
-  assert(sink_calls==dispatch_before_mutation+1 and writer.state()=="idle")
-  local created=instrument.phrases[#instrument.phrases]
-  local created_id=ownership.id(created)
-  assert(song.tool_data~=store_bytes and created_id and store.read_entry(song,created_id) and
-    store.read_entry(song,old_id) and selected.name==holder_names[1] and
-    second.name==holder_names[2] and third.name==holder_names[3],
-    "identity admission probe changed the collision or lost its immutable source revision")
-  identity_ctx:release_document()
-  cold_ctx:bind_phrase(instrument,selected)
-  assert(cold_ctx:independence_eligibility(),"fresh identity authorization failed after settlement")
-  cold_ctx:transition("arm")
-  assert(cold_ctx:generation_state().armed,
-    "Live Edit did not arm before Make Independent")
-  song.selected_instrument=instrument
-  song.selected_phrase=selected
-  local dispatch_count=sink_calls
-  local independent,identity= cold_ctx:make_independent()
-  assert(independent,identity)
-  assert(cold_ctx:generation_state().armed,
-    "Make Independent changed the Live Edit arming state")
-  assert(rawequal(cold_ctx:target_state().phrase,selected),
-    "Make Independent replaced the explicitly selected phrase object")
-  assert(rawequal(song.selected_instrument,instrument) and rawequal(song.selected_phrase,selected),
-    "Make Independent changed native selection")
-  assert(identity.old_id==old_id and ownership.id(selected)==identity.id)
-  assert(ownership.id(second)==old_id and ownership.id(third)==old_id)
-  local groups=assert(ownership.inventory(song))
-  assert(#groups[old_id]==2 and #groups[identity.id]==1)
-  assert(ownership.compare(selected_before,assert(ownership.snapshot(selected)),'name'),
-    'Make Independent changed musical content')
-  local retained=assert(store.read_entry(song,old_id))
-  local cloned=assert(store.read_entry(song,identity.id))
-  assert(sequencer.same_source(retained,old_source) and sequencer.same_source(cloned,old_source))
-  assert(sequencer.same_source(cold_ctx:editor_state().source,old_source),
-    'Make Independent replaced the committed editor source with a placeholder')
-  assert(sink_calls==dispatch_count,'Make Independent entered the writer')
-  local independent_target=cold_ctx:target_state()
-  assert(independent_target.kind=='owned' and rawequal(independent_target.phrase,selected),
-    tostring(independent_target.kind)..': '..tostring(independent_target.reason))
-
-  cold_ctx:transition("disarm")
-  edit(cold_ctx,source(49))
-  assert(first_note(cold_ctx:editor_state().source)==49,
-    'selected holder editor did not retain its new draft source')
-  assert(ownership.id(selected)==identity.id and #instrument.phrases==4 and
-    #assert(ownership.inventory(song))[old_id]==2,
-    'selected holder draft changed an unrelated same-ID collision')
-
-  cold_ctx:release_document()
-  cold_ctx:attach_document(song)
-  cold_ctx:open_dialog(cold_delivery)
-  cold_ctx:bind_phrase(instrument,selected)
-  local reopened_target=cold_ctx:target_state()
-  assert(reopened_target.kind=='owned' and reopened_target.baseline.id==identity.id)
-  assert(first_note(assert(store.load(song,instrument,selected)))==55)
-  assert(first_note(reopened_target.baseline.source)==55,
-    'reopened independent holder did not recover its committed source')
-  assert(#assert(ownership.inventory(song))[old_id]==2)
-
-  -- A reentrant dialog close after the identity commit retains the selected
-  -- object and blocks writes until committed state is explicitly revalidated.
-  local reentrant_duplicate=duplicate_phrase()
-  local phrase_count_before_reentrant=#instrument.phrases
-  local reentrant_id=assert(ownership.id(selected))
-  local selected_snapshot=assert(ownership.snapshot(selected))
-  local duplicate_snapshot=assert(ownership.snapshot(reentrant_duplicate))
-  local other_snapshot=assert(ownership.snapshot(second))
-  local third_snapshot=assert(ownership.snapshot(third))
-  local retained_source,retained_policy,retained_pb_range=store.read_entry(song,old_id)
-  assert(retained_source)
-  local duplicate_source,duplicate_policy,duplicate_pb_range=store.read_entry(song,reentrant_id)
-  assert(duplicate_source)
-  local function unrelated_state_unchanged()
-    local current_source,current_policy,current_pb_range=store.read_entry(song,old_id)
-    local current_duplicate_source,current_duplicate_policy,current_duplicate_pb_range=
-      store.read_entry(song,reentrant_id)
-    return current_source and sequencer.same_source(retained_source,current_source) and
-      current_policy==retained_policy and current_pb_range==retained_pb_range and
-      current_duplicate_source and sequencer.same_source(duplicate_source,current_duplicate_source) and
-      current_duplicate_policy==duplicate_policy and current_duplicate_pb_range==duplicate_pb_range and
-      ownership.compare(duplicate_snapshot,assert(ownership.snapshot(reentrant_duplicate))) and
-      ownership.compare(other_snapshot,assert(ownership.snapshot(second))) and
-      ownership.compare(third_snapshot,assert(ownership.snapshot(third)))
-  end
-  assert(ownership.id(reentrant_duplicate)==reentrant_id)
-  local reentrant_ctx=new_context()
-  local reentrant_results,reentrant_delivery=delivered()
-  reentrant_ctx:attach_document(song)
-  reentrant_ctx:open_dialog(reentrant_delivery)
-  reentrant_ctx:bind_phrase(instrument,selected)
-  local original_transition=reentrant_ctx.transition
-  local close_on_refresh=true
-  reentrant_ctx.transition=function(self,kind,values)
-    if kind=="refresh" and close_on_refresh then
-      close_on_refresh=false
-      self:close_dialog()
-    end
-    return original_transition(self,kind,values)
-  end
-  local dispatch_before_close=sink_calls
-  local committed,close_result=reentrant_ctx:make_independent()
-  reentrant_ctx.transition=original_transition
-  assert(sink_calls==dispatch_before_close,"reentrant identity close dispatched the writer")
-  assert(committed and close_result.committed and close_result.warning,
-    "post-commit dialog close was not reported as a committed blocked result")
-  assert(not reentrant_ctx:lifetime_state().open,
-    "post-commit reentrant close left the dialog open")
-  assert(ownership.id(selected)~=reentrant_id and ownership.id(reentrant_duplicate)==reentrant_id,
-    "reentrant close changed the selected phrase identity or its duplicate")
-  assert(ownership.compare(selected_snapshot,assert(ownership.snapshot(selected)),"name"),
-    "reentrant identity close changed the selected phrase content")
-  assert(#instrument.phrases==phrase_count_before_reentrant and
-    unrelated_state_unchanged() and
-    ownership.id(second)==old_id and ownership.id(third)==old_id,
-    "reentrant close changed unrelated phrase content, identities, or inventory")
-  assert(rawequal(reentrant_ctx:target_projection().phrase,selected),
-    "reentrant close replaced the explicitly selected phrase object")
-  assert(reentrant_ctx:integrity_state().blocked and
-    not reentrant_ctx:request_generation("manual"),
-    "post-commit reentrant close allowed a write before revalidation")
-  reentrant_ctx:open_dialog(reentrant_delivery)
-  song.selected_instrument=instrument
-  song.selected_phrase=selected
-  local revalidation,revalidation_proof=reentrant_ctx:revalidation_status()
-  assert(revalidation.verified,revalidation.reason)
-  assert(reentrant_ctx:revalidate(revalidation_proof),
-    "post-commit reentrant close evidence could not be revalidated")
-  reentrant_ctx:bind_phrase(instrument,selected)
-  reentrant_ctx:transition("disarm")
-  local regenerated_pitch=56
-  edit(reentrant_ctx,source(regenerated_pitch))
-  dispatch(reentrant_ctx)
-  drain(reentrant_results,1,"regenerate after reentrant identity close")
-  assert_success(reentrant_results[1],selected,"regenerate after reentrant identity close")
-  assert(rawequal(reentrant_results[1].phrase,selected) and
-    #instrument.phrases==phrase_count_before_reentrant,
-    "explicit regeneration after identity close changed the destination or phrase count")
-  assert(first_note(assert(store.load(song,instrument,selected)))==regenerated_pitch)
-  assert(unrelated_state_unchanged(),
-    "regeneration after identity close changed unrelated phrase or source state")
-  reentrant_ctx:release_document()
-end
-
 -- Once apply has produced a verified receipt, a later native edit must be
 -- preserved and reported as blocked instead of rolling back over that edit.
 do
@@ -708,6 +532,8 @@ do
   dirty.length=3
   dirty.pitch_events[1].slide=true
   dirty.time_events[3]="R"
+  for index=1,12 do dirty.scale_mask[index]=index==1 end
+  dirty.scale_mask_enabled=true
   assert(target_ctx:transition("edit",{source=dirty,output_policy="play_once",pb_range=12}))
   local draft_before=assert(drafts.capture(target_song,target,target_phrase,target_ctx:draft_options()))
   target.samples[1].sample_buffer.has_sample_data=false
@@ -747,6 +573,9 @@ do
     "new phrase revision did not capture the current receiver")
   assert(sequencer.same_source(assert(store.load(target_song,target,target_phrase)),dirty),
     "receiver-change regenerate did not commit the dirty source")
+  assert(target_phrase.cells[1].note_value==48 and
+      target_ctx:editor_state().prepared_resolution.resolved_records[1].note==48,
+    "masked raw pitch was not shared with the committed render output")
   assert(not ownership.compare(sample_native,assert(ownership.snapshot(target_phrase)),"name"),
     "receiver-change regenerate did not materialize the new receiver output")
   assert(target_song.tool_data~=before_store and drafts.get(target_song,target,target_phrase)==nil and
@@ -757,6 +586,246 @@ do
   MAX_NOTE_COLUMNS,MAX_EFFECT_COLUMNS=previous_note_capacity,previous_effect_capacity
   phrase_api_values.MAX_NUMBER_OF_NOTE_COLUMNS=previous_note_capacity
   phrase_api_values.MAX_NUMBER_OF_EFFECT_COLUMNS=previous_effect_capacity
+end
+
+do
+  local previous_song_accessor=renoise.song
+  local function duplicate_fixture(fail_integrity_record)
+    local target={}
+    for key,value in pairs(instrument)do target[key]=value end
+    target.name,target.phrases="Duplicate transaction",{}
+    local target_song={instruments={target},tool_data="",transport={timing_model=2,groove_enabled=false}}
+    function target_song:is_undo_redoing()return false end
+    renoise.song=function()return target_song end
+    local integrity_module=require("runtime.integrity")
+    local original_integrity_new=integrity_module.new
+    if fail_integrity_record then
+      integrity_module.new=function(...)
+        local integrity=original_integrity_new(...)
+        integrity.record=function()return false,"injected integrity record failure"end
+        return integrity
+      end
+    end
+    local owner=new_context()
+    local completions,delivery=delivered()
+    owner:attach_document(target_song);owner:open_dialog(delivery);owner:bind_new(target)
+    integrity_module.new=original_integrity_new
+    edit(owner,source(48));dispatch(owner)
+    local original=assert(completions[1].phrase)
+    assert_success(completions[1],original,"duplicate origin create")
+    assert(owner:rename_label("Acid Pattern",true))
+    edit(owner,source(51))
+    local descriptor=assert(drafts.capture(target_song,target,original,owner:draft_options()))
+    return owner,target_song,target,original,completions,descriptor
+  end
+  local owner,target_song,target,original,completions,descriptor=duplicate_fixture()
+  local baseline=assert(ownership.snapshot(original))
+  local committed=assert(store.load(target_song,target,original))
+  assert(owner:request_duplicate())
+  local result=assert(completions[2],"duplicate completion missing: "..tostring(owner:generation_state().last_result and owner:generation_state().last_result.reason))
+  assert_success(result,result.phrase,"committed-source duplicate")
+  assert(not rawequal(result.phrase,original) and #target.phrases==2)
+  assert(ownership.id(result.phrase)~=ownership.id(original))
+  assert(ownership.compare(baseline,assert(ownership.snapshot(original))))
+  assert(sequencer.same_source(committed,assert(store.load(target_song,target,result.phrase))))
+  local _,_,_,label,custom=store.read_entry(target_song,ownership.id(result.phrase))
+  assert(label=="Acid Pattern copy" and custom==true)
+  assert(sequencer.same_source(owner:editor_state().source,committed) and
+    rawequal(owner:target_state().phrase,result.phrase),"duplicate completion accepted dirty origin source")
+  assert(drafts.is_current(target_song,descriptor) and
+    sequencer.same_source(source(51),assert(drafts.get(target_song,target,original))) and
+    sequencer.same_source(source(51),assert(store.read_draft(target_song,target,original))),
+    "duplicate success consumed or changed original draft")
+  owner:release_document()
+
+  for _,change in ipairs({"target","source","label"}) do
+    local owner,target_song,target,original,completions,descriptor=duplicate_fixture()
+    local changed_editor,changed_revision,changed_draft
+    before_terminal_delivery=function(result)
+      assert(result.kind=="success" and result.verified,"stale duplicate fixture did not commit")
+      if change=="target" then assert(owner:restore_editor_target(target,nil))
+      elseif change=="source" then edit(owner,source(54))
+      else assert(owner:rename_label("Later label",true))end
+      changed_editor=assert(owner:editor_state())
+      changed_revision=owner:revision_state()
+      changed_draft=assert(drafts.capture(target_song,target,original,owner:draft_options()))
+    end
+    assert(owner:request_duplicate())
+    assert(#target.phrases==2 and ownership.id(target.phrases[2])~=ownership.id(original),
+      "late binding change removed verified duplicate")
+    local selected=owner:target_projection()
+    assert((change=="target" and selected.kind=="new" or
+      change~="target" and rawequal(selected.phrase,original)) and
+      sequencer.same_source(changed_editor.source,owner:editor_state().source) and
+      owner:editor_state().label==changed_editor.label and
+      owner:revision_state().target_revision==changed_revision.target_revision and
+      owner:revision_state().edit_revision==changed_revision.edit_revision and
+      owner:revision_state().metadata_revision==changed_revision.metadata_revision,
+      "stale duplicate completion replaced current editor or selection")
+    assert((not completions[2] or completions[2].stale==true and completions[2].destination_current==false) and
+      drafts.is_current(target_song,changed_draft),
+      "stale duplicate completion delivered to replaced editor or consumed origin draft")
+    if change=="target" then assert(drafts.is_current(target_song,descriptor))end
+    owner:release_document()
+  end
+
+  for _,phase in ipairs({"allocation","insertion","materialization","store","verification",
+      "origin-materialized","origin-committed","rollback"}) do
+    local owner,target_song,target,original,completions,descriptor=duplicate_fixture(phase=="rollback")
+    local raw=target_song.tool_data
+    local baseline=assert(ownership.snapshot(original))
+    local allocate,insert,apply,commit,restore,classify=store.allocate,target.insert_phrase_at,
+      materializer.apply,store.commit,store.restore,require("writers.phrase_validator").classify_verified_postimage
+    local validator=require("writers.phrase_validator")
+    if phase=="allocation" then store.allocate=function()return nil,"injected allocation"end
+    elseif phase=="insertion" then target.insert_phrase_at=function()error("injected insertion")end
+    elseif phase=="materialization" then materializer.apply=function()return nil,"injected materialization",false end
+    elseif phase=="store" then store.commit=function()return nil,"injected store"end
+    elseif phase=="verification" then validator.classify_verified_postimage=function()return nil,"injected verification"end
+    elseif phase=="origin-materialized" then
+      after_materializer_apply=function()original.cells[1].note_value=47 end
+    elseif phase=="origin-committed" then
+      store.commit=function(...)
+        local saved,reason=commit(...)
+        if saved then original.cells[1].note_value=47 end
+        return saved,reason
+      end
+    else
+      store.commit=function(...)assert(commit(...));error("injected committed store")end
+      store.restore=function()return nil,"injected rollback failure"end
+    end
+    local called,accepted,reason=pcall(owner.request_duplicate,owner)
+    store.allocate,target.insert_phrase_at,materializer.apply,store.commit,store.restore,
+      validator.classify_verified_postimage=allocate,insert,apply,commit,restore,classify
+    after_materializer_apply=nil
+    assert(called,phase..": duplicate escaped transaction: "..tostring(accepted))
+    local result=completions[2] or last_writer_terminal
+    assert(not accepted or result and result.kind=="failure",phase..": failure was reported as success")
+    assert(drafts.is_current(target_song,descriptor),phase..": original draft revision changed")
+    assert(drafts.matches_values(target_song,target,original,source(51),"play_once",0),
+      phase..": original session draft changed")
+    assert(sequencer.same_source(source(51),assert(store.read_draft(target_song,target,original))))
+    if phase=="rollback" then
+      assert(result and result.status=="integrity_blocked" and owner:integrity_state().blocked,
+        "uncertain duplicate rollback did not retain recovery blocker")
+      assert(sequencer.same_source(source(51),owner:editor_state().source),
+        "uncertain duplicate rollback replaced original editor source")
+    else
+      assert(rawequal(owner:target_projection().phrase,original),phase..": failed duplicate changed target")
+      assert(target_song.tool_data==raw and #target.phrases==1 and rawequal(target.phrases[1],original),
+        phase..": duplicate did not restore exact store and phrase inventory")
+      if phase=="origin-materialized" or phase=="origin-committed" then
+        assert(original.cells[1].note_value==47,phase..": rollback overwrote external origin edit")
+      else assert(ownership.compare(baseline,assert(ownership.snapshot(original))),phase..": origin phrase changed")end
+    end
+    owner:release_document()
+    if phase=="rollback" then
+      local fresh=new_context()
+      fresh:attach_document(target_song);fresh:open_dialog()
+      assert(fresh:bind_phrase(target,original).kind=="owned")
+      edit(fresh,source(55))
+      assert(not fresh:integrity_state().blocked,
+        "new same-song context unexpectedly inherited ACID integrity evidence")
+      local calls=sink_calls
+      local phrase_count,phrase_before=#target.phrases,assert(ownership.snapshot(original))
+      local store_before=target_song.tool_data
+      local accepted,reason=fresh:request_generation("manual")
+      assert(not accepted and type(reason)=="string" and
+        reason:find("Phrase rollback failed",1,true),
+        "real writer did not return its writer-only integrity rejection")
+      assert(fresh:integrity_state().blocked and sink_calls==calls+1,
+        "fresh context did not retain the same-song writer blocker")
+      assert(#target.phrases==phrase_count and target_song.tool_data==store_before and
+        ownership.compare(phrase_before,assert(ownership.snapshot(original))),
+        "writer-only rejection changed the phrase, source, or song store")
+      assert(not fresh:request_generation("manual") and sink_calls==calls+1,
+        "retained writer blocker allowed a later dispatch")
+      assert(not fresh:request_duplicate() and sink_calls==calls+1,
+        "retained writer blocker allowed Duplicate")
+      fresh:transition("arm")
+      assert(not fresh:request_generation("live") and sink_calls==calls+1,
+        "retained writer blocker allowed Live Edit")
+      fresh:bind_new(target)
+      assert(not fresh:request_generation("manual") and sink_calls==calls+1,
+        "target change bypassed the retained writer blocker")
+      fresh:close_dialog();fresh:open_dialog()
+      assert(not fresh:request_generation("manual") and sink_calls==calls+1,
+        "dialog reopen cleared the retained writer blocker")
+      fresh:release_document()
+      fresh:attach_document(target_song);fresh:open_dialog();fresh:bind_phrase(target,original)
+      assert(fresh:integrity_state().blocked and
+        not fresh:request_generation("manual") and sink_calls==calls+1,
+        "same-song reattachment cleared the retained writer blocker")
+      fresh:release_document()
+    end
+  end
+
+  -- A failed runtime adoption after a verified writer commit stays blocked
+  -- until same-song reattachment proves the committed target again.
+  local seed_ctx,adoption_song,adoption_target,adoption_phrase=duplicate_fixture()
+  seed_ctx:release_document()
+  local integrity_module=require("runtime.integrity")
+  local original_integrity_new=integrity_module.new
+  integrity_module.new=function(...)
+    local owner=original_integrity_new(...)
+    owner.record=function()return false,"injected integrity evidence failure"end
+    return owner
+  end
+  local adoption_ctx=new_context()
+  local adoption_results,adoption_delivery=delivered()
+  adoption_ctx:attach_document(adoption_song)
+  adoption_ctx:open_dialog(adoption_delivery)
+  assert(adoption_ctx:bind_phrase(adoption_target,adoption_phrase).kind=="owned")
+  integrity_module.new=original_integrity_new
+
+  local function fail_adoption(note)
+    fail_next_adoption=true
+    edit(adoption_ctx,source(note))
+    local expected=#adoption_results+1
+    dispatch(adoption_ctx)
+    drain(adoption_results,expected,"adoption failure")
+    assert(adoption_results[#adoption_results].status=="integrity_blocked" and
+      adoption_ctx:integrity_state().blocked,
+      "failed adoption recording did not block the current session")
+    local calls=sink_calls
+    adoption_ctx:close_dialog();adoption_ctx:open_dialog(adoption_delivery)
+    assert(not adoption_ctx:request_generation("manual") and sink_calls==calls,
+      "dialog reopen cleared an unrecorded adoption blocker")
+  end
+
+  fail_adoption(54)
+  assert(adoption_ctx:release_document())
+  local classify=require("writers.phrase_validator").classify
+  local classifications=0
+  require("writers.phrase_validator").classify=function(...)
+    classifications=classifications+1
+    return classify(...)
+  end
+  adoption_ctx:attach_document(adoption_song);adoption_ctx:open_dialog(adoption_delivery)
+  local rebound=adoption_ctx:bind_phrase(adoption_target,adoption_phrase)
+  require("writers.phrase_validator").classify=classify
+  assert(classifications>0 and rebound.kind=="owned" and rebound.baseline and
+    rebound.baseline.id==ownership.id(adoption_phrase),
+    "same-song attachment did not establish a fresh committed target proof")
+  edit(adoption_ctx,source(55))
+  local regenerate_expected=#adoption_results+1
+  dispatch(adoption_ctx)
+  drain(adoption_results,regenerate_expected,"regenerate after fresh target proof")
+  assert_success(adoption_results[#adoption_results],adoption_phrase,"regenerate after fresh target proof")
+
+  fail_adoption(56)
+  assert(adoption_ctx:release_document())
+  adoption_phrase.cells[MAX_LINES].delay_value=1
+  adoption_ctx:attach_document(adoption_song);adoption_ctx:open_dialog(adoption_delivery)
+  assert(adoption_ctx:bind_phrase(adoption_target,adoption_phrase).kind=="unavailable",
+    "same-song attachment adopted a corrupt native phrase after failed evidence recording")
+  local calls=sink_calls
+  assert(not adoption_ctx:request_generation("manual") and sink_calls==calls,
+    "corrupt post-commit phrase passed full generation admission")
+  adoption_phrase.cells[MAX_LINES].delay_value=0
+  adoption_ctx:release_document()
+  integrity_module.new=original_integrity_new
+  renoise.song=previous_song_accessor
 end
 
 print("ACID runtime writer integration checks passed (native playback unverified)")

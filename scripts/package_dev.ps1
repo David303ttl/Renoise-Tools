@@ -39,9 +39,10 @@ $expectedId = 'com.david303ttl.ACID'
 $toolRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $toolDirectoryName))
 $packageScript = Join-Path $PSScriptRoot 'package.ps1'
 $driverDirectory = Join-Path $repoRoot 'tests/renoise/driver'
-$driverSource = Join-Path $driverDirectory 'remote_driver.lua'
-$codecSource = Join-Path $driverDirectory 'json.lua'
-$acceptanceSource = Join-Path $driverDirectory 'acceptance_cases.lua'
+$driverSources = [ordered]@{}
+foreach ($name in @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua', 'gui_layout_acceptance.lua', 'gui_lifecycle_acceptance.lua')) {
+  $driverSources[$name] = Join-Path $driverDirectory $name
+}
 $writerRequestSource = Join-Path $repoRoot 'tests/acid/writer_request.lua'
 $referenceSources = [ordered]@{
   'pattrns_writer.lua' = Join-Path $repoRoot 'tests/acid/reference/pattrns_writer.lua'
@@ -316,17 +317,12 @@ if (-not (Test-Path -LiteralPath $toolRoot -PathType Container)) { throw "ACID s
 if (-not (Test-Path -LiteralPath $packageScript -PathType Leaf)) { throw "Release packager '$packageScript' was not found." }
 if (-not (Test-Path -LiteralPath $driverDirectory -PathType Container)) { throw "Development driver directory '$driverDirectory' was not found." }
 $driverFiles = @(Get-ChildItem -LiteralPath $driverDirectory -Force -Recurse)
-if ($driverFiles.Count -ne 3 -or
-    @($driverFiles | Where-Object { $_.PSIsContainer }).Count -ne 0 -or
-    -not ($driverFiles.Name -ccontains 'remote_driver.lua') -or
-    -not ($driverFiles.Name -ccontains 'json.lua') -or
-    -not ($driverFiles.Name -ccontains 'acceptance_cases.lua')) {
-  throw "Development driver directory must contain only the fixed remote driver, JSON codec and acceptance cases."
+if ($driverFiles.Count -ne $driverSources.Count -or
+    @($driverFiles | Where-Object { $_.PSIsContainer -or -not ($driverSources.Keys -ccontains $_.Name) }).Count -ne 0) {
+  throw 'Development driver directory must contain only the fixed driver modules.'
 }
 Assert-NoReparsePoint -Path $driverDirectory
-Assert-NoReparsePoint -Path $driverSource
-Assert-NoReparsePoint -Path $codecSource
-Assert-NoReparsePoint -Path $acceptanceSource
+foreach ($source in $driverSources.Values) { Assert-NoReparsePoint -Path $source }
 if (-not (Test-Path -LiteralPath $writerRequestSource -PathType Leaf)) { throw 'Native acceptance request factory is missing.' }
 Assert-NoReparsePoint -Path $writerRequestSource
 foreach ($referenceSource in $referenceSources.Values) {
@@ -395,9 +391,9 @@ try {
   if ($mainText.Contains($bootstrapMarker)) { throw 'Release main.lua already contains a development bootstrap.' }
   $driverDirectoryInTool = Join-Path $stagedToolPath '__dev'
   New-Item -ItemType Directory -Path $driverDirectoryInTool | Out-Null
-  Copy-Item -LiteralPath $driverSource -Destination (Join-Path $driverDirectoryInTool 'remote_driver.lua')
-  Copy-Item -LiteralPath $codecSource -Destination (Join-Path $driverDirectoryInTool 'json.lua')
-  Copy-Item -LiteralPath $acceptanceSource -Destination (Join-Path $driverDirectoryInTool 'acceptance_cases.lua')
+  foreach ($name in $driverSources.Keys) {
+    Copy-Item -LiteralPath $driverSources[$name] -Destination (Join-Path $driverDirectoryInTool $name)
+  }
   Copy-Item -LiteralPath $writerRequestSource -Destination (Join-Path $driverDirectoryInTool 'writer_request.lua')
   $referenceDirectoryInTool = Join-Path $driverDirectoryInTool 'reference'
   New-Item -ItemType Directory -Path $referenceDirectoryInTool | Out-Null
@@ -478,9 +474,7 @@ try {
 
   $expectedDevFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
   foreach ($relative in $sourcePayload.Keys) { [void]$expectedDevFiles.Add($relative) }
-  [void]$expectedDevFiles.Add('__dev/remote_driver.lua')
-  [void]$expectedDevFiles.Add('__dev/json.lua')
-  [void]$expectedDevFiles.Add('__dev/acceptance_cases.lua')
+  foreach ($name in $driverSources.Keys) { [void]$expectedDevFiles.Add("__dev/$name") }
   [void]$expectedDevFiles.Add('__dev/writer_request.lua')
   foreach ($referenceName in $referenceSources.Keys) { [void]$expectedDevFiles.Add("__dev/reference/$referenceName") }
   $actualDevFiles = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -503,14 +497,9 @@ try {
       }
     }
     else {
-      if ($relative -eq '__dev/remote_driver.lua') {
-        $expectedHash = (Get-FileHash -LiteralPath $driverSource -Algorithm SHA256).Hash.ToLowerInvariant()
-      }
-      elseif ($relative -eq '__dev/json.lua') {
-        $expectedHash = (Get-FileHash -LiteralPath $codecSource -Algorithm SHA256).Hash.ToLowerInvariant()
-      }
-      elseif ($relative -eq '__dev/acceptance_cases.lua') {
-        $expectedHash = (Get-FileHash -LiteralPath $acceptanceSource -Algorithm SHA256).Hash.ToLowerInvariant()
+      $driverName = $relative.Substring($relative.LastIndexOf('/') + 1)
+      if ($relative -ceq "__dev/$driverName" -and $driverSources.Contains($driverName)) {
+        $expectedHash = (Get-FileHash -LiteralPath $driverSources[$driverName] -Algorithm SHA256).Hash.ToLowerInvariant()
       }
       elseif ($relative -eq '__dev/writer_request.lua') {
         $expectedHash = (Get-FileHash -LiteralPath $writerRequestSource -Algorithm SHA256).Hash.ToLowerInvariant()

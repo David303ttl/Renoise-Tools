@@ -89,6 +89,11 @@ local function snapshot(phrase)
   return assert(ownership.snapshot(phrase,{max_lines=CAP_LINES,
     max_note_columns=CAP_NOTES,max_effect_columns=CAP_EFFECTS}))
 end
+local function advance_song()
+  local next_song={instruments={instrument},tool_data=song.tool_data,transport=song.transport}
+  function next_song:is_undo_redoing()return false end
+  song=next_song
+end
 
 -- Create and regeneration settle synchronously, with one authorized mutation.
 local first=request(source(48),1)
@@ -242,7 +247,7 @@ assert(writer.is_temporary(song,instrument,target)==false,
   "rollback failure registered the existing destination as temporary")
 assert(restore(target,good_snapshot,{max_lines=CAP_LINES,
   max_note_columns=CAP_NOTES,max_effect_columns=CAP_EFFECTS}))
-writer.clear_integrity_blocker(song)
+advance_song()
 assert(song.tool_data==good_raw and ownership.compare(good_snapshot,snapshot(target)))
 
 -- A source rollback setter can reenter and edit the phrase after the initial
@@ -292,7 +297,7 @@ do
     "phrase restore overwrote the native edit made during source rollback")
   assert(song.tool_data==rollback_raw and reentrant_request.blocker,
     "reentrant rollback did not restore source bytes or retain blocker evidence")
-  writer.clear_integrity_blocker(song)
+  advance_song()
   assert(restore(target,rollback_snapshot,{max_lines=CAP_LINES,
     max_note_columns=CAP_NOTES,max_effect_columns=CAP_EFFECTS}))
   assert(song.tool_data==rollback_raw)
@@ -326,7 +331,7 @@ for _,outcome in ipairs({"missing flag","throw"}) do
     "unknown apply outcome did not retain blocker evidence: "..outcome)
   assert(restore(target,before,{max_lines=CAP_LINES,
     max_note_columns=CAP_NOTES,max_effect_columns=CAP_EFFECTS}))
-  writer.clear_integrity_blocker(song)
+  advance_song()
   good_snapshot=snapshot(target)
   good_raw=song.tool_data
 end

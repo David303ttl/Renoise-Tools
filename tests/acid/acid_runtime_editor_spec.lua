@@ -12,6 +12,11 @@ local OWNED_PHRASE_ID=101
 local CREATED_PHRASE_ID=103
 local function fixture(new)
  local song,instrument,phrase,other,source=helper.fixture(new and 'new')
+ if new then
+  phrase,other=helper.phrase(source,OWNED_PHRASE_ID),helper.phrase(source,CREATED_PHRASE_ID)
+  phrase.name,other.name="Native phrase","Other native phrase"
+  instrument.phrases={phrase,other}
+ end
  local log={captures=0,sinks=0,requests={},done={},cancels=0}
  local ctx=context.new{writer={state=function()return 'idle',nil end},
   capture=function(trigger,token)
@@ -50,9 +55,9 @@ local function verify_rebase(persistence_failure)
  assert(ctx:request_generation('manual'))
  local request=log.requests[1]
  local newer=copy_edit(source,NEWER_EDIT_NOTE)
- local write_draft=store.write_draft
+  local write_draft=store.write_draft_metadata
  if persistence_failure then
-  store.write_draft=function()return false,'injected draft persistence failure'end
+  store.write_draft_metadata=function()return false,'injected draft persistence failure'end
  end
  local edited,edit_error=ctx:transition('edit',{source=newer,output_policy='play_once',pb_range=0})
  assert(edited,edit_error or 'newer edit failed')
@@ -70,7 +75,7 @@ local function verify_rebase(persistence_failure)
 
  log.done[1]({kind='success',status='committed',verified=true,token=request.token,
    epoch=request.epoch,request=request,phrase=phrase,baseline=committed_baseline})
- store.write_draft=write_draft
+  store.write_draft_metadata=write_draft
 
  local state=ctx:generation_state()
  assert(not state.last_commit,'older editor revision was recorded as the current commit')
@@ -99,6 +104,202 @@ end
 verify_rebase(true)
 verify_rebase(false)
 
+for _,new in ipairs({false,true}) do
+ local ctx,log,song,instrument,phrase,_,source=fixture(new)
+ local target_phrase=not new and phrase or nil
+ assert(ctx:transition("edit",values(copy_edit(source,FIRST_COMMITTED_NOTE))))
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ local write_draft=store.write_draft_metadata
+ store.write_draft_metadata=function()return false,"Injected musical draft failure"end
+ assert(ctx:transition("edit",{source=newer,output_policy="repeat",pb_range=12}))
+ store.write_draft_metadata=write_draft
+ local accepted=ctx:editor_state()
+ local update_label=store.update_label
+ store.update_label=function()return nil,"Injected label failure",store.LABEL_WRITE_UNCHANGED end
+ assert(not ctx:rename_label("Volatile draft",true))
+ store.update_label=update_label
+ local matches,metadata=cache.matches_values(song,instrument,target_phrase,newer,"repeat",12,
+   accepted.label,accepted.label_custom)
+ assert(matches and not metadata.persistent and ctx:editor_state().draft_warning=="Injected musical draft failure",
+   "failed rename accepted or cleared the unsaved musical draft")
+ assert(ctx:rename_label("Volatile draft",true))
+ local durable,policy,pb,label,custom=store.read_draft(song,instrument,target_phrase)
+ assert(seq.same_source(durable,newer) and policy=="repeat" and pb==12 and label=="Volatile draft" and custom,
+   "rename did not persist the current musical draft and label atomically")
+ matches,metadata=cache.matches_values(song,instrument,target_phrase,newer,"repeat",12,label,custom)
+ assert(matches and metadata.persistent and not metadata.warning and log.sinks==0)
+ if not new then assert(seq.same_source(store.read_entry(song,OWNED_PHRASE_ID),source)) end
+end
+
+for _,new in ipairs({false,true}) do
+ local ctx,log,song,instrument,phrase,_,source=fixture(new)
+ local target_phrase=not new and phrase or nil
+ local raw=song.tool_data
+ local absent=assert(cache.capture_label(song,instrument,target_phrase))
+ assert(absent())
+ local accept_label=cache.accept_label
+ cache.accept_label=function()return false end
+ assert(not ctx:rename_label("Rejected acceptance",true))
+ cache.accept_label=accept_label
+ assert(song.tool_data==raw and absent(),"failed session acceptance changed storage or created a draft")
+ assert(ctx:editor_state().label~="Rejected acceptance" and not ctx:integrity_state().blocked)
+ local edited=copy_edit(source,FIRST_COMMITTED_NOTE)
+ assert(ctx:transition("edit",values(edited)))
+ local matches,before=cache.matches_values(song,instrument,target_phrase,edited,"play_once",0)
+ assert(matches and not absent(),"draft addition did not invalidate captured absence")
+ local captured=assert(cache.capture_label(song,instrument,target_phrase))
+ assert(ctx:rename_label("Dirty label",true))
+ local retained,after=cache.matches_values(song,instrument,target_phrase,edited,"play_once",0,"Dirty label",true)
+ assert(retained and before.token==after.token and before.revision~=after.revision and not captured())
+ assert(log.sinks==0 and seq.same_source(ctx:editor_state().source,edited))
+ if not new then assert(seq.same_source(store.read_entry(song,OWNED_PHRASE_ID),source)) end
+ local before_raw=song.tool_data
+ local before_label=ctx:editor_state().label
+ local stored=before_raw
+ local reentered=false
+ local newer=copy_edit(source,NEWER_EDIT_NOTE)
+ song.tool_data=nil
+ setmetatable(song,{__index=function(_,key)if key=="tool_data" then return stored end end,
+  __newindex=function(object,key,value)
+   if key~="tool_data" then rawset(object,key,value);return end
+   stored=value
+   if reentered then return end
+   reentered=true
+   local write_draft=store.write_draft_metadata
+   store.write_draft_metadata=function()return nil,"Injected session-only draft"end
+   cache.put(song,instrument,target_phrase,newer,"play_once",0,ctx:draft_options(),before_label,true)
+   store.write_draft_metadata=write_draft
+  end})
+ assert(not ctx:rename_label("Stale label",true))
+ assert(stored==before_raw and ctx:editor_state().label==before_label)
+ assert(cache.matches_values(song,instrument,target_phrase,newer,"play_once",0,before_label,true),
+  "label rollback overwrote the newer session draft")
+ assert(not ctx:integrity_state().blocked and log.sinks==0)
+end
+
+do
+ local ctx,_,song=fixture(true)
+ local raw=song.tool_data
+ assert(not ctx:rename_label("Stale history",true,function()return false end))
+ assert(song.tool_data==raw and ctx:editor_state().label~="Stale history")
+end
+
+-- Label metadata writes do not advance the musical revision or enqueue renders.
+do
+ local ctx,log,song,instrument,_,_,source=fixture(true)
+ local before=ctx:revision_state()
+ assert(ctx:rename_label("Untitled",true))
+ local after=ctx:revision_state()
+ assert(after.edit_revision==before.edit_revision and
+   after.metadata_revision==before.metadata_revision+1 and log.sinks==0)
+ local draft,_,_,label,label_custom=store.read_draft(song,instrument,nil)
+ assert(draft and label=="Untitled" and label_custom==true)
+ local raw=song.tool_data
+ assert(not ctx:rename_label(" bad",true) and song.tool_data==raw)
+end
+
+-- Both owned and New label writes are independent of unrelated native content.
+for _,new in ipairs({false,true}) do
+ local ctx,log,song,instrument,_,other=fixture(new)
+ local ownership=require('renoise.phrase_ownership')
+ local capture_recovery=ownership.capture_recovery
+ local reads=0
+ local function unreadable()
+  reads=reads+1;error('Unrelated phrase content is unavailable')
+ end
+ other.line=unreadable
+ local foreign={name='Foreign phrase',line=unreadable}
+ song.instruments[2]=helper.instrument({foreign})
+ song.instruments[2].name='Unrelated instrument'
+ ownership.capture_recovery=function()
+  reads=reads+1;error('Label rename must not capture native phrase recovery')
+ end
+ local before=ctx:revision_state()
+ local renamed,reason=ctx:rename_label('Independent label',true)
+ ownership.capture_recovery=capture_recovery
+ assert(renamed,reason)
+ assert(reads==0,'label rename inspected native phrase recovery or unrelated cells')
+ assert(ctx:editor_state().label=='Independent label' and log.sinks==0)
+ assert(ctx:revision_state().edit_revision==before.edit_revision)
+ assert(ctx:revision_state().metadata_revision==before.metadata_revision+1)
+ assert(instrument.phrases[2]==other and song.instruments[2].phrases[1]==foreign)
+end
+
+do
+ local ctx,log,song=fixture(true)
+ local update_label=store.update_label
+ local before=ctx:editor_state()
+ store.update_label=function()return false,"Rejected",store.LABEL_WRITE_UNCHANGED end
+ assert(not ctx:rename_label("Rejected",true))
+ assert(not ctx:integrity_state().blocked,"verified unchanged metadata blocked the document")
+ local raw=song.tool_data
+ local writes=0
+ store.update_label=function()
+  writes=writes+1
+  song.tool_data="unverified storage"
+  return false,"Uncertain",store.LABEL_WRITE_UNCERTAIN
+ end
+ assert(not ctx:rename_label("Uncertain",true))
+ assert(ctx:integrity_state().blocked,"uncertain label persistence did not block writes")
+ assert(ctx:editor_state().label==before.label,"failed label was installed in the editor")
+ assert(not ctx:rename_label("Blocked",true) and writes==1)
+ assert(not ctx:request_generation("manual") and log.sinks==0)
+ song.tool_data=raw
+ ctx:close_dialog();ctx:open_dialog()
+ assert(ctx:integrity_state().blocked,"dialog reopen cleared the label blocker")
+ assert(not ctx:rename_label("Still blocked",true) and writes==1)
+ assert(not ctx:request_generation("manual") and log.sinks==0)
+ store.update_label=function()error("Interrupted metadata write")end
+ assert(not ctx:rename_label("Interrupted",true))
+ store.update_label=update_label
+ assert(ctx:integrity_state().blocked,"interrupted persistence did not block writes")
+ assert(not ctx:request_generation("manual") and log.sinks==0)
+end
+
+do
+ local ctx,log,song,instrument,phrase,_,source=fixture(true)
+ assert(ctx:rename_label("Accepted label",true))
+ local before=ctx:editor_state()
+ local revision=ctx:revision_state()
+ local raw=song.tool_data
+ local stored=raw
+ local writes=0
+ local corrupt=true
+ song.tool_data=nil
+ setmetatable(song,{__index=function(_,key)
+  if key=="tool_data" then return stored end
+ end,__newindex=function(object,key,value)
+  if key~="tool_data" then rawset(object,key,value);return end
+  writes=writes+1
+  stored=corrupt and "unexpected store bytes" or value
+ end})
+ assert(not ctx:rename_label("Rejected label",true))
+ assert(ctx:integrity_state().blocked and writes==1)
+ local rejected=ctx:editor_state()
+ assert(rejected.label==before.label and rejected.label_custom==before.label_custom and
+   seq.same_source(rejected.source,before.source),"uncertain rename changed accepted editor metadata")
+ assert(ctx:revision_state().metadata_revision==revision.metadata_revision,
+   "uncertain rename advanced accepted metadata history")
+ stored=raw
+ corrupt=false
+ local draft,_,_,label,label_custom=store.read_draft(song,instrument,nil)
+ assert(seq.same_source(draft,source) and label==before.label and label_custom==before.label_custom)
+ local edited=copy_edit(source,FIRST_COMMITTED_NOTE)
+ assert(ctx:transition("edit",values(edited)))
+ assert(ctx:bind_phrase(instrument,phrase).kind=="unavailable")
+ assert(not ctx:restore_editor_target(instrument,phrase))
+ assert(seq.same_source(ctx:editor_state().source,edited) and ctx:target_state().kind=="new",
+   "blocked target switch discarded the dirty editor")
+ assert(writes==1,"blocked edit or target switch persisted a draft")
+ assert(not ctx:request_generation("manual") and log.sinks==0)
+ assert(not ctx:rename_label("Still blocked",true) and writes==1)
+ assert(ctx:release_document())
+ ctx:attach_document(song);ctx:open_dialog()
+ assert(ctx:integrity_state().blocked and not ctx:request_generation("manual"),
+   "same-song reattachment cleared an uncertain label-write blocker")
+ assert(writes==1,"same-song reattachment rewrote uncertain label metadata")
+end
+
 local function verify_create_transfer(failure)
  local ctx,log,song,instrument,_,_,source=fixture(true)
  assert(ctx:transition('edit',values(copy_edit(source,FIRST_COMMITTED_NOTE))))
@@ -113,10 +314,10 @@ local function verify_create_transfer(failure)
  instrument.phrases[#instrument.phrases+1]=created
  assert(store.save(song,CREATED_PHRASE_ID,request.source,request.output_policy,request.pb_range))
  local durable_before=song.tool_data
- local write_draft=store.write_draft
+  local write_draft=store.write_draft_metadata
  local put=cache.put
  if failure=='persistence' then
-  store.write_draft=function()return false,'injected destination draft persistence failure'end
+  store.write_draft_metadata=function()return false,'injected destination draft persistence failure'end
  elseif failure=='session' then
   cache.put=function(target_song,target_instrument,target_phrase,...)
    if rawequal(target_phrase,created) then return nil,'injected destination session transfer failure'end
@@ -126,7 +327,7 @@ local function verify_create_transfer(failure)
  local baseline=validated_baseline(song,instrument,created,CREATED_PHRASE_ID)
  log.done[1]({kind='success',status='committed',verified=true,token=request.token,
   epoch=request.epoch,request=request,phrase=created,baseline=baseline})
- store.write_draft=write_draft
+  store.write_draft_metadata=write_draft
  cache.put=put
  assert(log.sinks==1,'newer create draft triggered a second render')
  if failure=='session' then
@@ -212,7 +413,7 @@ do
  assert(seq.same_source(ctx:editor_state().source,newer),'closed completion lost the newer New draft')
 end
 
--- Runtime admission validates its detached editor buffer without an extra source copy.
+-- A changed source is detached once to issue its prepared resolution snapshot.
 do
  local ctx,_,_,_,_,_,source=fixture(true)
  local changed=copy_edit(source,7)
@@ -237,7 +438,7 @@ do
  seq.copy_source=copy_source
  cache.put=put
  assert(called and edited,edit_error or 'source edit transition failed')
- assert(validation_copies==0,'edit made a discarded validation copy outside draft persistence')
+ assert(validation_copies>=1,'edit did not issue a detached resolution snapshot')
 end
 
 -- Source values and revision identities remain distinct through A -> B -> A.
@@ -245,7 +446,8 @@ do
  local ctx,log,song,instrument,_,_,source=fixture(true)
  local before=ctx:revision_state()
  ctx:transition('edit',values(source))
- assert(ctx:revision_state().edit_revision==before.edit_revision and log.sinks==0)
+ assert(ctx:revision_state().edit_revision==before.edit_revision and log.sinks==0,
+   tostring(before.edit_revision).." -> "..tostring(ctx:revision_state().edit_revision).." sinks="..log.sinks)
  local changed=copy_edit(source,7)
  ctx:transition('edit',values(changed))
  local middle=ctx:revision_state()
@@ -259,7 +461,6 @@ do
  ctx:transition('arm')
  assert(log.sinks==0,'arming generated music')
  ctx:transition('reset',values(changed))
- ctx:transition('recovery',values(source))
  ctx:transition('programmatic',values(changed))
  assert(log.sinks==0,'guarded source load generated music')
  local revision=ctx:revision_state().edit_revision
@@ -409,11 +610,9 @@ do
  assert(log.sinks==0 and ctx:editor_state().source.length==0)
  assert(not ctx:request_generation('manual'))
  ctx:transition('programmatic',values(source))
- local recoverable=ctx:editor_recovery()
- assert(#recoverable>0 and recoverable[#recoverable].source.length==0)
- recoverable[#recoverable].source.length=17
- local pristine=ctx:editor_recovery()
- assert(pristine[#pristine].source.length==0,'invalid recovery projection was mutable')
+ local released,warning=ctx:release_document()
+ assert(released and warning=='Invalid ACID editor buffers are session-only and were released',
+   'document release did not report the discarded invalid editor buffer')
 end
 
 -- Reorder/rename refresh preserves revisions; removal and native object changes revoke.
@@ -439,10 +638,12 @@ do
  song.instruments[2]=other
  ctx:refresh_inventory()
  assert(not ctx:musical_eligibility())
- assert(ctx:independence_eligibility(),'matching collision should permit explicit resolution proof')
+ assert(ctx:bind_phrase(instrument,phrase).kind~='owned','duplicate ownership ID became writable')
+ assert(not ctx:request_generation('manual'),'colliding ownership ID passed Generate admission')
  assert(log.sinks==0)
  copied.lines[helper.limits.max_lines].note_columns[helper.limits.max_note_columns].delay_value=1
- assert(not ctx:independence_eligibility(),'modified collision holder qualified for resolution')
+ assert(ctx:bind_phrase(instrument,phrase).kind~='owned','modified collision holder became writable')
+ assert(not ctx:request_generation('manual'),'modified collision holder passed Generate admission')
  assert(log.sinks==0)
 end
 do

@@ -84,9 +84,7 @@ local exclusion_calls={
  function(value)return store.write_draft(song,first,a,source,'repeat',0,value)end,
  function(value)return store.clear_draft(song,first,a,value)end,
  function(value)return validator.classify(song,first,a,{}, {}, {},value)end,
- function(value)return validator.compatibility(a,{}, {}, {}, {},value)end,
  function(value)return validator.classify(song,first,a,{}, {}, {excluded=value})end,
- function(value)return validator.compatibility(a,{}, {}, {}, {excluded=value})end,
 }
 local before_exclusions=song.tool_data
 for _,value in ipairs({{[collision]=true},{[a]=true},{},{token={}},false})do
@@ -97,7 +95,7 @@ for _,value in ipairs({{[collision]=true},{[a]=true},{},{token={}},false})do
  end
 end
 -- Explicit nil surplus arguments must also reject under Lua 5.1.
-for index=1,9 do
+for index=1,8 do
  local result,reason=exclusion_calls[index](nil)
  assert(not result and reason=='Ownership exclusions are not supported')
 end
@@ -208,8 +206,9 @@ local partial_song,partial_instrument,partial_data=draft_write_fixture("mutate_t
 current=partial_song
 assert(rawequal(renoise.song(),partial_song))
 local persisted,partial_error=store.write_draft(partial_song,partial_instrument,nil,write_source,"repeat",0)
-assert(persisted,partial_error or "a setter error with exact requested readback is verified success")
-assert(type(partial_data())=="string" and partial_data():find("DRAFT|",1,true))
+assert(not persisted and partial_error:find("restored",1,true),
+  "a throwing draft setter must abort after exact rollback")
+assert(partial_data()==nil,"failed draft publication did not restore absent storage")
 local unchanged_song,unchanged_instrument,unchanged_data=draft_write_fixture("unchanged")
 current=unchanged_song
 local unchanged,unchanged_error=store.write_draft(unchanged_song,unchanged_instrument,nil,write_source,"repeat",0)

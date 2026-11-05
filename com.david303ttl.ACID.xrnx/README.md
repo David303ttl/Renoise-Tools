@@ -9,16 +9,69 @@ manifest remains at version 0.1.
 
 Open **Tools > ACID...**, use the Pattern Editor context menu, or assign a
 shortcut to `Global:ACID:Show` in **Edit > Preferences > Keys**. Renoise
-keeps shortcuts in each user's keymap. The current developer keymap assigns
-**Ctrl+Alt+B** to `Global:ACID:Show`; ACID does not set a default. The command
+keeps shortcuts in each user's keymap. ACID does not set a default shortcut. The command
 opens or focuses the same ACID window as the menu entries. A fresh draft is
-ready immediately: 32 C pitch entries, 32 NOTE commands, LAST STEP 16 and an
-active PITCH span of 16. Change LAST STEP and the active PITCH span as needed.
-Program view selects one PITCH entry and TIME step for editing. Grid
-view edits sixteen positions directly across two continuous pages. Both views
+ready immediately: 32 C pitch entries, 32 NOTE commands, Length 16 and a
+Pitch span of 16. Change Length and Pitch span independently as needed.
+The header places Instrument first, then Phrase with Rename and Duplicate.
+Length, Timing, Reset pattern and Pitch span sit above the editor.
+Program and Grid share PITCH and TIME selections with separate memory pages. Grid
+selects sixteen positions per page for direct editing with shared pitch and
+NOTE/TIE/REST controls. Program offers direct editing and **Enter pitches**
+or **Enter timing**. Both views
 edit the same source; switching views does not change or regenerate the
-sequence. Reducing LAST STEP keeps hidden TIME entries available if the length
-is increased again.
+sequence. Reducing Length keeps hidden TIME entries available if the length
+is increased again; inactive TIME positions remain inspectable but cannot be
+edited directly. All 32 PITCH entries remain stored and editable.
+
+TIME buttons show **Note**, **Tie** or **Rest**. Program shows a pitch reference
+below each active TIME command; Grid shows the reference and resolved note above
+it. Ties identify the pitch they hold; rests have no pitch reference. Amber
+outlines link a selected TIME step to its PITCH slot, revealing the pitch page
+when necessary. Selecting a PITCH slot outlines every TIME step that plays or
+holds it, including repeated uses after pitch wrapping. The context line lists
+the relationship; its tooltip includes all linked steps. These links describe
+the compiled pattern, not a playback cursor.
+
+Slide belongs to the source PITCH entry and connects it to the next NOTE,
+continuing through TIEs. Both views show **SLD→** on a pitch with an outgoing
+connection; **SLD** alone is a stored flag without an active connection. TIME
+references show **→** on the source and carried ties, and **↗** on the destination.
+Selecting either endpoint or a carried tie outlines both pitches and the connected
+TIME steps. The context identifies source, destination and ties; tooltips list
+additional connections. A REST breaks the connection and the context names the
+blocking REST. **↻** and **next cycle** identify connections across the pattern
+boundary in Repeat mode; Play Once omits these connections. Arrows describe
+musical slide intent; target capabilities and output approximations still apply.
+
+Used PITCH slots are green. Unused slots remain dim and editable; their tooltips
+distinguish unused pitches from pitches outside Pitch span. TIME positions beyond
+Length are dim, retain their stored command, and have no pitch reference.
+Assignment controls below the active editor highlight the selected command. Grid pitches
+show Renoise note names with **ACC** and the Slide marker when enabled. Pitch tooltips
+identify musical notes. Grid shows canonical source; Program shows the
+pending edits during sequential entry.
+
+Shared feedback shows unresolved save, destination, scale, audition and output
+issues. Routine successful Live Edit stays quiet; explicit Generate confirms
+completion. Entry navigation and cursor progress appear only during entry.
+
+Sequential entry starts separate edits over the active memory span. Set each value
+and press **Enter and advance** to mark it entered. Back and Restart only
+move the cursor; changing an entered value clears its marker. Generate
+identifies the first missing position and reveals it in Program without applying
+incomplete edits. Grid remains read-only during entry; return to Program to
+complete missing positions. **Finish** is
+available only after every position is entered and applies one undoable edit;
+**Cancel** abandons the pending edits after confirmation. Neither action resumes
+a blocked navigation or command automatically: invoke that action again. Closing the dialog or
+changing song drops the candidate and retains the canonical draft best effort.
+
+**Audition** in each view's PITCH controls previews the selected resolved pitch
+or PITCH-stage candidate through the selected native instrument and non-send
+track. TIME-stage audition is disabled. It changes no source or phrase. Release
+is nominally scheduled after 120 ms, subject to host load; cleanup is best effort if captured host
+objects disappear. ACID never substitutes a replacement object at a reused index.
 
 Timing selects straight sixteenth steps or 1/8 triplet steps. Straight uses
 phrase LPB 16 and triplet LPB 12, with four phrase lines per source step. A
@@ -37,29 +90,60 @@ SLIDE belong to PITCH entries. Entering TIE at TIME 01 stores NOTE. Repeat
 cycles reset pitch consumption to P01 while preserving the sounding voice for
 boundary interpretation.
 
+## Scales and randomization
+
+In **SCALE**, choose a root and then a scale to apply its MASK.
+Root, category, and search are browsing controls and never change the stored
+mask by themselves. Selecting a scale applies the absolute note set at that
+root as one undoable edit. Identical note sets appear once with searchable
+aliases. Edit the checkboxes for a custom mask. MASK preserves raw notes and
+filters audition/output.
+
+With MASK enabled, **Randomize PITCH** samples allowed notes in the MIDI range.
+**Follow scale** snaps Program/Grid note entry; green keys mark allowed classes.
+Follow defaults off. Root/browser/Follow are session controls; MASK is saved with
+the pattern and supports Undo/Redo.
+
+PITCH and TIME have separate editable seeds and remembered seeds. Random
+operations decorrelate adjacent seeds before sampling. **Apply** keeps the
+entered seed. Change the seed for another result; return to an earlier seed
+and Apply with the same range/weights, mask and scope to recall its result.
+**Repeat last** reuses the operation's remembered seed with current settings/mask
+without changing the seed field.
+Undo restores the pattern, not seed controls. Seeds last for the editor session.
+
+**Import .txt** adds scales such as `My scale = 0 2 3 5 7 9 10`, saves them in
+tool preferences and deduplicates them. Conflicting names with different
+intervals are rejected. See [the text format](../docs/acid-scales.md).
+
 ## Generating phrases
 
 Choose any instrument slot and an existing unchanged ACID-owned phrase or
 **New Phrase**. **Repeat** is the default output policy. **Play Once** renders
 one traversal with an explicit final release. Changing this policy changes the
 owned phrase layout and saved phrase settings, not the PITCH/TIME source or the
-instrument's global phrase trigger settings. The decoded Start/Repeating
-preview is read-only.
+instrument's global phrase trigger settings.
 
-The Destination phrase control binds ACID to an exact instrument and phrase.
+The Phrase control binds ACID to an exact instrument and phrase.
 Selecting an ACID-owned phrase in Renoise's Phrase Editor loads its source and
 PB Range into ACID. Navigation and restoring a saved draft never generate music.
 Native instrument and phrase changes refresh the choices without inferring
 that a copied phrase belongs to ACID.
 
-Manual Generate and Regenerate remain available. Live Edit optionally applies
-each valid source/settings edit immediately through the single serialized,
+In **OUTPUT**, Mode and Bend range precede Live Edit and **Generate**.
+Generate creates a New Phrase or updates the selected owned phrase. Live Edit
+optionally applies each valid source/settings edit through the single serialized,
 synchronous writer. The write finishes inside the initiating user action; if a
 writer job is already active, only the latest pending trigger is retained.
 Undo and Redo cover source edits and phrase output policy and PB Range. A failed
-Live Edit remains armed; correct the source or use Retry Live Edit. Enabling
-Live Edit arms subsequent edits without writing.
-Only an explicitly selected **New Phrase** destination can create a phrase.
+Live Edit remains armed. **Generate** can retry an ordinary failed write after
+the usual admission checks; an unsafe destination or song-integrity blocker
+remains unavailable and cannot be cleared by retrying. Enabling Live Edit arms
+subsequent edits without writing.
+Label-only changes use ACID Undo/Redo without rendering, source dirtying or a
+phrase revision. Native host Undo for label metadata is not guaranteed.
+Normal generation creates only for an explicitly selected **New Phrase**
+destination; Duplicate has its own verified committed-source authorization.
 Foreign, modified, deleted and colliding phrases block generation; choose New
 explicitly to create separate output.
 Uncommitted drafts with an unambiguous song key are stored separately from the
@@ -68,29 +152,18 @@ the XRNS. A successful write clears only the exact draft revision it commits;
 later edits remain dirty. If a draft has an ambiguous destination or persistence
 fails, it remains available in the open session and ACID reports the unsaved
 state. Give a new draft's instrument a unique name or generate its phrase before
-closing the song. Detached recovery entries are session-only. ACID protects
+closing the song. Detached drafts are session-only; ACID provides no action to
+copy or discard them manually. ACID protects
 foreign or modified phrases and uses ownership checks, source persistence and
 verified rollback when updating an owned phrase in place. The persisted source
-schema is `ACID-PITCH-TIME-1`. With Live Edit off, the source remains dirty until
+schema is `ACID-PITCH-TIME-2`. Only empty song tool data or strict schema 2
+is accepted. Unsupported or corrupt data blocks writes and retains its bytes;
+ACID offers no conversion or reset. With Live Edit off, the source remains dirty until
 a successful Generate applies the draft.
 
-Native copies with the same ACID ID block every holder of that ID. Select the
-particular copied phrase in Destination phrase and use **Make Independent**.
-The action requires every holder to match its saved committed source/settings,
-compatible output, and unchanged phrase content. It assigns a fresh ID only to
-the selected phrase and clones its committed source/settings without rendering
-or changing its music. Other holders keep their IDs and any remaining collision
-stays blocked until resolved explicitly. Missing or incompatible source and
-changed content prevent resolution. ACID never automatically re-keys a copy or
-adopts an import.
-
-**Recover Draft** lists detached drafts with their captured instrument/phrase
-labels and reason. **Copy to New** restores the selected source and settings to
-the current instrument's New scratch, preserving any occupied scratch as another
-recovery entry. Copying and discarding do not render, even with Live Edit armed.
-The original recovery entry remains until that exact copied revision creates a
-phrase or you explicitly discard it. Detached recovery entries are session-only;
-save or generate wanted drafts before closing the song.
+Native copies with the same ACID ID block every holder of that ID. ACID does
+not re-key copies or adopt imports. Select another valid destination or New
+explicitly; selection cannot clear a song-wide integrity blocker.
 
 Create needs one free phrase slot under Renoise's 126-phrase instrument limit;
 it inserts the final destination. Regenerate updates the exact existing phrase
@@ -102,12 +175,12 @@ rows remain in the song so native Undo and Redo can restore matching music,
 source and settings. The revision number in the phrase name changes while its
 position and native phrase object stay the same. This increases stored source
 data with committed revisions.
-If cleanup or rollback cannot be verified,
-ACID blocks further writes and retains recovery evidence. **Revalidate** checks
-consistency without rendering, repairing ownership or deleting recovery objects.
-It requires the writer to be idle and recorded recovery objects to
-be absent. Use native undo or a known-good saved song when consistency cannot be
-established, then explicitly Generate or edit after successful revalidation.
+If cleanup, rollback or committed-source adoption cannot be verified, ACID
+blocks further mutations and retains integrity evidence. These states have no
+repair action in ACID. Changing targets, reopening the dialog or reattaching
+the same song does not establish safety or clear a persistent song blocker.
+Existing phrase content and saved data remain protected; failed draft saving
+is still reported separately. Do not rely on retry or reopening as a repair.
 
 The renderer derives NOTE, TIE, REST, gate, release and slide intent from the
 source. Sample-only targets use native sample glide. Plugin and MIDI SLIDE
@@ -140,33 +213,87 @@ owned phrase and restore on selection/save/reopen; PITCH/TIME memory stays
 unchanged. Out-of-range slides fall back to ordered notes with an approximation
 warning. Hybrid sample layers may respond differently.
 
+## Pattern tools
+
+In the editor toolbar beside Program/Grid and Undo/Redo, choose PITCH, TIME or
+Both, then Copy or Paste. Paste requires a matching copied scope and available
+editing; pending entry or an unresolved rename must be resolved first. The
+session clipboard holds all 32 records and the corresponding active bounds.
+It excludes timing, mask, labels, output settings and destination identity.
+Copy and scope selection do not save or generate. Paste is one ordinary edit;
+an identical paste does nothing. Paste into New Phrase follows the usual
+Live Edit or manual Generate authorization.
+
+**Rename** accepts 1–32 ASCII characters: start with a letter or digit, followed
+by letters, digits, spaces, underscores, periods or hyphens. Input is never
+trimmed or truncated. Labels are song metadata, may repeat and do not change
+the sealed native phrase name. A fresh draft is Untitled; first generation
+uses `Pattern <ID>` unless you explicitly entered a custom label. A failed
+label-only save retains the accepted label/history and offers Retry or Discard
+Attempt. Resolve it before switching target or using Undo/Redo. Discard does
+not clear an independent storage-integrity blocker.
+
+**Duplicate** creates a fresh owned phrase from the verified committed source,
+mask and output settings. It preserves a dirty original draft only after a
+successful durable save and exact readback; failure aborts the duplicate.
+It never substitutes the dirty draft for committed music.
+
+In **SCALE**, the optional twelve-class mask resolves raw pitches
+to the nearest enabled note within MIDI 24–60, with lower-note ties. Raw values
+remain intact. A disabled empty mask is valid; enabling it or removing its
+last enabled class is rejected. Audition and output use the same resolution.
+
+Clear and transform operations offer Active memory or All 32 stored scope
+and apply immediately in Program and Grid. Clear PITCH resets notes and both flags;
+Clear TIME sets NOTE. Clear TIE changes TIE to NOTE, while TIE-to-REST changes
+it to REST. Clear REST and REST-to-NOTE change REST to NOTE. Clear ACCENT or
+SLIDE changes only that flag. Seeded PITCH randomization uses a selected raw
+24–60 range and retains flags; TIME randomization uses NOTE/TIE/REST weights.
+In **OPERATIONS**, set randomization seed, range or weights, select
+scope, then Apply for one direct edit in either view.
+TIME 01 normalizes a drawn TIE to NOTE. Scope never changes active bounds;
+All 32 also edits inactive storage. Each changed result is one undoable edit.
+
+**Reset pattern** preserves Length and label. It resets all pitch notes and
+flags, all TIME commands, PITCH span to 16, timing to straight, mask to disabled
+with every class selected, and output/PB settings to defaults. An identical
+reset has no edit effect. Reset applies immediately in both views and one
+Undo restores the complete changed state.
+
+## Using generated phrases in Renoise
+
+Use Renoise's instrument phrase playback controls to enable phrase triggering,
+then enter instrument notes and phrase-selection commands in the Pattern
+Editor and arrange those patterns in the Pattern Sequencer. Phrase keymap or
+program selection, trigger-note transposition and native phrase length controls
+belong to Renoise. ACID does not configure their instrument-wide settings.
+
+Change ACID LAST STEP or PITCH span to change its source, then Generate.
+Editing generated phrase notes, length or loop properties directly can invalidate
+ownership and block regeneration. Regeneration replaces generated content;
+arbitrary manual edits are not preserved. A verified single-sequence loop does
+not establish continuous slides across independent phrase switches.
+
 ## Native acceptance status
 
-The 2026-11-01 M4.7 scoped acceptance passed the 8×8 production GUI workflow,
-native Undo/Redo, two cold reopens, and MIDI event capture (6 notes, 6 OFFs,
-12 pitch-bend events). The project accepted 16×8 under the scoped decision; its
-run created 128 base phrases plus one explicit Create and completed 112
-regenerations before native selection changed. The remaining run was waived,
-and the retained native report is partial. Sample/VST audio capture was waived
-and no audio pass is claimed. No 30 ms latency threshold is active. See the
-[native evidence and scope](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
+Recorded deterministic and native results, host versions and limitations are
+in the [acceptance record](../tests/acid/runtime_acceptance.md). Final integrated
+editor, playback, persistence, Undo/Redo and Live Edit acceptance remains
+unverified until the required native procedures are executed. Procedure
+readiness and mocked tests do not establish sound, timing or GUI behavior.
 
-Recorded local checks passed 73/73 repository Lua specs, 18/18 offline groups,
-and package verification; this documentation-only closeout did not rerun them.
-
-Max-length timing/layout playback and PB center-reset alignment at LPB 16/12,
-host-groove behavior, and receiver-dependent audio remain unverified; these are
-recorded in the [manual checklist](../tests/acid/acid_m35_s_manual.md) and
+Max-length timing/layout playback, PB center-reset alignment at LPB 16/12,
+host groove and receiver-dependent audio require the
+[manual checklist](../tests/acid/acid_m35_s_manual.md) and
 [timing checklist](../tests/acid/acid_timing_manual.md). A receiver that ignores
 pitch-bend commands will not produce the intended bend; use PB Off for
-receiver-controlled note overlap.
-
-Generation requires LPB transport timing and rejects
-unsupported speed timing before changing phrases or saved source. Straight and
-triplet playback, including host groove, remain subject to the
-[timing checklist](../tests/acid/acid_timing_manual.md).
+receiver-controlled note overlap. Generation requires LPB transport timing and
+rejects unsupported speed timing before changing phrases or saved source.
 
 ## Development checks
+
+Use the [editor acceptance guide](../tests/acid/acid_editor_presentation_manual.md)
+for the current interface, editing journey and layout checks.
 
 From the repository root in PowerShell 7:
 

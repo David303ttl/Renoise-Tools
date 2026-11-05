@@ -398,13 +398,16 @@ local function valid_args_for_operation(current, request)
     if (args.root ~= "fixtures" and args.root ~= "temp") or not valid_fixture_name(args.name) then return false end
     return validate_timeout(args, LIMITS.default_timeout_ms) ~= nil
   elseif operation == "acid.acceptance.run" then
-    local case_allowed = args.case == "make-independent" or args.case == "draft-recovery" or
-        args.case == "reopen-independent" or args.case == "api-probe" or
+    local case_allowed =        args.case == "api-probe" or
         args.case == "integrity-observers" or args.case == "writer-recovery" or
-        args.case == "editor-responsiveness" or args.case == "import-donor" or args.case == "ownership-negatives" or
-        args.case == "independence-undo-fixture" or args.case == "independence-undo-prepare" or args.case == "independence-undo" or
+        args.case == "editor-responsiveness" or args.case == "gui-redesign" or
+        args.case == "gui-layout" or args.case == "gui-lifecycle" or
+        args.case == "import-donor" or args.case == "ownership-negatives" or
         args.case == "revision-undo-fixture" or args.case == "revision-undo-prepare" or args.case == "revision-undo" or
         args.case == "revision-live-undo-fixture" or args.case == "revision-live-undo-prepare" or args.case == "revision-live-undo" or
+        args.case == "persistence-failures" or
+        args.case == "metadata-undo-prepare" or args.case == "metadata-undo" or
+        args.case == "metadata-recovery-prepare" or args.case == "metadata-recovery" or args.case == "metadata-recovery-cold" or
         args.case == "cold-reopen-regenerate" or
         args.case == "cold-reopen-verify" or args.case == "multi-instrument-workflow" or
         args.case == "selection-feasibility" or args.case == "direct-output-feasibility" or
@@ -833,7 +836,8 @@ local function cancel_document_scoped_commands(current, old_epoch)
     local is_cross_epoch_wait = record.operation == "wait.condition" and
       (condition == "document_epoch_changed" or condition == "observed_operation_settled")
     local is_lifecycle_acceptance = record.acceptance_started and
-      record.operation == "acid.acceptance.run" and record.args.case == "integrity-observers"
+      record.operation == "acid.acceptance.run" and
+      (record.args.case == "integrity-observers" or record.args.case == "gui-lifecycle")
     if record.document_epoch == old_epoch and not is_active_transition and not is_cross_epoch_wait and
         not is_lifecycle_acceptance then
       to_cancel[#to_cancel + 1] = record

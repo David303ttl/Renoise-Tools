@@ -85,9 +85,8 @@ do
    'restored ID did not hydrate the matching old source and settings')
  assert(not restored.draft and seq.same_source(restored.source,ctx:editor_state().source),
   'newer revision draft was attached to the restored phrase')
- local recovery=cache.list(song)
- assert(#recovery==1 and seq.same_source(recovery[1].pattern,draft),
-  'undo did not retain the newer revision draft as detached recovery')
+ assert(cache.has_volatile(song),
+  'undo did not retain the newer revision draft as session-only data')
  assert(store.read_entry(song,101) and store.read_entry(song,103),
   'native reconciliation removed an immutable source revision')
  assert(ctx:generation_state().last_commit==nil,
@@ -96,31 +95,38 @@ do
 end
 
 -- Unrelated undo leaves the current editor draft attached; matching undo
--- detaches it once, while a clean committed editor creates no recovery copy.
+-- detaches it once, while a clean committed editor creates no session-only draft.
 do
  local song,inst,a,b,source=fixture()
  local ctx=runtime(song)
+ local detach=cache.detach_for_native_revision
+ local detach_count=0
+ cache.detach_for_native_revision=function(...)
+  local detached=detach(...)
+  if detached then detach_count=detach_count+1 end
+  return detached
+ end
  assert(ctx:restore_editor_target(inst,a))
  local edited=seq.copy_source(source)
  edited.pitch_events[1]=seq.new_pitch(7,0,false,false)
  assert(ctx:transition('edit',{source=edited,output_policy='play_once',pb_range=0}))
  assert(ctx:notify_native_change('undo',b))
- assert(ctx:editor_state() and #cache.list(song)==0,
+ assert(ctx:editor_state() and detach_count==0 and not cache.has_volatile(song),
   'an unrelated phrase undo detached or hid the current editor draft')
  assert(ctx:notify_native_change('undo',a))
  assert(ctx:editor_state()==nil,'undo of the edited phrase left its stale editor visible')
- local recovery=cache.list(song)
- assert(#recovery==1 and seq.same_source(recovery[1].pattern,edited),
-  'matching undo did not preserve the dirty editor values for recovery')
- assert(ctx:notify_native_change('undo',a) and #cache.list(song)==1,
-  'duplicate undo notifications created duplicate recovery entries')
+ assert(detach_count==1 and cache.has_volatile(song),
+  'matching undo did not retain a detached session draft')
+ assert(ctx:notify_native_change('undo',a) and detach_count==1,
+  'duplicate undo notifications detached the same draft twice')
+ cache.detach_for_native_revision=detach
  ctx:release_document()
 
  local clean_song,clean_inst,clean_phrase=fixture()
  local clean=runtime(clean_song)
  assert(clean:restore_editor_target(clean_inst,clean_phrase))
  assert(clean:notify_native_change('undo',clean_phrase))
- assert(#cache.list(clean_song)==0,
+ assert(not cache.has_volatile(clean_song),
   'undo of a clean committed editor created a spurious recovery draft')
  clean:release_document()
 end

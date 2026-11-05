@@ -138,11 +138,6 @@ function M.diagnostic()
   return { code = last_diagnostic.code, message = last_diagnostic.message }
 end
 
-function M.clear_integrity_blocker(song)
-  if song ~= nil then integrity_errors[song] = nil end
-  if last_diagnostic and last_diagnostic.code == "transaction.blocker_recording" then last_diagnostic = nil end
-end
-
 local function set_diagnostic(code, message)
   last_diagnostic = { code = code, message = tostring(message) }
 end
@@ -178,6 +173,16 @@ local function checkpoint(request)
   return true
 end
 
+local function origin_checkpoint(request,candidate)
+  if request.operation~="duplicate" then return true end
+  if type(request.validate_origin_checkpoint)~="function" then
+    return false,"Duplicate origin authorization is unavailable"
+  end
+  local ok,valid,reason=pcall(request.validate_origin_checkpoint,request,candidate)
+  if not ok then return false,"Cannot inspect duplicate origin authorization" end
+  return valid==true,reason or "Duplicate origin authorization changed"
+end
+
 local function lpb_timing(song)
   local ok, valid = pcall(function()
     return renoise.Transport.TIMING_MODEL_LPB ~= nil and
@@ -210,6 +215,10 @@ local function prepare(request, done, kind)
   if type(request) ~= "table" then return nil, failure(request, "source.request", "source", "A runtime request is required") end
   if type(done) ~= "function" then return nil, failure(request, "source.callback", "source", "A terminal callback is required") end
   if request.kind ~= kind then return nil, failure(request, "source.request_kind", "source", "Request kind does not match the writer operation") end
+  if request.operation~=nil and request.operation~="duplicate" or
+      request.operation=="duplicate" and kind~="create" then
+    return nil,failure(request,"source.operation","source","Invalid writer operation intent")
+  end
   if request.token == nil then return nil, failure(request, "source.token", "source", "A request token is required") end
   if not policies.valid_output_policy(request.output_policy) then
     return nil, failure(request, "source.output_policy", "source", "Invalid phrase output policy")
@@ -297,7 +306,8 @@ local function prepare(request, done, kind)
     return nil, failure(request, "safety.phrase_capacity", "safety", "No phrase slot is available for the new phrase")
   end
   local output, planning_error = output_planner.plan_for_materialization(request.source, request.output_policy, request.pb_range,
-    limits, profile, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled })
+    limits, profile, { pitch_bend_delivery = phrase_pitch_bend.delivery_enabled },
+    request.prepared_resolution)
   if not output then return nil, failure(request, "phrase.unrepresentable", "phrase", planning_error) end
   if replace then
     local safe, preflight_error = validator.preflight_destination(baseline.snapshot, output)
@@ -315,13 +325,21 @@ local function prepare(request, done, kind)
   local guard = function()
     return token_current(request)
   end
+  local committed_label=request.label
+  if request.target_kind=="new" and request.label_custom~=true then committed_label=nil end
   local candidate, candidate_error = store.prepare_revision(song, id, output.source, request.output_policy,
-    request.pb_range, guard, request.draft_capture)
+    request.pb_range, guard, request.draft_capture,
+    committed_label,request.label_custom)
   if not candidate then return nil, failure(request, "transaction.persistence_prepare", "transaction", candidate_error) end
   local valid, checkpoint_error = checkpoint(request)
   if not valid then
     store.release_candidate(candidate)
     return nil, failure(request, "safety.target_changed", "safety", checkpoint_error)
+  end
+  valid,checkpoint_error=origin_checkpoint(request)
+  if not valid then
+    store.release_candidate(candidate)
+    return nil,failure(request,"safety.duplicate_origin","safety",checkpoint_error)
   end
   return {
     kind = kind, request = request, done = done, token = request.token, epoch = request.epoch,
@@ -371,6 +389,10 @@ end
 
 local function restore_source(job)
   local status = store.candidate_status(job.store_candidate)
+  if not status or not status.write_attempted then
+    job.committed=false
+    return true
+  end
   if status and status.written_verified then
     local ok, current = pcall(function() return job.song.tool_data end)
     job.committed = ok and current == status.written_raw
@@ -442,7 +464,22 @@ local function rollback(job, phrase, preimage, reason,restore_phrase)
       end
       if still_authorized then
         local restored, restore_error = materializer.restore(phrase, preimage, limits_for_writer(job.limits))
-        if not restored then errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error) end
+        if not restored then
+          errors[#errors + 1] = "phrase restore failed: " .. tostring(restore_error)
+        elseif job.replace and job.written_name then
+          local name_ok,current_name=pcall(function()return phrase.name end)
+          if not name_ok then
+            errors[#errors+1]="phrase name changed before transaction rollback"
+          elseif current_name==job.written_name then
+            local restored_name=pcall(function()phrase.name=job.baseline.snapshot.name end)
+            local verify_name,actual_name=pcall(function()return phrase.name end)
+            if not restored_name or not verify_name or actual_name~=job.baseline.snapshot.name then
+              errors[#errors+1]="phrase name did not restore to its captured preimage"
+            end
+          elseif current_name~=job.baseline.snapshot.name then
+            errors[#errors+1]="phrase name changed before transaction rollback"
+          end
+        end
       else
         errors[#errors + 1]="destination changed before phrase rollback: "..tostring(authorization_error)
       end
@@ -503,6 +540,8 @@ local function mutation_body(job)
   if not job.replace then
     local before = inventory(job.instrument)
     if not same_inventory(job.inventory_before, before) then error("Instrument phrase inventory changed before create", 0) end
+    local authorized,origin_error=origin_checkpoint(request)
+    if not authorized then error(origin_error,0) end
     local inserted
     inserted, returned = pcall(function()
       return job.instrument:insert_phrase_at(#job.instrument.phrases + 1)
@@ -565,6 +604,7 @@ local function mutation_body(job)
   if type(verified_output) ~= "table" then error("Materializer returned no verified output receipt", 0) end
   local named, name_error = set_phrase_name(phrase, job.id, verified_output)
   if not named then error(name_error, 0) end
+  job.written_name=named
   local final_index = phrase_index(job.instrument, phrase)
   if not final_index then error("Committed phrase object is no longer uniquely present", 0) end
   local inventory_after = inventory(job.instrument)
@@ -574,6 +614,8 @@ local function mutation_body(job)
     error("Create inventory no longer contains only the generated phrase addition", 0)
   end
   if job.cancel_requested or not token_current(request) then error("Generation was invalidated before source commit", 0) end
+  local authorized,origin_error=origin_checkpoint(request)
+  if not authorized then error(origin_error,0) end
   local committed, commit_error = store.commit(job.song, job.store_candidate)
   if not committed then error("Source revision commit failed: " .. tostring(commit_error), 0) end
   job.committed = true
@@ -591,6 +633,8 @@ local function mutation_body(job)
   if not sequencer.same_source(classified.source, job.output.source) then
     error("final phrase source snapshot differs from frozen input", 0)
   end
+  authorized,origin_error=origin_checkpoint(request,job.store_candidate)
+  if not authorized then error(origin_error,0) end
   local baseline = { id = job.id, source = classified.source, settings = classified.settings,
     snapshot = classified.baseline, planning_inputs = classified.planning_inputs }
   if job.cancel_requested or not token_current(request) then error("Generation was invalidated during source commit", 0) end

@@ -16,16 +16,41 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local parent_by_child={}
+  local default_size={width=0,height=0}
+  local sizes=setmetatable({},{__mode="k"})
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child;parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then table.remove(parent.views,index);parent_by_child[child]=nil;return end
+    end
+    error("view is not a child")
+  end
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
+    setmetatable(node,{__index=function(view,key)
+      if key=="size" then return sizes[view] or default_size end
+    end,__newindex=function(view,key,value)
+      if key=="size" then sizes[view]=value~=default_size and value or nil
+      else rawset(view,key,value) end
+    end})
     for key,value in pairs(properties or {}) do
-      if type(key)=="number" then node.views[#node.views+1]=value
+      if type(key)=="number" then add_view(node,value)
       else node[key]=value end
     end
     if node.id then builder.views[node.id]=node end
     builder.nodes[#builder.nodes+1]=node
-    function node:add_child(child) self.views[#self.views+1]=child end
+    function node:add_view(child) add_view(self,child) end
+    function node:remove_view(child) remove_view(self,child) end
+    node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
+    function node:update()
+      assert(self.kind=="canvas")
+      self.render({size=self.size,stroke_rect=function() end})
+    end
     function node:fire(value)
       self.value=value
       if self.notifier then self.notifier(value) end
@@ -40,7 +65,8 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={},
+  preferences={custom_scales={value=""}}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="Owned two"}
@@ -79,7 +105,8 @@ local function read_entry(_,id)
   if not entry then return nil,"test source revision is missing" end
   return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end
-package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+local valid_label=require("renoise.pattern_store").valid_label
+package.loaded["renoise.pattern_store"]={valid_label=valid_label,load=function(_,instrument,phrase)
   local entry=committed_entries[phrase.id]
   if not entry then
     local source=sequencer.new_pattern(16)
@@ -90,7 +117,7 @@ package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
   return assert(sequencer.copy_source(entry.source)),entry.policy,entry.pb_range
 end,
   read_entry=read_entry,
-  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+  write_draft_metadata=function(song,instrument,phrase,pattern,policy,pb_range)
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end
@@ -118,11 +145,7 @@ package.loaded["renoise.phrase_ownership"]={
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
-  matches_recovery=function(_,token)return type(token)=="table" end,
-  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
-package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
-package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 local active_request
 local function terminal_result(call,status,message)
@@ -198,22 +221,6 @@ package.loaded["writers.phrase_writer"]={
   end
 }
 
-local editor_module=require("model.editor_state")
-local force_diagnostic=false
-package.loaded["model.editor_state"]={
-  MAX_PAGES=editor_module.MAX_PAGES,
-  project=function(pattern)
-    if force_diagnostic then
-      return {error={step=3,pitch_index=2,message="TIME step 03: test diagnostic."},
-        used={},mapping={},repeat_mapping={},note_count=0}
-    end
-    return editor_module.project(pattern)
-  end,
-  new_history=editor_module.new_history,
-  index_on_page=editor_module.index_on_page,
-  page_for=editor_module.page_for,
-  step_text=editor_module.step_text
-}
 renoise={
   song=function()return song end,
   tool=function()return tool end,
@@ -228,6 +235,10 @@ dofile("tests/acid/gui_host_stub.lua")
 local function open_gui()
   require("gui").show()
   return current_builder,dialogs[#dialogs]
+end
+local function pitch_key(builder,index)
+  return assert(builder.views[string.format("acid_program_key_%02d",index)],
+    "missing PITCH key button "..index)
 end
 local function button(builder,label)
   for _,node in ipairs(builder.nodes) do
@@ -248,42 +259,35 @@ end
 
 local builder,dialog=open_gui()
 local timing=builder.views.acid_timing
-local generate=button(builder,"Generate / Regenerate ACID Phrase")
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",builder.views.acid_source_state.text)
+local generate=button(builder,"Generate")
 generate:fire()
 local manual=tool.writer_calls[#tool.writer_calls]
 assert(manual.pattern.timing_mode=="straight" and manual.options.token:is_current(),
   "manual generation starts with a current straight snapshot")
 timing:fire(2)
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
-assert(builder.views.acid_source_diagnostic.text:find("cycle 16/3 beats",1,true))
 builder.views.acid_editor_view:fire(2)
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 button(builder,"Undo"):fire()
-assert(timing.value==1 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+assert(timing.value==1)
 button(builder,"Redo"):fire()
-assert(timing.value==2 and builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
+assert(timing.value==2)
 assert(not manual.options.token:is_current(),
   "changing timing invalidates the pending manual render")
 render_callbacks[#render_callbacks](terminal_result(manual,"suspended","invalidated"))
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 generate:fire()
 local manual_call=tool.writer_calls[#tool.writer_calls]
 render_callbacks[#render_callbacks](terminal_result(manual_call,"committed","saved"))
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",
-  "a successful current generation clears the dirty indication")
 timing:fire(2)
 
 
 local live_checkbox
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="checkbox" and node.value==false then live_checkbox=node end
+  if node.id=="acid_live_edit" then live_checkbox=node end
 end
 assert(live_checkbox)
 live_checkbox:fire(true)
 local before_live_edit=#tool.writer_calls
 assert(before_live_edit==2,"arming Live Edit does not write")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 local first=tool.writer_calls[#tool.writer_calls]
 assert(first.pattern.timing_mode=="triplet" and first.options.token:is_current(),
@@ -298,7 +302,6 @@ assert(second~=first and second.pattern.timing_mode=="straight" and second.optio
   "Live Edit queues the newest timing after the stale render settles")
 local live_result=terminal_result(second,"committed","saved")
 render_callbacks[#render_callbacks](live_result)
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED")
 live_checkbox:fire(false)
 
 
@@ -308,12 +311,10 @@ assert(pb_range_popup(builder).value==2, "timing edits retain phrase one PB Rang
 phrase_choice:fire(2)
 assert(timing.value==2 and pb_range_popup(builder).value==5,
   "phrase two restores its committed timing and separate PB Range")
-assert(builder.views.acid_source_state.text=="SOURCE COMMITTED",builder.views.acid_source_state.text)
 timing:fire(1)
 phrase_choice:fire(1)
 assert(timing.value==2 and pb_range_popup(builder).value==2,
   "switching back restores phrase one's timing draft and PB Range")
-assert(builder.views.acid_source_state.text:find("SOURCE DIRTY",1,true))
 phrase_choice:fire(2)
 assert(timing.value==1 and pb_range_popup(builder).value==5,
   "phrase two retains its independent timing draft")
@@ -341,12 +342,12 @@ assert(timing.value==2 and pb_range_popup(builder).value==1,
   "the second instrument retains its own uncommitted timing")
 local reopened_live
 for _,node in ipairs(builder.nodes) do
-  if node.kind=="checkbox" and node.value==false then reopened_live=node end
+  if node.id=="acid_live_edit" then reopened_live=node end
 end
 assert(reopened_live)
 reopened_live:fire(true)
 local before_append=#tool.writer_calls
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 tool.app_idle_observable:fire()
 assert(#tool.writer_calls==before_append+1,"an edit requests the armed append")
 local append=tool.writer_calls[#tool.writer_calls]
@@ -360,11 +361,11 @@ assert(other_instrument.phrases[2]==other_foreign,
   "foreign phrase remains untouched during Live Edit recovery")
 append_callback(terminal_result(append,"suspended","invalidated"))
 assert(#tool.writer_calls==before_append+1,"navigation does not queue an append")
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 assert(#tool.writer_calls==before_append+1,
   "foreign selection never redirects its source to append")
 phrase_choice:fire(3)
-builder.views.acid_program_key_popup:fire(3)
+pitch_key(builder,3):fire()
 tool.app_idle_observable:fire()
 local explicit_new=tool.writer_calls[#tool.writer_calls]
 assert(explicit_new~=append and explicit_new.instrument_index==2 and explicit_new.target==3 and

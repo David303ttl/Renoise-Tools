@@ -20,8 +20,8 @@ $warmProfile = Resolve-AcidAcceptanceProfile -AcceptanceCase 'editor-responsiven
 $detailedProfile = Resolve-AcidAcceptanceProfile -AcceptanceCase 'multi-instrument-workflow' -Profile Detailed -Explicit
 Assert ($warmProfile.Applies -and $warmProfile.Profile -ceq 'Warm') 'editor responsiveness did not default to Warm instrumentation'
 Assert ($detailedProfile.Applies -and $detailedProfile.Profile -ceq 'Detailed') 'Detailed profile did not resolve for multi-instrument workflow'
-Assert (-not (Resolve-AcidAcceptanceProfile -AcceptanceCase 'make-independent').Applies) 'profile selection applied to an unrelated acceptance case'
-Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'make-independent' -Profile Detailed -Explicit } 'only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow'
+Assert (-not (Resolve-AcidAcceptanceProfile -AcceptanceCase 'ownership-negatives').Applies) 'profile selection applied to an unrelated acceptance case'
+Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'ownership-negatives' -Profile Detailed -Explicit } 'only valid with -AcceptanceCase editor-responsiveness or multi-instrument-workflow'
 Reject { Resolve-AcidAcceptanceProfile -AcceptanceCase 'editor-responsiveness' -Profile Verbose -Explicit } 'Warm|Detailed'
 $metadataReads = [pscustomobject]@{ Count = 0 }
 $metadataStart = [datetime]::UtcNow
@@ -287,6 +287,7 @@ New-Item -ItemType Directory $fixturePreflightRoot | Out-Null
 try {
     [IO.File]::WriteAllText((Join-Path $fixturePreflightRoot 'alpha.xrns'), 'fixture')
     Assert ((Assert-AcidScenarioFixtures -Directory $fixturePreflightRoot -Scenarios @(@{ name='alpha'; fixture='alpha.xrns' })) -eq 1) 'staged fixture preflight did not accept a registered fixture'
+    Assert ((Assert-AcidScenarioFixtures -Directory $fixturePreflightRoot -Scenarios @()) -eq 1) 'acceptance-only fixture preflight rejected an empty catalog selection'
     Reject { Assert-AcidScenarioFixtures -Directory $fixturePreflightRoot -Scenarios @(@{ name='missing'; fixture='missing.xrns' }) } 'requires missing staged fixture'
 } finally {
     Remove-Item -LiteralPath $fixturePreflightRoot -Recurse -Force
@@ -540,7 +541,7 @@ try {
         [IO.Directory]::Delete($junctionPath, $false)
     }
 
- foreach ($case in @('unchanged','changed','changed-empty-directory','changed-empty-fixtures','reparse','partial','failed-launch','bad-backup')) {
+ foreach ($case in @('unchanged','changed','changed-empty-directory','changed-empty-fixtures','reparse','partial','transient-remove','partial-remove-with-change','failed-launch','bad-backup')) {
     $toolsPath = Join-Path $root $case
     $artifactRoot = Join-Path $toolsPath 'artifacts'
     New-Item -ItemType Directory $artifactRoot -Force | Out-Null
@@ -619,6 +620,37 @@ try {
         if ($case -eq 'changed-empty-directory') {
             Assert (Test-Path (Join-Path $installedToolPath 'empty-added-during-run') -PathType Container) 'restoration removed an added empty directory'
         }
+    } elseif ($case -in @('transient-remove','partial-remove-with-change')) {
+        $script:runnerRemoveAttempts = 0
+        $removeAction = {
+            param($Target)
+            $script:runnerRemoveAttempts++
+            if ($script:runnerRemoveAttempts -eq 1) {
+                Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $Target 'main.lua') -Force
+                if ($case -eq 'partial-remove-with-change') {
+                    Set-Content -LiteralPath (Join-Path $Target 'unexpected.lua') 'changed during restoration'
+                }
+                throw [IO.IOException]::new('injected transient directory lock')
+            }
+            Microsoft.PowerShell.Management\Remove-Item -LiteralPath $Target -Recurse -Force -ErrorAction Stop
+        }
+        if ($case -eq 'transient-remove') {
+            $preferencesPath = Join-Path $installedToolPath 'preferences.xml'
+            Set-Content -LiteralPath $preferencesPath '<Preferences />'
+            $preferencesHash = (Get-FileHash -LiteralPath $preferencesPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            $operation = Get-RenoiseRestorationOperation
+            . $operation $removeAction
+            Assert ($script:runnerRemoveAttempts -eq 2) 'transient directory lock was not retried exactly once'
+            $preservedPreferences = Join-Path $artifactRoot 'generated-preferences.xml'
+            Assert ((Get-FileHash -LiteralPath $preservedPreferences -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $preferencesHash) 'generated preferences.xml was not preserved byte-for-byte'
+        } else {
+            $operation = Get-RenoiseRestorationOperation
+            Reject { . $operation $removeAction } 'changed during restoration'
+            Assert ($script:runnerRemoveAttempts -eq 1) 'restoration retried after a partial removal revealed an unexpected file'
+            Assert (Test-Path -LiteralPath (Join-Path $installedToolPath 'unexpected.lua')) 'restoration deleted a file added after the partial removal'
+            Assert (Test-Path -LiteralPath $localBackupToolPath -PathType Container) 'partial changed installation lost its restoration backup'
+            continue
+        }
     } else {
         . ([scriptblock]::Create((Get-RenoiseRestorationOperation)))
         Assert ((Get-DirectoryHash $installedToolPath) -eq $originalHash) "restoration failed: $case"
@@ -638,15 +670,24 @@ Assert ($reportLine.Count -eq 1) 'runner failed to emit a report'
 $runReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($runReport.status -eq 'ERROR' -and $runReport.error -match 'TestEnvironment.Keyboard.ShowShortcut') 'missing shortcut did not fail clearly'
 Assert ($runReport.keyboard.negative_cases[0].name -eq 'missing_mapping' -and $runReport.keyboard.negative_cases[0].input_sent -eq $false) 'missing mapping guard did not report a no-input negative case'
-$coldPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase make-independent -ColdProcessRoundTrip -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
-Assert ($LASTEXITCODE -ne 0) 'cold-process run accepted a selected Renoise PID'
-$coldPidReportLine = @($coldPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-Assert ($coldPidReportLine.Count -eq 1) 'cold-process PID rejection did not emit a report'
-$coldPidReport = Get-Content -LiteralPath $coldPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
-Assert ($coldPidReport.error -match 'requires the runner to launch and own') 'cold-process PID rejection was not explicit'
+$retiredCaseInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase make-independent -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'retired Make Independent acceptance case remained enabled'
+$retiredCaseReportLine = @($retiredCaseInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($retiredCaseReportLine.Count -eq 1) 'retired-case rejection did not emit a report'
+$retiredCaseReport = Get-Content -LiteralPath $retiredCaseReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($retiredCaseReport.error -match 'Unsupported native acceptance case') 'retired-case rejection was not explicit'
+$metadataPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase metadata-recovery -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'metadata recovery cold reopen accepted a selected Renoise PID'
+$metadataPidReportLine = @($metadataPidInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($metadataPidReportLine.Count -eq 1) 'metadata recovery PID rejection did not emit a report'
+$metadataPidReport = Get-Content -LiteralPath $metadataPidReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($metadataPidReport.error -match 'requires a runner-owned process' -and
+    @($metadataPidReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+    'metadata recovery did not reject an unowned PID before starting Renoise'
 $profileRejectedInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase make-independent -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
+    -Suite Native -AcceptanceCase ownership-negatives -AcceptanceProfile Detailed -ApproveDisposableSong 2>&1
 Assert ($LASTEXITCODE -ne 0) 'runner accepted a profile option for an unrelated native case'
 $profileRejectedReportLine = @($profileRejectedInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
 Assert ($profileRejectedReportLine.Count -eq 1) 'profile rejection did not emit a run report'
@@ -673,15 +714,29 @@ $coldAcceptanceFunction = $runnerAst.Find({ param($node)
 }, $true)
 Assert ($null -ne $coldAcceptanceFunction -and $coldAcceptanceFunction.Extent.Text -match "Invoke-RenoiseDriverBootstrap" -and
     $coldAcceptanceFunction.Extent.Text -match "Assert-RenoiseProcessIdentity") 'cold-process flow does not bootstrap and identity-check the newly launched host'
-Assert ($runnerAst.Extent.Text -match "-Case 'cold-reopen-regenerate'" -and $runnerAst.Extent.Text -match "-Case 'cold-reopen-verify'") 'cold-process round trip does not regenerate and reopen its saved generation'
-Assert ($runnerAst.Extent.Text -match "'independence-undo-prepare'" -and
+Assert ($runnerAst.Extent.Text -match 'Invoke-ColdProcessAcceptance -SongPath \$recoverySongPath -Case \$coldRecoveryCase') 'metadata cold-process verification is not run against its saved fixture'
+Assert ($runnerAst.Extent.Text -notmatch "'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-live-undo-prepare'" -and
     $runnerAst.Extent.Text -match 'case = \$undoPrepareCase' -and
     $runnerAst.Extent.Text -match "-Keys '\{Enter\}'" -and
-    $runnerAst.Extent.Text -match '\$undoCallbackAcceptance' -and
+    $runnerAst.Extent.Text -notmatch 'undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
 Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
+& {
+    $transportAssignment = $runnerAst.Find({ param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -eq '$transportOnly'
+    }, $true)
+    $Suite = 'Native'
+    $Scenario = 'transport'
+    $AcceptanceCase = 'metadata-recovery'
+    . ([scriptblock]::Create($transportAssignment.Extent.Text))
+    Assert (-not $transportOnly) 'transport selection omitted fixtures needed by native acceptance'
+    $AcceptanceCase = ''
+    . ([scriptblock]::Create($transportAssignment.Extent.Text))
+    Assert $transportOnly 'transport smoke unnecessarily enabled native fixture deployment'
+}
 foreach ($case in @('production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery')) {
     $rejected = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
         -Suite Native -AcceptanceCase $case -ApproveDisposableSong 2>&1

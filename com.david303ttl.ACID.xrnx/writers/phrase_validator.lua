@@ -255,11 +255,6 @@ local function preflight(snapshot,output,allow_visibility_expansion)
   return true
 end
 
--- Preflight consumes a detached baseline and a plan derived from the proposed source.
-function M.preflight(snapshot,output)
-  return protected(preflight,snapshot,output,false)
-end
-
 -- Destination writes may raise visibility to the planner's requirements.
 function M.preflight_destination(snapshot,output)
   return protected(preflight,snapshot,output,true)
@@ -407,13 +402,6 @@ local function compatibility(phrase,committed,capabilities,capacities,options,ve
   end
   return {kind="owned",baseline=baseline,output=output,source=output.source,settings=output.settings,
     planning_inputs=inputs}
-end
-
--- Complete compatibility authorizes only the saved source/output association.
--- verify() checks an intermediate renderer payload; it is not ownership permission.
-function M.compatibility(phrase,committed,capabilities,capacities,options,...)
-  if select("#",...)>0 then return nil,"Ownership exclusions are not supported" end
-  return protected(compatibility,phrase,committed,capabilities,capacities,options)
 end
 
 local function classify(song,instrument,phrase,capabilities,capacities,options,verified_snapshot,verified_index,

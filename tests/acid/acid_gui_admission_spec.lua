@@ -16,16 +16,41 @@ end
 
 local function view_builder()
   local builder={views={},nodes={}}
+  local parent_by_child={}
+  local default_size={width=0,height=0}
+  local sizes=setmetatable({},{__mode="k"})
+  local function add_view(parent,child)
+    if parent_by_child[child] then error("view already has a parent") end
+    parent.views[#parent.views+1]=child;parent_by_child[child]=parent
+  end
+  local function remove_view(parent,child)
+    for index,current in ipairs(parent.views) do
+      if rawequal(current,child) then table.remove(parent.views,index);parent_by_child[child]=nil;return end
+    end
+    error("view is not a child")
+  end
   local function construct(kind,properties)
     local node={kind=kind,views={},notifiers={}}
+    setmetatable(node,{__index=function(view,key)
+      if key=="size" then return sizes[view] or default_size end
+    end,__newindex=function(view,key,value)
+      if key=="size" then sizes[view]=value~=default_size and value or nil
+      else rawset(view,key,value) end
+    end})
     for key,value in pairs(properties or {}) do
-      if type(key)=="number" then node.views[#node.views+1]=value
+      if type(key)=="number" then add_view(node,value)
       else node[key]=value end
     end
     if node.id then builder.views[node.id]=node end
     builder.nodes[#builder.nodes+1]=node
-    function node:add_child(child) self.views[#self.views+1]=child end
+    function node:add_view(child) add_view(self,child) end
+    function node:remove_view(child) remove_view(self,child) end
+    node.add_child=node.add_view;node.remove_child=node.remove_view
     function node:add_notifier(handler) self.notifiers[#self.notifiers+1]=handler end
+    function node:update()
+      assert(self.kind=="canvas")
+      self.render({size=self.size,stroke_rect=function() end})
+    end
     function node:fire(value)
       self.value=value
       if self.notifier then self.notifier(value) end
@@ -40,7 +65,8 @@ local function view_builder()
 end
 
 local tool={app_new_document_observable=observable(),app_release_document_observable=observable(),
-  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={}}
+  app_idle_observable=observable(),tool_will_unload_observable=observable(),writer_calls={},
+  preferences={custom_scales={value=""}}}
 
 local phrase_one={id=11,name="Owned one"}
 local phrase_two={id=12,name="Owned two"}
@@ -64,16 +90,28 @@ function app:show_custom_dialog(_,content)
   return dialog
 end
 function app:show_warning(message) warnings[#warnings+1]=message end
+function app:show_prompt(title)
+  error("Unexpected confirmation: "..tostring(title))
+end
 
 local persisted_drafts={}
+local persisted_entries={}
 local fail_draft_persistence=false
 local fail_draft_clear=false
-package.loaded["renoise.pattern_store"]={load=function(_,instrument,phrase)
+local draft_save_attempts=0
+local valid_label=require("renoise.pattern_store").valid_label
+package.loaded["renoise.pattern_store"]={valid_label=valid_label,load=function(_,instrument,phrase)
+  local committed=persisted_entries[phrase.id]
+  if committed then
+    return assert(require("model.sequencer").copy_source(committed.source)),
+      committed.output_policy,committed.pb_range
+  end
   local source=require("model.sequencer").new_pattern(16)
   if phrase.id==12 then source.timing_mode="triplet" end
   return source,"repeat",phrase.id==11 and 2 or phrase.id==12 and 48 or 0
 end,
-  write_draft=function(song,instrument,phrase,pattern,policy,pb_range)
+  write_draft_metadata=function(song,instrument,phrase,pattern,policy,pb_range)
+    draft_save_attempts=draft_save_attempts+1
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id,name=phrase and phrase.id or 0,instrument.name
     if fail_draft_persistence then return nil,"test persistence failure" end
@@ -89,6 +127,11 @@ end,
     assert(item.name==name)
     return item.pattern,item.policy,item.pb_range
   end,
+  read_entry=function(_,id)
+    local item=persisted_entries[id]
+    if not item then return nil end
+    return item.source,item.output_policy,item.pb_range
+  end,
   clear_draft=function(song,instrument,phrase)
     local index;for i,candidate in ipairs(song.instruments) do if rawequal(candidate,instrument) then index=i;break end end
     local phrase_id=phrase and phrase.id or 0
@@ -102,14 +145,11 @@ package.loaded["renoise.phrase_ownership"]={
   id=function(phrase)if phrase.foreign then return nil end;return phrase.id end,
   snapshot_index=function()return nil end,
   capture_recovery=function()return {} end,
-  matches_recovery=function(_,token)return type(token)=="table" end,
-  recovery_matches_snapshot=function(token)return type(token)=="table" end
 }
-package.loaded["renoise.selection_context"]={inspect_selection=function()return "selection" end}
-package.loaded["renoise.sampler_audit"]={describe=function()return "sampler" end}
 local render_callbacks={}
 local active_request
 local sync_next_result
+local preserve_target_on_sync_success=false
 local function terminal_result(call,status,message)
   local success=status=="committed" or status=="approximate"
   local phrase=call.phrase or call.request.phrase
@@ -118,10 +158,24 @@ local function terminal_result(call,status,message)
     phrase=success and phrase or nil,reason=success and nil or (message or "fixture complete"),
     message=message or "fixture complete"}
   if success then
-    result.baseline={id=phrase and phrase.id,source=call.request.source,
-      settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
-      snapshot=call.request.baseline and call.request.baseline.snapshot or {},
-      planning_inputs=call.request.planning_inputs or {capabilities={},capacities={},options={}}}
+    if phrase and phrase.id and call.request.token:is_current() then
+      persisted_entries[phrase.id]={source=call.request.source,
+        output_policy=call.request.output_policy,pb_range=call.request.pb_range}
+    end
+    local candidate
+    if call.request.kind=="create" and phrase then
+      local ok,value=pcall(function()
+        return require("writers.phrase_validator").classify(call.request.song,
+          call.request.instrument,phrase,{},{},{})
+      end)
+      if ok then candidate=value end
+    end
+    result.baseline=candidate and {id=phrase.id,source=candidate.source,settings=candidate.settings,
+      snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs} or
+      {id=phrase and phrase.id,source=call.request.source,
+        settings={output_policy=call.request.output_policy,pb_range=call.request.pb_range},
+        snapshot=call.request.baseline and call.request.baseline.snapshot or {},
+        planning_inputs=call.request.planning_inputs or {capabilities={},capacities={},options={}}}
   end
   return result
 end
@@ -157,7 +211,7 @@ local function start(kind,request,done)
   if sync_next_result then
     local status=sync_next_result
     sync_next_result=nil
-    if status=="committed" and kind=="regenerate" then
+    if status=="committed" and kind=="regenerate" and not preserve_target_on_sync_success then
       request:mutate(request.token,function() request.phrase.id=request.phrase.id+100 end)
     end
     render_callbacks[callback_index](terminal_result(call,status))
@@ -198,6 +252,10 @@ local function button(builder,label)
   end
   error("missing button: "..label)
 end
+local function pitch_key(builder,index)
+  return assert(builder.views[string.format("acid_program_key_%02d",index)],
+    "missing PITCH key button "..index)
+end
 local function popup(builder,width)
   for _,node in ipairs(builder.nodes) do
     if node.kind=="popup" and node.width==width then return node end
@@ -228,20 +286,26 @@ context_module.new=function(options)
   return context
 end
 local function live_control(builder)
-  local selected
-  for _,node in ipairs(builder.nodes) do
-    if node.kind=="checkbox" then selected=node end
-  end
-  return assert(selected,"missing Live Edit checkbox")
+  return assert(builder.views.acid_live_edit,"missing Live Edit checkbox")
 end
-local function complete(index,status)
+local function complete(index,status,phrase)
   local call=tool.writer_calls[index]
+  call.phrase=phrase
   render_callbacks[index](terminal_result(call,status))
 end
 
 local builder,dialog=open_gui()
 assert(#contexts==1,"GUI must install one runtime context")
 assert(#admissions==0 and #tool.writer_calls==0,"opening must not request generation")
+assert(builder.views.acid_generate and builder.views.acid_generate.text=="Generate",
+  "the output action uses one Generate control")
+assert(builder.views.acid_pb_range.tooltip:find("receiver uses the same range",1,true) and
+  builder.views.acid_pb_range.tooltip:find("entire MIDI channel",1,true) and
+  builder.views.acid_pb_range.tooltip:find("isolated monophonic routing",1,true),
+  "bend range tooltip explains receiver assumptions and channel routing")
+for _,node in ipairs(builder.nodes) do
+  assert(node.text~="Retry Live Edit","Live Edit has no retry button")
+end
 local phrase_popup=popup(builder,360)
 local live=live_control(builder)
 live:fire(true)
@@ -249,14 +313,13 @@ phrase_popup:fire(2)
 phrase_popup:fire(1)
 builder.views.acid_editor_view:fire(2)
 builder.views.acid_editor_view:fire(1)
-button(builder,"Reset Source"):fire()
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
 builder.views.acid_pb_range:fire(builder.views.acid_pb_range.value)
 assert(#admissions==0 and #tool.writer_calls==0,
-  "arming, target/source restoration, view navigation, reset and no-op edits must make zero requests")
+  "arming, target/source restoration, view navigation and no-op edits must make zero requests")
 
 sync_next_result="error"
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==1 and #admissions==1 and admissions[1].trigger=="manual",
   "manual Generate must enter runtime admission: "..tostring(admissions[#admissions] and admissions[#admissions].reason))
 local manual=tool.writer_calls[1]
@@ -265,7 +328,7 @@ assert(manual.completed,"manual write and completion finish inside the Generate 
 builder.views.acid_timing:fire(builder.views.acid_timing.value)
 assert(#admissions==1 and manual.completed,
   "a no-op edit neither enqueues a duplicate nor changes completed state")
-builder.views.acid_program_key_popup:fire(2)
+pitch_key(builder,2):fire()
 assert(#tool.writer_calls==2 and #admissions==2 and admissions[2].trigger=="live",
   "armed edit must enter runtime admission inside the user edit callback")
 tool.app_idle_observable:fire()
@@ -283,72 +346,279 @@ local admission_count=#admissions
 builder,dialog=open_gui()
 assert(#contexts==1,"reopening retains the same runtime authority")
 assert(#admissions==admission_count,"reopen and draft restoration request nothing")
-local state_before=builder.views.acid_source_state.text
 local target_before=popup(builder,360).value
 complete(2)
-assert(builder.views.acid_source_state.text==state_before and popup(builder,360).value==target_before,
-  "old-session completion must not update reopened widgets or destination")
-
-fail_next_edit_transition=true
-builder.views.acid_program_key_popup:fire(3)
-local status_view
-for _,node in ipairs(builder.nodes) do
-  if node.kind=="multiline_textfield" then status_view=node end
-end
-assert(not fail_next_edit_transition and status_view and
-  status_view.text:find("DRAFT SAVE ERROR: session recovery only: Injected editor transition failure",1,true),
-  "a failed editor transition must not report a saved draft")
+assert(popup(builder,360).value==target_before,
+  "old-session completion must not update the reopened destination")
+phrase_popup=popup(builder,360)
 
 local context=contexts[#contexts]
+do
+  local phrase_popup=popup(builder,360)
+  local status=builder.views.acid_status
+  local failed_a=#tool.writer_calls+1
+  button(builder,"Generate"):fire()
+  assert(#tool.writer_calls==failed_a,"target A Generate was not admitted: "..tostring(admissions[#admissions].reason))
+  complete(failed_a,"error","target A failure detail")
+  assert(status.text:find("Couldn't update the phrase. Try again.",1,true),
+    "a current target A generation failure gets actionable feedback")
+  local restore=context.restore_editor_target
+  function context:restore_editor_target(...)
+    local restored=restore(self,...)
+    restored.draft_error="injected unreadable draft"
+    return restored
+  end
+  phrase_popup:fire(2)
+  context.restore_editor_target=restore
+  assert(not status.text:find("Couldn't update the phrase. Try again.",1,true),
+    "switching to B clears A-specific generation feedback")
+  local duplicate=context.request_duplicate
+  context.request_duplicate=function()return false,"injected duplicate admission detail"end
+  local writer_count=#tool.writer_calls
+  builder.views.acid_pattern_duplicate:fire()
+  context.request_duplicate=duplicate
+  local duplicate_failure="Couldn't duplicate the phrase. Try again."
+  local load_failure="Saved edits could not be loaded. Check the sequence before generating."
+  assert(status.text==load_failure.."\n"..duplicate_failure and #tool.writer_calls==writer_count,
+    "a rejected duplicate publishes its own failure without writing or raw details")
+  local succeeded_b=#tool.writer_calls+1
+  button(builder,"Generate"):fire()
+  assert(#tool.writer_calls==succeeded_b,"target B Generate was not admitted")
+  complete(succeeded_b,"approximate")
+  assert(not status.text:find("Couldn't update the phrase. Try again.",1,true) and
+    require("model.sequencer").same_source(context:editor_state().source,
+      tool.writer_calls[succeeded_b].request.source),
+    "verified target B success adopts B's source and clears A's generation failure")
+  assert(status.text==load_failure.."\n"..duplicate_failure..
+    "\nPhrase updated with a musical approximation.",
+    "approximation warning coexists with unresolved draft-load and Duplicate failures")
+  phrase_popup:fire(1)
+end
+do
+  local phrase_popup=popup(builder,360)
+  local status=builder.views.acid_status
+  local writer_count=#tool.writer_calls
+  button(builder,"Generate"):fire()
+  local stale_success=#tool.writer_calls
+  assert(stale_success==writer_count+1 and
+    tool.writer_calls[stale_success].request.phrase==phrase_one)
+  phrase_popup:fire(2)
+  builder.views.acid_clipboard_paste:fire()
+  assert(status.text:find("Copy a scope before pasting.",1,true),
+    "fixture creates B-scoped feedback before stale success: "..status.text)
+  local b_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
+  local b_revision=context:revision_state().edit_revision
+  local b_feedback=status.text
+  complete(stale_success,"committed")
+  assert(context:target_projection().phrase==phrase_two and
+    context:revision_state().edit_revision==b_revision and
+    require("model.sequencer").same_source(b_source,context:editor_state().source) and
+    status.text==b_feedback and not status.text:find("Phrase updated.",1,true),
+    "stale success for A cannot change B source, history or feedback")
+  phrase_popup:fire(1)
+  button(builder,"Generate"):fire()
+  local stale_failure=#tool.writer_calls
+  assert(stale_failure==stale_success+1 and
+    tool.writer_calls[stale_failure].request.phrase==phrase_one)
+  phrase_popup:fire(2)
+  builder.views.acid_clipboard_paste:fire()
+  b_feedback=status.text
+  complete(stale_failure,"error","stale A failure detail")
+  assert(status.text==b_feedback and not status.text:find("stale A failure detail",1,true) and
+    context:target_projection().phrase==phrase_two,
+    "stale failure for A cannot replace feedback for B")
+  phrase_popup:fire(1)
+end
+
+fail_next_edit_transition=true
+pitch_key(builder,3):fire()
+local status_view=builder.views.acid_status
+assert(not fail_next_edit_transition and status_view and
+  status_view.text=="Your latest edits could not be saved with the song.",
+  "a failed editor transition must not report a saved draft: "..tostring(status_view and status_view.text))
+fail_next_edit_transition=true
+button(builder,"Undo"):fire()
+local timing=builder.views.acid_timing
+timing:fire(timing.value==1 and 2 or 1)
+assert(not builder.views.acid_status.text:find(
+  "Edits to the previous phrase could not be saved with the song.",1,true),
+  "a successful save to the matching target clears its prior save warning")
+
+fail_next_edit_transition=true
+pitch_key(builder,4):fire()
+assert(rawequal(context:target_projection().phrase,phrase_one),"save-warning fixture starts on A")
+assert(builder.views.acid_status.text:find(
+  "Your latest edits could not be saved with the song.",1,true),
+  "the failed save fixture sets A's save issue")
+do
+  local status=builder.views.acid_status
+  local one_issue_height=status.height
+  local save_count,writer_count=draft_save_attempts,#tool.writer_calls
+  builder.views.acid_clipboard_paste:fire()
+  assert(status.text:find("Your latest edits could not be saved with the song.\nCopy a scope before pasting.",1,true) and
+    status.height>one_issue_height and status.visible and draft_save_attempts==save_count and
+    #tool.writer_calls==writer_count,
+    "save precedes input feedback and both issues receive space without saving or writing")
+  builder.views.acid_clipboard_copy:fire()
+  assert(status.text=="Your latest edits could not be saved with the song." and status.height==one_issue_height,
+    "successful Copy clears its input error and restores feedback height without hiding the save failure")
+end
+phrase_popup:fire(2)
+assert(rawequal(context:target_projection().phrase,phrase_two),"save-warning fixture switched from A to B")
+assert(builder.views.acid_status.text:find(
+  "Edits to the previous phrase could not be saved with the song.",1,true),
+  "switching away preserves A's failed save as a previous-target warning: "..builder.views.acid_status.text)
+timing:fire(timing.value==1 and 2 or 1)
+assert(builder.views.acid_status.text:find(
+  "Edits to the previous phrase could not be saved with the song.",1,true),
+  "saving target B cannot clear A's save warning")
+phrase_popup:fire(1)
+assert(builder.views.acid_status.text:find(
+  "Edits to the previous phrase could not be saved with the song.",1,true),
+  "returning to A does not clear its warning before a verified save")
+timing:fire(timing.value==1 and 2 or 1)
+assert(not builder.views.acid_status.text:find(
+  "Edits to the previous phrase could not be saved with the song.",1,true),
+  "a verified save to matching target A clears its previous-target warning")
+
+do
+  local restore=context.restore_editor_target
+  local injected_load_error=false
+  function context:restore_editor_target(...)
+    local restored=restore(self,...)
+    if not injected_load_error then
+      injected_load_error=true
+      restored.draft_error="injected unreadable draft"
+    end
+    return restored
+  end
+  local save_count,writer_count=draft_save_attempts,#tool.writer_calls
+  phrase_popup:fire(2)
+  assert(builder.views.acid_status.text=="Saved edits could not be loaded. Check the sequence before generating.",
+    "unreadable draft produces a target-specific load error without raw details")
+  phrase_popup:fire(1)
+  context.restore_editor_target=restore
+  assert(builder.views.acid_status.text=="" and draft_save_attempts==save_count and
+    #tool.writer_calls==writer_count,
+    "leaving an unreadable draft clears its load issue without inventing a failed save or writing")
+end
+
 local original=instrument.phrases[1]
+local writer_count=#tool.writer_calls
 instrument.phrases[1]={id=91,name="replacement",foreign=true}
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#tool.writer_calls==2,"removed same-index target must reject without append")
+button(builder,"Generate"):fire()
+assert(#tool.writer_calls==writer_count,"removed same-index target must reject without append")
 instrument.phrases[1]=original
 popup(builder,290):fire(2)
 popup(builder,360):fire(2)
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#tool.writer_calls==2,"foreign manual destination must reject without append")
+button(builder,"Generate"):fire()
+assert(#tool.writer_calls==writer_count,"foreign manual destination must reject without append")
 live_control(builder):fire(true)
-builder.views.acid_program_key_popup:fire(3)
-assert(#tool.writer_calls==2,"foreign Live Edit must reject without append")
+pitch_key(builder,3):fire()
+assert(#tool.writer_calls==writer_count,"foreign Live Edit must reject without append")
 
+local new_request_base=#tool.writer_calls
 popup(builder,360):fire(3)
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#tool.writer_calls==3 and tool.writer_calls[3].target==3,
+button(builder,"Generate"):fire()
+local create_request=#tool.writer_calls
+assert(create_request==new_request_base+1 and tool.writer_calls[create_request].target==3,
   "only explicitly selected New authorizes append")
-assert(tool.writer_calls[3].options.token:is_current(),"New uses runtime-issued authorization")
-complete(3,"error")
+assert(tool.writer_calls[create_request].options.token:is_current(),"New uses runtime-issued authorization")
+complete(create_request,"error","new target failure")
+assert(builder.views.acid_status.text:find("Couldn't update the phrase. Try again.",1,true),
+  "a failed New Phrase generation is scoped to the New target")
+local create_retry=#tool.writer_calls+1
+button(builder,"Generate"):fire()
+assert(create_retry==#tool.writer_calls and tool.writer_calls[create_retry].target==3,
+  "retry retains the selected New destination")
+local created_phrase={id=31,name="ACID created phrase"}
+tool.writer_calls[create_retry].options.phrase_mutation(function()
+  other_instrument.phrases[#other_instrument.phrases+1]=created_phrase
+  return created_phrase
+end)
+complete(create_retry,"committed",created_phrase)
+assert(context:target_projection().phrase==created_phrase and popup(builder,360).value==3 and
+  require("model.sequencer").same_source(context:editor_state().source,
+    tool.writer_calls[create_retry].request.source) and
+  not builder.views.acid_status.text:find("Couldn't update the phrase. Try again.",1,true) and
+  builder.views.acid_status.text:find(
+    "Edits to the previous phrase could not be saved with the song.",1,true) and
+  not builder.views.acid_status.text:find("Phrase updated.",1,true),
+  "verified New Phrase success adopts the target and clears its old feedback: "..
+    builder.views.acid_status.text.." / "..tostring(context:target_projection().phrase==created_phrase))
 live_control(builder):fire(false)
 popup(builder,290):fire(1)
 popup(builder,360):fire(1)
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#tool.writer_calls==4)
-builder.views.acid_program_key_popup:fire(5)
-local dirty_state=builder.views.acid_source_state.text
-assert(not tool.writer_calls[4].options.token:is_current(),"real edits revoke a prior manual request")
-complete(4)
-assert(builder.views.acid_source_state.text==dirty_state and
+local stale_request=#tool.writer_calls+1
+button(builder,"Generate"):fire()
+assert(#tool.writer_calls==stale_request)
+pitch_key(builder,5):fire()
+local dirty_source=assert(require("model.sequencer").copy_source(context:editor_state().source))
+assert(not tool.writer_calls[stale_request].options.token:is_current(),"real edits revoke a prior manual request")
+complete(stale_request)
+assert(require("model.sequencer").same_source(dirty_source,context:editor_state().source) and
   require("runtime.draft_cache").get(song,instrument,original),
   "same-session stale completion preserves current widgets and newer draft")
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
-assert(#tool.writer_calls==5)
-assert(context:record_blocker(tool.writer_calls[5].options.token,{reason="fixture recovery evidence"}))
-complete(5,"error")
+
+do
+  live_control(builder):fire(true)
+  fail_draft_persistence=true
+  sync_next_result="committed"
+  preserve_target_on_sync_success=true
+  local writer_count,admission_count=#tool.writer_calls,#admissions
+  local save_count=draft_save_attempts
+  local edit_revision=context:revision_state().edit_revision
+  local source_before_edit=assert(require("model.sequencer").copy_source(context:editor_state().source))
+  pitch_key(builder,6):fire()
+  preserve_target_on_sync_success=false
+  fail_draft_persistence=false
+  local completed=tool.writer_calls[#tool.writer_calls]
+  local feedback=builder.views.acid_status.text
+  assert(#tool.writer_calls==writer_count+1 and #admissions==admission_count+1 and
+    draft_save_attempts==save_count+1 and completed.completed and active_request==nil,
+    "failed draft persistence is followed by exactly one synchronous Live Edit write")
+  assert(context:revision_state().edit_revision>edit_revision and
+    require("model.sequencer").same_source(completed.request.source,context:editor_state().source),
+    "accepted source and history remain aligned after the output write")
+  assert(feedback:find("Your latest edits could not be saved with the song.",1,true) and
+    not feedback:find("Phrase updated.",1,true) and not feedback:find("Draft saved.",1,true),
+    "generation success cannot erase or contradict the matching save failure: "..feedback)
+  live_control(builder):fire(false)
+  button(builder,"Undo"):fire()
+  assert(require("model.sequencer").same_source(context:editor_state().source,source_before_edit),
+    "the synchronously written edit remains in GUI history and Undo restores its prior source")
+end
+
+popup(builder,360):fire(#popup(builder,360).items)
+local blocker_request=#tool.writer_calls+1
+button(builder,"Generate"):fire()
+assert(#tool.writer_calls==blocker_request,"New destination admits blocker fixture request")
+assert(context:record_blocker(tool.writer_calls[blocker_request].options.token,{reason="fixture recovery evidence"}))
+complete(blocker_request,"error")
 assert(context:integrity_state().blocked)
 dialog.visible=false
 tool.app_idle_observable:fire()
+local restore_blocked=context.restore_editor_target
+function context:restore_editor_target(...)
+  local restored=restore_blocked(self,...)
+  restored.draft_error="injected blocked draft load detail"
+  return restored
+end
 builder,dialog=open_gui()
+context.restore_editor_target=restore_blocked
 assert(#contexts==1 and context:integrity_state().blocked,
   "closing and reopening cannot clear a song integrity blocker")
+assert(builder.views.acid_status.text:find("ACID cannot safely update this song.",1,true) and
+  not builder.views.acid_status.text:find("Check the sequence before generating.",1,true),
+  "a draft-load failure cannot conceal the current song blocker or offer generation as a remedy")
 local blocked_count=#tool.writer_calls
-button(builder,"Generate / Regenerate ACID Phrase"):fire()
+button(builder,"Generate"):fire()
 assert(#tool.writer_calls==blocked_count,"a reopened integrity blocker still rejects generation")
 
 -- A new document warns about volatile drafts from the tracked old song, and a
 -- closed dialog's checkbox is not touched by the released runtime.
 fail_draft_persistence=true
-builder.views.acid_program_key_popup:fire(7)
+pitch_key(builder,7):fire()
 assert(require("runtime.draft_cache").has_volatile(song),
   "volatile draft fixture was not created")
 local warnings_before=#warnings

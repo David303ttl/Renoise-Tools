@@ -87,6 +87,11 @@ local function run(candidate)
   end)
   return accepted, rejection, calls, result
 end
+local function advance_song()
+  local next_song={instruments={instrument},tool_data=song.tool_data,transport=song.transport}
+  function next_song:is_undo_redoing()return false end
+  song=next_song
+end
 
 local created = request(source(48), 1)
 local accepted, rejection, calls, result = run(created)
@@ -137,7 +142,7 @@ assert(song.tool_data == initial_raw and ownership.id(phrase) == initial_id
   "phrase inventory drift changed source or marked the existing phrase temporary")
 instrument.phrases[1] = phrase
 table.remove(instrument.phrases, 2)
-writer.clear_integrity_blocker(song)
+advance_song()
 
 -- If source restoration fails after a verified commit, report the live revision.
 local commit = store.commit
