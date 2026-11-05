@@ -24,6 +24,14 @@ command. Lua 5.1 or newer and LuaJIT 2.x are supported:
 ./scripts/run_offline_tests.ps1 -LuaCommand lua5.1
 ```
 
+The shared runner owns interpreter/process checks, registration regressions, Lua
+specs, and release packaging. Tool checks live behind an optional
+`tests/<short-name>/offline.ps1` entrypoint accepting `-LuaCommand`. Entrypoints
+run in separate PowerShell processes in tool-name order and must return a
+nonzero exit code on failure. ACID owns host preflight, native runner mocks,
+development packaging, and loop-oracle validation through its entrypoint.
+Adding another tool does not require editing either shared runner.
+
 The checks remain available individually: `./scripts/run_tests.ps1`,
 `./scripts/test_host_preflight.ps1`, `./tests/renoise/runner_spec.ps1`,
 `./tests/renoise/test_package_dev.ps1 -LuaCommand lua5.1`, and
@@ -43,7 +51,26 @@ lua tests/arp/arp_writer_spec.lua
 lua tests/acid/acid_compiler_spec.lua
 ```
 
-`bootstrap.lua` configures module lookup for the selected tool. Specs still run
+Tool suites are discovered from root `.xrnx` directories and matching directories
+under `tests/` (lowercase short names). Specifications are discovered
+recursively in deterministic order. `All` is reserved for suite selection;
+`renoise` is a reserved host suite: ACID
+includes it, while other tools do not. Unknown selectors, ambiguous registrations,
+orphaned test directories, and missing or
+invalid configuration fail explicitly. A tool without specs is skipped by `All`;
+selecting that tool directly fails.
+
+To register a tool, add its implementation and `tests/<short-name>/config.lua`:
+
+```lua
+return { runtime_root = "com.example.MyTool.xrnx" }
+```
+
+Configuration uses this single-field literal form (a trailing comma is allowed).
+The runtime root must identify the matching repository tool directory. Put Lua
+specifications anywhere under that test directory and start each spec with
+`dofile("tests/bootstrap.lua")("mytool")`. The bootstrap derives the test path
+and configures module lookup for that tool. Specs still run
 as separate processes when using the suite runner.
 
 ACID regression coverage targets the synchronous production planner, phrase

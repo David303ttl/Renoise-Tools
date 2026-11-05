@@ -1,5 +1,15 @@
 -- Fixed native acceptance cases for the disposable development host.
 local M = {}
+local driver_directory = debug.getinfo(1, "S").source:sub(2):match("^(.*[\\/])")
+local acceptance_invariants = dofile(driver_directory .. "acceptance_invariants.lua")
+local persisted_baselines = dofile(driver_directory .. "persisted_baseline.lua")
+local function require_function(module, name)
+  local value = module[name]
+  assert(type(value) == "function", "Missing native acceptance helper: " .. name)
+  return value
+end
+local persisted_baseline = require_function(persisted_baselines, "persisted_baseline")
+local canonical_baseline = require_function(persisted_baselines, "canonical_baseline")
 local TWO_HOLDER_COUNT = 2
 local THREE_HOLDER_COUNT = 3
 local THREE_EMPTY_INSTRUMENTS = 3
@@ -18,33 +28,9 @@ local WORKFLOW_INSTRUMENT_COUNT = 3
 local WORKFLOW_PHRASES_PER_INSTRUMENT = 4
 local WORKFLOW_OWNED_PER_INSTRUMENT = 2
 local WORKFLOW_FOREIGN_PER_INSTRUMENT = 2
-local EDITOR_FIXTURE_OPERATION = "editor-responsiveness fixture lifecycle"
-local REQUIRED_SELECTION_SCOPE = "required"
-local FIXTURE_SELECTION_SCOPE = "harness-fixture"
-local ACCEPTANCE_PROFILES = { Warm = true, Detailed = true }
-local PROFILED_ACCEPTANCE_CASES = {
-  ["editor-responsiveness"] = true,
-  ["multi-instrument-workflow"] = true,
-}
+local EDITOR_FIXTURE_OPERATION = assert(acceptance_invariants.editor_fixture_operation,
+  "Missing native acceptance fixture operation")
 local prepared_revision_undo = nil
-
-local function selection_trace_passes(trace)
-  if type(trace) ~= "table" or #trace == 0 then return false end
-  for _, event in ipairs(trace) do
-    if event.selection_scope == REQUIRED_SELECTION_SCOPE then
-      if event.selection_stable ~= true then return false end
-    elseif event.selection_scope == FIXTURE_SELECTION_SCOPE then
-      if event.operation ~= EDITOR_FIXTURE_OPERATION or
-          (event.event ~= "phrase-list-change" and event.event ~= "selected-phrase-change") or
-          event.selection_stable ~= nil then
-        return false
-      end
-    else
-      return false
-    end
-  end
-  return true
-end
 
 local function native_selection(song)
   return {
@@ -55,21 +41,9 @@ local function native_selection(song)
   }
 end
 
-local function same_native_selection(left, right)
-  return left ~= nil and right ~= nil and
-    rawequal(left.instrument, right.instrument) and rawequal(left.phrase, right.phrase) and
-    left.instrument_index == right.instrument_index and left.phrase_index == right.phrase_index
-end
-
-local function same_native_color(left, right)
-  if left == nil or right == nil then return false end
-  if type(left) ~= type(right) then return false end
-  if type(left) ~= "table" then return left == right end
-  for index, value in ipairs(left) do
-    if value ~= right[index] then return false end
-  end
-  return #left == #right
-end
+local same_native_selection = require_function(acceptance_invariants, "same_native_selection")
+local same_native_color = require_function(acceptance_invariants, "same_native_color")
+local selection_scope_for_operation = require_function(acceptance_invariants, "selection_scope_for_operation")
 
 local PRIMARY_SELECTION_BORDER = 2
 local PRIMARY_SELECTION_COLOR = {0xF2,0xC5,0x46}
@@ -91,37 +65,11 @@ local function has_selected_page_color(view)
   return view ~= nil and same_native_color(view.color, SELECTED_PROGRAM_PAGE_COLOR)
 end
 
-local function editor_fixture_passes(prerequisites, result)
-  return prerequisites == true and type(result) == "table" and
-    result.editor_fixture_inventory_restored == true and
-    result.editor_fixture_native_selection_restored == true
-end
-
-local function install_profile_wrapper(profile_mode,target,key,wrap)
-  if profile_mode~="Detailed" or type(target)~="table" or type(target[key])~="function" then
-    return nil,false
-  end
-  local original=target[key]
-  target[key]=wrap(original)
-  return original,true
-end
-
-local function callback_latency_acceptance(profile_mode)
-  if profile_mode=="Detailed" then return "NOT_CLAIMED" end
-  return "NOT_GATED"
-end
-
-local function resolve_acceptance_profile(case_name,profile_mode)
-  if profile_mode~=nil and not PROFILED_ACCEPTANCE_CASES[case_name] then
-    return nil,"instrumentation profile is only valid for editor-responsiveness and multi-instrument-workflow"
-  end
-  if not PROFILED_ACCEPTANCE_CASES[case_name] then return nil end
-  profile_mode=profile_mode or "Warm"
-  if not ACCEPTANCE_PROFILES[profile_mode] then
-    return nil,"instrumentation profile must be Warm or Detailed"
-  end
-  return profile_mode
-end
+local selection_trace_passes = require_function(acceptance_invariants, "selection_trace_passes")
+local editor_fixture_passes = require_function(acceptance_invariants, "editor_fixture_passes")
+local install_profile_wrapper = require_function(acceptance_invariants, "install_profile_wrapper")
+local callback_latency_acceptance = require_function(acceptance_invariants, "callback_latency_acceptance")
+local resolve_acceptance_profile = require_function(acceptance_invariants, "resolve_acceptance_profile")
 
 local function create_acceptance_sample(instrument,label)
   if #instrument.samples==0 then instrument:insert_sample_at(1) end
@@ -210,54 +158,6 @@ local function on_next_idle(callback)
     callback()
   end
   idle:add_notifier(notifier)
-end
-
--- Intern repeated native empty cells without hashing or dropping inactive data.
-local function canonical_baseline(value)
-  local definitions, interned = {}, {}
-  local function encode(item)
-    if type(item) == "string" then return string.format("%q", item) end
-    if type(item) == "number" then return string.format("%.17g", item) end
-    if type(item) ~= "table" then return tostring(item) end
-    local keys, parts = {}, {}
-    for key in pairs(item) do keys[#keys + 1] = key end
-    table.sort(keys, function(a, b)
-      if type(a) ~= type(b) then return type(a) < type(b) end
-      return a < b
-    end)
-    for _, key in ipairs(keys) do parts[#parts + 1] = encode(key) .. "=" .. encode(item[key]) end
-    local contents = "{" .. table.concat(parts, ",") .. "}"
-    if not interned[contents] then
-      definitions[#definitions + 1] = contents
-      interned[contents] = #definitions
-    end
-    return "@" .. tostring(interned[contents])
-  end
-  local root = encode(value)
-  return table.concat(definitions, "\n") .. "\n" .. root
-end
-
-local function persisted_baseline(song)
-  local ownership = require("renoise.phrase_ownership")
-  local store = require("renoise.pattern_store")
-  local instruments = {}
-  for instrument_index, instrument in ipairs(song.instruments) do
-    local phrases = {}
-    for phrase_index, phrase in ipairs(instrument.phrases) do
-      local id = ownership.id(phrase)
-      local source, policy, pb = nil, nil, nil
-      if id then source, policy, pb = store.read_entry(song, id) end
-      local snapshot = ownership.snapshot(phrase)
-      assert(snapshot, "Persisted baseline requires a complete phrase snapshot")
-      phrases[phrase_index] = { id = id, snapshot = snapshot,
-        source = source, output_policy = policy, pb_range = pb }
-    end
-    instruments[instrument_index] = { name = instrument.name, phrases = phrases }
-  end
-  local raw = song.tool_data or ""
-  local hex = raw:gsub(".", function(byte) return string.format("%02x", string.byte(byte)) end)
-  return canonical_baseline({ instruments = instruments, tool_data_hex = hex,
-    tool_data_present = song.tool_data ~= nil })
 end
 
 local function save_independent_fixture(song, fixture_name)
@@ -1768,8 +1668,7 @@ local function run_multi_instrument_workflow(done, json, profile_mode)
       selected_phrase_identity = native_identity(selected.phrase),
       selected_instrument_label = selected.instrument_identity,
       selected_phrase_label = selected.phrase_identity,
-      selection_scope = active_operation == EDITOR_FIXTURE_OPERATION and
-        FIXTURE_SELECTION_SCOPE or REQUIRED_SELECTION_SCOPE,
+      selection_scope = selection_scope_for_operation(active_operation),
       selection_state = selected,
     }
     if instrument then

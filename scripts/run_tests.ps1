@@ -5,13 +5,13 @@
 Runs the standalone Lua specs for one or all Renoise tools.
 
 .DESCRIPTION
-Starts every spec in a separate Lua process from the repository root. This
-keeps module caches and mocked Renoise APIs isolated between specs.
+Discovers root .xrnx tools and matching test suites. Starts every spec in a
+separate Lua process from the repository root to isolate module caches and mocks.
 
 .PARAMETER Tool
-Select ARP, ACID, Renoise, or All (the default). ACID also includes the offline
-Renoise harness specs. DigitaktSampleChain currently has no automated Lua
-specs; selecting it reports that clearly.
+Select a discovered tool, Renoise, or All (the default). ACID also includes the
+reserved Renoise host suite. Tools without specs are skipped by All and fail
+when selected directly.
 
 .PARAMETER LuaCommand
 Executable command used to run specs. Defaults to lua.
@@ -25,39 +25,41 @@ to 30 seconds. Optimize expensive fixtures instead of masking them with a larger
 
 .EXAMPLE
 ./scripts/run_tests.ps1 -Tool ACID -LuaCommand lua5.1
+
+.PARAMETER RepositoryRoot
+Repository root to scan. Intended for isolated discovery regressions.
 #>
 param(
-    [ValidateSet("All", "ARP", "ACID", "Renoise", "DigitaktSampleChain")]
     [string]$Tool = "All",
     [string]$LuaCommand = "lua",
     [ValidateRange(1, 3600)]
-    [int]$SpecTimeoutSeconds = 30
+    [int]$SpecTimeoutSeconds = 30,
+    [string]$RepositoryRoot
 )
 
 $ErrorActionPreference = "Stop"
-$repoRoot = Split-Path -Parent $PSScriptRoot
+$repoRoot = if ($RepositoryRoot) { [IO.Path]::GetFullPath($RepositoryRoot) } else { Split-Path -Parent $PSScriptRoot }
 . (Join-Path $PSScriptRoot 'lua_interpreter.ps1')
 $lua = Resolve-LuaInterpreter -LuaCommand $LuaCommand
-
-if ($Tool -eq "DigitaktSampleChain") {
-    throw "DigitaktSampleChain has no automated Lua specs. Select ARP, ACID, Renoise, or All."
-}
-
-$specRoots = switch ($Tool) {
-    "All" { @("tests/arp", "tests/acid", "tests/renoise") }
-    "ARP" { @("tests/arp") }
-    "ACID" { @("tests/acid", "tests/renoise") }
-    "Renoise" { @("tests/renoise") }
-}
-$specs = [System.Collections.Generic.List[System.IO.FileInfo]]::new()
-foreach ($specRoot in $specRoots) {
-    $rootPath = Join-Path $repoRoot $specRoot
-    $recurse = $specRoot -eq "tests/renoise"
-    foreach ($spec in Get-ChildItem -LiteralPath $rootPath -Filter "*_spec.lua" -File -Recurse:$recurse) {
-        $specs.Add($spec)
+Import-Module (Join-Path $PSScriptRoot 'tool_discovery.psm1') -Force
+$discovery = Get-DiscoveredTools -RepositoryRoot $repoRoot
+$specs = @()
+if ($Tool -ieq 'All') {
+    foreach ($untested in @($discovery.Tools | Where-Object { $_.Specs.Count -eq 0 })) {
+        Write-Host "Skipping $($untested.Name): no automated Lua specs."
     }
+    $specs = @($discovery.Tools | Where-Object { $_.Specs.Count -gt 0 } | ForEach-Object { $_.Specs }) + @($discovery.HostSpecs)
 }
-$specs = @($specs | Sort-Object FullName)
+elseif ($Tool -ieq 'Renoise') {
+    $specs = @($discovery.HostSpecs)
+}
+else {
+    $selected = Get-DiscoveredTool -Discovery $discovery -Name $Tool
+    if ($selected.Specs.Count -eq 0) { throw "Tool '$($selected.Name)' has no automated Lua specs." }
+    $specs = @($selected.Specs)
+    if ($selected.Name -ieq 'ACID') { $specs += @($discovery.HostSpecs) }
+}
+$specs = @($specs | Sort-Object FullName -Unique)
 
 if ($specs.Count -eq 0) {
     throw "No Lua specs found for '$Tool' under the selected test roots."

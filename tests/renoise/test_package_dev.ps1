@@ -19,7 +19,7 @@ $testRoot = Join-Path $repoTempRoot ('renoise-package-dev-spec-日本語-' + [gu
 $sourceToolName = 'com.david303ttl.ACID.xrnx'
 $runtimeExtensions = @('.lua', '.xml', '.txt', '.json', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.bmp', '.wav', '.aif', '.aiff', '.flac', '.ogg', '.bin')
 $bootstrapMarker = '-- ACID development bootstrap'
-$driverNames = @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua', 'gui_layout_acceptance.lua', 'gui_lifecycle_acceptance.lua')
+$driverNames = @('remote_driver.lua', 'json.lua', 'acceptance_cases.lua', 'acceptance_invariants.lua', 'persisted_baseline.lua', 'persistence_acceptance.lua', 'metadata_undo_acceptance.lua', 'metadata_recovery_acceptance.lua', 'gui_layout_acceptance.lua', 'gui_lifecycle_acceptance.lua')
 . (Join-Path $repoRoot 'scripts/lua_interpreter.ps1')
 $luaCommandInfo = Resolve-LuaInterpreter -LuaCommand $LuaCommand
 

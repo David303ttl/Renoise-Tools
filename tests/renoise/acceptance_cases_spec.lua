@@ -1,18 +1,6 @@
-local file = assert(io.open("tests/renoise/driver/acceptance_cases.lua", "rb"))
-local contents = file:read("*a")
-file:close()
-local prefix = assert(contents:match("^(.-)local function save_independent_fixture"))
-local helpers = assert(loadstring(prefix .. [[
-  return {
-    selection_trace_passes = selection_trace_passes,
-    same_native_selection = same_native_selection,
-    same_native_color = same_native_color,
-    editor_fixture_passes = editor_fixture_passes,
-    install_profile_wrapper = install_profile_wrapper,
-    callback_latency_acceptance = callback_latency_acceptance,
-    resolve_acceptance_profile = resolve_acceptance_profile,
-  }
-]]))()
+local helpers = dofile("tests/renoise/driver/acceptance_invariants.lua")
+assert(helpers.selection_scope_for_operation(helpers.editor_fixture_operation) == "harness-fixture")
+assert(helpers.selection_scope_for_operation("regenerate instrument 1 target 1") == "required")
 
 local SELECTED_COLOR,IDLE_COLOR={0xF0,0xC0,0x40},{0x40,0x40,0x40}
 assert(helpers.same_native_color(SELECTED_COLOR,{unpack(SELECTED_COLOR)}))

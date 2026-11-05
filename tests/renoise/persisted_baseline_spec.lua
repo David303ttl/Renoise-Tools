@@ -1,8 +1,9 @@
-local file = assert(io.open("tests/renoise/driver/acceptance_cases.lua", "rb"))
-local contents = file:read("*a")
-file:close()
-local prefix = assert(contents:match("^(.-)local function save_independent_fixture"))
-local baseline = assert(loadstring(prefix .. "\nreturn persisted_baseline"))()
+local persisted_baselines = dofile("tests/renoise/driver/persisted_baseline.lua")
+local baseline = persisted_baselines.persisted_baseline
+local canonical = persisted_baselines.canonical_baseline
+
+assert(canonical({ left = 1, right = 2 }) == canonical({ right = 2, left = 1 }),
+  "canonical snapshots must ignore table insertion order")
 
 package.loaded["renoise.phrase_ownership"] = {
   id = function(phrase) return phrase.id end,
