@@ -1,12 +1,8 @@
 # M5 Followup GUI Redesign Playbook
 
-**Status:** Tasks 1–3 are verified within the recorded native and automated
-scope. Tasks 4–10 header, sequence settings, toolbar, editors, sequential entry,
-Scale, Operations, Output and content-sized layout are implemented. Task 11
-regression coverage and current documentation are complete; native checks
-remain open. Results and remaining limits are recorded in
+**Status:** Tasks 1–12 are complete. The later linked-selection and mapping
+follow-up is also implemented and verified. Current-checkout evidence is in
 [the acceptance record](../tests/acid/acid_gui_redesign_acceptance.md).
-Final redesign acceptance remains open.
 
 **Dependency:** Closed M5 editor implementation. This follow-up replaces the
 presentation requirements of [M5_EDITOR_PLAYBOOK.md](M5_EDITOR_PLAYBOOK.md)

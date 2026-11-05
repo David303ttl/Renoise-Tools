@@ -1,11 +1,43 @@
 # ACID GUI redesign acceptance
 
+## Current checkout follow-up (2026-11-05)
+
+The Task 12 acceptance below records revision
+`fb747b93b47ba18e063890b25f297dca33f8ab07`. Later commits added linked
+TIME/PITCH selection, slide references and primary/related cell outlines. This
+follow-up records the current checkout at `ef3bdce416c6870c567d6f13af1b9404f94d3c99`
+plus the native lifecycle probe update in this worktree.
+
+| Check | Result |
+| --- | --- |
+| `./scripts/run_tests.ps1 -Tool ACID` | 79 specs passed; Lua 5.1 |
+| Native `gui-redesign` | PASS on Renoise 3.5.4 / API 6.2; `tmp/interactive-31c5d360015e4e0cabc7cb8b39332ad2/report.json` |
+| Native `gui-layout` | PASS on Renoise 3.5.4 / API 6.2; `tmp/interactive-4780a43db878463eb77d9b1c2a209f42/report.json` |
+| Native `gui-lifecycle` | PASS on Renoise 3.5.4 / API 6.2; `tmp/interactive-091538e5091d4d328e2e139684b89c00/report.json` |
+| Package/source comparison | 32 files; all archive bytes match source; root entry points and private modules verified |
+
+The lifecycle probe now checks the current selection-outline canvas, page
+indicators and inactive-cell presentation. The final run restored the existing
+Renoise installation and session.
+
+The current archive is `dist/com.david303ttl.ACID_0.1.xrnx`, SHA-256
+`5b29d790b851e33464cd5a6f0b147caa205c549d74914d565d41ad258beeab12`.
+Packaged `gui.lua` SHA-256 is
+`a6d1b518f3d43e7531b994214252d22d38471878b9d4cc793c75ae1b48a03b67`.
+It includes the later `views/memory_cells.lua` module.
+
+Current source contains 30 Lua files and 13,326 Lua lines; `gui.lua` has 2,394
+lines and `views/memory_cells.lua` has 46. The Task 12 size table below remains
+the measurement for its accepted revision, before these later editor additions.
+
 ## Task 12 verification (2026-11-04)
 
-Base revision: `fb747b93b47ba18e063890b25f297dca33f8ab07`, plus the
-verification changes in this checkout. Task 12 acceptance is **COMPLETE** as of
+Base revision: `fb747b93b47ba18e063890b25f297dca33f8ab07`, plus its
+verification changes. Task 12 acceptance is **COMPLETE** as of
 2026-11-05. Native functional, layout and persistence checks pass; audio was
 tested and accepted by the user separately from automated callback assertions.
+Task 1–11 sections below preserve their checkpoint results. Any open or
+unverified status in those sections was superseded by this final Task 12 run.
 
 ### Automated checks and deletion inventory
 
@@ -530,9 +562,10 @@ All menu and keybinding callbacks in `main.lua` reach the same `gui.show()`.
 | Lua 5.1 syntax and `git diff --check` | Passed |
 | Removed references | No workspace state, tab constructors, fixed stack, retired report refreshers or Live Edit Retry in GUI; executable native probes use current controls |
 
-Native screen fit, scaling, expanded-row resizing and playback checks remain
-unverified. Runtime file layout and package inputs are unchanged; no package
-rebuild was required. `gui.lua` is 13 lines smaller than before Tasks 9-10.
+At the Task 10 checkpoint, native screen fit, scaling, expanded-row resizing and
+playback checks remained unverified. Task 12 completed those checks. Runtime
+file layout was unchanged, and `gui.lua` was 13 lines smaller than before Tasks
+9–10.
 
 ## Task 11 Regression coverage
 
@@ -553,8 +586,9 @@ have no retired action dependencies; active ownership snapshot/capture helpers
 remain used by integrity and writer paths. Native layout, sizing and audio
 correctness remain outside mocked coverage.
 
-Only tests and documentation changed. No runtime or package inputs changed;
-no package rebuild is required. Final native acceptance remains open in Task 12.
+At the Task 11 checkpoint, only tests and documentation had changed, so no
+package rebuild was required then. Task 12 subsequently rebuilt and verified
+the release archive; final native acceptance is recorded above.
 
 | Check | Result |
 | --- | --- |

@@ -17,6 +17,10 @@ local FIRST_PAGE_START = 1
 local SECOND_PAGE_START = PAGE_SIZE + 1
 local FIRST_SECOND_PAGE_CELL = 1
 local LAST_PAGE_CELL = PAGE_SIZE
+local PRIMARY_SELECTION_BORDER = 2
+local PRIMARY_SELECTION_COLOR = {0xF2,0xC5,0x46}
+local PROGRAM_PAGE_COLOR = {0xF0,0x70,0x70}
+local INACTIVE_PITCH_COLOR = {0x30,0x32,0x39}
 local ACTIVE_BOUNDARY_LAST_STEP = FIRST_STEP
 local ACTIVE_BOUNDARY_PITCH_LENGTH = SOURCE_LENGTH
 local BOUNDARY_PAIRS = {
@@ -50,10 +54,13 @@ local function same_color(left, right)
   return true
 end
 
-local function copy_color(color)
-  local copy = {}
-  for index, value in ipairs(color) do copy[index] = value end
-  return copy
+local function canvas_draws_primary_selection(render)
+  if type(render)~="function" then return false end
+  local strokes,context=0,{}
+  function context:stroke_rect() strokes=strokes+1 end
+  render(context)
+  return strokes==1 and context.line_width==PRIMARY_SELECTION_BORDER and
+    same_color(context.stroke_color,PRIMARY_SELECTION_COLOR)
 end
 
 local function file_basename(path)
@@ -77,7 +84,7 @@ function M.run(done)
   local instrument = song.instruments[instrument_index]
   local fixture_path = tool.bundle_path .. "\\..\\fixtures\\" .. FIXTURE_NAME
   local release_fixture_path = tool.bundle_path .. "\\..\\fixtures\\" .. RELEASE_FIXTURE_NAME
-  local controls, callbacks = {}, {}
+  local controls, callbacks, canvas_renderers = {}, {}, {}
   local dialogs, contexts = {}, {}
   local original_scale_preferences
   local scale_preferences_captured = false
@@ -161,7 +168,7 @@ function M.run(done)
   end
 
   local function capture_gui()
-    controls, callbacks = {}, {}
+    controls, callbacks, canvas_renderers = {}, {}, {}
     local builder_factory = original_builder
     renoise.ViewBuilder = function(...)
       local builder = builder_factory(...)
@@ -172,6 +179,7 @@ function M.run(done)
           local id = type(properties) == "table" and properties.id
           local notifier = type(properties) == "table" and properties.notifier
           local items = type(properties) == "table" and properties.items
+          local canvas_render = type(properties) == "table" and properties.render
           local phrase_selector = name == "popup" and type(items) == "table" and
             items[#items] == NEW_PHRASE_LABEL
           if type(notifier) == "function" then
@@ -179,6 +187,10 @@ function M.run(done)
           end
           local view = constructor(builder, properties, ...)
           if id then controls[id] = view end
+          if name == "canvas" and type(canvas_render) == "function" then
+            local selection_id = type(id) == "string" and id:match("^(.*)_selection$")
+            if selection_id then canvas_renderers[selection_id] = canvas_render end
+          end
           if id then
             local ok, add_notifier = pcall(function() return view.add_notifier end)
             if ok and type(add_notifier) == "function" then
@@ -353,21 +365,25 @@ function M.run(done)
         "acid_program_select_time_"
       local program_page_id = memory == "pitch" and "acid_program_pitch_page_2" or
         "acid_program_time_page_2"
+      local grid_page_id = memory == "pitch" and "acid_pitch_page_2" or "acid_time_page_2"
       callbacks[grid_prefix .. string.format("%02d", first_cell)]()
-      local first_color = copy_color(controls[grid_prefix .. string.format("%02d", first_cell)].color)
+      local first_id=grid_prefix..string.format("%02d",first_cell)
+      local last_id=grid_prefix..string.format("%02d",last_cell)
+      assert(canvas_draws_primary_selection(canvas_renderers[first_id]),
+        memory:upper().." Grid selection did not outline position 17")
       callbacks[grid_prefix .. string.format("%02d", last_cell)]()
-      local last_color = copy_color(controls[grid_prefix .. string.format("%02d", last_cell)].color)
-      local cleared_color = controls[grid_prefix .. string.format("%02d", first_cell)].color
-      assert(same_color(first_color, last_color) and not same_color(first_color, cleared_color),
+      assert(canvas_draws_primary_selection(canvas_renderers[last_id]) and
+        not canvas_draws_primary_selection(canvas_renderers[first_id]),
         memory:upper() .. " Grid selection did not move from position 17 to 32")
       set_value("acid_editor_view", 1)
       callbacks[program_page_id]()
-      local program_cell = controls[program_prefix .. string.format("%02d", last_cell)]
-      assert(same_color(program_cell.color, controls[program_page_id].color) and
-        same_color(program_cell.color, last_color),
+      local program_id=program_prefix..string.format("%02d",last_cell)
+      assert(canvas_draws_primary_selection(canvas_renderers[program_id]) and
+        same_color(controls[program_page_id].color,PROGRAM_PAGE_COLOR),
         memory:upper() .. " Program selection did not retain position 32 and its page")
       set_value("acid_editor_view", 2)
-      assert(same_color(controls[grid_prefix .. string.format("%02d", last_cell)].color, last_color),
+      assert(canvas_draws_primary_selection(canvas_renderers[last_id]) and
+        tostring(controls[grid_page_id].text):find("[*]",1,true),
         memory:upper() .. " Grid selection did not restore position 32")
     end
     local function check_pair(pair)
@@ -387,17 +403,26 @@ function M.run(done)
       check_page("time", SECOND_PAGE)
       check_selected_position("pitch", FIRST_SECOND_PAGE_CELL, LAST_PAGE_CELL)
       check_selected_position("time", FIRST_SECOND_PAGE_CELL, LAST_PAGE_CELL)
-      local pitch17 = assert(controls.acid_grid_pitch_header_01).text
-      local pitch32 = assert(controls["acid_grid_pitch_header_" .. string.format("%02d", LAST_PAGE_CELL)]).text
-      assert((pitch17:find("inactive", 1, true) ~= nil) == (pair.pitch_length < SECOND_PAGE_START),
-        "PITCH position 17 did not show the correct active state")
-      assert((pitch32:find("inactive", 1, true) ~= nil) == (pair.pitch_length < SOURCE_LENGTH),
-        "PITCH position 32 did not show the correct active state")
-      local time17 = assert(controls.acid_grid_select_time_01).text
-      local time32 = assert(controls["acid_grid_select_time_" .. string.format("%02d", LAST_PAGE_CELL)]).text
-      assert((time17:sub(-2) == " *") == (pair.last_step < SECOND_PAGE_START),
+      callbacks.acid_grid_pitch_01()
+      callbacks.acid_pitch_page_2()
+      callbacks.acid_grid_pitch_16()
+      local pitch17 = assert(controls.acid_grid_pitch_01)
+      local pitch32 = assert(controls["acid_grid_pitch_" .. string.format("%02d", LAST_PAGE_CELL)])
+      local pitch17_inactive=same_color(pitch17.color,INACTIVE_PITCH_COLOR)
+      local pitch32_inactive=same_color(pitch32.color,INACTIVE_PITCH_COLOR)
+      assert(pitch17_inactive==(pair.pitch_length<SECOND_PAGE_START),string.format(
+        "PITCH position 17 active state mismatch (span=%d, color=%s, tooltip=%s)",
+        pair.pitch_length,type(pitch17.color)=="table" and table.concat(pitch17.color,",") or tostring(pitch17.color),
+        tostring(pitch17.tooltip)))
+      assert(pitch32_inactive==(pair.pitch_length<SOURCE_LENGTH),string.format(
+        "PITCH position 32 active state mismatch (span=%d, color=%s, tooltip=%s)",
+        pair.pitch_length,type(pitch32.color)=="table" and table.concat(pitch32.color,",") or tostring(pitch32.color),
+        tostring(pitch32.tooltip)))
+      local time17 = assert(controls.acid_grid_mapping_01).text
+      local time32 = assert(controls["acid_grid_mapping_" .. string.format("%02d", LAST_PAGE_CELL)]).text
+      assert((time17 == "INACTIVE") == (pair.last_step < SECOND_PAGE_START),
         "TIME position 17 did not show the correct active state")
-      assert((time32:sub(-2) == " *") == (pair.last_step < SOURCE_LENGTH),
+      assert((time32 == "INACTIVE") == (pair.last_step < SOURCE_LENGTH),
         "TIME position 32 did not show the correct active state")
       local raw = song.tool_data
       callbacks.acid_grid_select_time_01()
