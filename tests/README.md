@@ -84,9 +84,8 @@ For other manual checks, use a disposable song and follow the relevant guides:
 - [ACID Live Edit](acid/acid_live_edit_manual.md)
 - [ACID integrated editor procedures and evidence](acid/acid_regeneration_manual.md)
 
-The [ACID editor playbook, section 13](../com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md#13-native-renoise-click-procedures-and-evidence-ledger)
-defines the final integrated native checks. The integrated editor guide routes
-all 13.1–13.8 procedures to evidence fields and includes the actual operation
+The [integrated editor guide](acid/acid_regeneration_manual.md)
+defines native checks and evidence fields, including operation
 dialogs with inactive memory. Scripted modal answers do not establish that
 human journey or distinguish Active from All-32 at 32/32 bounds. Procedure
 readiness is not a native pass.

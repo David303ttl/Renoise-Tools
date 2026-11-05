@@ -202,9 +202,8 @@ Gates 5–12 remain pending. Revision: `5ccaa982` plus this working tree.
 
 **Scope:** baseline, pinned SDK facts and call-site inventory only. No runtime,
 source schema, manifest, package inputs or M4 acceptance claims changed. Gates
-1+2 and all later implementation/native acceptance remain pending. This record
-implements the audit required by `com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md`
-section 11; it does not claim that new M5 assertions already pass.
+1+2 and all later implementation/native acceptance remain pending. This audit
+does not claim that new M5 assertions already pass.
 
 ### Checkout and executed baseline
 
@@ -529,8 +528,7 @@ schema 1, coupled navigation and target-derived create authorization are pending
 implementation gaps explicitly covered by the accepted design, not reasons to
 weaken it. Initial checkout cleanliness is the baseline receipt; current audit
 changes are documentation only. `pwsh -Command "git diff --check"` passed;
-`git status --short` and `git diff --stat` show only this record and
-`com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md` changed. Git's existing LF/CRLF
+`git status --short` and `git diff --stat` showed documentation-only changes. Git's existing LF/CRLF
 conversion warnings are not whitespace errors. No staged changes, runtime edits,
 manifest changes or tracked SDK/build artifacts were introduced.
 

@@ -1,7 +1,6 @@
 # ACID Live Edit manual verification
 
-Use the [integrated setup and evidence fields](acid_regeneration_manual.md)
-and [canonical persistence/Live Edit checks](../../com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md#137-persistence-ownership-undo-and-live-edit).
+Use the [integrated setup and persistence checks](acid_regeneration_manual.md).
 These procedures do not claim an executed native result.
 Executed checks and remaining limits are recorded in
 [integrated native verification](runtime_acceptance.md#integrated-editor-and-live-edit-verification-2026-11-02).

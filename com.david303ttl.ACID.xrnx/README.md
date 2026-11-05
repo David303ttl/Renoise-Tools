@@ -2,8 +2,7 @@
 
 ACID is an experimental Renoise 3.5 / scripting API 6.2 phrase sequencer. It
 edits independent PITCH and TIME memories and renders a native instrument
-phrase. Renoise supplies the sound generator, transport and arrangement. The
-manifest remains at version 0.1.
+phrase. Renoise supplies the sound generator, transport and arrangement.
 
 ## Editing a sequence
 
@@ -114,7 +113,10 @@ Undo restores the pattern, not seed controls. Seeds last for the editor session.
 
 **Import .txt** adds scales such as `My scale = 0 2 3 5 7 9 10`, saves them in
 tool preferences and deduplicates them. Conflicting names with different
-intervals are rejected. See [the text format](../docs/acid-scales.md).
+intervals are rejected. Use one definition per line, with unique integer offsets
+from 0 to 11 including root 0, separated by spaces or commas. Optional
+`[Category]` headings group definitions; blank lines and `#` comment lines are
+ignored. Invalid lines reject the whole import.
 
 ## Generating phrases
 
@@ -268,48 +270,11 @@ Editor and arrange those patterns in the Pattern Sequencer. Phrase keymap or
 program selection, trigger-note transposition and native phrase length controls
 belong to Renoise. ACID does not configure their instrument-wide settings.
 
-Change ACID LAST STEP or PITCH span to change its source, then Generate.
+Change ACID Length or Pitch span to change its source, then Generate.
 Editing generated phrase notes, length or loop properties directly can invalidate
 ownership and block regeneration. Regeneration replaces generated content;
 arbitrary manual edits are not preserved. A verified single-sequence loop does
 not establish continuous slides across independent phrase switches.
-
-## Native acceptance status
-
-Recorded deterministic and native results, host versions and limitations are
-in the [acceptance record](../tests/acid/runtime_acceptance.md). Final integrated
-editor, playback, persistence, Undo/Redo and Live Edit acceptance remains
-unverified until the required native procedures are executed. Procedure
-readiness and mocked tests do not establish sound, timing or GUI behavior.
-
-Max-length timing/layout playback, PB center-reset alignment at LPB 16/12,
-host groove and receiver-dependent audio require the
-[manual checklist](../tests/acid/acid_regeneration_manual.md) and
-[timing checklist](../tests/acid/acid_timing_manual.md). A receiver that ignores
-pitch-bend commands will not produce the intended bend; use PB Off for
-receiver-controlled note overlap. Generation requires LPB transport timing and
-rejects unsupported speed timing before changing phrases or saved source.
-
-## Development checks
-
-Use the [editor acceptance guide](../tests/acid/acid_editor_presentation_manual.md)
-for the current interface, editing journey and layout checks.
-
-From the repository root in PowerShell 7:
-
-```powershell
-./scripts/run_tests.ps1 -Tool ACID
-./tests/acid/validate_loop_oracle.ps1
-./scripts/package.ps1 -Tool ACID
-```
-
-Each Lua spec runs in a separate process. Semantic and mocked tests do not
-establish Renoise audio behavior. ACID's GUI and phrase-writer regression specs
-cover editable LAST STEP, Reset/Undo, selected-phrase regeneration, and sample
-slide commands scheduled before midpoint OFFs. Run the
-[integrated editor checklist](../tests/acid/acid_regeneration_manual.md) in Renoise to
-verify phrase playback and GUI behavior. The package has `manifest.xml` and
-`main.lua` at its root and excludes development files.
 
 ## License
 

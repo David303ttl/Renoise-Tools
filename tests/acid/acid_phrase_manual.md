@@ -1,7 +1,6 @@
 # ACID native phrase workflow acceptance
 
-Use the [integrated setup/evidence fields](acid_regeneration_manual.md) and
-[canonical retained workflow checks](../../com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md#138-retained-renoise-workflow-acceptance).
+Use the [integrated setup and workflow checks](acid_regeneration_manual.md).
 Use [timing acceptance](acid_timing_manual.md) for Straight/Triplet, Play Once,
 Repeat and sentinel inspection. Native playback remains unverified until an
 observed result is recorded against the tested build and receiver.

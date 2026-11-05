@@ -1,8 +1,7 @@
 # ACID integrated editor acceptance
 
 Use Renoise 3.5 / API 6.2, the current ACID build and a disposable song.
-The [editor playbook, section 13](../../com.david303ttl.ACID.xrnx/M5_EDITOR_PLAYBOOK.md#13-native-renoise-click-procedures-and-evidence-ledger)
-is the canonical procedure. Execute every applicable numbered check; record
+Execute every applicable numbered check below; record
 actual observations separately from deterministic/native harness results.
 This guide prepares execution and claims no native pass.
 

@@ -7,17 +7,10 @@
 
 ## Commit messages
 
-- Follow [Conventional Commits 1.0.0](docs/COMMIT_MESSAGES.md) for new commits.
-- Use `type(scope): description`, with a lowercase imperative description and
-  no trailing period. Scope is optional; use a relevant tool or area when useful.
-- Choose a type that describes the change: `feat`, `fix`, `docs`, `refactor`,
-  `perf`, `test`, `build`, `ci`, `chore`, `style`, or `revert`.
-- Mark breaking changes with `!` after the type/scope, and describe the change
-  in a `BREAKING CHANGE:` footer when context is useful.
-- Keep commits focused. Do not infer or change tool versions from commit types;
-  each Renoise tool's version remains managed in its manifest.
-- This is documented guidance only: do not add Git hooks, commit-message
-  workflows, or other automatic enforcement for the commit format.
+- Use Conventional Commits: `type(scope): description`, with an optional scope,
+  lowercase imperative description and no trailing period. Mark breaking changes
+  with `!`. Commit types do not change manifest versions. Do not add automatic
+  commit-message enforcement.
 
 ## Tool boundaries
 

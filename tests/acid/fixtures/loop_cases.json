@@ -2,7 +2,7 @@
   "format": "ACID-LOOP-ORACLE-1",
   "status": "semantic expectations exercised by the pure cycle interpreter; native playback unverified",
   "cursor_policy": "reset_each_time_cycle",
-  "profile_scope": "These are ACID source expectations, not original-hardware traces. Entered leading TIE becomes NOTE; raw leading-TIE source is invalid.",
+  "profile_scope": "ACID source expectations: entered leading TIE becomes NOTE; raw leading-TIE source is invalid.",
   "cycles": 3,
   "index_base": 1,
   "note_numbering": "Renoise note_value, 0..119",
@@ -64,7 +64,6 @@
     {"id":"all_rest_multistep_stays_silent","length":4,"pitch_length":1,"pitches":[{"note":36}],"time":["R", "R", "R", "R"],"expected":[{"note_pitch_indices":[],"note_values":[],"note_transitions":[],"tie_notes":[],"rest_releases":[false, false, false, false],"exit_voice":null,"exit_next_pitch":1},{"note_pitch_indices":[],"note_values":[],"note_transitions":[],"tie_notes":[],"rest_releases":[false, false, false, false],"exit_voice":null,"exit_next_pitch":1},{"note_pitch_indices":[],"note_values":[],"note_transitions":[],"tie_notes":[],"rest_releases":[false, false, false, false],"exit_voice":null,"exit_next_pitch":1}]},
     {
       "id": "outgoing_boundary_slide_connects_different_pitches",
-      "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
       "length": 2,
       "pitch_length": 16,
       "pitches": [{"note": 36}, {"note": 43, "slide": true}],
@@ -77,7 +76,6 @@
     },
     {
       "id": "outgoing_boundary_slide_ties_equal_pitches",
-      "reference": "Roland TB-303 Owner's Manual, April 1982, printed page 63 (R03)",
       "length": 2,
       "pitch_length": 16,
       "pitches": [{"note": 36}, {"note": 36, "slide": true}],

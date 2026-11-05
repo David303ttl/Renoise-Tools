@@ -25,8 +25,6 @@ released tool's `manifest.xml`. Modules are private to each bundle; shared code
 should only be introduced when a deliberate build step can keep installed tools
 self-contained.
 
-New commits follow [Conventional Commits](docs/COMMIT_MESSAGES.md).
-
 ## License
 
 Copyright (C) 2026 David303ttl. Licensed under GNU GPL version 3 only

@@ -321,8 +321,6 @@ lua tests/renoise/acceptance_cases_spec.lua
 
 ## Coverage handoff
 
-Owners and A–E contracts refer to the
-[runtime playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
 The table separates recorded harness acceptance from behavior acceptance. `PASS`
 below cites existing results, not a new execution. `PENDING` means the owning
 runtime gate and its native acceptance remain open; it does not block unrelated
