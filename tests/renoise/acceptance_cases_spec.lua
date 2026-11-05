@@ -7,16 +7,10 @@ local helpers = assert(loadstring(prefix .. [[
     selection_trace_passes = selection_trace_passes,
     same_native_selection = same_native_selection,
     same_native_color = same_native_color,
-    production_output_matches = production_output_matches,
     editor_fixture_passes = editor_fixture_passes,
     install_profile_wrapper = install_profile_wrapper,
     callback_latency_acceptance = callback_latency_acceptance,
     resolve_acceptance_profile = resolve_acceptance_profile,
-    production_latency_fixture = production_latency_fixture,
-    production_latency_functional_status = production_latency_functional_status,
-    diagnostic_performance = diagnostic_performance,
-    source_value = source_value,
-    canonical_baseline = canonical_baseline,
   }
 ]]))()
 
@@ -25,41 +19,6 @@ assert(helpers.same_native_color(SELECTED_COLOR,{unpack(SELECTED_COLOR)}))
 assert(not helpers.same_native_color(SELECTED_COLOR,IDLE_COLOR))
 assert(not helpers.same_native_color(nil,nil) and not helpers.same_native_color(SELECTED_COLOR,nil),
   "missing native color observations cannot verify selection highlighting")
-
-local codec=dofile("tests/renoise/driver/json.lua")
-local expected_output={properties={lpb=16},lines={},empty_note={},empty_effect={}}
-local native_output={properties={lpb=16},lines={}}
-for line=1,2 do
-  expected_output.lines[line]={note_columns={{note_value=48,delay_value=0}},
-    effect_columns={{number_value=0,amount_value=0}}}
-  native_output.lines[line]={notes={{note_value=48,delay_value=0}},
-    effects={{number_value=0,amount_value=0}}}
-end
-assert(helpers.production_output_matches(native_output,expected_output))
-for _,change in ipairs({{"notes","note_value",49},{"notes","delay_value",1},
-    {"effects","number_value",1},{"effects","amount_value",127}}) do
-  local cell=native_output.lines[2][change[1]][1]
-  local before=cell[change[2]]
-  cell[change[2]]=change[3]
-  assert(not helpers.production_output_matches(native_output,expected_output),
-    "native oracle accepted corrupted tail "..change[2])
-  cell[change[2]]=before
-end
-native_output.lines[2].notes={}
-assert(not helpers.production_output_matches(native_output,expected_output),
-  "native oracle accepted a missing column")
-local hidden_source={length=1,pitch_length=1,timing_mode="triplet",pitch_events={},time_events={}}
-for step=1,32 do
-  hidden_source.pitch_events[step]={key=step%12,note=36+step%12,octave=0,
-    accent=step%2==0,slide=step%3==0}
-  hidden_source.time_events[step]=step%2==0 and "R" or "N"
-end
-local encoded_source=codec.encode(helpers.source_value(hidden_source,true,codec))
-local reopened_source=helpers.source_value(assert(codec.decode(encoded_source)),false)
-assert(helpers.canonical_baseline(reopened_source)==helpers.canonical_baseline(hidden_source),
-  "checkpoint JSON lost hidden PITCH/TIME memory or source settings")
-assert(getmetatable(reopened_source.pitch_events)==nil and reopened_source.pitch_events[32].key==8,
-  "checkpoint decoder must restore ordinary source arrays with inactive values intact")
 
 local production_trace = {
   {selection_scope = "required", selection_stable = true},
@@ -132,59 +91,29 @@ end)
 assert(installed and rawequal(original,warm_callback) and wrapper_target.callback(2)==3 and
   detailed_wrapped_calls==1,"Detailed mode did not install its requested diagnostic wrapper")
 wrapper_target.callback=original
-assert(helpers.callback_latency_acceptance("Warm",{edit=30})=="NOT_GATED",
+assert(helpers.callback_latency_acceptance("Warm")=="NOT_GATED",
   "Warm latency must be record-only")
-assert(helpers.callback_latency_acceptance("Warm",{edit=1100})=="NOT_GATED",
-  "Latency must not fail functional acceptance")
-assert(helpers.callback_latency_acceptance("Detailed",{edit=1000})=="NOT_CLAIMED",
+assert(helpers.callback_latency_acceptance("Detailed")=="NOT_CLAIMED",
   "Detailed timing must remain diagnostic and cannot claim latency acceptance")
 assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
   helpers.resolve_acceptance_profile("multi-instrument-workflow")=="Warm",
   "profiled native acceptance cases must default to Warm")
 assert(helpers.resolve_acceptance_profile("gui-redesign")==nil,
   "GUI redesign acceptance must not claim instrumentation or performance acceptance")
-local latency_8=helpers.production_latency_fixture("production-latency-8x8")
-assert(helpers.diagnostic_performance({})=="NOT_MEASURED")
-assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=30,
-  performance_acceptance="PASS"}})=="NOT_GATED")
-assert(helpers.diagnostic_performance({{instrumentation_profile="Warm",elapsed_ms=31,
-  performance_acceptance="NOT_CLAIMED"},{instrumentation_profile="Warm",elapsed_ms=1,
-  performance_acceptance="PASS"}})=="NOT_GATED",
-  "latency diagnostics must not impose an acceptance ceiling")
-assert(helpers.diagnostic_performance({{instrumentation_profile="Detailed",elapsed_ms=31,
-  performance_acceptance="NOT_CLAIMED"}})=="NOT_MEASURED",
-  "Detailed instrumentation must not determine the Warm release judgement")
-local latency_16=helpers.production_latency_fixture("production-latency-16x8")
-assert(latency_8.instruments==8 and latency_8.owned_per_instrument==8 and
-    latency_8.receiver_counts.sample==3 and latency_8.receiver_counts.vst==3 and
-    latency_8.receiver_counts.midi==2 and latency_16.instruments==16 and
-    latency_16.owned_per_instrument==8 and latency_16.receiver_counts.sample==6 and
-    latency_16.receiver_counts.vst==6 and latency_16.receiver_counts.midi==4 and
-    helpers.production_latency_fixture("production-latency-4x4")==nil,
-  "production latency fixtures must use the explicit 8x8 and 16x8 receiver mixes")
-assert(helpers.production_latency_functional_status({status="PASS",
-    editor_fixture_inventory_restored=true,editor_fixture_native_selection_restored=true,
-    editor_fixture_store_restored=true,
-    gui_live_first_edit_elapsed_ms=80}) and
-    not helpers.production_latency_functional_status({status="FAIL",
-      editor_fixture_inventory_restored=true,editor_fixture_native_selection_restored=true,
-      editor_fixture_store_restored=true,
-      gui_live_first_edit_elapsed_ms=1}) and
-    not helpers.production_latency_functional_status({status="PASS",
-      editor_fixture_inventory_restored=false,editor_fixture_native_selection_restored=true,
-      editor_fixture_store_restored=true,
-      gui_live_first_edit_elapsed_ms=1}) and
-    not helpers.production_latency_functional_status({status="PASS",
-      editor_fixture_inventory_restored=true,editor_fixture_native_selection_restored=true,
-      editor_fixture_store_restored=false,
-      gui_live_first_edit_elapsed_ms=1}),
-  "latency diagnostics must require functional completion and fixture cleanup, independent of elapsed time")
 assert(helpers.resolve_acceptance_profile("editor-responsiveness","Detailed")=="Detailed")
 local ignored_profile,ignored_error=helpers.resolve_acceptance_profile("ownership-negatives","Detailed")
 assert(ignored_profile==nil and ignored_error,"profile selector was accepted by an unrelated native case")
 local invalid_profile,invalid_error=helpers.resolve_acceptance_profile("editor-responsiveness","Verbose")
 assert(invalid_profile==nil and invalid_error,"unknown instrumentation profile was accepted")
 local acceptance_cases=dofile("tests/renoise/driver/acceptance_cases.lua")
+for _,case_name in ipairs({"production-session-8x8","production-stress-16x8",
+    "phrase-midi-delivery"}) do
+  local accepted,reason=acceptance_cases.run(case_name,function()
+    error("retired native acceptance case was dispatched")
+  end)
+  assert(accepted==false and reason=="native acceptance case is not allowlisted",
+    "retired native acceptance case remains executable: "..case_name)
+end
 local rejected_profile_result
 assert(acceptance_cases.run("ownership-negatives",function(result) rejected_profile_result=result end,nil,"Detailed"))
 assert(rejected_profile_result.status=="ERROR" and rejected_profile_result.reason==ignored_error,
@@ -194,4 +123,4 @@ assert(acceptance_cases.run("editor-responsiveness",function(result) rejected_pr
 assert(rejected_profile_result.status=="ERROR" and rejected_profile_result.reason==invalid_error,
   "M.run did not reject an unsupported profile value")
 
-print("Acceptance driver regressions pass: profile modes, record-only latency and selection")
+print("Acceptance driver regressions pass: profile modes and selection")

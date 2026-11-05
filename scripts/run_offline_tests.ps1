@@ -14,7 +14,6 @@ $checks = @(
     [pscustomobject]@{ Name = 'Renoise runner'; Script = 'tests/renoise/runner_spec.ps1'; Arguments = @() }
     [pscustomobject]@{ Name = 'Development package'; Script = 'tests/renoise/test_package_dev.ps1'; Arguments = @('-LuaCommand', $LuaCommand) }
     [pscustomobject]@{ Name = 'Release package'; Script = 'tests/package_license_spec.ps1'; Arguments = @() }
-    [pscustomobject]@{ Name = 'Audio capture'; Script = 'tests/acid/test_audio_capture.ps1'; Arguments = @() }
     [pscustomobject]@{ Name = 'Loop oracle validation'; Script = 'tests/acid/validate_loop_oracle.ps1'; Arguments = @() }
 )
 $failures = [System.Collections.Generic.List[string]]::new()

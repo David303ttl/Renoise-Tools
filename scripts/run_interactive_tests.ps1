@@ -5,10 +5,6 @@ param(
     [ValidateSet('Native','Keyboard','All')][string]$Suite = 'Native',
     [string]$Scenario,
     [string]$AcceptanceCase,
-    [string]$MidiOutputDevice,
-    [string]$AudioInputDevice,
-    [ValidateSet(44100,48000,96000)][int]$AudioSampleRate = 48000,
-    [string]$ProductionCheckpoint,
     [ValidateSet('Warm','Detailed')][string]$AcceptanceProfile = 'Warm',
     [string]$RenoiseExe,
     [int]$RenoiseProcessId = 0,
@@ -33,7 +29,6 @@ Import-Module (Join-Path $repoRoot 'tests/renoise/runner.psm1') -Force
 $runnerProcessGracefulShutdownMilliseconds = 10000
 $runnerProcessForcedShutdownMilliseconds = 5000
 $runnerProcessIdentityWaitMilliseconds = 5000
-$coldRegenerationFixtureName = 'acceptance-cold-regenerated.xrns'
 $independentFixtureInstrumentCount = 10
 $independentPrimaryPhraseCount = 2
 $independentForeignSentinelCount = 1
@@ -68,7 +63,6 @@ $deploymentStageFixturesHash = $null
 $installedFixturesHash = $null
 $installedDirectoryHash = $null
 $installedSessionHash = $null
-$fixturesDeployed = $false
 $deploymentStarted = $false
 $safeToRestore = $false
 $driverMayBeLoaded = $false
@@ -85,7 +79,6 @@ $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
 $lastExpected = 'Runner preflight completes without changing developer-owned Renoise state'
 $lastActual = $null
 $lastDiff = $null
-$productionPlaybackSummary = $null
 $inventoryDiff = $null
 $report = [ordered]@{
     schema_version = 1
@@ -108,7 +101,6 @@ $report = [ordered]@{
 }
 $clock = [Diagnostics.Stopwatch]::StartNew()
 $transportOnly = $Suite -eq 'Keyboard' -or ($Scenario -ceq 'transport' -and -not $AcceptanceCase)
-$productionSessionAcceptance = $AcceptanceCase -cin @('production-session-8x8','production-stress-16x8')
 $revisionLiveUndoAcceptance = $AcceptanceCase -ceq 'revision-live-undo'
 $revisionUndoAcceptance = $AcceptanceCase -cin @('revision-undo','revision-live-undo')
 $metadataUndoAcceptance = $AcceptanceCase -ceq 'metadata-undo'
@@ -157,11 +149,6 @@ function Get-VersionTriplet {
     $match = [regex]::Match($Value, '(?<!\d)(\d+)\.(\d+)\.(\d+)(?!\d)')
     if (-not $match.Success) { throw "Could not resolve Renoise version from '$Value'." }
     return [version]::new([int]$match.Groups[1].Value, [int]$match.Groups[2].Value, [int]$match.Groups[3].Value)
-}
-
-function Assert-RunnerProcess {
-    if ($null -ne $script:startedIdentity) { Assert-RenoiseProcessIdentity -Identity $script:startedIdentity }
-    elseif ($null -ne $script:selectedIdentity) { Assert-RenoiseProcessIdentity -Identity $script:selectedIdentity }
 }
 
 function Stop-RunnerOwnedProcess {
@@ -221,16 +208,10 @@ function Start-RunnerOwnedProcess {
     return [pscustomobject]@{ Process = $process; Identity = $identity }
 }
 
-function Invoke-ColdProcessAcceptance {
+function Invoke-ColdMetadataRecovery {
     param(
         [Parameter(Mandatory)][string]$SongPath,
-        [Parameter(Mandatory)][string]$Case,
-        $ExpectedBaseline,
-        [int]$ExpectedOldId,
-        [int]$ExpectedTargetId,
-        [string]$ExpectedFixture,
-        [string]$Stage,
-        [string]$MidiOutputDevice
+        [Parameter(Mandatory)]$ExpectedBaseline
     )
     $oldIdentity = $script:processIdentity
     $processCheck = { Assert-RenoiseProcessIdentity -Identity $script:processIdentity }
@@ -272,153 +253,26 @@ function Invoke-ColdProcessAcceptance {
     if ($bootstrap.Ping.protocol_version -ne 1 -or $bootstrap.Ping.session -cne $script:session.Nonce) {
         throw [RenoiseRunnerAssertionException]::new('Cold-process authenticated handshake reported the wrong protocol or run nonce.')
     }
-    $coldArguments = @{case=$Case}
-    if ($Stage) { $coldArguments.stage=$Stage; $coldArguments.midi_output_device=$MidiOutputDevice }
     $result = Invoke-RenoiseDriverRequest -Client $script:client -Session $script:session `
-        -Operation 'acid.acceptance.run' -Arguments $coldArguments `
-        -TimeoutSeconds $(if ($Stage) { 3600 } else { [Math]::Max($script:CommandTimeoutSeconds, 180) }) -ProcessCheck $processCheck
-    if ($result.case -cne $Case -or [string]$result.status -cne 'PASS') {
-        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' did not pass: $(ConvertTo-AcidCanonicalJson $result)")
+        -Operation 'acid.acceptance.run' -Arguments @{case='metadata-recovery-cold'} `
+        -TimeoutSeconds ([Math]::Max($script:CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
+    if ($result.case -cne 'metadata-recovery-cold' -or [string]$result.status -cne 'PASS') {
+        throw [RenoiseRunnerAssertionException]::new("Cold-process metadata recovery did not pass: $(ConvertTo-AcidCanonicalJson $result)")
     }
     if ($null -eq $ExpectedBaseline -or $null -eq $result.reopened_baseline -or
         (ConvertTo-AcidCanonicalJson $ExpectedBaseline) -cne (ConvertTo-AcidCanonicalJson $result.reopened_baseline)) {
-        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' changed the independently captured persisted baseline.")
+        throw [RenoiseRunnerAssertionException]::new('Cold-process metadata recovery changed the independently captured persisted baseline.')
     }
-    if ($Stage) {
-        if ($result.reopened_baseline -cne $ExpectedBaseline) {
-            throw [RenoiseRunnerAssertionException]::new('Production cold baseline mismatch.')
-        }
-        Add-Trace -Operation "acceptance.$Case.$Stage" -Status 'PASS' -Details $result
-        return $result
-    }
-    if ($Case -cin @('metadata-recovery-cold')) {
-        $requiredPostcondition = if ($Case -ceq 'metadata-recovery-cold') { $result.owned_and_new_labels_exact } else { $result.recovered_generation_verified }
-        if ($result.read_only_restore -ne $true -or $requiredPostcondition -ne $true) {
-            throw [RenoiseRunnerAssertionException]::new('Cold recovery-label acceptance omitted required postconditions.')
-        }
-        $script:scenarioResults.Add([pscustomobject]@{
-            name = "acceptance.$Case"; suite = 'Native'; status = 'PASS'
-            expected = 'Fresh-process restoration preserves the exact persisted baseline and case-specific label/draft postconditions'
-            actual = ConvertTo-AcidCanonicalJson $result; diff = $null
-        })
-        Add-Trace -Operation "acceptance.$Case" -Status 'PASS' -Details $result
-        return $result
-    }
-    $targetRevisionMatches = if ($Case -ceq 'cold-reopen-regenerate') {
-        $result.previous_target_id -eq $ExpectedTargetId -and $null -ne $result.target_id -and $result.target_id -ne $ExpectedTargetId
-    } else { $result.target_id -eq $ExpectedTargetId }
-    if ($result.old_id -ne $ExpectedOldId -or -not $targetRevisionMatches) {
-        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' did not preserve the original identity and expected source revision transition.")
-    }
-    Add-Trace -Operation 'acceptance.persisted_baseline' -Status 'PASS' -Details @{
-        case = $Case; expected = $ExpectedBaseline; actual = $result.reopened_baseline
-    }
-    if ($ExpectedFixture -and $result.roundtrip_fixture -cne $ExpectedFixture) {
-        throw [RenoiseRunnerAssertionException]::new("Cold-process acceptance '$Case' returned an unexpected saved fixture name.")
+    if ($result.read_only_restore -ne $true -or $result.owned_and_new_labels_exact -ne $true) {
+        throw [RenoiseRunnerAssertionException]::new('Cold recovery-label acceptance omitted required postconditions.')
     }
     $script:scenarioResults.Add([pscustomobject]@{
-        name = "acceptance.$Case"
-        suite = 'Native'
-        status = 'PASS'
-        expected = if ($ExpectedFixture) { "Cold reopened song passes read-only checks, then regenerates and saves '$ExpectedFixture'" } else { 'Cold reopened regenerated song passes read-only association checks' }
-        actual = ConvertTo-AcidCanonicalJson $result
-        diff = $null
+        name = 'acceptance.metadata-recovery-cold'; suite = 'Native'; status = 'PASS'
+        expected = 'Fresh-process restoration preserves the exact persisted baseline and case-specific label/draft postconditions'
+        actual = ConvertTo-AcidCanonicalJson $result; diff = $null
     })
-    Add-Trace -Operation "acceptance.$Case" -Status 'PASS' -Details $result
+    Add-Trace -Operation 'acceptance.metadata-recovery-cold' -Status 'PASS' -Details $result
     return $result
-}
-
-function Save-ProductionFixtureArtifacts {
-    if (-not $productionSessionAcceptance -or -not $fixturesDeployed -or
-        -not (Test-Path -LiteralPath $installedFixturesPath)) { return }
-    Assert-DirectoryHasNoReparsePoints -Path $installedFixturesPath
-    $generatedNames = @('acceptance-production.xrns','acceptance-production-baseline.json','acceptance-production-state.json')
-    $sourceFiles = @(Get-ChildItem -LiteralPath $fixturesSourcePath -File)
-    $allowedNames = @($sourceFiles.Name) + $generatedNames
-    foreach ($entry in @(Get-ChildItem -LiteralPath $installedFixturesPath -Force)) {
-        if ($entry.PSIsContainer -or $entry.Name -cnotin $allowedNames) {
-            throw 'Production acceptance changed an unexpected fixture path.'
-        }
-    }
-    foreach ($source in $sourceFiles) {
-        $installed = Join-Path $installedFixturesPath $source.Name
-        if (-not (Test-Path -LiteralPath $installed -PathType Leaf) -or
-            (Get-FileHash -LiteralPath $installed).Hash -cne (Get-FileHash -LiteralPath $source.FullName).Hash) {
-            throw 'Production acceptance changed a staged source fixture.'
-        }
-    }
-    foreach ($name in $generatedNames) {
-        $generated = Join-Path $installedFixturesPath $name
-        if (Test-Path -LiteralPath $generated -PathType Leaf) {
-            Copy-Item -LiteralPath $generated -Destination (Join-Path $artifactRoot $name)
-        }
-    }
-    $script:installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
-}
-
-function Test-ProductionAudioSignal {
-    param([double]$Rms, [double]$MutedRms)
-    # Match the audio oracle's -60 dBFS silence floor and 3 dB sustain margin.
-    return [double]::IsFinite($Rms) -and [double]::IsFinite($MutedRms) -and
-        $MutedRms -ge 0 -and $Rms -gt 0.001 -and $Rms -gt $MutedRms * [Math]::Sqrt(2)
-}
-
-function Invoke-ProductionAudioCapture {
-    Import-Module (Join-Path $repoRoot 'tests/acid/audio_analyzer.psm1') -Force
-    $ffmpeg = (Get-Command ffmpeg -CommandType Application -ErrorAction Stop).Source
-    $captures = [Collections.Generic.List[object]]::new()
-    $silenceRms = $null
-    try {
-        foreach ($kind in @('silence','sample','vst','all')) {
-            $ready = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-                -Arguments @{case=$AcceptanceCase;stage="playback-$kind";midi_output_device=$MidiOutputDevice} `
-                -TimeoutSeconds 180 -ProcessCheck $processCheck
-            if ($ready.status -cne 'PASS' -or $ready.playing -ne $true) { throw 'Production playback route did not start.' }
-            $wavePath = Join-Path $artifactRoot "playback-$kind.wav"
-            $logPath = Join-Path $artifactRoot "playback-$kind.log"
-            & $ffmpeg -hide_banner -nostdin -y -f dshow -sample_rate $AudioSampleRate -sample_size 16 -channels 2 `
-                -i "audio=$AudioInputDevice" -t 16 -c:a pcm_s16le $wavePath *> $logPath
-            if ($LASTEXITCODE -ne 0) { throw "Audio capture failed; see playback-$kind.log." }
-            & $processCheck
-            $audio = Read-ArticulationWav $wavePath
-            $rms = [Math]::Max((Get-SampleRms $audio.Left $audio.SampleRate 0 $audio.DurationMs),
-                (Get-SampleRms $audio.Right $audio.SampleRate 0 $audio.DurationMs))
-            if ($kind -ceq 'silence') { $silenceRms = $rms }
-            $captures.Add([pscustomobject]@{receiver=$kind;frames=$audio.FrameCount;sample_rate=$audio.SampleRate;
-                rms=$rms;muted_rms=$silenceRms;sha256=$audio.Sha256;file="playback-$kind.wav"})
-            $captures | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $artifactRoot 'audio-receipt.json') -Encoding utf8
-            if ($kind -cne 'silence' -and -not (Test-ProductionAudioSignal -Rms $rms -MutedRms $silenceRms)) {
-                throw "No $kind signal above the audio oracle's silence floor and muted loopback baseline."
-            }
-        }
-    }
-    finally {
-        $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-            -Arguments @{case=$AcceptanceCase;stage='playback-stop';midi_output_device=$MidiOutputDevice} `
-            -TimeoutSeconds 180 -ProcessCheck $processCheck
-    }
-    return @($captures)
-}
-
-function Invoke-ProductionMidiCapture {
-    $ready = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-        -Arguments @{case=$AcceptanceCase;stage='playback-midi';midi_output_device=$MidiOutputDevice} `
-        -TimeoutSeconds 180 -ProcessCheck $processCheck
-    if ($ready.status -cne 'PASS' -or $ready.playing -ne $true) { throw 'Production MIDI playback did not start.' }
-    Start-Sleep -Seconds 3
-    $receipt = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-        -Arguments @{case=$AcceptanceCase;stage='playback-stop';midi_output_device=$MidiOutputDevice} `
-        -TimeoutSeconds 180 -ProcessCheck $processCheck
-    $receipt | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $artifactRoot 'midi-receipt.json') -Encoding utf8
-    Add-Trace -Operation 'production.midi_capture' -Status $receipt.status -Details $receipt
-    if ($receipt.status -cne 'PASS') { throw 'Production MIDI playback did not stop cleanly.' }
-    foreach ($proof in $receipt.receiver_proofs) {
-        if ($proof.note -ne $true -or $proof.off -ne $true -or $proof.center -ne $true -or $proof.bend -ne $true) {
-            throw [RenoiseRunnerAssertionException]::new('A production MIDI receiver did not deliver the expected note/OFF/center/bend sequence.')
-        }
-    }
-    if (@($receipt.receiver_proofs).Count -notin @(2,4)) { throw 'Production MIDI receiver evidence is incomplete.' }
-    return $receipt
 }
 
 function Get-Preflight {
@@ -437,29 +291,18 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('integrity-observers','writer-recovery','editor-responsiveness','gui-redesign','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','revision-undo','revision-live-undo','production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery','persistence-failures','metadata-undo','metadata-recovery')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('integrity-observers','writer-recovery','editor-responsiveness','gui-redesign','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','revision-undo','revision-live-undo','persistence-failures','metadata-undo','metadata-recovery')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($metadataRecoveryAcceptance -and $RenoiseProcessId -gt 0) {
         throw 'Metadata recovery cold reopen requires a runner-owned process; omit -RenoiseProcessId.'
     }
-    $productionLatency = $AcceptanceCase -cin @('production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery')
-    if ($productionLatency -and $RenoiseProcessId -gt 0) {
-        throw 'Production latency diagnostics require a runner-owned Renoise process; omit -RenoiseProcessId.'
-    }
-    if ($productionLatency -and ([string]::IsNullOrWhiteSpace($MidiOutputDevice) -or $MidiOutputDevice.Length -gt 256)) {
-        throw 'Production latency diagnostics require -MidiOutputDevice with the exact approved MIDI output name (1-256 characters).'
-    }
-    if ($MidiOutputDevice -and -not $productionLatency) { throw '-MidiOutputDevice is only valid for production cases.' }
-    if ($AudioInputDevice -and (-not $productionSessionAcceptance -or $AudioInputDevice.Length -gt 256 -or
-        $AudioInputDevice -match '[\x00-\x1f]')) { throw '-AudioInputDevice requires a production session and an exact input device name.' }
-    if ($ProductionCheckpoint -and -not $productionSessionAcceptance) { throw '-ProductionCheckpoint requires a production session case.' }
     $profileResolution = Resolve-AcidAcceptanceProfile -AcceptanceCase $AcceptanceCase `
         -Profile $AcceptanceProfile -Explicit:($PSBoundParameters.ContainsKey('AcceptanceProfile'))
     $profileApplies = $profileResolution.Applies
     if ($profileApplies) { $report.acceptance_profile = $profileResolution.Profile }
     if ($AcceptanceCase -and $Suite -ne 'Native') { throw '-AcceptanceCase requires -Suite Native.' }
-    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not ($revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance -or $productionSessionAcceptance)) {
+    if ($AllowKeyboardFocusActivation -and $Suite -eq 'Native' -and -not ($revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance)) {
         throw '-AllowKeyboardFocusActivation is only valid for Keyboard or All suites, except Native undo acceptance.'
     }
     if ($VerifyScenarioOrder -and $Suite -ne 'Native') {
@@ -546,7 +389,7 @@ try {
         $report.keyboard.negative_cases = @($keyboardNegativeCases)
         $activeSuite = if ($Suite -eq 'Keyboard') { 'Keyboard' } else { 'Native' }
     }
-    elseif ($revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance -or $productionSessionAcceptance) {
+    elseif ($revisionUndoAcceptance -or $metadataUndoAcceptance -or $metadataRecoveryAcceptance) {
         $keyboardConfiguration = Get-AcidKeyboardConfiguration -Environment $environment
         $keyboardExecutable = Find-AutoHotkeyV2Executable -ConfiguredPath $keyboardConfiguration.AutoHotkeyPath
         if (-not (Test-Path -LiteralPath $keyboardHelperPath -PathType Leaf)) { throw "AutoHotkey helper does not exist: $keyboardHelperPath" }
@@ -994,91 +837,9 @@ try {
                 Add-Trace -Operation "acceptance.$AcceptanceCase.enter" -Status 'PASS' -Details @{ pid = $processIdentity.Id; keys = '{Enter}'; output = $enterResult.StdOut }
             }
             $acceptanceArguments = @{ case = $AcceptanceCase }
-            if ($ProductionCheckpoint) {
-                $checkpointRoot = [IO.Path]::GetFullPath($ProductionCheckpoint)
-                Assert-DirectoryHasNoReparsePoints -Path $checkpointRoot
-                foreach ($name in @('acceptance-production.xrns','acceptance-production-baseline.json')) {
-                    Copy-Item -LiteralPath (Join-Path $checkpointRoot $name) -Destination (Join-Path $installedFixturesPath $name)
-                }
-                $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
-                $null = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'document.load_fixture' `
-                    -Arguments @{root='fixtures';name='acceptance-production.xrns';timeout_ms=120000} `
-                    -TimeoutSeconds 123 -ProcessCheck $processCheck
-                $acceptanceArguments.stage='cold-verify'
-            }
-            if ($productionLatency) { $acceptanceArguments.midi_output_device = $MidiOutputDevice }
             if ($profileApplies) { $acceptanceArguments.profile = $profileResolution.Profile }
-            $acceptanceTimeout = if ($AcceptanceCase -cin @('production-session-8x8','production-stress-16x8')) { 3600 } else { [Math]::Max($CommandTimeoutSeconds, 180) }
-            $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' -Arguments $acceptanceArguments -TimeoutSeconds $acceptanceTimeout -ProcessCheck $processCheck
-            if ($productionSessionAcceptance -and -not $ProductionCheckpoint) {
-                for ($action = 0; $action -lt 2 -and $acceptance.status -ceq 'PASS'; $action++) {
-                    if ($acceptance.action_ready -ne $true) { throw 'Production GUI user action was not prepared.' }
-                    $enterResult = Invoke-AcidKeyboardHelper -Executable $keyboardExecutable -HelperScript $keyboardHelperPath `
-                        -Mode Send -ProcessId $processIdentity.Id -Keys '{Enter}' -ProcessCheck $processCheck `
-                        -AllowFocusActivation:$AllowKeyboardFocusActivation -TimeoutSeconds $keyboardConfiguration.TimeoutSeconds
-                    if ($enterResult.ExitCode -ne 0) { throw "Production Enter callback failed: $($enterResult.StdErr)" }
-                    $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
-                        -Arguments @{case=$AcceptanceCase;stage='undo';midi_output_device=$MidiOutputDevice} `
-                        -TimeoutSeconds 3600 -ProcessCheck $processCheck
-                }
-            }
-            if ($productionSessionAcceptance -and $acceptance.status -ceq 'PASS') {
-              if (-not $ProductionCheckpoint) {
-                if ($acceptance.action_ready -ne $false -or $acceptance.phases.native_undo -cne 'PASS') {
-                    throw 'Production native Undo/Redo evidence is incomplete.'
-                }
-                $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
-                $productionSongPath = Join-Path $installedFixturesPath 'acceptance-production.xrns'
-                foreach ($coldStage in @('cold-regenerate','cold-verify')) {
-                    $songHash = (Get-FileHash -LiteralPath $productionSongPath -Algorithm SHA256).Hash
-                    Copy-Item -LiteralPath $productionSongPath -Destination (Join-Path $artifactRoot "$coldStage.xrns")
-                    Add-Trace -Operation 'production.xrns' -Status 'PASS' -Details @{stage=$coldStage;sha256=$songHash}
-                    $cold = Invoke-ColdProcessAcceptance -SongPath $productionSongPath -Case $AcceptanceCase `
-                        -Stage $coldStage -MidiOutputDevice $MidiOutputDevice -ExpectedBaseline $acceptance.saved_baseline
-                    if ($coldStage -ceq 'cold-regenerate') {
-                        $acceptance.saved_baseline = $cold.saved_baseline
-                        $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
-                    }
-                }
-                $acceptance.phases.cold_reopen='PASS'
-              }
-              else {
-                $acceptance | Add-Member -NotePropertyName execution_mode -NotePropertyValue 'PLAYBACK_CHECKPOINT'
-              }
-                $acceptance | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $artifactRoot 'production-functional.json') -Encoding utf8
-                $midiEvidence = Invoke-ProductionMidiCapture
-                $acceptance.midi_counts = $midiEvidence.midi_counts
-                $acceptance.midi_events = $midiEvidence.midi_events
-                $acceptance | Add-Member -NotePropertyName midi_receiver_proofs -NotePropertyValue $midiEvidence.receiver_proofs -Force
-                $acceptance.status='FAIL'
-                if ($acceptance.midi_counts.note -le 0 -or $acceptance.midi_counts.off -le 0 -or $acceptance.midi_counts.bend -le 0) {
-                    $acceptance | Add-Member -NotePropertyName midi_status -NotePropertyValue 'FAIL' -Force
-                    $acceptance | Add-Member -NotePropertyName audio_status -NotePropertyValue 'NOT_RUN' -Force
-                    $acceptance.phases.playback='FAIL'
-                    $acceptance | Add-Member -NotePropertyName reason -NotePropertyValue 'multitrack MIDI note/OFF/pitch-bend events were not captured' -Force
-                }
-                else {
-                    $acceptance | Add-Member -NotePropertyName midi_status -NotePropertyValue 'PASS' -Force
-                    if ($AudioInputDevice) {
-                        $audioEvidence = Invoke-ProductionAudioCapture
-                        $acceptance | Add-Member -NotePropertyName audio_evidence -NotePropertyValue $audioEvidence -Force
-                        $acceptance | Add-Member -NotePropertyName audio_status -NotePropertyValue 'PASS' -Force
-                        $acceptance.phases.playback='PASS'
-                        $acceptance.status='PASS'
-                        $acceptance.complete=-not [bool]$ProductionCheckpoint
-                    }
-                    else {
-                        $acceptance | Add-Member -NotePropertyName audio_status -NotePropertyValue 'WAIVED' -Force
-                        $acceptance.phases.playback='PASS'
-                        $acceptance.status='PASS'
-                        $acceptance.complete=-not [bool]$ProductionCheckpoint
-                        $acceptance | Add-Member -NotePropertyName playback_evidence -NotePropertyValue 'MIDI_CAPTURED_AUDIO_NOT_REQUIRED' -Force
-                    }
-                }
-            }
-            if ($productionSessionAcceptance -and $acceptance.midi_status -and $acceptance.audio_status) {
-                $productionPlaybackSummary = 'MIDI {0}; audio {1}' -f $acceptance.midi_status, $acceptance.audio_status
-            }
+            $acceptance = Invoke-RenoiseDriverRequest -Client $client -Session $session -Operation 'acid.acceptance.run' `
+                -Arguments $acceptanceArguments -TimeoutSeconds ([Math]::Max($CommandTimeoutSeconds, 180)) -ProcessCheck $processCheck
             $acceptanceStatus = [string]$acceptance.status
             if ($acceptanceStatus -cnotin @('PASS','FAIL','ERROR') -or $acceptance.case -cne $AcceptanceCase) {
                 throw 'Native acceptance response did not match the selected case.'
@@ -1110,8 +871,7 @@ try {
                 }
                 $installedFixturesHash = Get-DirectoryHash -Path $installedFixturesPath
                 Copy-Item -LiteralPath $recoverySongPath -Destination (Join-Path $artifactRoot $recoveryFixtureName)
-                $coldRecoveryCase = 'metadata-recovery-cold'
-                $null = Invoke-ColdProcessAcceptance -SongPath $recoverySongPath -Case $coldRecoveryCase -ExpectedBaseline $acceptance.saved_baseline
+                $null = Invoke-ColdMetadataRecovery -SongPath $recoverySongPath -ExpectedBaseline $acceptance.saved_baseline
                 if ((Get-DirectoryHash -Path $installedFixturesPath) -cne $installedFixturesHash) {
                     throw 'Cold recovery verification changed saved fixture files.'
                 }
@@ -1243,7 +1003,6 @@ finally {
     }
     if ($deploymentStarted -and $safeToRestore) {
       try {
-        Save-ProductionFixtureArtifacts
         . ([scriptblock]::Create((Get-RenoiseRestorationOperation)))
     }
       catch {
@@ -1299,9 +1058,6 @@ finally {
     }
 }
 
-if ($productionPlaybackSummary) {
-    Write-Output "Production playback summary: $productionPlaybackSummary"
-}
 if ($report.status -eq 'PASS') {
     Write-Output 'PASS interactive Renoise runner'
     exit 0

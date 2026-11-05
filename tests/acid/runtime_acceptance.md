@@ -6,6 +6,23 @@ See [seed recall verification](#randomization-seed-recall-verification-2026-11-0
 and [direct operations verification](#direct-editor-operations-verification-2026-11-02)
 for current deterministic and native acceptance status.
 
+## Legacy cleanup verification (2026-11-05)
+
+Tested production revision: `a122e324de1d6bbd890eed05004f8449fc412f41`, with
+uncommitted native-harness deletions. Production Lua and manifest are unchanged.
+The retired session, MIDI-delivery and populated-song latency journeys are no
+longer executable acceptance cases. Their dated results below are evidence only.
+
+| Check | Command / evidence | Result |
+| --- | --- | --- |
+| Regression | `./scripts/run_offline_tests.ps1`; `tmp/cleanup-final-offline.log` | PASS; 67 isolated Lua specs, 0 failed; all 7 offline check groups |
+| Native recovery | `./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase writer-recovery`; `tmp/interactive-5667dcc37ded4e84a4609a1c7538be70/report.json` | PASS; Renoise 3.5.4 / API 6.2; transport, phrase inventory, expected-difference detection and transactional writer recovery |
+| Native GUI lifecycle | `tmp/interactive-2d82d3e8a7744bea899bce809a7a5b0b/report.json` | PASS; retained GUI lifecycle and native smoke checks against the same production revision |
+| Package | `./scripts/package.ps1 -Tool ACID` | PASS; 32 runtime files |
+
+These runs do not establish audible playback or reopen the waived acoustic and
+production-scale investigations. Reports and logs are local, ignored artifacts.
+
 ## Randomization seed recall verification (2026-11-02)
 
 | Check | Command / evidence | Result |
@@ -814,6 +831,8 @@ The 16×8 acceptance is **PASS by scope decision**, with the remaining stress ex
 
 ## Production-session native evidence
 
+These closed journeys are retained as evidence only and are not executable acceptance cases.
+
 | Scenario | Acceptance disposition / run result | Existing artifact and identity |
 | --- | --- | --- |
 | 8×8 production-session-8x8 | **PASS:** 64 base creations, one additional Create, 133 regenerations; seed, edits, drafts, native Undo/Redo, cold reopen and playback phases passed. MIDI is **PASS** (6 notes, 6 OFFs, 12 pitch-bend events); audio is **WAIVED**, with no audio pass claimed. | Native report, run 74c947cf55204a5da1e53b0edc30610e, SHA-256 8484522B90D3482A94101D23F34F4498C73AD741ABCE374DAA9FC51EA5008D74. Development bundle: tmp/acid-dev-74c947cf55204a5da1e53b0edc30610e/. |
@@ -857,10 +876,6 @@ Later report-field/timer fixes do not retrospectively apply to older artifacts.
 - `tests/renoise/acceptance_cases_spec.lua`: Warm-only aggregation retains an
   earlier performance FAIL and excludes Detailed overhead from release judgement.
   Each Detailed callback's observed ceiling status remains separate.
-- `tests/acid/production_session_acceptance.md`: distinguishes strict release
-  execution from `FUNCTIONAL_DIAGNOSTIC`, with unchanged safety stop conditions
-  and 30 ms ceiling; removes contradictory prohibitions on diagnostic 16x8 after
-  a complete 8x8 functional journey. The smaller latency case is not that journey.
 - `tests/renoise/README.md`: documents the diagnostic matrix/report semantics.
   Playbook and roadmap contain short references to this canonical evidence.
 
@@ -1097,7 +1112,6 @@ The six fresh observer/recovery/Warm/Detailed reports above all record `process.
 
 **NOT IMPLEMENTED / NOT RUN / Gate 8 OPEN.** The real-user acceptance target now includes a single ACID production GUI controlling **8 instruments × 8 owned phrases (64) + 8 foreign sentinels** and **16 instruments × 8 owned phrases (128) + 16 foreign sentinels**, with actual sample/VST/MIDI receivers, 8/16 playing tracks, heterogeneous LAST STEP/PITCH spans, NOTE/TIE/REST, accents/slides, Straight/Triplet, Repeat/Play Once, PB, drafts, real native Undo/Redo and two cold reopen stages. The existing 3-instrument diagnostic is retained as narrower historical evidence, not an expanded-case PASS.
 
-The full implementation-ready contract, deterministic profiles, real-GUI call path, 128/512 regeneration minimums, phase-specific independent oracles, 30 ms **per edit callback** maximum, source-history/heap/observer budgets, receiver event evidence, failure stop conditions and commands are in [production_session_acceptance.md](production_session_acceptance.md). Execute T8.0–T8.5 in order in the [playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance). The future case names are **not currently allowlisted**; no result is asserted here.
 
 | Requirement | 8x8 | 16x8 |
 | --- | --- | --- |

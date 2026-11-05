@@ -1991,7 +1991,7 @@ M4 completion. Step 8 later closed under the scoped decision recorded below.
 
 Record latency without an acceptance threshold. Preserve recovery snapshots unchanged. Further performance investigation and runtime optimization are out of scope. Historical result records remain unchanged.
 
-Driver protocol: [production-session acceptance contract](../tests/acid/production_session_acceptance.md).
+Recorded results: [production-session native evidence](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 
 ## Step 9 — Final documentation and review
 
