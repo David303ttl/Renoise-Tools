@@ -142,8 +142,8 @@ do
   equal(mode.value, 1)
   equal(slots.value, 1)
   equal(mono.value, 1)
-  equal(mode.items[1], 'Spaced (Digitakt Grid)')
-  equal(slots.items[1], 'Auto')
+  equal(mode.items[1], 'Grid (Digitakt Slices)')
+  equal(slots.items[1], '4')
   equal(mono.items[1], 'Average Channels')
   truthy(slots.active, 'slot selection should be enabled in spaced mode')
   local boxes = {}
@@ -160,8 +160,8 @@ do
   mode.notifier(1)
   equal(slots.active, true)
   equal(chain_options.export_mode(2), 'chain')
-  equal(chain_options.slot_count(1), nil)
-  equal(chain_options.slot_count(4), 16)
+  equal(chain_options.slot_count(1), 4)
+  equal(chain_options.slot_count(3), 16)
   equal(chain_options.mono_mode(3), 'right')
 end
 
@@ -173,7 +173,7 @@ do
   local slots = find_popup(state, chain_options.slot_count_labels())
   local mono = find_popup(state, chain_options.mono_mode_labels())
   mode.notifier(2)
-  slots.notifier(4)
+  slots.notifier(3)
   mono.notifier(3)
   local boxes = {}
   for _, view in ipairs(state.views) do if view.kind == 'checkbox' then boxes[#boxes + 1] = view end end

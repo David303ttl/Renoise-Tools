@@ -59,8 +59,11 @@ function M.show()
       set_text(status, message)
     end,
     on_finish = function(result)
-      set_running(false, string.format("Exported %d slots (%d frames @ %d Hz).",
-        result.slot_count, result.frames, result.sample_rate))
+      local description = result.mode == "chain"
+        and string.format("%d concatenated samples", result.slot_count)
+        or string.format("%d-slice grid", result.slot_count)
+      set_running(false, string.format("Exported %s (%d frames @ %d Hz).",
+        description, result.frames, result.sample_rate))
       local label = result.mode == "chain" and "Mean Sample" or "Slot"
       set_text(duration, string.format("%s: %.3f sec  |  Total: %.3f sec",
         label, result.slot_sec, result.total_sec))
@@ -177,7 +180,7 @@ function M.show()
 
     vb:text { text = "Export Digitakt Sample Chain" },
     row("Export Mode:", mode_selector),
-    row("Slot Count (Optional):", slot_selector),
+    row("Grid Divisions:", slot_selector),
     row(string.format("Apply %d ms fade-out to each sample", chain_options.FADE_OUT_MS), fade_checkbox),
     row("Apply Dither (TPDF):", dither_checkbox),
     row(string.format("Pad both slot edges with %d silent frames", chain_options.EDGE_SILENCE_FRAMES), pad_checkbox),

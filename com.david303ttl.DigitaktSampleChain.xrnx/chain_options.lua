@@ -7,8 +7,8 @@ M.EDGE_SILENCE_FRAMES = 64
 M.DEFAULT_CHOICE = 1
 
 local EXPORT_MODES = {
-  { id = "spaced", label = "Spaced (Digitakt Grid)" },
-  { id = "chain", label = "Chain (Direct Concatenation)" },
+  { id = "spaced", label = "Grid (Digitakt Slices)" },
+  { id = "chain", label = "Concatenated" },
 }
 
 local MONO_MODES = {
@@ -34,9 +34,9 @@ function M.mono_mode_labels()
 end
 
 function M.slot_count_labels()
-  local items = { "Auto" }
+  local items = {}
   for i, count in ipairs(SLOT_COUNT_CHOICES) do
-    items[i + 1] = tostring(count)
+    items[i] = tostring(count)
   end
   return items
 end
@@ -52,17 +52,25 @@ function M.mono_mode(index)
 end
 
 function M.slot_count(index)
-  return SLOT_COUNT_CHOICES[index - M.DEFAULT_CHOICE]
+  return SLOT_COUNT_CHOICES[index]
 end
 
 function M.defaults()
   return {
     mode = EXPORT_MODES[M.DEFAULT_CHOICE].id,
     mono = MONO_MODES[M.DEFAULT_CHOICE].id,
+    slot_count = SLOT_COUNT_CHOICES[M.DEFAULT_CHOICE],
     fade = false,
     dither = false,
     zero_pad = false,
   }
+end
+
+function M.is_grid_division(value)
+  for _, count in ipairs(SLOT_COUNT_CHOICES) do
+    if value == count then return true end
+  end
+  return false
 end
 
 local function contains_id(list, id)
@@ -82,15 +90,12 @@ function M.validate(options)
   if not contains_id(MONO_MODES, options.mono) then
     return nil, "Unknown mono conversion mode."
   end
-  local slot_count = options.slot_count
-  if slot_count ~= nil then
-    local supported = false
-    for _, count in ipairs(SLOT_COUNT_CHOICES) do
-      if slot_count == count then supported = true end
+  local slot_count = nil
+  if options.mode == "spaced" then
+    if not M.is_grid_division(options.slot_count) then
+      return nil, "Choose a grid division of 4, 8, 16, 32 or 64."
     end
-    if not supported then
-      return nil, "Choose a supported slot count or Auto."
-    end
+    slot_count = options.slot_count
   end
   for _, flag in ipairs({ "fade", "dither", "zero_pad" }) do
     if type(options[flag]) ~= "boolean" then

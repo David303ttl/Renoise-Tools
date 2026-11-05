@@ -15,7 +15,10 @@ function M.plan(lengths, options, sample_rate)
     total = total + length
   end
   local chain = options.mode == "chain"
-  local count = chain and #lengths or (options.slot_count or #lengths)
+  local count = chain and #lengths or options.slot_count
+  if not chain and not settings.is_grid_division(count) then
+    return nil, "Choose a grid division of 4, 8, 16, 32 or 64."
+  end
   if count < #lengths then
     return nil, string.format("%d samples do not fit into %d slots.", #lengths, count)
   end

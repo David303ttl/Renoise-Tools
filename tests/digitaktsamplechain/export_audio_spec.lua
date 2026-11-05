@@ -50,7 +50,8 @@ end
 -- Decode every frame, including padding and unused fixed slots, independently
 -- of the layout and PCM encoder implementations.
 for _, mode in ipairs({ 'chain', 'spaced' }) do
-  for _, fixed in ipairs({ false, true }) do
+  local division_choices = mode == 'spaced' and { 4, 8, 16, 32, 64 } or { 4 }
+  for _, divisions in ipairs(division_choices) do
     for _, padded in ipairs({ false, true }) do
       for _, mono in ipairs({ 'average', 'left', 'right' }) do
         local source = host.instrument({
@@ -61,11 +62,11 @@ for _, mode in ipairs({ 'chain', 'spaced' }) do
         })
         local options = settings.defaults()
         options.mode, options.mono, options.zero_pad = mode, mono, padded
-        options.slot_count = fixed and 4 or nil
+        options.slot_count = divisions
         local pcm, info = export(source, options)
         local edge = mode == 'spaced' and padded and 64 or 0
         local width = 5 + 2 * edge
-        local count = mode == 'chain' and 2 or fixed and 4 or 2
+        local count = mode == 'chain' and 2 or divisions
         local expected = mode == 'chain' and 8 or count * width
         assert(#pcm == expected and info.frames == expected and info.slot_count == count)
         assert(info.total_sec == expected / RATE)

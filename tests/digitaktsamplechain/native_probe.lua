@@ -112,17 +112,17 @@ add("native-menu-registration", function()
   check(tool:has_menu_entry("Sample Editor:Export Digitakt Sample Chain"), "production menu was not registered")
 end)
 
-for _, fixed in ipairs({ false, true }) do
+for _, divisions in ipairs({ 4, 8, 16, 32, 64 }) do
   for _, padded in ipairs({ false, true }) do
-    local use_fixed, use_padding = fixed, padded
-    add("native-grid-" .. (fixed and "fixed" or "auto") .. (padded and "-padded" or ""), function()
+    local count, use_padding = divisions, padded
+    add("native-grid-" .. tostring(count) .. (padded and "-padded" or ""), function()
       local source = instrument({ 3, 5, 0 })
       local options = settings.defaults()
-      options.slot_count = use_fixed and GRID_COUNT or nil
+      options.slot_count = count
       options.zero_pad = use_padding
-      local count, edge = use_fixed and GRID_COUNT or 2, use_padding and EDGE_FRAMES or 0
+      local edge = use_padding and EDGE_FRAMES or 0
       local slot_frames = 5 + edge * 2
-      local path = output("grid-" .. tostring(use_fixed) .. "-" .. tostring(use_padding))
+      local path = output("grid-" .. tostring(count) .. "-" .. tostring(use_padding))
       local before = source.samples[1].sample_buffer:sample_data(1, 1)
       coroutine.yield()
       local original_name = source.name
@@ -156,7 +156,7 @@ for _, mode in ipairs({ "average", "left", "right" }) do
   add("native-stereo-" .. mode, function()
     local source = instrument({ 3 }, RATE, STEREO)
     local options = settings.defaults()
-    options.mono = selected
+    options.mode, options.mono = "chain", selected
     local path = output("stereo-" .. selected)
     local result, failure = export(source, options, path)
     check(result and not failure, failure)
@@ -181,7 +181,7 @@ end)
 add("native-short-fade", function()
   local source = instrument({ 3 })
   local options = settings.defaults()
-  options.fade = true
+  options.mode, options.fade = "chain", true
   local path = output("fade")
   local result, failure = export(source, options, path)
   check(result and not failure, failure)
@@ -198,7 +198,9 @@ add("native-source-bit-depths", function()
     for frame = 1, 5 do buffer:set_sample_data(1, frame, 0.25) end
     buffer:finalize_sample_data_changes()
     local path = output("depth-" .. depth)
-    local result, failure = export(source, settings.defaults(), path)
+    local options = settings.defaults()
+    options.mode = "chain"
+    local result, failure = export(source, options, path)
     check(result and not failure, failure)
     local content = verify_wav(path, 5)
     check(uint(content, 35, 2) == 16 and pcm(content, 1) == 8192)
@@ -213,7 +215,7 @@ add("native-sliced-slot-order", function()
   local path = output("slices")
   local result, failure = export(source, settings.defaults(), path)
   check(result and not failure, failure)
-  check(result.slot_count == #source.samples)
+  check(result.slot_count == GRID_COUNT and #source.samples <= GRID_COUNT)
   local content = verify_wav(path, result.frames)
   local slot_frames = result.frames / result.slot_count
   for index, sample in ipairs(source.samples) do
@@ -226,7 +228,7 @@ end)
 add("native-reproducible-dither-and-reimport", function()
   local source = instrument({ 17 })
   local options = settings.defaults()
-  options.dither = true
+  options.mode, options.dither = "chain", true
   local first, second = output("dither-first"), output("dither-second")
   local result, failure = export(source, options, first)
   check(result and not failure, failure)
@@ -248,7 +250,9 @@ add("native-rate-conversion", function()
       buffer:set_sample_data(1, frame, TONE_LEVEL * math.sin(2 * math.pi * TEST_TONE_HZ * (frame - 1) / rate))
     end
     buffer:finalize_sample_data_changes()
-    local result, failure = export(source, settings.defaults(), output("converted-" .. rate))
+    local options = settings.defaults()
+    options.mode = "chain"
+    local result, failure = export(source, options, output("converted-" .. rate))
     check(result and not failure, failure)
     check(result.frames == RATE and result.sample_rate == RATE)
     check(source.samples[1].sample_buffer.sample_rate == rate)
@@ -271,7 +275,9 @@ add("native-downsampling-alias-suppression", function()
   end
   buffer:finalize_sample_data_changes()
   local path = output("alias-suppression")
-  local result, failure = export(source, settings.defaults(), path)
+  local options = settings.defaults()
+  options.mode = "chain"
+  local result, failure = export(source, options, path)
   check(result and not failure, failure)
   local content, energy, count = verify_wav(path, RATE), 0, 0
   for frame = SIGNAL_EDGE_FRAMES + 1, RATE - SIGNAL_EDGE_FRAMES do
@@ -289,6 +295,9 @@ add("native-preflight-rejections", function()
   options.slot_count = GRID_COUNT
   local job, err = runner.start(source, options, output("rejected-count"), {})
   check(not job and err:find("do not fit"))
+  options.slot_count = nil
+  job, err = runner.start(source, options, output("rejected-missing-grid"), {})
+  check(not job and err:find("grid division"), "missing grid division was accepted")
 end)
 
 add("native-cancel-preserves-destination", function()
@@ -355,7 +364,9 @@ add("native-final-progress-edit-rejected", function()
   local path = output("final-edit")
   write_file(path, "original")
   local edited = false
-  local result, failure = export(source, settings.defaults(), path, function()
+  local options = settings.defaults()
+  options.mode = "chain"
+  local result, failure = export(source, options, path, function()
     if current_job and current_job.written_frames > 0 and not edited then
       edited = true
       local buffer = source.samples[1].sample_buffer
@@ -427,7 +438,7 @@ add("native-dialog-and-export-callbacks", function()
   wait_for(function() return jobs[1].finished end)
   check(#errors == 0 and duration.text:find("Slot:"), errors[1])
   check(export_button.view.active)
-  verify_wav(destination, 10)
+  verify_wav(destination, 20)
   destination = ""
   export_button.callback()
   check(#jobs == 1 and duration.text == "" and #errors == 0, "save cancel retained stale state")
@@ -482,7 +493,6 @@ end
 
 if config.waveforms then
   local variants = {
-    { id = "auto", mode = "spaced" },
     { id = "grid64", mode = "spaced", slots = CORPUS_BATCH_SIZE },
     { id = "padded", mode = "spaced", slots = CORPUS_BATCH_SIZE, pad = true },
     { id = "chain", mode = "chain" },

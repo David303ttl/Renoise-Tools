@@ -41,11 +41,11 @@ local job = assert(runner.start(instrument, settings.defaults(), path, callbacks
 assert(instrument.samples[1].sample_buffer.reads == 0, "start should not read full audio")
 drive(tool)
 assert(job.finished and result and not failure)
-assert(result.mode == "spaced" and result.frames == 10 and result.slot_count == 2)
-assert(result.slot_sec == 5 / 48000 and result.total_sec == 10 / 48000)
+assert(result.mode == "spaced" and result.frames == 20 and result.slot_count == 4)
+assert(result.slot_sec == 5 / 48000 and result.total_sec == 20 / 48000)
 assert(host.read_file(path):sub(45) == string.char(
   0, 64, 0, 224, 0, 16, 0, 0, 0, 0,
-  154, 25, 154, 25, 154, 25, 154, 25, 154, 25))
+  154, 25, 154, 25, 154, 25, 154, 25, 154, 25) .. string.rep("\0", 20))
 clean(tool, song, instrument)
 job.timer() -- Delayed callbacks after completion are inert.
 assert(os.remove(path))
@@ -170,7 +170,9 @@ clean(tool, song, changing)
 local final_write = host.instrument({ host.buffer(40000) })
 tool, song = host.host(final_write)
 failure, result = nil, nil
-job = assert(runner.start(final_write, settings.defaults(), path, {
+local final_options = settings.defaults()
+final_options.mode = "chain"
+job = assert(runner.start(final_write, final_options, path, {
   on_error = function(err) failure = err end,
   on_progress = function()
     if job and job.written_frames > 0 and not job.verifying then
@@ -269,7 +271,7 @@ for _, mode in ipairs({ "chain", "spaced" }) do
   job = assert(runner.start(source, opts, path, callbacks))
   drive(tool)
   assert(result and not failure)
-  local expected = mode == "chain" and 14400 or 19200
+  local expected = mode == "chain" and 14400 or 38400
   assert(result.frames == expected and result.sample_rate == 48000)
   local bytes = host.read_file(path)
   assert(#bytes == 44 + expected * 2)

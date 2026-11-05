@@ -7,11 +7,15 @@ local function options(overrides)
   return result
 end
 local RATE = settings.SAMPLE_RATE
-local auto = assert(layout.plan({ 3, 5 }, options(), RATE))
-assert(auto.slot_count == 2 and auto.slot_frames == 5 and auto.total_frames == 10)
-assert(auto.slot_sec == 5 / RATE and auto.total_sec == 10 / RATE)
-local fixed = assert(layout.plan({ 3, 5 }, options({ slot_count = 4 }), RATE))
-assert(fixed.slot_frames == 5 and fixed.total_frames == 20)
+local default_grid = assert(layout.plan({ 3, 5 }, options(), RATE))
+assert(default_grid.slot_count == 4 and default_grid.slot_frames == 5 and default_grid.total_frames == 20)
+assert(default_grid.slot_sec == 5 / RATE and default_grid.total_sec == 20 / RATE)
+local fixed = assert(layout.plan({ 3, 5 }, options({ slot_count = 8 }), RATE))
+assert(fixed.slot_frames == 5 and fixed.total_frames == 40)
+local missing_division = options()
+missing_division.slot_count = nil
+assert(select(2, layout.plan({ 3, 5 }, missing_division, RATE)):find("grid division"))
+assert(select(2, layout.plan({ 3, 5 }, options({ slot_count = 2 }), RATE)):find("grid division"))
 local refused, why = layout.plan({ 1, 1, 1, 1, 1 }, options({ slot_count = 4 }), RATE)
 assert(not refused and why:find("do not fit"))
 assert(not layout.plan({}, options(), RATE))
@@ -19,10 +23,9 @@ assert(not layout.plan({ 1.5 }, options(), RATE))
 assert(not layout.plan({ math.huge }, options(), RATE))
 
 -- Every emitted slot boundary and reported duration agrees with the padded grid.
-for _, count in ipairs({ 0, 4, 8, 16, 32, 64 }) do
+for _, count in ipairs({ 4, 8, 16, 32, 64 }) do
   for _, pad in ipairs({ false, true }) do
-    local opts = options({ zero_pad = pad })
-    if count > 0 then opts.slot_count = count end
+    local opts = options({ zero_pad = pad, slot_count = count })
     local lengths = { 3, 5 }
     local plan = assert(layout.plan(lengths, opts, RATE))
     local slot_frames = 5 + (pad and 128 or 0)

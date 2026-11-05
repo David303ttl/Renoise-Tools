@@ -124,8 +124,10 @@ and mocked GUI/lifecycle behavior. Run `./tests/digitaktsamplechain/run_native.p
 with Renoise closed for its separate fresh-process native probe. The
 [native results](renoise/host_verification.md#digitakt-native-export-2026-11-05)
 cover real sample buffers, timers, reimport, undo preservation and notifier-driven
-GUI checks. Same-size edits emit no buffer notification on the verified host;
-the exporter detects already-written audio changes using bounded PCM readback.
+GUI checks. These recorded results predate the mandatory explicit grid
+divisions change and must not be treated as a PASS for the updated grid behavior.
+Same-size edits emit no buffer notification on the verified host; the exporter
+detects already-written audio changes using bounded PCM readback.
 `-WaveformDirectory tmp/000` adds exhaustive 64-file batches against the supplied
 single-cycle corpus, preserving generated chains and a hashed source manifest;
 see the [corpus results](renoise/host_verification.md#digitakt-single-cycle-corpus-2026-11-05).

@@ -12,14 +12,15 @@ WAV for Elektron Digitakt. Requires Renoise 3.5 / scripting API 6.2.
   interpolation and anti-alias filtering when downsampling. Source buffers are
   unchanged. Output lengths preserve duration to the nearest frame (minimum one).
   Source bit depth does not restrict export; output is always 16-bit PCM.
-- **Spaced (Digitakt Grid):** each slot has the longest converted source's frame count.
-  Auto uses one slot per source; fixed counts are 4, 8, 16, 32 and 64. A fixed
-  count must cover every non-empty source. Extra slots are silent.
-- **Slot padding:** adds 64 silent frames at both edges, increasing each spaced
-  slot by exactly 128 frames. Padding and empty slots remain digital silence,
-  including with dither enabled. Slot counts and padding are disabled in Chain mode.
-- **Chain (Direct Concatenation):** joins samples without spacing. The duration
-  readout reports the mean sample length and the exact total, not a slicing grid.
+- **Grid (Digitakt Slices):** select exactly 4, 8, 16, 32 or 64 equal divisions
+  (default: 4). Each division has the longest converted source's frame count.
+  The selected grid must cover every non-empty source; extra divisions are silent.
+- **Slot padding:** adds 64 silent frames at both edges, increasing each grid
+  division by exactly 128 frames. Padding and empty slots remain digital silence,
+  including with dither enabled. Grid divisions and padding are disabled in
+  Concatenated mode.
+- **Concatenated:** joins samples without spacing or grid divisions. The duration
+  readout reports the mean sample length and exact total, not a slicing grid.
 - **Mono conversion:** average both stereo channels, or select Left or Right.
   All three choices use the only channel of a mono source.
 - **Fade-out:** optional 20 ms linear fade ending at zero. Shorter samples fade
@@ -76,7 +77,9 @@ installations are not replaced. Reports, copied test inputs and logs stay under
 ignored `tmp/digitakt-native-<run-id>/`; the owned process and unchanged probe
 are removed after the run.
 
-Renoise 3.5.4 / API 6.2 passed 24 native cases, including real sample buffers,
+The last recorded Renoise 3.5.4 / API 6.2 run passed 24 native cases before
+grid divisions became mandatory. Re-run the native suite for this change. The
+previous run covered real sample buffers,
 timers, source mutation, undo preservation, native GUI views and notifier-driven
 export, WAV reimport, pitch preservation and alias suppression. See the
 [host verification record](../tests/renoise/host_verification.md#digitakt-native-export-2026-11-05).
@@ -92,13 +95,15 @@ batches of at most 64. Original files are not modified. Generated
 `single-cycle-<batch>-<variant>.wav` chains, the ordered source manifest and
 native report remain in the run directory. Each primary chain is checked
 against original PCM and reimported into Renoise. The supplied 465-file corpus
-passed all 72 cases; see the
+passed all 72 cases with the previous grid behavior; a new run is required
+after removing implicit grid selection. See the
 [corpus results](../tests/renoise/host_verification.md#digitakt-single-cycle-corpus-2026-11-05).
 
 Remaining manual checks:
 
-1. Export unequal-length 48 kHz mono/stereo samples with Auto and fixed counts,
-   padding on/off, and both modes. Reimport the WAV and verify frame counts,
+1. Export unequal-length 48 kHz mono/stereo samples with each supported grid
+   division (4/8/16/32/64), padding on/off, and Concatenated mode. Reimport
+   the WAV and verify frame counts,
    slot boundaries, pitch, mono-channel selection and the duration readout.
 2. Exercise very short fades and dither; repeat an unchanged export and compare
    the files. Confirm empty sample slots and sliced instruments follow the
