@@ -19,7 +19,8 @@
 - ARP and ACID target Renoise 3.5 / scripting API 6.2, using Lua 5.1-compatible
   syntax. Do not raise manifest API or tool versions as incidental cleanup.
 - DigitaktSampleChain is frozen unless the user explicitly requests work on it.
-  Its existing manifest targets API 6.1; preserve that compatibility.
+  It targets Renoise 3.5 / scripting API 6.2 with Lua 5.1-compatible syntax;
+  preserve that compatibility.
 - Keep modules private to each tool. ACID uses qualified module names such as
   `model.compiler` and `writers.phrase_writer`.
 
@@ -61,7 +62,8 @@
 
 ## Verification and releases
 
-- Run `./scripts/run_tests.ps1` after Lua changes; `-Tool ARP` or `-Tool ACID`
+- Run `./scripts/run_tests.ps1` after Lua changes; `-Tool ARP`, `-Tool ACID`
+  or `-Tool DigitaktSampleChain`
   selects one suite. Every spec runs in a separate process to isolate mocks and
   module caches. Direct specs run from the repository root.
 - Keep deterministic model behavior testable without Renoise. Use meaningful

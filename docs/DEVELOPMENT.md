@@ -1,7 +1,6 @@
 # Renoise development setup
 
-ARP and ACID target Renoise 3.5 / scripting API 6.2. The existing frozen
-DigitaktSampleChain tool retains its API 6.1 manifest.
+ARP, ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2.
 
 ## Required tools
 
@@ -26,15 +25,15 @@ it with `-LuaCommand` when needed:
 ```
 
 Lua 5.0 and older are rejected. Future versions are accepted when compatible
-with the test harness. Production ARP and ACID code must retain Lua 5.1
+with the test harness. Production tool code must retain Lua 5.1
 compatibility for Renoise's LuaJIT runtime. Run the baseline specs explicitly
 with `./scripts/run_tests.ps1 -LuaCommand lua5.1`;
 passing locally with a newer interpreter does not establish baseline
 compatibility. Keep `.luarc.json` set to Lua 5.1.
 
 The development package suite uses Windows ACLs and therefore runs on Windows.
-Native integration checks require a Windows installation of Renoise. ARP and
-ACID target Renoise 3.5 / API 6.2; get Renoise from its
+Native integration checks require a Windows installation of Renoise. The tools
+target Renoise 3.5 / API 6.2; get Renoise from its
 [downloads page](https://renoise.com/downloads).
 
 The Renoise `Keyboard` and `All` interactive suites additionally require
@@ -121,8 +120,8 @@ or local workspace locations.
 
 ## Real Renoise testing
 
-Run `./scripts/run_offline_tests.ps1` for all 18 offline groups, including Lua,
-PowerShell analyzers, oracle validation, harness and packaging checks.
+Run `./scripts/run_offline_tests.ps1` for the discovered offline groups, including
+Lua, host preflight, oracle validation, discovery, harness and packaging checks.
 
 Use your normal Renoise installation. Other Renoise instances and virtual desktops
 may remain in use; no separate account, VM, profile attestation or trace evidence

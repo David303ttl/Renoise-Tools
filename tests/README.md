@@ -15,6 +15,7 @@ If Lua is installed under a different command name, pass it explicitly:
 
 ```powershell
 ./scripts/run_tests.ps1 -LuaCommand lua5.1
+./scripts/run_tests.ps1 -Tool DigitaktSampleChain -LuaCommand lua5.1
 ```
 
 Run the offline Lua, PowerShell preflight, runner and package checks with one
@@ -110,6 +111,7 @@ For other manual checks, use a disposable song and follow the relevant guides:
 - [ACID Repeat acceptance and deferred audio checks](acid/acid_loop_manual.md)
 - [ACID Live Edit](acid/acid_live_edit_manual.md)
 - [ACID integrated editor procedures and evidence](acid/acid_regeneration_manual.md)
+- [Digitakt sample-chain export checks](../com.david303ttl.DigitaktSampleChain.xrnx/README.md#verification)
 
 The [integrated editor guide](acid/acid_regeneration_manual.md)
 defines native checks and evidence fields, including operation
@@ -117,8 +119,10 @@ dialogs with inactive memory. Scripted modal answers do not establish that
 human journey or distinguish Active from All-32 at 32/32 bounds. Procedure
 readiness is not a native pass.
 
-Keep the existing DigitaktSampleChain tool installed and confirm it still opens
-after reloading tools. Real Renoise integration, playback, undo and save/reload behavior require
+DigitaktSampleChain offline checks cover streaming, file replacement, audio math
+and mocked GUI/lifecycle behavior. The linked manual checks require Renoise;
+same-size sample-edit notification coverage is not guaranteed by the API docs.
+Real Renoise integration, playback, undo and save/reload behavior require
 manual validation until an executed native scenario explicitly covers them.
 
 ## Package license checks
