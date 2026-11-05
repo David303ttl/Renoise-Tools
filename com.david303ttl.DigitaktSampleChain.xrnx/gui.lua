@@ -182,8 +182,6 @@ function M.show()
     row("Apply Dither (TPDF):", dither_checkbox),
     row(string.format("Pad both slot edges with %d silent frames", chain_options.EDGE_SILENCE_FRAMES), pad_checkbox),
     row("Mono Conversion:", mono_selector),
-    vb:text { text = string.format("%d Hz sources required. Mono sources use their only channel.",
-      chain_options.SAMPLE_RATE) },
 
     vb:horizontal_aligner {
       mode = "center",

@@ -16,11 +16,9 @@
 
 - Each root `.xrnx` directory is independently installable. Keep `main.lua`,
   `manifest.xml`, and all runtime dependencies inside that tool's directory.
-- ARP and ACID target Renoise 3.5 / scripting API 6.2, using Lua 5.1-compatible
-  syntax. Do not raise manifest API or tool versions as incidental cleanup.
-- DigitaktSampleChain is frozen unless the user explicitly requests work on it.
-  It targets Renoise 3.5 / scripting API 6.2 with Lua 5.1-compatible syntax;
-  preserve that compatibility.
+- ARP, ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2,
+  using Lua 5.1-compatible syntax. Do not raise manifest API or tool versions as
+  incidental cleanup.
 - Keep modules private to each tool. ACID uses qualified module names such as
   `model.compiler` and `writers.phrase_writer`.
 

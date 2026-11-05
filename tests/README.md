@@ -120,8 +120,15 @@ human journey or distinguish Active from All-32 at 32/32 bounds. Procedure
 readiness is not a native pass.
 
 DigitaktSampleChain offline checks cover streaming, file replacement, audio math
-and mocked GUI/lifecycle behavior. The linked manual checks require Renoise;
-same-size sample-edit notification coverage is not guaranteed by the API docs.
+and mocked GUI/lifecycle behavior. Run `./tests/digitaktsamplechain/run_native.ps1`
+with Renoise closed for its separate fresh-process native probe. The
+[native results](renoise/host_verification.md#digitakt-native-export-2026-11-05)
+cover real sample buffers, timers, reimport, undo preservation and notifier-driven
+GUI checks. Same-size edits emit no buffer notification on the verified host;
+the exporter detects already-written audio changes using bounded PCM readback.
+`-WaveformDirectory tmp/000` adds exhaustive 64-file batches against the supplied
+single-cycle corpus, preserving generated chains and a hashed source manifest;
+see the [corpus results](renoise/host_verification.md#digitakt-single-cycle-corpus-2026-11-05).
 Real Renoise integration, playback, undo and save/reload behavior require
 manual validation until an executed native scenario explicitly covers them.
 

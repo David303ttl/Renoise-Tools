@@ -7,7 +7,7 @@ independently versioned tool; runtime modules stay inside its bundle.
 | --- | --- | --- |
 | ARP | 0.7 experimental: pattern generation, delayed gates, guarded regeneration | [ARP](com.david303ttl.ARP.xrnx/README.md) |
 | ACID | 0.1 experimental: independent PITCH/TIME editor and guarded phrase generation; final integrated native acceptance pending | [ACID](com.david303ttl.ACID.xrnx/README.md) |
-| DigitaktSampleChain | 1.0: streaming 48 kHz mono chain export; native acceptance pending | [DigitaktSampleChain](com.david303ttl.DigitaktSampleChain.xrnx/README.md) |
+| DigitaktSampleChain | 1.1: streaming 48 kHz mono chain export | [DigitaktSampleChain](com.david303ttl.DigitaktSampleChain.xrnx/README.md) |
 
 All tools target Renoise 3.5 (Lua API 6.2). Pure-Lua checks do not establish
 correct Renoise playback, undo, or save/reload behavior; see [tests](tests/README.md)

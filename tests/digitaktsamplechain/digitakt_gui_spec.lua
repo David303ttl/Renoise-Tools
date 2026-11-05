@@ -210,6 +210,8 @@ do
   click_export(state)
   equal(#state.prompts, 1)
   equal(#state.starts, 0)
+  equal(#state.errors, 0, 'canceling the save prompt must not show an error')
+  equal(#state.warnings, 0, 'canceling the save prompt must not show a warning')
   local failed_state, failed_gui = setup({ prompt = { 'C:/tmp/fail.wav' }, start_error = 'runner unavailable' })
   failed_gui.show()
   local failed_duration = feedback_text(failed_state, 2)

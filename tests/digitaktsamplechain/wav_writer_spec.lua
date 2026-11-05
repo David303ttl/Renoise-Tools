@@ -1,6 +1,16 @@
 dofile('tests/bootstrap.lua')('digitaktsamplechain')
 local wav = require("wav_writer")
 local host = require("host_stub")
+local function file_proxy(file, overrides)
+  local proxy = {}
+  for _, method in ipairs({ "write", "flush", "seek", "read", "close" }) do
+    local name = method
+    proxy[name] = overrides[name] or function(_, ...)
+      return file[name](file, ...)
+    end
+  end
+  return proxy
+end
 local function uint(bytes, offset, length)
   local value = 0
   for index = offset + length - 1, offset, -1 do value = value * 256 + bytes:byte(index) end
@@ -48,6 +58,7 @@ local temporary = output.temporary
 assert(host.read_file(path) == "original WAV", "opening output must not truncate the destination")
 assert(output:write(payload))
 assert(host.read_file(path) == "original WAV")
+assert(output:verify(payload))
 assert(output:commit())
 local content = host.read_file(path)
 assert(#content == 44 + #payload and content:sub(45) == payload)
@@ -65,25 +76,58 @@ assert(output:write(payload:sub(1, 2)))
 assert(output:abort() and output:abort())
 assert(host.read_file(path) == content and not io.open(temporary, "rb"))
 
+-- Verification requires exact readback and leaves the destination untouched on failure.
+for _, failure in ipairs({ "mismatch", "partial", "read", "seek" }) do
+  output = assert(wav.open(path, #values, 48000))
+  temporary = output.temporary
+  assert(output:write(payload))
+  if failure == "mismatch" then
+    local verified, verify_err = output:verify(payload:sub(1, #payload - 2) .. "xx")
+    assert(not verified and verify_err:find("changed", 1, true))
+  else
+    local overrides = {}
+    if failure == "partial" then
+      overrides.read = function(self, count) return self.file:read(count - 1) end
+    elseif failure == "read" then
+      overrides.read = function() return nil, "simulated read failure" end
+    else
+      overrides.seek = function() return nil, "simulated seek failure" end
+    end
+    local raw = output.file
+    local proxy = file_proxy(raw, overrides)
+    if failure == "partial" then proxy.file = raw end
+    output.file = proxy
+    local verified, verify_err = output:verify(payload)
+    assert(not verified)
+    assert(verify_err:find(failure == "partial" and "changed" or
+      failure == "read" and "simulated read failure" or "simulated seek failure", 1, true))
+  end
+  assert(not output:commit(), "unverified output must not commit")
+  assert(output:abort() and host.read_file(path) == content)
+  assert(not io.open(temporary, "rb"))
+end
+
 -- Errors from writes, flushes and close are all surfaced and cleanable.
 for _, failure in ipairs({ "write", "flush", "close" }) do
   output = assert(wav.open(path, #values, 48000))
   temporary = output.temporary
-  assert(output.file:close())
-  local fake = {}
-  for _, method in ipairs({ "write", "flush", "close" }) do
-    local name = method
-    fake[name] = function()
-      if name == failure then return nil, "simulated " .. failure end
-      return true
-    end
-  end
-  output.file = fake
   local ok, err
   if failure == "write" then
+    assert(output.file:close())
+    output.file = { write = function() return nil, "simulated write" end,
+      close = function() return true end }
     ok, err = output:write(payload)
   else
     assert(output:write(payload))
+    assert(output:verify(payload))
+    local raw = output.file
+    local overrides = {
+      [failure] = function()
+        if failure == "close" then raw:close() end
+        return nil, "simulated " .. failure
+      end,
+    }
+    output.file = file_proxy(raw, overrides)
     ok, err = output:commit()
   end
   assert(not ok and err:find("simulated " .. failure))
@@ -94,6 +138,7 @@ end
 -- A failed final rename restores the previous destination.
 output = assert(wav.open(path, #values, 48000))
 assert(output:write(payload))
+assert(output:verify(payload))
 temporary = output.temporary
 local rename = os.rename
 os.rename = function(from, to)
@@ -109,6 +154,7 @@ assert(output:abort() and not io.open(temporary .. ".bak", "rb"))
 -- Failed restoration retains a recoverable original backup and names it.
 output = assert(wav.open(path, #values, 48000))
 assert(output:write(payload))
+assert(output:verify(payload))
 temporary = output.temporary
 os.rename = function(from, to)
   if from == temporary or from == temporary .. ".bak" then return nil, "simulated rename failure" end
@@ -124,6 +170,7 @@ assert(output:abort())
 -- Backup cleanup failures are a warning after a successful installation.
 output = assert(wav.open(path, #values, 48000))
 assert(output:write(payload))
+assert(output:verify(payload))
 temporary = output.temporary
 local remove = os.remove
 os.remove = function(name)
@@ -141,7 +188,7 @@ assert(remove(temporary .. ".bak"))
 local io_open = io.open
 local staged
 io.open = function(name, mode)
-  if mode == "wb" then
+  if mode == "w+b" then
     staged = name
     local file = assert(io_open(name, mode))
     assert(file:close())

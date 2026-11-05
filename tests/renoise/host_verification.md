@@ -4,6 +4,8 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 
 | Check | Result |
 | --- | --- |
+| Digitakt single-cycle corpus (2026-11-05) | PASS: 72 cases, all 465 supplied waveforms, eight batches, 56 retained chain WAVs; original hashes unchanged |
+| DigitaktSampleChain native export (2026-11-05) | PASS: 24 cases; native audio buffers, streaming timers, WAV bytes/reimport, conversion/pitch/alias checks, source edits, undo preservation, cancellation, real GUI views and document release; see record below |
 | Interactive persistence (2026-11-02) | PASS: injected setter failures, exact rollback/cache isolation, explicit revalidation and fresh-process recovery-label restoration/generation; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
 | Focused metadata recovery (2026-11-02) | PASS: guarded Enter callback, owned/New label persistence, zero phrase recovery reads or generation, uncertain-write blocking and explicit revalidation with unrelated native edits, exact cold-process readback; [evidence](../acid/runtime_acceptance.md#focused-metadata-recovery-acceptance-2026-11-02) |
 | Native Undo/Redo (2026-11-02) | Musical generation PASS; metadata-only rename FAIL: no native undo entry (`can_undo=false`); exact rename verified; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
@@ -27,6 +29,69 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 Snapshots contain native inventory values and selection indices. Indices describe
 positions at readback time, not persistent object identity. Driver shutdown is
 complete only after its per-run completion file is observed and removed.
+
+## Digitakt native export (2026-11-05)
+
+```powershell
+./tests/digitaktsamplechain/run_native.ps1
+```
+
+Renoise 3.5.4 / API 6.2: **24/24 PASS**. Evidence remains locally at
+`tmp/digitakt-native-0fbccf40f51f4e1e972769cc55273653/native-report.json`, with
+the exact staged runtime, nonce-bound configuration and Renoise stdout/stderr logs.
+
+- Verified Auto/fixed grids, both padding states, exact PCM bytes and durations,
+  empty slots, stereo channel selection, mono Right, direct concatenation,
+  short fades, sliced-slot ordering and 16/24/32-bit source buffers.
+- Verified byte-identical dithered exports, native WAV reimport, 44.1/96 kHz
+  conversion preserving a 1 kHz tone, and suppression of a 30 kHz input during
+  96-to-48 kHz downsampling.
+- Verified existing destinations survive cancellation, buffer/list/slice changes,
+  same-size edits, final progress-callback edits, dialog closure and document release.
+- Same-size sample edits emitted **zero** native buffer notifications; dimension
+  replacement emitted one. Bounded re-render/readback detects changed PCM before
+  replacement without relying on that notification.
+- Verified source immutability and absence of export undo entries using a native
+  rename/undo sentinel. Fixture mutations settle before the sentinel is recorded.
+- Built actual native views and exercised their production notifiers, disabled
+  controls, duration feedback, export and cancellation. Save-path selection was
+  test-controlled, not a physical file-dialog interaction.
+
+The fresh owned process and hash-verified test-only probe were removed. Existing
+production tool installations were not replaced. Physical UI interaction, visual
+fit, audible playback, hardware Digitakt import and actual tool-disable/unload
+remain outside these native assertions. Continuous source editing is not an
+atomic snapshot contract.
+
+## Digitakt single-cycle corpus (2026-11-05)
+
+```powershell
+./tests/digitaktsamplechain/run_native.ps1 -WaveformDirectory tmp/000 -StartupTimeoutSeconds 600
+```
+
+Renoise 3.5.4 / API 6.2: **72/72 PASS**, including the 24 base cases and
+48 corpus cases. Evidence and generated WAVs:
+`tmp/digitakt-native-65de417d728c4845a01008fc4521b910/`.
+
+- All 465 inputs are distinct, non-silent 48 kHz mono 16-bit WAVs containing
+  512 frames each: 238,080 source frames, or 4.96 seconds total.
+- Ordinal filename order forms seven 64-waveform batches and one 17-waveform
+  batch. `waveform-manifest.json` records every source name, SHA-256 and copied input.
+- Every batch passed Auto, fixed-64, fixed-64 padded, direct Chain, fade and
+  dither cases. Eight additional dither-repeat files matched byte-for-byte:
+  **56 retained WAVs** in total.
+- Every output frame matched original-file PCM exactly when processing was
+  disabled; fades matched the expected ramp, dither stayed within one LSB,
+  and padded/unused regions remained exact digital silence.
+- Every primary output was reimported into native Renoise and compared at every
+  frame. Source buffers and all 465 original disk hashes remained unchanged.
+- Fixed-64 chains contain 32,768 frames (0.682667 seconds); padded chains contain
+  40,960 frames (0.853333 seconds). The last Auto/Chain batch contains 8,704 frames
+  (0.181333 seconds); its fixed grid has 17 occupied and 47 silent slots.
+
+The native-tested runtime copies match the current source. The test-only probe
+was removed; chain outputs, manifest, report and process logs remain available.
+This verifies PCM and native reimport, not listening or Digitakt hardware playback.
 
 ## Focused metadata recovery check
 

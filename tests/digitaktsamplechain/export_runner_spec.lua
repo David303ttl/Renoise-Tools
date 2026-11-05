@@ -145,8 +145,63 @@ for _, lifetime in ipairs({ "app_release_document_observable", "tool_will_unload
   clean(tool, song, long)
 end
 
+-- Readback catches same-size edits to frames emitted before verification.
+local changed_value = false
+local changing = host.instrument({ host.buffer(100, 48000, 1, function(_, frame)
+  if frame == 1 and changed_value then return 0.75 end
+  return 0.25
+end) })
+tool, song = host.host(changing)
+host.write_file(path, "original")
+result, failure = nil, nil
+job = assert(runner.start(changing, settings.defaults(), path, {
+  on_error = function(err) failure = err end,
+  on_progress = function(message)
+    if message:find("Verifying", 1, true) then changed_value = true end
+  end,
+}))
+temporary = job.output.temporary
+drive(tool)
+assert(failure and failure:find("changed", 1, true) and not result)
+assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
+clean(tool, song, changing)
+
+-- A source edit in the last writing progress callback is rechecked immediately.
+local final_write = host.instrument({ host.buffer(40000) })
+tool, song = host.host(final_write)
+failure, result = nil, nil
+job = assert(runner.start(final_write, settings.defaults(), path, {
+  on_error = function(err) failure = err end,
+  on_progress = function()
+    if job and job.written_frames > 0 and not job.verifying then
+      final_write.samples_observable:notify()
+    end
+  end,
+}))
+temporary = job.output.temporary
+drive(tool)
+assert(failure and failure:find("changed", 1, true) and not result)
+assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
+clean(tool, song, final_write)
+
+-- Cancellation during verification closes and removes the staging file.
+local verifying = host.instrument({ host.buffer(100) })
+tool, song = host.host(verifying)
+canceled = 0
+job = assert(runner.start(verifying, settings.defaults(), path, {
+  on_cancel = function() canceled = canceled + 1 end,
+  on_progress = function(message)
+    if message:find("Verifying", 1, true) then job:cancel() end
+  end,
+}))
+temporary = job.output.temporary
+drive(tool)
+assert(job.finished and job.canceled and canceled == 1)
+assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
+clean(tool, song, verifying)
+
 -- Read/encoding/write/commit failures remove staging files without success callbacks.
-for _, kind in ipairs({ "read", "nan", "write", "commit" }) do
+for _, kind in ipairs({ "read", "nan", "write", "verify", "commit" }) do
   local source = host.instrument({ host.buffer(100) })
   tool, song = host.host(source)
   result, failure = nil, nil

@@ -7,6 +7,7 @@ local FULL_SCALE = WORD_BASE / 2
 local INT16_MIN, INT16_MAX = -FULL_SCALE, FULL_SCALE - 1
 local PCM_FORMAT, CHANNELS, FORMAT_CHUNK_BYTES = 1, 1, 16
 local BYTES_PER_FRAME = CHANNELS * BITS_PER_SAMPLE / BITS_PER_BYTE
+local HEADER_BYTES = 44
 local RIFF_OVERHEAD = 36
 local MAX_RIFF_SIZE = 4294967295
 local RNG_MODULUS, RNG_MULTIPLIER, DEFAULT_SEED = 2147483647, 48271, 1
@@ -118,6 +119,7 @@ end
 
 function Writer:write(payload)
   if not self.file then return nil, "WAV output is closed." end
+  if self.verified then return nil, "WAV output is being verified." end
   if #payload % BYTES_PER_FRAME ~= 0 or self.written + #payload > self.expected then
     return nil, "PCM data exceeds the planned WAV length."
   end
@@ -127,9 +129,29 @@ function Writer:write(payload)
   return true
 end
 
+function Writer:verify(payload)
+  if not self.file then return nil, "WAV output is closed." end
+  if self.written ~= self.expected then return nil, "WAV data is incomplete." end
+  if not self.verified then
+    local flushed, flush_err = file_call(self.file, "flush")
+    if not flushed then return nil, "WAV flush failed: " .. flush_err end
+    local positioned, seek_err = file_call(self.file, "seek", "set", HEADER_BYTES)
+    if not positioned then return nil, "WAV seek failed: " .. seek_err end
+    self.verified = 0
+  end
+  if self.verified + #payload > self.expected then return nil, "WAV verification exceeds planned length." end
+  local read_ok, content, read_err = pcall(self.file.read, self.file, #payload)
+  if not read_ok then return nil, "WAV readback failed: " .. tostring(content) end
+  if not content then return nil, "WAV readback failed: " .. tostring(read_err or "unexpected end of file") end
+  if content ~= payload then return nil, "Source audio changed. Restart the export." end
+  self.verified = self.verified + #payload
+  return true
+end
+
 function Writer:commit()
   if not self.file then return nil, "WAV output is closed." end
   if self.written ~= self.expected then return nil, "WAV data is incomplete." end
+  if self.verified ~= self.expected then return nil, "WAV verification is incomplete." end
   local flushed, flush_err = file_call(self.file, "flush")
   if not flushed then return nil, "WAV flush failed: " .. flush_err end
   local closed, close_err = file_call(self.file, "close")
@@ -169,7 +191,7 @@ function M.open(path, frames, rate)
   if not header then return nil, err end
   local temporary, temp_err = staging_path(path)
   if not temporary then return nil, "Could not create export staging file: " .. tostring(temp_err) end
-  local file, open_err = io.open(temporary, "wb")
+  local file, open_err = io.open(temporary, "w+b")
   if not file then return nil, "Could not open WAV output: " .. tostring(open_err) end
   local writer = setmetatable({
     file = file, destination = path, temporary = temporary,

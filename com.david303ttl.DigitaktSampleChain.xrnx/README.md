@@ -39,15 +39,18 @@ WAV for Elektron Digitakt. Requires Renoise 3.5 / scripting API 6.2.
 
 Audio is read and written in bounded chunks on Renoise's GUI thread between UI
 events. No complete chain or complete source audio is copied into Lua tables.
-The source buffers are never modified, so no song undo entry is created.
+Before replacement, a second bounded pass re-renders the source and compares it
+with the staged PCM. The source buffers are never modified and export creates
+no song undo entry.
 
 Do not edit source audio while exporting. Observed buffer, slice, sample-list or
 instrument-list changes abort the export; song release and tool unload cancel
-it and release timers and observers. Buffer dimensions are also checked between
-chunks. API 6.2 does not document whether same-size audio edits always notify;
-that behavior needs native verification and is not a snapshot-isolation guarantee.
+it and release timers and observers. Buffer dimensions are checked between
+chunks. Renoise 3.5.4 does not notify same-size edits; PCM readback verification
+detects changes to already-written audio before committing. Continuous editing
+is not snapshot-isolated, so keep sources stable during both passes.
 
-Output is staged beside the destination. Cancellation and write/flush/close
+Output is staged beside the destination. Cancellation and write/read/seek/flush/close
 failures leave an existing destination unchanged. Replacement uses a temporary
 backup; failed restoration reports the original backup's recovery path. Cleanup
 failures are reported rather than hidden. This is not a power-loss-safe file
@@ -59,6 +62,7 @@ Run from the repository root:
 
 ```powershell
 ./scripts/run_tests.ps1 -Tool DigitaktSampleChain -LuaCommand lua5.1
+./tests/digitaktsamplechain/run_native.ps1
 ./scripts/package.ps1 -Tool DigitaktSampleChain
 ```
 
@@ -66,7 +70,32 @@ The offline specs cover slot geometry, fades, mono conversion, PCM bytes, privat
 dither, source invalidation, file failures, cancellation and mocked GUI wiring.
 They do not establish native GUI behavior, playback or Digitakt import.
 
-Manual checks in a disposable Renoise song:
+The native runner requires Renoise closed, creates a fresh disposable song in
+its own process, and installs a separate test-only probe. Production tool
+installations are not replaced. Reports, copied test inputs and logs stay under
+ignored `tmp/digitakt-native-<run-id>/`; the owned process and unchanged probe
+are removed after the run.
+
+Renoise 3.5.4 / API 6.2 passed 24 native cases, including real sample buffers,
+timers, source mutation, undo preservation, native GUI views and notifier-driven
+export, WAV reimport, pitch preservation and alias suppression. See the
+[host verification record](../tests/renoise/host_verification.md#digitakt-native-export-2026-11-05).
+
+For a supplied 48 kHz mono 16-bit WAV corpus:
+
+```powershell
+./tests/digitaktsamplechain/run_native.ps1 -WaveformDirectory tmp/000 -StartupTimeoutSeconds 600
+```
+
+Files are copied and hash-verified, sorted by ordinal filename and tested in
+batches of at most 64. Original files are not modified. Generated
+`single-cycle-<batch>-<variant>.wav` chains, the ordered source manifest and
+native report remain in the run directory. Each primary chain is checked
+against original PCM and reimported into Renoise. The supplied 465-file corpus
+passed all 72 cases; see the
+[corpus results](../tests/renoise/host_verification.md#digitakt-single-cycle-corpus-2026-11-05).
+
+Remaining manual checks:
 
 1. Export unequal-length 48 kHz mono/stereo samples with Auto and fixed counts,
    padding on/off, and both modes. Reimport the WAV and verify frame counts,
@@ -80,9 +109,10 @@ Manual checks in a disposable Renoise song:
    Cancel the save dialog with no error shown.
 4. Export a long chain, use the UI, then cancel or close the dialog. Confirm the
    original destination survives and staging files are removed.
-5. During a long export, edit audio without changing its length, resize a buffer,
-   change slices, load a new song, and disable/reload the tool. Confirm exports
-   stop, no stale callbacks run, and no source samples or undo history are changed.
+5. Check actual file-dialog interaction and visual fit at different DPI settings,
+   tool disable/reload during export, audible output and import on Digitakt
+   hardware. Automated notifier calls do not establish mouse/keyboard interaction
+   or listening results.
 
 ## License
 

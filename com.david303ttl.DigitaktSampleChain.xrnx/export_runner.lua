@@ -61,10 +61,12 @@ function Job:step()
   if self.finished then return end
   if self.invalid_reason then self:fail(self.invalid_reason); return end
   if self.callbacks.on_progress then
-    self.callbacks.on_progress(string.format("Exporting %d%%",
-      math.floor(PERCENT_SCALE * self.written_frames / self.plan.total_frames)))
+    local frames = self.verifying and self.verified_frames or self.written_frames
+    self.callbacks.on_progress(string.format("%s %d%%", self.verifying and "Verifying" or "Exporting",
+      math.floor(PERCENT_SCALE * frames / self.plan.total_frames)))
   end
   if self.finished then return end
+  if self.invalid_reason then self:fail(self.invalid_reason); return end
 
   -- Buffer notifications can arrive after dimensions change.
   for _, entry in ipairs(self.snapshot.buffers) do
@@ -94,10 +96,22 @@ function Job:step()
       self.slot, self.offset, self.reader = self.slot + 1, 0, nil
     end
   end
-  local written, write_err = self.output:write(wav.encode(self.chunk, 1, count, self.dither))
-  if not written then self:fail(write_err); return end
-  self.written_frames = self.written_frames + count
+  local payload = wav.encode(self.chunk, 1, count, self.dither)
+  local accepted, output_err
+  if self.verifying then
+    accepted, output_err = self.output:verify(payload)
+    self.verified_frames = self.verified_frames + count
+  else
+    accepted, output_err = self.output:write(payload)
+    self.written_frames = self.written_frames + count
+  end
+  if not accepted then self:fail(output_err); return end
   if self.slot <= self.plan.slot_count then return end
+  if not self.verifying then
+    self.verifying, self.slot, self.offset, self.reader = true, 1, 0, nil
+    self.dither = self.options.dither and wav.new_dither() or nil
+    return
+  end
 
   local committed, warning = self.output:commit()
   if not committed then self:fail(warning); return end
@@ -138,7 +152,7 @@ function M.start(instrument, options, path, callbacks)
     plan = plan, tool = renoise.tool(), guards = {}, chunk = {},
     frames_per_step = frames_per_step,
     dither = normalized.dither and wav.new_dither() or nil,
-    slot = 1, offset = 0, written_frames = 0, finished = false,
+    slot = 1, offset = 0, written_frames = 0, verified_frames = 0, finished = false,
   }, Job)
   job.timer = function()
     local ok, err = pcall(Job.step, job)

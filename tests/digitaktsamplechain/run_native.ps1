@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param(
     [string]$RenoiseExe,
+    [string]$WaveformDirectory,
     [ValidateRange(10,600)][int]$StartupTimeoutSeconds = 180
 )
 
@@ -15,6 +16,8 @@ $probeSourcePath = Join-Path $PSScriptRoot 'native_probe.lua'
 $jsonSourcePath = Join-Path $repoRoot 'tests/renoise/driver/json.lua'
 $probeBundleName = 'com.david303ttl.DigitaktSampleChainNativeTests.xrnx'
 $reportName = 'native-report.json'
+$stdoutLogName = 'renoise-stdout.log'
+$stderrLogName = 'renoise-stderr.log'
 $pollIntervalMilliseconds = 250
 $shutdownGraceMilliseconds = 5000
 $runId = [guid]::NewGuid().ToString('N')
@@ -22,11 +25,17 @@ $nonce = [guid]::NewGuid().ToString('D')
 $stagingRoot = Join-Path $repoRoot ('tmp/digitakt-native-' + $runId)
 $stagedBundlePath = Join-Path $stagingRoot 'bundle'
 $reportPath = Join-Path $stagingRoot $reportName
+$stdoutLogPath = Join-Path $stagingRoot $stdoutLogName
+$stderrLogPath = Join-Path $stagingRoot $stderrLogName
 $installedBundlePath = $null
 $installedBundleHash = $null
 $ownedProcess = $null
 $ownedIdentity = $null
 $ownedIdentityVerified = $false
+$stdoutLogStream = $null
+$stderrLogStream = $null
+$stdoutCopyTask = $null
+$stderrCopyTask = $null
 $module = $null
 
 function Get-RenoiseProcesses {
@@ -92,7 +101,33 @@ try {
 '@
     [IO.File]::WriteAllText((Join-Path $stagedBundlePath 'manifest.xml'), $manifest, [Text.UTF8Encoding]::new($false))
     $runDirectory = [IO.Path]::GetFullPath($stagingRoot).Replace('\', '/')
-    $nativeConfig = [ordered]@{ run_directory = $runDirectory; nonce = $nonce } | ConvertTo-Json -Compress
+    $config = [ordered]@{ run_directory = $runDirectory; nonce = $nonce }
+    $waveformManifest = @()
+    if ($WaveformDirectory) {
+        $inputDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot $WaveformDirectory))
+        if (-not (Test-Path -LiteralPath $inputDirectory -PathType Container)) {
+            throw "Waveform directory is missing: $inputDirectory"
+        }
+        $waveformPaths = [string[]]@(Get-ChildItem -LiteralPath $inputDirectory -Filter '*.wav' -File | ForEach-Object FullName)
+        if ($waveformPaths.Count -eq 0) { throw 'Waveform directory contains no WAV files.' }
+        [Array]::Sort($waveformPaths, [StringComparer]::Ordinal)
+        $copiedWaveforms = Join-Path $stagingRoot 'waveforms'
+        New-Item -ItemType Directory -Path $copiedWaveforms | Out-Null
+        $waveformManifest = @(foreach ($path in $waveformPaths) {
+            $name = [IO.Path]::GetFileName($path)
+            $copy = Join-Path $copiedWaveforms $name
+            $hash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
+            Copy-Item -LiteralPath $path -Destination $copy
+            if ((Get-FileHash -LiteralPath $copy -Algorithm SHA256).Hash -cne $hash) {
+                throw "Waveform copy differs from source: $name"
+            }
+            [ordered]@{ name = $name; source = $path; path = $copy.Replace('\', '/'); sha256 = $hash }
+        })
+        $config.waveforms = @($waveformManifest | ForEach-Object { [ordered]@{ name = $_.name; path = $_.path } })
+        [IO.File]::WriteAllText((Join-Path $stagingRoot 'waveform-manifest.json'),
+            (ConvertTo-Json -InputObject $waveformManifest -Depth 8), [Text.UTF8Encoding]::new($false))
+    }
+    $nativeConfig = $config | ConvertTo-Json -Depth 8 -Compress
     [IO.File]::WriteAllText((Join-Path $stagedBundlePath 'native-config.json'), $nativeConfig, [Text.UTF8Encoding]::new($false))
 
     $stagedBundleHash = Get-DirectoryHash -Path $stagedBundlePath
@@ -111,8 +146,14 @@ try {
     $startInfo = [Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $resolvedExe
     $startInfo.UseShellExecute = $false
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $stdoutLogStream = [IO.FileStream]::new($stdoutLogPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
+    $stderrLogStream = [IO.FileStream]::new($stderrLogPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::Read)
     $ownedProcess = [Diagnostics.Process]::Start($startInfo)
     if ($null -eq $ownedProcess) { throw 'Could not start the Renoise native-test process.' }
+    $stdoutCopyTask = $ownedProcess.StandardOutput.BaseStream.CopyToAsync($stdoutLogStream)
+    $stderrCopyTask = $ownedProcess.StandardError.BaseStream.CopyToAsync($stderrLogStream)
     $ownedIdentity = Get-RenoiseProcessIdentity -Id $ownedProcess.Id -WaitMilliseconds 5000
     if (-not [string]::Equals($ownedIdentity.Path, $resolvedExe, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Started Renoise process does not match the discovered executable.'
@@ -163,7 +204,13 @@ try {
     if ($cases.Count -eq 0 -or @($cases | Where-Object { $_.status -cne 'PASS' }).Count -gt 0) {
         throw 'Native report must contain one or more cases, all with status PASS.'
     }
+    foreach ($waveform in $waveformManifest) {
+        if ((Get-FileHash -LiteralPath $waveform.source -Algorithm SHA256).Hash -cne $waveform.sha256) {
+            throw "Original waveform changed during the run: $($waveform.name)"
+        }
+    }
     Write-Output ("DigitaktSampleChain native tests: PASS ({0} cases)" -f $cases.Count)
+    if ($waveformManifest.Count) { Write-Output "Source waveforms verified unchanged: $($waveformManifest.Count)" }
     Write-Output "Report: $reportPath"
 }
 finally {
@@ -189,6 +236,22 @@ finally {
             }
         }
         catch { $cleanupErrors.Add("Could not safely stop the owned Renoise process: $($_.Exception.Message)") }
+    }
+    if ($processStoppedConfirmed) {
+        foreach ($copyTask in @($stdoutCopyTask, $stderrCopyTask)) {
+            if ($null -ne $copyTask) {
+                try { [void]$copyTask.GetAwaiter().GetResult() }
+                catch { $cleanupErrors.Add("Could not finish writing a Renoise process log: $($_.Exception.Message)") }
+            }
+        }
+        foreach ($logStream in @($stdoutLogStream, $stderrLogStream)) {
+            if ($null -ne $logStream) {
+                try { $logStream.Flush(); $logStream.Dispose() }
+                catch { $cleanupErrors.Add("Could not flush or close a Renoise process log: $($_.Exception.Message)") }
+            }
+        }
+    }
+    if ($ownedProcess) {
         $ownedProcess.Dispose()
     }
     if ($installedBundlePath -and $installedBundleHash -and (Test-Path -LiteralPath $installedBundlePath -PathType Container)) {
@@ -202,5 +265,7 @@ finally {
         catch { $cleanupErrors.Add("Could not safely remove the installed native probe: $($_.Exception.Message)") }
     }
     if ($module) { Remove-Module -ModuleInfo $module -Force -ErrorAction SilentlyContinue }
+    Write-Output "Renoise stdout: $stdoutLogPath"
+    Write-Output "Renoise stderr: $stderrLogPath"
     if ($cleanupErrors.Count -gt 0) { throw ($cleanupErrors -join [Environment]::NewLine) }
 }

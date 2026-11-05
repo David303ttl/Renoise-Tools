@@ -7,7 +7,12 @@ local RATE, BUFFER_BITS, MONO, STEREO = 48000, 32, 1, 2
 local HEADER_BYTES, PCM_BYTES, FULL_SCALE, BYTE_BASE = 44, 2, 32768, 256
 local GRID_COUNT, EDGE_FRAMES, LONG_FRAMES = 4, 64, 131072
 local FINAL_EDIT_FRAMES = 32769
+local TEST_TONE_HZ, ALIAS_TONE_HZ, TONE_LEVEL = 1000, 30000, 0.5
+local SIGNAL_EDGE_FRAMES, MAX_ALIAS_RMS = 64, 0.02
 local CONTROLLER_INTERVAL_MS, CASE_TIMEOUT_SECONDS = 10, 20
+local CORPUS_BATCH_SIZE, CORPUS_TIMEOUT_SECONDS, VERIFY_YIELD_FRAMES = 64, 90, 4096
+local SOURCE_BITS, MILLISECONDS_PER_SECOND = 16, 1000
+local RIFF_CHUNK_START, CHUNK_HEADER_BYTES = 13, 8
 local tests, cleanups, current_job = {}, {}, nil
 
 local function read_file(path)
@@ -36,7 +41,9 @@ end
 
 local function output(name) return config.run_directory .. "/" .. name .. ".wav" end
 local function check(condition, message) assert(condition, message or "native assertion failed") end
-local function add(name, callback) tests[#tests + 1] = { name = name, run = callback } end
+local function add(name, callback, timeout)
+  tests[#tests + 1] = { name = name, run = callback, timeout = timeout or CASE_TIMEOUT_SECONDS }
+end
 local function defer(callback) cleanups[#cleanups + 1] = callback end
 
 local function wait_for(predicate)
@@ -117,6 +124,10 @@ for _, fixed in ipairs({ false, true }) do
       local slot_frames = 5 + edge * 2
       local path = output("grid-" .. tostring(use_fixed) .. "-" .. tostring(use_padding))
       local before = source.samples[1].sample_buffer:sample_data(1, 1)
+      coroutine.yield()
+      local original_name = source.name
+      source.name = "Native export undo sentinel"
+      coroutine.yield()
       local undo = renoise.song():can_undo()
       local result, failure = export(source, options, path)
       check(result and not failure, failure)
@@ -133,6 +144,9 @@ for _, fixed in ipairs({ false, true }) do
       check(result.total_sec == result.frames / RATE)
       check(source.samples[1].sample_buffer:sample_data(1, 1) == before, "source buffer changed")
       check(renoise.song():can_undo() == undo, "export changed undo availability")
+      check(undo, "undo sentinel was not registered")
+      renoise.song():undo()
+      check(source.name == original_name, "export added an undo entry ahead of the sentinel")
     end)
   end
 end
@@ -175,6 +189,40 @@ add("native-short-fade", function()
   check(pcm(content, 1) == 8192 and pcm(content, 2) == 4096 and pcm(content, 3) == 0)
 end)
 
+add("native-source-bit-depths", function()
+  for _, depth in ipairs({ 16, 24, 32 }) do
+    local source = instrument({ 5 })
+    local buffer = source.samples[1].sample_buffer
+    check(buffer:create_sample_data(RATE, depth, MONO, 5))
+    buffer:prepare_sample_data_changes(false)
+    for frame = 1, 5 do buffer:set_sample_data(1, frame, 0.25) end
+    buffer:finalize_sample_data_changes()
+    local path = output("depth-" .. depth)
+    local result, failure = export(source, settings.defaults(), path)
+    check(result and not failure, failure)
+    local content = verify_wav(path, 5)
+    check(uint(content, 35, 2) == 16 and pcm(content, 1) == 8192)
+    check(buffer.bit_depth == depth, "export changed source bit depth")
+  end
+end)
+
+add("native-sliced-slot-order", function()
+  local source = instrument({ 6 })
+  source.samples[1]:insert_slice_marker(3)
+  coroutine.yield()
+  local path = output("slices")
+  local result, failure = export(source, settings.defaults(), path)
+  check(result and not failure, failure)
+  check(result.slot_count == #source.samples)
+  local content = verify_wav(path, result.frames)
+  local slot_frames = result.frames / result.slot_count
+  for index, sample in ipairs(source.samples) do
+    local buffer = sample.sample_buffer
+    local expected = math.floor(buffer:sample_data(1, 1) * FULL_SCALE + 0.5)
+    check(pcm(content, (index - 1) * slot_frames + 1) == expected, "slice/master slot order mismatch")
+  end
+end)
+
 add("native-reproducible-dither-and-reimport", function()
   local source = instrument({ 17 })
   local options = settings.defaults()
@@ -194,11 +242,45 @@ end)
 add("native-rate-conversion", function()
   for _, rate in ipairs({ 44100, 96000 }) do
     local source = instrument({ rate }, rate)
+    local buffer = source.samples[1].sample_buffer
+    buffer:prepare_sample_data_changes(false)
+    for frame = 1, rate do
+      buffer:set_sample_data(1, frame, TONE_LEVEL * math.sin(2 * math.pi * TEST_TONE_HZ * (frame - 1) / rate))
+    end
+    buffer:finalize_sample_data_changes()
     local result, failure = export(source, settings.defaults(), output("converted-" .. rate))
     check(result and not failure, failure)
     check(result.frames == RATE and result.sample_rate == RATE)
     check(source.samples[1].sample_buffer.sample_rate == rate)
+    local content = verify_wav(output("converted-" .. rate), RATE)
+    local crossings = 0
+    for frame = 2, RATE do
+      if pcm(content, frame - 1) <= 0 and pcm(content, frame) > 0 then crossings = crossings + 1 end
+    end
+    check(math.abs(crossings - TEST_TONE_HZ) <= 1, "sample-rate conversion shifted pitch")
   end
+end)
+
+add("native-downsampling-alias-suppression", function()
+  local rate = 96000
+  local source = instrument({ rate }, rate)
+  local buffer = source.samples[1].sample_buffer
+  buffer:prepare_sample_data_changes(false)
+  for frame = 1, rate do
+    buffer:set_sample_data(1, frame, TONE_LEVEL * math.sin(2 * math.pi * ALIAS_TONE_HZ * (frame - 1) / rate))
+  end
+  buffer:finalize_sample_data_changes()
+  local path = output("alias-suppression")
+  local result, failure = export(source, settings.defaults(), path)
+  check(result and not failure, failure)
+  local content, energy, count = verify_wav(path, RATE), 0, 0
+  for frame = SIGNAL_EDGE_FRAMES + 1, RATE - SIGNAL_EDGE_FRAMES do
+    local value = pcm(content, frame) / FULL_SCALE
+    energy, count = energy + value * value, count + 1
+  end
+  local rms = math.sqrt(energy / count)
+  check(rms < MAX_ALIAS_RMS, "downsampling alias energy exceeds limit")
+  return { alias_rms = rms, input_frequency = ALIAS_TONE_HZ }
 end)
 
 add("native-preflight-rejections", function()
@@ -250,7 +332,7 @@ for _, change in ipairs({ "same-size", "resize", "sample-list", "slices" }) do
     wait_for(function() return job.written_frames > 0 or job.finished end)
     if mutation == "same-size" then
       buffer:prepare_sample_data_changes()
-      buffer:set_sample_data(1, LONG_FRAMES, -0.25)
+      buffer:set_sample_data(1, 1, -0.25)
       buffer:finalize_sample_data_changes()
     elseif mutation == "resize" then
       check(buffer:create_sample_data(RATE, BUFFER_BITS, MONO, LONG_FRAMES / 2))
@@ -261,7 +343,6 @@ for _, change in ipairs({ "same-size", "resize", "sample-list", "slices" }) do
     end
     wait_for(function() return job.finished end)
     check(failure and not result, "source mutation did not reject export: " .. mutation)
-    if mutation == "same-size" then check(notifications > 0, "same-size edit emitted no native buffer notification") end
     check(read_file(path) == "original" and not io.exists(temporary))
     check(not tool:has_timer(job.timer))
     current_job = nil
@@ -279,7 +360,7 @@ add("native-final-progress-edit-rejected", function()
       edited = true
       local buffer = source.samples[1].sample_buffer
       buffer:prepare_sample_data_changes(false)
-      buffer:set_sample_data(1, FINAL_EDIT_FRAMES, -0.25)
+      buffer:set_sample_data(1, 1, -0.25)
       buffer:finalize_sample_data_changes()
     end
   end)
@@ -380,8 +461,136 @@ add("native-document-release-cancels-export", function()
   current_job = nil
 end)
 
+local function source_pcm(path)
+  local content, position = read_file(path), RIFF_CHUNK_START
+  while position + CHUNK_HEADER_BYTES - 1 <= #content do
+    local length = uint(content, position + 4, 4)
+    if content:sub(position, position + 3) == "data" then
+      local payload = content:sub(position + CHUNK_HEADER_BYTES, position + CHUNK_HEADER_BYTES + length - 1)
+      check(#payload == length, "truncated source PCM")
+      return payload
+    end
+    position = position + CHUNK_HEADER_BYTES + length + length % 2
+  end
+  error("source WAV has no data chunk")
+end
+
+local function source_frame(payload, frame)
+  local value = uint(payload, (frame - 1) * PCM_BYTES + 1, PCM_BYTES)
+  return value >= FULL_SCALE and value - FULL_SCALE * 2 or value
+end
+
+if config.waveforms then
+  local variants = {
+    { id = "auto", mode = "spaced" },
+    { id = "grid64", mode = "spaced", slots = CORPUS_BATCH_SIZE },
+    { id = "padded", mode = "spaced", slots = CORPUS_BATCH_SIZE, pad = true },
+    { id = "chain", mode = "chain" },
+    { id = "fade", mode = "spaced", slots = CORPUS_BATCH_SIZE, fade = true },
+    { id = "dither", mode = "spaced", slots = CORPUS_BATCH_SIZE, pad = true, dither = true },
+  }
+  report.waveforms = { count = #config.waveforms, batch_size = CORPUS_BATCH_SIZE }
+  for first = 1, #config.waveforms, CORPUS_BATCH_SIZE do
+    local batch_first = first
+    local batch_last = math.min(first + CORPUS_BATCH_SIZE - 1, #config.waveforms)
+    local batch_number = math.floor((first - 1) / CORPUS_BATCH_SIZE) + 1
+    for _, variant in ipairs(variants) do
+      local chosen = variant
+      local name = string.format("single-cycle-%03d-%s", batch_number, chosen.id)
+      add(name, function()
+        local source = instrument({})
+        local entries, longest, total = {}, 0, 0
+        for file_index = batch_first, batch_last do
+          local fixture = config.waveforms[file_index]
+          local sample = source:insert_sample_at(#source.samples + 1)
+          check(sample.sample_buffer:load_from(fixture.path), "could not load " .. fixture.name)
+          sample.name = fixture.name
+          local buffer = sample.sample_buffer
+          check(buffer.sample_rate == RATE and buffer.number_of_channels == MONO
+            and buffer.bit_depth == SOURCE_BITS, "corpus oracle requires 48 kHz mono 16-bit PCM")
+          local payload = source_pcm(fixture.path)
+          local frames = buffer.number_of_frames
+          check(#payload == frames * PCM_BYTES)
+          entries[#entries + 1] = { buffer = buffer, frames = frames, pcm = payload, name = fixture.name }
+          longest, total = math.max(longest, frames), total + frames
+        end
+        local options = settings.defaults()
+        options.mode, options.slot_count = chosen.mode, chosen.slots
+        options.zero_pad, options.fade, options.dither = chosen.pad or false, chosen.fade or false, chosen.dither or false
+        local path = output(name)
+        local result, failure = export(source, options, path)
+        check(result and not failure, failure)
+        local edge = options.zero_pad and EDGE_FRAMES or 0
+        local slots = options.slot_count or #entries
+        local slot_frames = longest + edge * 2
+        local expected_frames = options.mode == "chain" and total or slots * slot_frames
+        local content = verify_wav(path, expected_frames)
+        check(result.frames == expected_frames and result.total_sec == expected_frames / RATE)
+        local expected_mean = options.mode == "chain" and total / #entries or slot_frames
+        check(result.slot_sec == expected_mean / RATE)
+        local absolute = 0
+        for slot = 1, slots do
+          local entry = entries[slot]
+          local length = options.mode == "chain" and entry.frames or slot_frames
+          local fade = entry and math.min(entry.frames,
+            math.floor(RATE * settings.FADE_OUT_MS / MILLISECONDS_PER_SECOND)) or 0
+          for frame = 1, length do
+            local original_frame, expected = frame - edge, 0
+            if entry and original_frame >= 1 and original_frame <= entry.frames then
+              expected = source_frame(entry.pcm, original_frame)
+              if options.fade and original_frame > entry.frames - fade then
+                local gain = fade == 1 and 0 or (entry.frames - original_frame) / (fade - 1)
+                expected = math.floor(expected * gain + 0.5)
+              end
+            end
+            absolute = absolute + 1
+            local actual = pcm(content, absolute)
+            local tolerance = options.dither and expected ~= 0 and 1 or 0
+            check(math.abs(actual - expected) <= tolerance,
+              string.format("%s slot %d frame %d: expected %d, got %d", name, slot, frame, expected, actual))
+            if absolute % VERIFY_YIELD_FRAMES == 0 then coroutine.yield() end
+          end
+        end
+        check(absolute == expected_frames)
+        local imported_index = #source.samples + 1
+        local imported = source:insert_sample_at(imported_index).sample_buffer
+        check(imported:load_from(path), "chain reimport failed")
+        check(imported.sample_rate == RATE and imported.number_of_frames == expected_frames
+          and imported.number_of_channels == MONO and imported.bit_depth == SOURCE_BITS)
+        for frame = 1, expected_frames do
+          check(imported:sample_data(1, frame) * FULL_SCALE == pcm(content, frame), "reimported audio differs")
+          if frame % VERIFY_YIELD_FRAMES == 0 then coroutine.yield() end
+        end
+        source:delete_sample_at(imported_index)
+        if options.dither then
+          local repeated, repeat_error = export(source, options, output(name .. "-repeat"))
+          check(repeated and not repeat_error, repeat_error)
+          check(read_file(output(name .. "-repeat")) == content, "corpus dither is not reproducible")
+        end
+        for _, entry in ipairs(entries) do
+          check(entry.buffer.number_of_frames == entry.frames and entry.buffer.sample_rate == RATE)
+          for frame = 1, entry.frames do
+            check(entry.buffer:sample_data(1, frame) * FULL_SCALE == source_frame(entry.pcm, frame), "source waveform changed")
+          end
+        end
+        return {
+          files = #entries, first = entries[1].name, last = entries[#entries].name,
+          frames = expected_frames, seconds = expected_frames / RATE,
+          slots = slots, slot_frames = options.mode == "chain" and json.null or slot_frames,
+          output = name .. ".wav", reimport_verified = true,
+        }
+      end, CORPUS_TIMEOUT_SECONDS)
+    end
+  end
+end
+
 local index, fiber, deadline, completed = 0, nil, nil, false
+local resetting, fresh_document = false, false
 local controller
+local function document_ready()
+  if resetting then fresh_document = true end
+end
+tool.app_new_document_observable:add_notifier(document_ready)
 local function finish_case(ok, detail)
   if current_job and not current_job.finished then current_job:cancel() end
   current_job = nil
@@ -399,6 +608,16 @@ end
 
 controller = function()
   if completed or not renoise.song() then return end
+  if not fresh_document then
+    if not resetting then
+      resetting = true
+      renoise.app():new_song_no_template()
+    end
+    return
+  end
+  if tool.app_new_document_observable:has_notifier(document_ready) then
+    tool.app_new_document_observable:remove_notifier(document_ready)
+  end
   if not fiber then
     index = index + 1
     if index > #tests then
@@ -410,7 +629,7 @@ controller = function()
       return
     end
     fiber = coroutine.create(tests[index].run)
-    deadline = os.time() + CASE_TIMEOUT_SECONDS
+    deadline = os.time() + tests[index].timeout
   end
   if os.time() > deadline then finish_case(false, "native case timeout"); return end
   local ok, detail = coroutine.resume(fiber)
