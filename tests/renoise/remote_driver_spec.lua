@@ -940,9 +940,9 @@ local function test_instrument_navigation_setup_inserts_only_when_needed()
 end
 
 local function test_fixed_native_acceptance_command()
-  local completion, acceptance_json_codec, acceptance_profile, acceptance_options
+  local completion, acceptance_json_codec, acceptance_profile
   local host, driver = start_driver({
-    acceptance_runner = function(case_name, done, json_codec, profile, options)
+    acceptance_runner = function(case_name, done, json_codec, profile)
       assert(type(json_codec) == "table" and type(json_codec.array) == "function",
         "acceptance runner did not receive the shared response codec")
       assert(case_name == "integrity-observers" or case_name == "writer-recovery" or
@@ -955,17 +955,11 @@ local function test_fixed_native_acceptance_command()
         case_name == "metadata-undo-prepare" or case_name == "metadata-undo" or
         case_name == "metadata-recovery-prepare" or case_name == "metadata-recovery" or case_name == "metadata-recovery-cold" or
         case_name == "cold-reopen-regenerate" or
-        case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow" or
-        case_name == "selection-feasibility" or case_name == "direct-output-feasibility" or
-        case_name == "source-undo-feasibility" or
-        case_name == "production-latency-8x8" or case_name == "production-latency-16x8" or
-        case_name == "production-session-8x8" or case_name == "production-stress-16x8" or
-        case_name == "phrase-midi-delivery",
+        case_name == "cold-reopen-verify" or case_name == "multi-instrument-workflow",
         "fixed native acceptance case was not allowlisted")
       completion = done
       acceptance_json_codec = json_codec
       acceptance_profile = profile
-      acceptance_options = options
       return true
     end
   })
@@ -985,12 +979,20 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(invalid, "acceptance-profile-invalid-value").error.code, "invalid_arguments")
   assert_equal(completion, nil, "invalid acceptance command reached its runner")
 
+  for _, case_name in ipairs({"production-session-8x8", "production-stress-16x8", "phrase-midi-delivery",
+      "production-latency-8x8", "production-latency-16x8"}) do
+    local id = "acceptance-retired-" .. case_name
+    send_request(host, client, id, "acid.acceptance.run", {case = case_name})
+    fire_idle(host)
+    assert_equal(find_response(take_responses(client), id).error.code, "invalid_arguments")
+    assert_equal(completion, nil, "retired acceptance case reached its runner: " .. case_name)
+  end
+
   local persistence_cases = {"persistence-failures",
     "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
     "metadata-undo-prepare", "metadata-undo"}
   for _, case_name in ipairs(persistence_cases) do
-    for index, extra in ipairs({{stage = "undo"}, {profile = "Warm"},
-        {midi_output_device = "test loopback"}, {fault = "write"}}) do
+    for index, extra in ipairs({{stage = "undo"}, {profile = "Warm"}, {fault = "write"}}) do
       local args = {case = case_name}
       for key, value in pairs(extra) do args[key] = value end
       local id = case_name .. "-invalid-" .. index
@@ -1001,57 +1003,7 @@ local function test_fixed_native_acceptance_command()
     end
   end
 
-  for index, args in ipairs({
-    {case = "production-latency-8x8"},
-    {case = "production-latency-8x8", midi_output_device = ""},
-    {case = "production-latency-16x8", midi_output_device = "port\nname"},
-    {case = "production-latency-8x8", midi_output_device = string.rep("a", 257)},
-    {case = "integrity-observers", midi_output_device = "test loopback"},
-    {case = "production-session-8x8"},
-    {case = "phrase-midi-delivery"},
-    {case = "production-stress-16x8", midi_output_device = "test loopback", stage = "unchecked"},
-    {case = "production-latency-8x8", midi_output_device = "test loopback", stage = "undo"},
-  }) do
-    local id = "acceptance-midi-invalid-" .. index
-    send_request(host, client, id, "acid.acceptance.run", args)
-    fire_idle(host)
-    assert_equal(find_response(take_responses(client), id).error.code, "invalid_arguments")
-    assert_equal(completion, nil, "invalid MIDI selection reached its runner")
-  end
-  for _, scale in ipairs({"8x8", "16x8"}) do
-    local id = "acceptance-latency-" .. scale
-    local case_name = "production-latency-" .. scale
-    send_request(host, client, id, "acid.acceptance.run",
-      {case = case_name, midi_output_device = "test loopback"})
-    fire_idle(host)
-    assert_equal(acceptance_options.midi_output_device, "test loopback")
-    assert_equal(acceptance_profile, nil)
-    fake_time = fake_time + 31
-    fire_idle(host)
-    assert_equal(find_response(take_responses(client), id), nil,
-      "populated-song diagnostic expired at the ordinary command deadline")
-    assert(completion({status = "PASS", case = case_name, performance_acceptance = "NOT_CLAIMED",
-      measurements = acceptance_json_codec.array({{elapsed_ms = 80}})}))
-    fire_idle(host)
-    assert_equal(find_response(take_responses(client), id).result.performance_acceptance, "NOT_CLAIMED")
-  end
   completion = nil
-
-  for _,case_name in ipairs({"production-session-8x8","production-stress-16x8"}) do
-    for _,stage in ipairs({"undo","cold-regenerate","cold-verify","playback-all",
-        "playback-sample","playback-vst","playback-silence","playback-stop"}) do
-      local id=case_name.."-"..stage
-      send_request(host,client,id,"acid.acceptance.run",
-        {case=case_name,midi_output_device="test loopback",stage=stage})
-      fire_idle(host)
-      assert_equal(acceptance_options.stage,stage,"production continuation stage was lost")
-      assert_equal(acceptance_options.midi_output_device,"test loopback")
-      assert(completion({status="PASS",case=case_name}))
-      fire_idle(host)
-      assert_equal(find_response(take_responses(client),id).result.status,"PASS")
-    end
-  end
-  completion=nil
 
   send_request(host, client, "acceptance-run", "acid.acceptance.run", {case = "integrity-observers"})
   fire_idle(host)
@@ -1180,8 +1132,7 @@ local function test_fixed_native_acceptance_command()
   local negatives = find_response(take_responses(client), "acceptance-ownership-negatives")
   assert(negatives and negatives.ok)
   assert_equal(negatives.result.status, "PASS")
-  for _, case_name in ipairs({ "selection-feasibility", "direct-output-feasibility", "source-undo-feasibility",
-      "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
+  for _, case_name in ipairs({ "revision-undo-fixture", "revision-undo-prepare", "revision-undo",
       "persistence-failures", "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
       "metadata-undo-prepare", "metadata-undo",
       "revision-live-undo-fixture", "revision-live-undo-prepare", "revision-live-undo" }) do
@@ -1197,6 +1148,36 @@ local function test_fixed_native_acceptance_command()
     assert(accepted and accepted.ok)
     assert_equal(accepted.result.status, "PASS")
   end
+  driver.stop()
+end
+
+local function test_interactive_cases_reach_the_acceptance_runner()
+  local file=assert(io.open("scripts/run_interactive_tests.ps1","rb"))
+  local runner=file:read("*a")
+  file:close()
+  local cases=assert(runner:match("if %(%$AcceptanceCase %-and %$AcceptanceCase %-cnotin @%((.-)%)"),
+    "interactive acceptance case list is missing")
+  local dispatched
+  local host,driver=start_driver({acceptance_runner=function(name,done)
+    dispatched=name
+    done({status="PASS",case=name})
+    return true
+  end})
+  local client=new_client()
+  accept(host,client)
+  local count=0
+  for name in cases:gmatch("'([^']+)'") do
+    count=count+1
+    local args={case=name}
+    local id="advertised-case-"..count
+    dispatched=nil
+    send_request(host,client,id,"acid.acceptance.run",args)
+    fire_idle(host)
+    local response=find_response(take_responses(client),id)
+    assert(response and response.ok,"advertised case rejected by transport: "..name)
+    assert_equal(dispatched,name,"advertised case did not reach acceptance dispatch")
+  end
+  assert(count>0,"interactive runner advertises no acceptance cases")
   driver.stop()
 end
 
@@ -1517,6 +1498,7 @@ test_gui_state_is_read_from_the_acid_adapter()
 test_gui_state_fails_closed_without_an_adapter()
 test_instrument_navigation_setup_inserts_only_when_needed()
 test_fixed_native_acceptance_command()
+test_interactive_cases_reach_the_acceptance_runner()
 test_response_encoding_errors_are_distinct_from_oversized_frames()
 test_diagnostics_counts_other_commands()
 test_shutdown_records_completion_after_server_stop()

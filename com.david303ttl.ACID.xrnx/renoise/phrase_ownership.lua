@@ -71,15 +71,6 @@ function M.id(phrase)
   return id
 end
 
-function M.make_name(phrase,id)
-  if type(id)~="number" or id%1~=0 or id<1 or id>MAX_PHRASE_ID then
-    return nil,"invalid ACID phrase ID"
-  end
-  local seal,err=hash(phrase)
-  if not seal then return nil,err end
-  return string.format("%s%d [v3:%s]",PREFIX,id,seal)
-end
-
 function M.make_name_from_verified_snapshot(snapshot,id,seal_columns)
   if type(id)~="number" or id%1~=0 or id<1 or id>MAX_PHRASE_ID then
     return nil,"invalid ACID phrase ID"

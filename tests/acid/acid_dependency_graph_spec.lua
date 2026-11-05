@@ -167,38 +167,10 @@ for path in files:lines() do
 end
 assert(files:close())
 assert(sources.main and sources["model.articulation"], "runtime inventory is incomplete")
-for _, name in ipairs({ "writers.script_runner", "writers.pattrns_writer", "writers.gate_writer", "writers.legato_writer",
-    "renoise.selection_context", "renoise.sampler_audit", "runtime.independence", "runtime.eligibility" }) do
-  assert(not sources[name], name .. " must remain outside the release runtime")
-end
 assert(sources["runtime.context"], "runtime context interface is missing")
-assert(not sources["runtime.legacy_writer_adapter"], "obsolete writer adapter remains")
-assert(not sources["model.live_regen"], "competing Live Edit scheduler remains")
-for name, source in pairs(sources) do
-  assert(not source:find("legacy_writer_adapter", 1, true), name .. " imports the obsolete writer adapter")
-  assert(not source:find("model.live_regen", 1, true), name .. " imports the obsolete scheduler")
-end
 validate(sources)
 dofile('tests/bootstrap.lua')('acid')
-local articulation = require("model.articulation")
-local gates = require("reference.gate_writer")
-assert(articulation.apply == nil, "articulation must expose planning only")
-assert(gates.apply == nil and gates.plan == nil and gates.location == nil, "gate writer must expose planned application only")
 local writer = require("writers.phrase_writer")
-assert(writer.generate == nil, "writer must not expose the positional generation API")
-assert(writer.clear_integrity_blocker == nil, "writer exposes a retired blocker repair action")
-local drafts=require("runtime.draft_cache")
-assert(drafts.list==nil and drafts.copy_to_new==nil and drafts.discard==nil,
-  "draft cache exposes retired recovery actions")
-local validator=require("writers.phrase_validator")
-assert(validator.compatibility==nil and validator.preflight==nil,
-  "phrase validator exposes retired compatibility or projection APIs")
-local integrity=require("runtime.integrity").new(nil,nil)
-assert(integrity.status==nil and integrity.clear==nil and integrity.capture_committed==nil,
-  "integrity owner exposes retired proof or repair actions")
-local ownership=require("renoise.phrase_ownership")
-assert(ownership.matches_recovery==nil and ownership.recovery_matches_snapshot==nil,
-  "ownership exposes retired recovery comparison actions")
 assert(type(writer.create) == "function" and type(writer.regenerate) == "function",
   "writer must expose explicit create and regenerate operations")
 print("acid_dependency_graph_spec: OK")

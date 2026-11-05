@@ -216,7 +216,7 @@ draft and produce an unsaved warning. Save the XRNS to retain stored drafts.
 Lua specs validate deterministic semantics, current-format persistence and
 mocked API integration. They do not establish actual playback, plugin velocity,
 MIDI delivery, sample continuity or GUI scaling. The manual checklist in
-[tests/acid/acid_m35_s_manual.md](../tests/acid/acid_m35_s_manual.md) records the
+[tests/acid/acid_regeneration_manual.md](../tests/acid/acid_regeneration_manual.md) records the
 required host checks and their results. Unrun checks remain unverified.
 
 The pinned API SDK is a development reference, never a runtime dependency.

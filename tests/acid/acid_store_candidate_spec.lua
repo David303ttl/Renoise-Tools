@@ -5,12 +5,21 @@ local store=require("renoise.pattern_store")
 local current
 renoise={song=function()return current end}
 local function yes()return true end
+local phrase_limits={max_lines=1,max_note_columns=1,max_effect_columns=0,number_of_lines=1}
+local make_phrase_fixture=dofile("tests/acid/complete_phrase_fixture.lua")
+local function set_identity(p,id)
+  local snapshot=assert(own.snapshot(p,phrase_limits))
+  local seal_columns={}
+  for column=1,12 do seal_columns[column]=p:column_is_muted(column) end
+  p.name=assert(own.make_name_from_verified_snapshot(snapshot,id,seal_columns))
+end
 local function phrase(id)
-  local p={name="",number_of_lines=1,visible_note_columns=1,visible_effect_columns=0}
-  function p:line()return {note_columns={{note_value=48,instrument_value=255,
-    volume_value=255,panning_value=255,delay_value=0,effect_number_value=0,effect_amount_value=0}}}end
-  function p:column_is_muted()return false end
-  p.name=assert(own.make_name(p,id));return p
+  local p=make_phrase_fixture(phrase_limits)
+  local cell=p.lines[1].note_columns[1]
+  cell.note_value=48
+  cell.is_empty=false
+  set_identity(p,id)
+  return p
 end
 local function fresh()
   local a,b=phrase(1),phrase(2)

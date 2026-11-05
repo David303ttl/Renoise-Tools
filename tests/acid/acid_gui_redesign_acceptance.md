@@ -56,12 +56,10 @@ driver Lua regression specs pass. `git diff --check` is clean.
 | `runtime/eligibility.lua` | Deleted after reachability tracing found no production consumer |
 | Validator `compatibility` and `preflight` exports | Deleted; compatibility remains private to the active classifier, destination preflight remains used by the writer; regression assertions use retained APIs |
 | Workspace tabs, decoded/report views, permanent Live Edit Retry and alternative GUI paths | Absent from production constructors, update paths and runtime exports |
-| Tests and native probes | Retained workflows use the production GUI/runtime; retired names occur in absence assertions rather than executable calls |
+| Tests and native probes | Retained workflows use the production GUI/runtime |
 | Historical/planning mentions | Kept in the redesign/editor/runtime playbooks and earlier acceptance receipts; these describe deletion requirements or superseded results |
 | Persisted identity and source markers | Kept where required by active ownership, drafts and schema contracts |
 
-There are no unresolved deletion rows. `model.output_planner.location` remains
-an active planning/reference-writer contract, outside the retired workflows.
 Manifest/API/tool versions, persisted schemas, ARP and DigitaktSampleChain are
 unchanged.
 
@@ -677,7 +675,7 @@ Inspected definitions and offline docs: `view.lua`, `rack.lua`,
 | Program/Grid pitch keys, octaves, C+, accent, slide, PITCH/TIME positions, and pages; ID families `acid_program_*`, `acid_grid_*`, `acid_pitch_page_*`, `acid_time_page_*` (`gui.lua:944-1050`, `1695-1775`) | Selection/edit callbacks at `gui.lua:740-1059`; `update()` and `refresh_stage()` render selection, active bounds, pages and staged entry (`gui.lua:516-699`) | Retain. `acid_gui_views_spec.lua`, `acid_editor_spec.lua`, `acid_program_staging_spec.lua`; editor presentation manual |
 | Entry actions `acid_program_back`, `acid_program_enter`, `acid_program_restart`, `acid_program_finish`, `acid_program_discard`, `acid_program_reenter_pitch`, `acid_program_reenter_time` | `stage_navigation`, `finish_stage`, `begin_stage`, `refresh_stage` in `gui.lua` | Retain. `acid_program_discard` remains the Cancel ID. Redundant `acid_program_edit_one` is deleted; `acid_program_check` is removed with diagnostics. |
 | Audition `acid_audition`, Live Edit `acid_live_edit`, and Generate / Regenerate (anonymous button) (`gui.lua:1422-1438`, `1742-1758`, `2170-2188`) | Shared audition release and lifecycle hooks (`gui.lua:94-170`, `2198-2268`); generation admission through runtime; result feedback in `acid_status` | Retain audition, Live Edit and Generate. Remove permanent anonymous `Retry Live Edit` in Task 9. `acid_audition_status` is a separate cleanup report slated to merge into shared feedback. Tests: audition lifecycle, GUI admission/views, runtime request/writer integration; Live Edit manual |
-| Rename, Duplicate, Reset, Undo/Redo; `acid_label_*`, `acid_pattern_duplicate`, `acid_pattern_reset` (`gui.lua:1444-1542`, `1815-1827`, `2148-2155`) | Rename attempt/save lifecycle, duplicate admission and editor history | Retain. Rename dialog Save/Retry/Discard Attempt resolves label edits and stays; it is not recovery UI. `acid_duplicate_label_spec.lua`, `acid_editor_spec.lua` |
+| Rename, Duplicate, Reset, Undo/Redo; `acid_label_*`, `acid_pattern_duplicate`, `acid_pattern_reset` (`gui.lua:1444-1542`, `1815-1827`, `2148-2155`) | Rename attempt/save lifecycle, duplicate admission and editor history | Retain. Rename dialog Save/Retry/Discard Attempt resolves label edits and stays; it is not recovery UI. `acid_editor_spec.lua` |
 | Copy/Paste, operations, random parameters, scale browser/import and mask; `acid_clipboard_*`, `acid_operation_*`, `acid_random_*`, `acid_scale_*`, `acid_mask_*` (`gui.lua:1788-2092`) | Scoped source edits and operation/scale update callbacks; `update()` refreshes active state (`gui.lua:550-739`) | Retain. Clipboard, GUI views, sequencer and scale specs |
 | Shared feedback `acid_status` (`gui.lua:279-281`) | User-visible action/result feedback | Retain as the common message owner. Replace report surfaces before removing them. |
 | Diagnostics and Details: `acid_source_state`, `acid_source_diagnostic`, `acid_source_summary`, `acid_preview_summary`, `acid_details_panel`, `acid_details_toggle`; anonymous “Go to source error” and “Check” (`gui.lua:299-306`, `535-549`, `762-779`, `1731-1739`, `2133-2138`) | `show_diagnostic`, `navigate_diagnostic`, `show_diagnostic()` call in `update()` | Delete presentation and navigation. Keep `project()` and projection validation used by editing, audition, generation and staging. Move meaningful failures to shared feedback. Tests: GUI views, editor, staging; presentation manual currently expects these controls. |
@@ -733,7 +731,7 @@ remain distinct in feedback.
 | Masked notes and scale browsing/application | `acid_gui_views_spec.lua`, `acid_scale_mask_spec.lua`, `acid_scales_spec.lua` |
 | Saved drafts, restore, detach and release | `acid_draft_recovery_spec.lua`, `acid_runtime_inventory_spec.lua`, `acid_phrase_persistence_spec.lua`, `acid_live_identity_spec.lua` |
 | New Phrase; owned, foreign, colliding and unavailable destinations | `acid_gui_views_spec.lua`, `acid_runtime_inventory_spec.lua`, `acid_runtime_writer_integration_spec.lua` |
-| Observer, mutation, adoption and writer blocker fixtures | `acid_runtime_observers_spec.lua`, `acid_runtime_mutation_spec.lua`, `acid_runtime_integrity_spec.lua`, `acid_runtime_writer_integration_spec.lua` |
+| Observer, mutation, adoption and writer blocker fixtures | `acid_runtime_observers_spec.lua`, `acid_runtime_integrity_spec.lua`, `acid_runtime_writer_integration_spec.lua` |
 
 The current presentation and Live Edit manuals use retained workflows.
 Workspace navigation remains until its later layout task; destination,

@@ -216,9 +216,6 @@ function M.run(done, json)
     assert(controls.acid_editor_view and controls.acid_program_reenter_pitch and
       controls.acid_operation and controls.acid_random_parameters and controls.acid_status,
       "production layout controls were not captured")
-    local _,draft_load_reason=require("runtime.draft_cache").get(song,song.selected_instrument,nil,
-      context:draft_options())
-    metrics.initial_draft_load_reason=draft_load_reason
     metrics.initial_instrument_name=song.selected_instrument.name
     hold_state("program-compact",function()
         set_value("acid_editor_view",GRID_VIEW)

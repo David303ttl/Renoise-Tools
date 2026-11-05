@@ -198,13 +198,7 @@ instance. Close Renoise before rebuilding the fixture; ordinary Native runner
 runs support concurrent instances. Fixture construction uses explicit native
 field values, and scenario expectations come from independent golden values.
 
-### Gate 8 production GUI scenarios
-
-The parameterized native cases `production-session-8x8` and `production-stress-16x8` use one captured production GUI. Gate 8 is closed by user decision; the remaining 16×8 run and audio capture are waived. The specification is [production_session_acceptance.md](../acid/production_session_acceptance.md); reference driver details are in the [M4.7 playbook](../../com.david303ttl.ACID.xrnx/M4_7_RUNTIME_REFACTOR_PLAYBOOK.md#step-8--native-renoise-acceptance).
-
-Implement one parameterized test-only journey, reusing the real production ACID GUI and existing native runner, verified developer bundle, identity-guarded cleanup and per-process report. Seed owned phrases **through** the real GUI rather than the standalone writer request factory. Use 64/128 heterogeneous sources, 8/16 playing tracks, actual sample/loaded VST/MIDI-only routes, 128/512 regenerations, true native Undo/Redo, two cold Renoise process restarts and per-action/periodic native oracles. The invariant is no cross-target write, no lost draft, no accidental selection, complete source revision integrity. Never infer played phrases/MIDI delivery from transport progression. A test-only loopback/real MIDI route is required for MIDI delivery claims; missing availability is BLOCKED, not silent fallback.
-
-Do not create 128 full phrase snapshots per edit: keep small action/peer traces and periodic complete 512×12+8 verification outside timed callbacks. Keep script-specific real GUI driver extensions test-only, package-allowlisted and excluded from the release. No second writer/scheduler/test framework and no production API for tests. The existing `multi-instrument-workflow`, `editor-responsiveness` and `direct-output-feasibility` are narrow runnable prerequisites, not production-scale passes. The production case commands and cold-process stages are defined in the linked contract.
+### GUI responsiveness acceptance
 
 The existing responsiveness cases default to the `Warm` profile, which measures the real GUI callback without diagnostic wrappers. `Detailed` keeps the function-level profiler for diagnosis and records instrumented timings separately. Both modes retain the same functional assertions.
 
@@ -214,26 +208,6 @@ The existing responsiveness cases default to the `Warm` profile, which measures 
 ./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase multi-instrument-workflow -AcceptanceProfile Warm
 ~~~
 
-
-### Populated-song latency diagnostics
-
-`production-latency-8x8` and `production-latency-16x8` share one fixture and reuse
-the editor callback measurements. Each empty/early/late history stage records
-three Warm samples and a separate Detailed profile; setup uses standalone writer requests
-outside the timer: 64/128 owned phrases, one foreign sentinel per instrument,
-and a 3/3/2 or 6/6/4 sample/Surge XT/MIDI receiver mix. One sample target is measured
-before seeding, after seeding and after two added revisions per owned phrase;
-the VST/MIDI instruments remain loaded.
-The editor helper adds one temporary phrase, so the measured song contains
-73/145 native phrases. Surge XT keeps its startup Init patch; the MIDI
-output must exactly match the explicitly approved device name.
-
-~~~powershell
-./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase production-latency-8x8 -MidiOutputDevice '<approved MIDI output>' -CommandTimeoutSeconds 300
-./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase production-latency-16x8 -MidiOutputDevice '<approved MIDI output>' -CommandTimeoutSeconds 300
-~~~
-
-These diagnostics record latency without an acceptance threshold. Functional errors stop the run. They do not establish playback, receiver delivery or full production-session acceptance.
 
 ### Native scenario catalog
 
@@ -374,7 +348,7 @@ Mocks can establish local contracts but cannot close these native rows.
 
 Steps 2.9 and 7 must map their local regressions to actual test cases/results;
 the handoff does not pre-author future scenario fixtures or replace those gates.
-Gate 8 closure and accepted test scope are recorded in [production_session_acceptance.md](../acid/production_session_acceptance.md). Reference checks cover
+Gate 8 closure and accepted test scope are recorded in [native evidence and accepted scope](../acid/runtime_acceptance.md#production-session-native-evidence). Reference checks cover
 final-writer sentinel-field round trips, real undo/redo and save/reload.
 Unsupported-field preflight rejection must be recorded as rejection, not a
 preservation pass. Add each behavior's scenarios with its owning implementation;

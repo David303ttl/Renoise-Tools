@@ -3,14 +3,17 @@ local seq=require("model.sequencer")
 local own=require("renoise.phrase_ownership")
 local store=require("renoise.pattern_store")
 local host={__eq=function() error("host equality is not identity") end}
+local phrase_limits={max_lines=1,max_note_columns=1,max_effect_columns=0,number_of_lines=1}
+local make_phrase_fixture=dofile("tests/acid/complete_phrase_fixture.lua")
 local function phrase(id)
-  local cell={note_value=48,instrument_value=255,volume_value=255,panning_value=255,
-    delay_value=0,effect_number_value=0,effect_amount_value=0}
-  local p=setmetatable({name="",number_of_lines=1,visible_note_columns=1,
-    visible_effect_columns=0},host)
-  function p:line()return {note_columns={cell}}end
-  function p:column_is_muted()return false end
-  p.name=assert(own.make_name(p,id))
+  local p=setmetatable(make_phrase_fixture(phrase_limits),host)
+  local cell=p.lines[1].note_columns[1]
+  cell.note_value=48
+  cell.is_empty=false
+  local snapshot=assert(own.snapshot(p,phrase_limits))
+  local seal_columns={}
+  for column=1,12 do seal_columns[column]=p:column_is_muted(column) end
+  p.name=assert(own.make_name_from_verified_snapshot(snapshot,id,seal_columns))
   return p
 end
 local a,b=phrase(1),phrase(2)

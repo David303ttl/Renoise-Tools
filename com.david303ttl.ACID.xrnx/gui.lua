@@ -1308,7 +1308,7 @@ function M.show()
   end)
   local deliver
   if not active_runtime then
-    active_runtime=runtime_context.new({writer=phrase_writer,capture=function() return nil,"No editor source" end,
+    active_runtime=runtime_context.new({writer=phrase_writer,
       sink=function(request,done)
         local origin=request.origin or {}
         local baseline=origin.baseline or {}

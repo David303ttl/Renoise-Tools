@@ -701,20 +701,12 @@ $runnerTokens = $null
 $runnerErrors = $null
 $runnerAst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $repoRoot 'scripts/run_interactive_tests.ps1'), [ref]$runnerTokens, [ref]$runnerErrors)
 Assert ($runnerErrors.Count -eq 0) 'interactive runner did not parse'
-$audioSignalFunction = $runnerAst.Find({ param($node)
-    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Test-ProductionAudioSignal'
-}, $true)
-. ([scriptblock]::Create($audioSignalFunction.Extent.Text))
-Assert (-not (Test-ProductionAudioSignal -Rms 0.0000165537 -MutedRms 0.0000165218)) 'input noise was accepted as production audio'
-Assert (-not (Test-ProductionAudioSignal -Rms 0.1 -MutedRms 0.099)) 'unchanged loud background was accepted as production audio'
-Assert (-not (Test-ProductionAudioSignal -Rms ([double]::NaN) -MutedRms 0)) 'invalid audio RMS was accepted'
-Assert (Test-ProductionAudioSignal -Rms 0.02 -MutedRms 0.0000165) 'audible signal above muted noise was rejected'
 $coldAcceptanceFunction = $runnerAst.Find({ param($node)
-    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-ColdProcessAcceptance'
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-ColdMetadataRecovery'
 }, $true)
 Assert ($null -ne $coldAcceptanceFunction -and $coldAcceptanceFunction.Extent.Text -match "Invoke-RenoiseDriverBootstrap" -and
     $coldAcceptanceFunction.Extent.Text -match "Assert-RenoiseProcessIdentity") 'cold-process flow does not bootstrap and identity-check the newly launched host'
-Assert ($runnerAst.Extent.Text -match 'Invoke-ColdProcessAcceptance -SongPath \$recoverySongPath -Case \$coldRecoveryCase') 'metadata cold-process verification is not run against its saved fixture'
+Assert ($runnerAst.Extent.Text -match 'Invoke-ColdMetadataRecovery -SongPath \$recoverySongPath -ExpectedBaseline \$acceptance\.saved_baseline') 'metadata cold-process verification is not run against its saved fixture'
 Assert ($runnerAst.Extent.Text -notmatch "'independence-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-live-undo-prepare'" -and
@@ -737,52 +729,17 @@ Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instru
     . ([scriptblock]::Create($transportAssignment.Extent.Text))
     Assert $transportOnly 'transport smoke unnecessarily enabled native fixture deployment'
 }
-foreach ($case in @('production-latency-8x8','production-latency-16x8','production-session-8x8','production-stress-16x8','phrase-midi-delivery')) {
-    $rejected = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+foreach ($case in @('production-session-8x8','production-stress-16x8','phrase-midi-delivery')) {
+    $retired = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
         -Suite Native -AcceptanceCase $case -ApproveDisposableSong 2>&1
-    Assert ($LASTEXITCODE -ne 0) 'production latency run accepted an unspecified MIDI output'
-    $reportLine = @($rejected | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-    Assert ($reportLine.Count -eq 1) 'MIDI preflight rejection did not emit a run report'
-    $rejectedReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
-    Assert ($rejectedReport.error -match 'require -MidiOutputDevice' -and
-        @($rejectedReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
-        'missing MIDI selection was not rejected before starting Renoise'
-}
-$artifactSaver = $runnerAst.Find({ param($node)
-    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
-        $node.Name -eq 'Save-ProductionFixtureArtifacts'
-}, $true)
-Assert ($null -ne $artifactSaver) 'production fixture artifact saver is missing'
-& {
-    param($Definition, $Root)
-    . ([scriptblock]::Create($Definition))
-    $productionSessionAcceptance = $true
-    $fixturesDeployed = $true
-    $fixturesSourcePath = Join-Path $Root 'source'
-    $installedFixturesPath = Join-Path $Root 'installed'
-    $artifactRoot = Join-Path $Root 'artifacts'
-    $null = New-Item -ItemType Directory -Path $fixturesSourcePath,$installedFixturesPath,$artifactRoot -Force
-    Set-Content -LiteralPath (Join-Path $fixturesSourcePath 'source.xrns') -Value 'original'
-    Copy-Item -LiteralPath (Join-Path $fixturesSourcePath 'source.xrns') -Destination $installedFixturesPath
-    Set-Content -LiteralPath (Join-Path $installedFixturesPath 'acceptance-production.xrns') -Value 'generated'
-    Save-ProductionFixtureArtifacts
-    Assert ((Get-FileHash (Join-Path $artifactRoot 'acceptance-production.xrns')).Hash -ceq
-        (Get-FileHash (Join-Path $installedFixturesPath 'acceptance-production.xrns')).Hash) `
-        'generated production fixture was not retained before restoration'
-    Set-Content -LiteralPath (Join-Path $installedFixturesPath 'unexpected.xrns') -Value 'unrecognized'
-    $rejected = $false
-    try { Save-ProductionFixtureArtifacts } catch { $rejected = $_.Exception.Message -match 'unexpected fixture path' }
-    Assert $rejected 'production fixture cleanup accepted an unrecognized generated file'
-} $artifactSaver.Extent.Text (Join-Path $repoRoot ('tmp/production-fixture-test-' + [guid]::NewGuid().ToString('N')))
-$selectedLatency = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase production-latency-8x8 -MidiOutputDevice 'test loopback' `
-    -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
-Assert ($LASTEXITCODE -ne 0) 'production latency diagnostics accepted a developer-owned process'
-$selectedReportLine = @($selectedLatency | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-$selectedReport = Get-Content -LiteralPath $selectedReportLine[0].Substring(12) -Raw | ConvertFrom-Json
-Assert ($selectedReport.error -match 'require a runner-owned Renoise process' -and
-    @($selectedReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
-    'selected-process diagnostics were not rejected before launch'
+    Assert ($LASTEXITCODE -ne 0) "retired acceptance case '$case' was accepted"
+    $retiredReportLine = @($retired | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+    Assert ($retiredReportLine.Count -eq 1) "retired case '$case' rejection did not emit a run report"
+    $retiredReport = Get-Content -LiteralPath $retiredReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+    Assert ($retiredReport.error -match 'Unsupported native acceptance case' -and
+        @($retiredReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+        "retired case '$case' was not rejected by the runner allowlist before starting Renoise"
+    }
 $startProcessFunction = $runnerAst.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-RunnerOwnedProcess'
 }, $true)

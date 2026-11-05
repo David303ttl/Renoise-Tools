@@ -36,7 +36,6 @@ local function prepare(done)
   local ownership = require("renoise.phrase_ownership")
   local store = require("renoise.pattern_store")
   local context = require("runtime.context").new({writer = require("writers.phrase_writer"),
-    capture = function() return nil, "Metadata acceptance does not generate" end,
     sink = function() return false, "Metadata acceptance does not generate" end})
   local state = {song = song, instrument = instrument, context = context}
   local ok, err = pcall(function()

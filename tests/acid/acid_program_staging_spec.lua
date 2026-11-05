@@ -704,7 +704,7 @@ for _,complete in ipairs({false,true})do
     if name=="close" or name=="document" or name=="song" then
       gui.show()
       assert(not view("acid_program_enter").active,name.." cannot retain transient stage")
-      local restored=assert(drafts.get(song,instrument,origin,runtime:draft_options()))
+      local restored=assert(drafts.restore(song,instrument,origin,runtime:draft_options()))
       assert(seq.same_source(restored,canonical),name.." must preserve canonical draft")
     else
       assert(not view("acid_program_enter").active,name.." must invalidate staged candidate")
@@ -731,7 +731,7 @@ for _,complete in ipairs({false,true})do
   assert(drafts.has_volatile(song),"native switch must retain failed origin draft")
   assert(view("acid_status").text:find("Edits to the previous phrase could not be saved with the song.",1,true),
     "the verified origin draft failure remains phrase-scoped")
-  local recovered=assert(drafts.get(song,instrument,origin,runtime:draft_options()))
+  local recovered=assert(drafts.restore(song,instrument,origin,runtime:draft_options()))
   assert(seq.same_source(recovered,canonical),"recoverable draft must be canonical, never candidate")
 end
 fail_saves=false
@@ -824,7 +824,7 @@ assert(history.revision==revision+1 and saves==save_count+1 and writes==write_co
 assert(not view("acid_program_enter").active,"accepted Finish exits transient stage after save failure")
 assert(current().pitch_events[1].note==40)
 assert(drafts.has_volatile(song),"Finish save failure must preserve volatile draft")
-local recovered=assert(drafts.get(song,instrument,song.selected_phrase,runtime:draft_options()))
+local recovered=assert(drafts.restore(song,instrument,song.selected_phrase,runtime:draft_options()))
 assert(seq.same_source(recovered,current()),"Finish save failure recovery must contain whole accepted source")
 fail_saves=false
 fresh()

@@ -76,7 +76,7 @@ for _, regress in ipairs({false, true}) do
     assert(result.status == 'FAIL' and saved() == 0, 'native scenario accepted whole-song label recovery: status=' .. tostring(result.status) .. ' saved=' .. tostring(saved()) .. ' reason=' .. tostring(result.reason))
   else
     assert(result.status == 'PASS' and saved() == 1, result.reason)
-    assert(result.checks.owned_rename_without_phrase_capture and not result.checks.new_rename_without_phrase_capture)
+    assert(result.checks.owned_rename_without_render and not result.checks.new_rename_without_render)
     assert(result.checks.owned_uncertain_write_blocked and not result.checks.new_uncertain_write_blocked)
     assert(result.checks.zero_generation_and_recovery_reads)
     local cold = dofile('tests/renoise/driver/metadata_recovery_acceptance.lua')

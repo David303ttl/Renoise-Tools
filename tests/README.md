@@ -46,6 +46,11 @@ lua tests/acid/acid_compiler_spec.lua
 `bootstrap.lua` configures module lookup for the selected tool. Specs still run
 as separate processes when using the suite runner.
 
+ACID regression coverage targets the synchronous production planner, phrase
+materializer, writer and runtime. Musical expectations must be independent of
+retired writers. Native acceptance covers ownership, rollback, persistence,
+Undo/Redo and lifecycle behavior; mocked checks do not establish playback.
+
 For ACID runtime tests, use `runtime_phrase_fixture.fixture('new')` for checks
 that need no owned destination. The default fixture retains complete owned
 phrases for content, identity, navigation and recovery checks. Keep full-capacity

@@ -87,8 +87,6 @@ function M.build(song,instrument_index,pattern,target_index,options)
   end
   local operation_token=options.token or token()
   local captured_instrument_index=instrument_index
-  local captured_profile=profile
-  local captured_limits=caps
   local captured_baseline=baseline
   local public_baseline=baseline and {id=baseline.id,source=baseline.source,
     settings=baseline.settings,planning_inputs=baseline.planning_inputs} or nil
@@ -104,45 +102,6 @@ function M.build(song,instrument_index,pattern,target_index,options)
   local expected_revision
   function request:is_current()
     return operation_token:is_current()
-  end
-  function request:validate_checkpoint()
-    if not operation_token:is_current() then return false,"generation was invalidated" end
-    local ok,current_song=pcall(renoise.song)
-    if not ok or not rawequal(current_song,song) then return false,"song changed during generation" end
-    local current_instrument=song.instruments and song.instruments[captured_instrument_index]
-    if not rawequal(current_instrument,instrument) then
-      return false,"target instrument changed during generation"
-    end
-    local current_profile=capabilities.inspect(instrument)
-    if not capabilities.same(captured_profile,current_profile) then
-      return false,"target output capabilities changed during generation"
-    end
-    if kind=="regenerate" then
-      local found
-      for index,item in ipairs(instrument.phrases) do
-        if rawequal(item,phrase) then
-          if found then return false,"target phrase was removed during generation" end
-          found=index
-        end
-      end
-      if not found then return false,"target phrase was removed during generation" end
-      if ownership.id(phrase)~=captured_baseline.id or ownership.status(phrase)~="owned" then
-        return false,"target phrase changed during generation"
-      end
-      local candidate,reason=validator.classify(song,instrument,phrase,current_profile,captured_limits,
-        {pitch_bend_delivery=pitch_bend.delivery_enabled})
-      if not candidate then return false,reason end
-      local actual={id=ownership.id(phrase),source=candidate.source,settings=candidate.settings,
-        snapshot=candidate.baseline,planning_inputs=candidate.planning_inputs}
-      if not ownership.compare(captured_baseline,actual) then
-        return false,"Committed target baseline changed"
-      end
-    end
-    local timing=renoise.Transport.TIMING_MODEL_LPB
-    if timing==nil or song.transport.timing_model~=timing then
-      return false,"transport changed to unsupported timing during generation"
-    end
-    return true
   end
   function request:validate_authorization_checkpoint()
     if not operation_token:is_current() then return false,"generation was invalidated" end
@@ -185,15 +144,6 @@ function M.build(song,instrument_index,pattern,target_index,options)
     end
     expected_revision=revision_id
     return true
-  end
-  function request:cleanup_authorized(supplied)
-    return rawequal(supplied,operation_token) and not request.settled
-  end
-  function request:cleanup_mutate(supplied,action)
-    if not self:cleanup_authorized(supplied) or type(action)~='function' then
-      error('Cleanup mutation is not authorized',0)
-    end
-    return action()
   end
   function request:record_blocker(_,evidence)
     request.blocker=evidence

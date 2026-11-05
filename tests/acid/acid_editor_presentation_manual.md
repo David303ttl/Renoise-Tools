@@ -90,5 +90,6 @@ audible playback separately.
 
 Use [the phrase destination guide](acid_phrase_destination_manual.md),
 [Live Edit guide](acid_live_edit_manual.md) and
-[host lifecycle guide](renoise_host_lifecycle_manual.md) for detailed safety
-checks. Mocked tests do not establish Renoise playback behavior.
+[integrated editor acceptance](acid_regeneration_manual.md) for destination,
+document-lifecycle and persistence checks. Mocked tests do not establish
+Renoise playback behavior.

@@ -17,7 +17,7 @@ local function phrase(id)
   p.lines[1].note_columns[1].is_empty=false
   p.lines[3].note_columns[1].note_value=120
   p.lines[3].note_columns[1].is_empty=false
-  p.name=assert(own.make_name(p,id))
+  p.name=assert(own.make_name_from_verified_snapshot(assert(own.snapshot(p)),id))
   return p
 end
 local a,b=phrase(1),phrase(2)
@@ -39,12 +39,12 @@ end
 local dirty=seq.new_pattern(3)
 dirty.pitch_events[2]=seq.new_pitch(7,0,true,false)
 assert(cache.put(song,instrument,a,dirty,"repeat",12))
-local restored,policy,pb,initial=cache.get(song,instrument,a)
+local restored,policy,pb,initial=cache.restore(song,instrument,a)
 assert(restored.length==3 and policy=="repeat" and pb==12)
 assert(checks==2,"each draft access validates committed source/output")
 restored.pitch_events[2].accent=false
-assert(cache.get(song,instrument,a).pitch_events[2].accent)
-assert(cache.get(song,instrument,b)==nil)
+assert(cache.restore(song,instrument,a).pitch_events[2].accent)
+assert(select(4,cache.restore(song,instrument,b)).origin=="committed")
 local saved,sp,sb,meta=cache.restore(song,instrument,b)
 assert(saved.length==1 and sp=="play_once" and sb==0 and meta.origin=="committed")
 local descriptor,guard=cache.capture(song,instrument,a)
@@ -74,11 +74,11 @@ assert(cache.is_current(song,descriptor) and checks==calls,
 a.lines[1].note_columns[1].note_value=36
 local authorized=assert(cache.capture(song,instrument,a))
 a.lines[1].note_columns[1].note_value=37
-a.name=assert(own.make_name(a,1))
+a.name=assert(own.make_name_from_verified_snapshot(assert(own.snapshot(a)),1))
 assert(cache.compare_and_clear(song,authorized),
   "a verified regeneration may change phrase content while retaining its unique ID")
 a.lines[1].note_columns[1].note_value=36
-a.name=assert(own.make_name(a,1))
+a.name=assert(own.make_name_from_verified_snapshot(assert(own.snapshot(a)),1))
 assert(cache.put(song,instrument,a,seq.new_pattern(4),"repeat",0))
 assert(cache.put(song,instrument,a,dirty,"repeat",12))
 assert(not guard(descriptor.token,descriptor.revision),"equal-valued newer edits invalidate old revision")
@@ -90,7 +90,7 @@ local candidate=assert(store.prepare(song,1,committed,"play_once",0,
 assert(store.commit(song,candidate))
 assert(store.read_draft(song,instrument,a)==nil)
 assert(cache.compare_and_clear(song,latest))
-assert(not cache.get(song,instrument,a))
+assert(select(4,cache.restore(song,instrument,a)).origin=="committed")
 
 assert(cache.put(song,other,nil,dirty,"repeat",0))
 local scratch_capture=assert(cache.capture(song,other,nil))
@@ -108,8 +108,7 @@ assert(cache.clear(song,other,nil))
 
 assert(cache.put(song,instrument,a,dirty,"repeat",12))
 a.column_names[12]="changed preserved metadata"
-assert(not cache.get(song,instrument,a))
-assert(not cache.get(song,instrument,a),"detached drafts cannot rehydrate against a newer baseline")
+assert(not cache.restore(song,instrument,a))
 -- A fresh session cannot recover a durable phrase draft through either ID holder.
 local isolated_phrase=phrase(COLLISION_ID)
 local isolated_duplicate=phrase(COLLISION_ID)
@@ -128,10 +127,10 @@ assert(cache.put(isolated_song,isolated_instrument,isolated_phrase,dirty,"repeat
 assert(cache.release(isolated_song))
 isolated_other.phrases={isolated_duplicate}
 local isolated_raw=isolated_song.tool_data
-assert(not cache.get(isolated_song,isolated_instrument,isolated_phrase) and
+assert(not cache.restore(isolated_song,isolated_instrument,isolated_phrase) and
   isolated_song.tool_data==isolated_raw,
   "the original ID holder cannot read the durable draft in a fresh colliding session")
-assert(not cache.get(isolated_song,isolated_other,isolated_duplicate) and
+assert(not cache.restore(isolated_song,isolated_other,isolated_duplicate) and
   isolated_song.tool_data==isolated_raw,
   "the second ID holder cannot read or reassign the durable draft")
 assert(not cache.clear(isolated_song,isolated_instrument,isolated_phrase) and
@@ -147,20 +146,20 @@ song=current_song
 -- Durable hydration captures the currently verified baseline, not historical evidence.
 assert(cache.put(song,instrument,b,dirty,"repeat",24))
 assert(cache.release(song))
-local hydrated,hp,hb,hm=cache.get(song,instrument,b)
+local hydrated,hp,hb,hm=cache.restore(song,instrument,b)
 assert(hydrated.length==3 and hp=="repeat" and hb==24 and hm.recovered)
 local hydrated_token=hm.token
-assert(cache.get(song,instrument,b))
-assert(select(4,cache.get(song,instrument,b)).token==hydrated_token)
+assert(cache.restore(song,instrument,b))
+assert(select(4,cache.restore(song,instrument,b)).token==hydrated_token)
 local compatible=assert(seq.copy_source(committed));compatible.pitch_events[32].accent=true
 assert(store.save(song,2,compatible,"play_once",0))
-assert(not cache.get(song,instrument,b),"source baseline changes detach even when output remains compatible")
+assert(not cache.restore(song,instrument,b),"source baseline changes detach even when output remains compatible")
 
 -- A colliding ID never imports or changes the shared durable draft.
 local duplicate=phrase(2)
 other.phrases={duplicate}
 local raw=song.tool_data
-assert(not cache.get(song,other,duplicate))
+assert(not cache.restore(song,other,duplicate))
 local collision_source=seq.new_pattern(COLLISION_SOURCE_LENGTH)
 local collision_saved,collision_error,collision_meta=cache.put(song,other,duplicate,
   collision_source,"repeat",0)
@@ -174,17 +173,17 @@ assert(not cache.clear(song,other,duplicate) and song.tool_data==raw,
 assert(not cache.rebind(song,other,duplicate,collision_source,"repeat",0,collision_meta) and
   song.tool_data==raw,
   "identity rebind cannot overwrite a durable draft while its ID is ambiguous")
-assert(not cache.get(song,other,duplicate))
+assert(not cache.restore(song,other,duplicate))
 other.phrases={}
 assert(cache.has_volatile(song))
 local released,warning=cache.release(song)
 assert(released and warning and not cache.has_volatile(song))
-assert(cache.get(song,instrument,b),"a fresh session can recover unambiguous durable edits")
+assert(cache.restore(song,instrument,b),"a fresh session can recover unambiguous durable edits")
 
 -- Failed validation preserves local input but cannot seed an accepted baseline.
 local invalid={validate=function()return nil,"unverified"end}
 assert(not cache.put(song,instrument,a,dirty,"repeat",0,invalid))
-assert(not cache.get(song,instrument,a,invalid))
+assert(not cache.restore(song,instrument,a,invalid))
 local raw_before_unsealed=song.tool_data
 local calls=0
 local unsealed_proof={source=committed,settings={output_policy="play_once",pb_range=0},
@@ -206,7 +205,7 @@ local public_classifier={validate=function(target_song,target_instrument,target_
     {pitch_bend_delivery=true})
 end}
 assert(cache.put(song,instrument,b,dirty,"repeat",0,public_classifier))
-assert(cache.get(song,instrument,b,public_classifier))
+assert(cache.restore(song,instrument,b,public_classifier))
 assert(canonical_calls==2,"public classifier snapshots are revalidated on every access")
 assert(cache.clear(song,instrument,b))
 local sealed_calls=0
@@ -219,19 +218,19 @@ local sealed_classifier={validate=function(target_song,target_instrument,target_
     planning_inputs=candidate.planning_inputs,baseline_identity=identity}
 end}
 assert(cache.put(song,instrument,b,dirty,"repeat",12,sealed_classifier))
-assert(cache.get(song,instrument,b,sealed_classifier))
+assert(cache.restore(song,instrument,b,sealed_classifier))
 assert(sealed_calls==2,"sealed baseline identities are revalidated on every access")
 
 -- False and other invalid existing targets never alias the New Phrase scratch.
 assert(cache.put(song,other,nil,seq.new_pattern(9),"repeat",0))
-assert(not cache.get(song,other,nil,false) and cache.get(song,other,nil).length==9)
-assert(cache.get(song,other,nil).length==9)
+assert(not cache.restore(song,other,nil,false) and cache.restore(song,other,nil).length==9)
+assert(cache.restore(song,other,nil).length==9)
 for _,target in ipairs({false,0,"phrase"}) do
   assert(not cache.put(song,other,target,seq.new_pattern(10),"repeat",0))
-  assert(not cache.get(song,other,target) and not cache.restore(song,other,target))
+  assert(not cache.restore(song,other,target) and not cache.restore(song,other,target))
   assert(not cache.capture(song,other,target) and not cache.clear(song,other,target))
   assert(not cache.is_current(song,{kind="existing",instrument=other,phrase=target,token=1,revision=1}))
-  assert(cache.get(song,other,nil).length==9)
+  assert(cache.restore(song,other,nil).length==9)
 end
 local original_id=own.id
 own.id=function()error("required ID read failed")end
@@ -256,20 +255,20 @@ song=captured_song
 assert(scratch_guard(scratch_request.token,scratch_request.revision))
 local saved_raw=song.tool_data
 neighbor.name="Stable"
-local shared,_,_,shared_meta=cache.get(song,scratch,nil)
+local shared,_,_,shared_meta=cache.restore(song,scratch,nil)
 assert(shared.length==5 and not shared_meta.persistent and shared_meta.warning:find("ambiguous",1,true))
 neighbor.name="Neighbor"
 song.instruments={neighbor,scratch}
 scratch.name="Renamed"
-local stable,_,_,stable_meta=cache.get(song,scratch,nil)
+local stable,_,_,stable_meta=cache.restore(song,scratch,nil)
 assert(stable.length==5 and not stable_meta.persistent and stable_meta.warning)
 assert(song.tool_data==saved_raw)
 assert(not cache.put(song,scratch,nil,seq.new_pattern(6),"repeat",0))
-assert(cache.get(song,scratch,nil).length==6 and song.tool_data==saved_raw)
+assert(cache.restore(song,scratch,nil).length==6 and song.tool_data==saved_raw)
 assert(cache.release(song))
-assert(not cache.get(song,scratch,nil),"reload cannot reattach an old index/name scratch")
+assert(not cache.restore(song,scratch,nil),"reload cannot reattach an old index/name scratch")
 assert(cache.put(song,scratch,nil,seq.new_pattern(7),"repeat",0))
 song.instruments[2]={name="Renamed",phrases={}}
-assert(not cache.get(song,scratch,nil),"same-index replacement does not preserve object association")
+assert(not cache.restore(song,scratch,nil),"same-index replacement does not preserve object association")
 song=old_song
 print("ACID verified draft baselines and isolated cache lifecycle passed")

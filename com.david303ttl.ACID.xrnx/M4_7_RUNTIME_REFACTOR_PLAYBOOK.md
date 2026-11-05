@@ -18,7 +18,7 @@ of its upstream), with three preexisting staged documentation changes preserved.
 Pinned SDK setup succeeded and all 34 ACID specs passed again.
 **Step 0 complete (2026-10-29):** inventory, pinned API review, storage review,
 34-spec baseline and native feasibility observations are recorded in the
-[prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record).
+prerequisite feasibility record.
 The preservation and source/output association contracts below incorporate
 the observed failures. Step 1 may proceed under those revised contracts;
 runtime safety and M4 acceptance remain unverified.
@@ -126,7 +126,7 @@ Owned requires a valid current seal, valid song source/settings, independently v
 **SDK verification (2026-10-29; selection contract rechecked 2026-10-31):** `setup_sdk.ps1` succeeded against the installed pinned starter pack. The definitions and offline pages above were read together. Both `definitions/library/renoise/song.lua` and `docs/API/renoise/renoise.Song.html` mark `selected_phrase_index` READ-ONLY, as they do the selected phrase object. The API exposes no selected-phrase-index observable. ACID must not assign the index to restore selection; selection stability must be achieved and verified without relying on that unsupported write. Phrase equality is specified in `phrase.lua` under operators (line content only), but omitted from the generated phrase HTML. `copy_from` documents only copying contents, without field-by-field guarantees. The mapping reference has no explicit read-only annotation in either pinned reference; avoiding reference assignment is a preservation policy, not a verified access restriction. The observable guide demonstrates song-specific reattachment and name observation; the explicit layout-only list contract is in the ObservableList references. These sources establish signatures and restrictions, but do not establish native copy coverage, notification ordering, compile settlement latency, or cross-callback undo consistency. Native observations are recorded separately below.
 
 **Native qualifications (2026-10-29, Renoise 3.5.4 Demo / API 6.2):** The
-[feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record)
+feasibility record
 records the observed exceptions. `copy_from` did not create a backup mapping;
 destination mappings survived copying, so snapshot and independently verify
 their fields rather than treating the backup as complete. Inactive script
@@ -193,7 +193,7 @@ the writer independently repeats those checks immediately before mutation.
 
 ### 1.1 — Prove script-free staging feasibility
 
-**Status:** passed; see the [script-free staging feasibility record](../tests/acid/acid_m35_s_manual.md#script-free-staging-feasibility).
+**Status:** passed; see the script-free staging feasibility record.
 
 **Depends on:** completed Step 0 and its pinned API/native feasibility record.
 Use disposable native probes outside runtime/package inputs, not a partial writer
@@ -453,7 +453,7 @@ Steps 2–8; M4 remains open.
 
 | Contract / focused cases | Verification | Result |
 | --- | --- | --- |
-| Canonical empty script, complete native copy/rollback, same-object repeated regeneration and save/reload | [Native feasibility record](../tests/acid/acid_m35_s_manual.md#script-free-staging-feasibility) | Pass: Renoise 3.5.4 Demo / API 6.2 |
+| Canonical empty script, complete native copy/rollback, same-object repeated regeneration and save/reload | Native feasibility record | Pass: Renoise 3.5.4 Demo / API 6.2 |
 | Detached canonical source values, exact comparison and frozen candidate inputs | `tests/acid/acid_source_values_spec.lua` | Pass |
 | Raw/current membership, replacements, song-wide collisions, narrow entry reads and durable draft guards | `tests/acid/acid_live_identity_spec.lua`, `acid_phrase_persistence_spec.lua` | Pass; Step 2 must remove legacy exclusion arguments/tests; Step 3 verifies neutral temporary identities without inventory exceptions |
 | Shared repeat/play-once and straight/triplet planning, notes/rests/ties/accent, glide/gate fallback, overlap/PB and unknown receiver rejection | `tests/acid/acid_output_planner_spec.lua`, existing articulation/legato/timing specs | Pass |
@@ -1101,7 +1101,7 @@ Capture operation kind/trigger/token; current song/epoch/dialog session; exact i
 
 Use existing `draft_cache.capture/is_current` for the exact session draft token/revision and durable-removal preconditions. Do not create another draft counter/serializer. Invalid source/settings rejects before sink invocation while preserving the editable buffer/draft. Request values are detached copies, never mutable GUI/history or store-entry references.
 
-`is_current()` checks revocation, epoch/session/revisions and current context cheaply; a separate fail-closed `validate_checkpoint(request)` performs fresh raw membership, classifier/compatibility, source/settings/content/planning-input comparisons, global ID uniqueness, undo/redo and blocker checks. Neither adopts a new baseline. Writer performs its own live validation in Step 3 at admission and precommit, plus callback checkpoints appropriate to its state. Occupancy checks allow the same accepted job's own token but reject other jobs; do not make a running job fail its guard merely because it owns the slot. Cleanup authorization is separate from commit authorization and permits only that job's exact objects while its song is current.
+`is_current()` checks current operation authority. `validate_authorization_checkpoint()` verifies the captured request values and current lifecycle, source, settings and occupancy. Full native state is verified during capture and by the writer before mutation and commit. Rollback remains inside the original synchronous mutation scope.
 
 Capacity availability is rechecked against current membership before each insertion; it is not frozen free-slot count and does not turn reorder into target change. Persisted source-map concurrency and draft removal use the existing guarded store candidate rather than a second runtime transaction implementation.
 
@@ -1150,21 +1150,18 @@ never request music. Invalid buffers stay inspectable in session recovery.
 `musical_eligibility` and `independence_eligibility` are separate read-only
 predicates; the latter validates every holder without resolving any identity.
 
-`runtime.requests` supplies frozen capture when an editor is installed;
-the existing injected capture remains the isolated boundary-conformance seam.
-Requests carry `mutate`, `record_blocker`, `is_current`, `validate_checkpoint`
-and separate same-song `cleanup_authorized` hooks. Private canonical copies
+`runtime.requests` owns frozen capture for the current editor.
+Requests carry `mutate`, `record_blocker`, `is_current` and `validate_authorization_checkpoint`.
+Private canonical copies
 detect public-request mutation. Checkpoints verify raw target identity,
 membership, unique ownership, source/content/planning proof, LPB/groove,
 undo state, exact draft revision and own-token occupancy. A failed checkpoint
 permanently revokes that request. Release scrubs requests, draft descriptors
-and retained guard closures. Cleanup hooks establish job lifetime only;
-Step 3 must still check its exact private objects before mutation/deletion.
+and retained guard closures. Rollback shares the synchronous mutation scope.
 
 | Completion evidence | Focused verification | Result |
 | --- | --- | --- |
 | Positional exclusions including explicit nil and forged/stale options rejected; every ID holder counted | `tests/acid/acid_live_identity_spec.lua` | Pass, local mocks |
-| Nested neutral scopes, callbacks/throws/lifecycle unwind, no classification in scope, external invalidation | `tests/acid/acid_runtime_mutation_spec.lua` | Pass, fake writer |
 | Blocker persistence, recovery absence, stale proofs, exact draft guard, missing callback and cross-song occupancy | `tests/acid/acid_runtime_integrity_spec.lua` | Pass, local mocks |
 | Every transition row, A → B → A, copied/invalid recovery buffers, arming/manual isolation, group eligibility, zero navigation/load requests | `tests/acid/acid_runtime_transitions_spec.lua`, `acid_runtime_editor_spec.lua` | Pass, local mocks |
 | Frozen mutation, source/content/capability/options/timing/undo changes, slot ownership, stale revisions, explicit New and release scrubbing | `tests/acid/acid_runtime_request_spec.lua` | Pass, local mocks |
@@ -1994,7 +1991,7 @@ M4 completion. Step 8 later closed under the scoped decision recorded below.
 
 Record latency without an acceptance threshold. Preserve recovery snapshots unchanged. Further performance investigation and runtime optimization are out of scope. Historical result records remain unchanged.
 
-Driver protocol: [production-session acceptance contract](../tests/acid/production_session_acceptance.md).
+Recorded results: [production-session native evidence](../tests/acid/runtime_acceptance.md#production-session-native-evidence).
 
 ## Step 9 — Final documentation and review
 

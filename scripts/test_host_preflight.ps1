@@ -7,7 +7,7 @@ New-Item -ItemType Directory -Path $root | Out-Null
 try {
     $exe = Join-Path $root 'Renoise.exe'
     Set-Content $exe 'fixture'
-    $config = [pscustomobject]@{ RenoiseExe=$exe; TemporaryDirectory=$root; RenoiseProcessId=42; Mode='Safety' }
+    $config = [pscustomobject]@{ RenoiseExe=$exe; TemporaryDirectory=$root; RenoiseProcessId=42 }
     $context = [pscustomobject]@{
         RenoiseProductVersion='3.5.4'
         RenoiseProcesses=@([pscustomobject]@{Id=42; Path=$exe; StartTimeUtc=[datetime]::UtcNow})
@@ -23,8 +23,6 @@ try {
     $other=$context.PSObject.Copy()
     $other.RenoiseProcesses=@($context.RenoiseProcesses)+@([pscustomobject]@{Id=43;Path='other';StartTimeUtc=[datetime]::UtcNow})
     Check 'other instances do not block selected process' $config $other $true
-    $execution=$config.PSObject.Copy();$execution.Mode='Execution'
-    Check 'legacy execution mode needs no trace evidence' $execution $context $true
     $bad=$config.PSObject.Copy();$bad.RenoiseProcessId=999
     Check 'missing selected PID' $bad $context $false
     $bad=$context.PSObject.Copy();$bad.RenoiseProcesses=@([pscustomobject]@{Id=42;Path=(Join-Path $root 'other.exe');StartTimeUtc=[datetime]::UtcNow})

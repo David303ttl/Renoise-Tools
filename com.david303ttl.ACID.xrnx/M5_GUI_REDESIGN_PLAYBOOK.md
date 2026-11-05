@@ -464,8 +464,7 @@ Delete constructors and their exclusively owned support together:
    `diagnostic_jump`, their construction and `show_diagnostic()` together.
    Keep only an internal error-position helper used by explicit failed actions.
 9. Retain `project()`, `stage_resolution()`, prepared resolution invalidation,
-   `projection.used` where still needed for musical selection, and model
-   `editor.step_text()` for non-GUI callers. Delete preview-only `preview_cycle`
+   `projection.used` where still needed for musical selection. Delete preview-only `preview_cycle`
    and selectors only after removing every associated GUI use.
 10. Resolve every starting runtime candidate in the deletion inventory. Remove
     dead action APIs, exclusive helpers/state and orphaned modules in the same

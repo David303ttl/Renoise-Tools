@@ -288,7 +288,7 @@ Edit, draft recovery and edit Undo/Redo use the same protected writer.
 
 **Verification:** deterministic Lua and synthetic oracle checks validate source,
 render planning, mocked integration and failure recovery. The
-[manual checklist](../tests/acid/acid_m35_s_manual.md) records required Renoise
+[manual checklist](../tests/acid/acid_regeneration_manual.md) records required Renoise
 GUI, playback, routing, persistence and scaling checks. Those host checks are
 not run in this workspace; functional acceptance remains open.
 
@@ -494,7 +494,7 @@ bytes encode 14-bit center 8192 as `4000` and maximum 16383 as `7F7F`; effect
 with raw MIDI data. The [official manual](https://tutorials.renoise.com/wiki/Effect_Commands#midi-commands)
 documents M1 targeting and main/fine ordering. InstrumentPhrase docs describe
 phrase instrument columns as sample selectors, so actual plugin delivery cannot
-be inferred from these API checks. The [P0 procedure and result table](../tests/acid/acid_m35_s_manual.md#m36-pluginmidi-pitch-bend)
+be inferred from these API checks. The P0 procedure and result table
 records the bounded slot `03` Surge XT pass. That result closes the single
 reference-receiver go/no-go check for its documented configuration; it does
 not establish delivery or glide behavior for other receivers or routes.
@@ -544,7 +544,7 @@ not establish delivery or glide behavior for other receivers or routes.
 | Plugin/MIDI unavailable | Generation and editor continue with actionable warning |
 | Existing tests | ACID Lua suite, packaging and one in-Renoise reference check pass; no GitHub workflows |
 
-**Delivery:** one focused implementation PR after M3.5, with matching local Lua specs and a short addition to `tests/acid/acid_m35_s_manual.md`. If the M1 go/no-go check fails, document the blocker and close the spike without building a MIDI routing subsystem. Do not postpone M4 for open-ended testing.
+**Delivery:** one focused implementation PR after M3.5, with matching local Lua specs and a short addition to `tests/acid/acid_regeneration_manual.md`. If the M1 go/no-go check fails, document the blocker and close the spike without building a MIDI routing subsystem. Do not postpone M4 for open-ended testing.
 
 **M3.6 done when:** users can select PB Off or an assumed bend range, ACID writes correct validated phrase commands where supported, existing sample/plugin pathways remain intact, and the single reference-VST playback check establishes working bend/reset behavior. Do not promise identical glide from all VST instruments.
 
@@ -667,7 +667,7 @@ Implementation followed the dependency-ordered [runtime refactor playbook](M4_7_
 
 **Gate 0 / Steps 0–1A:** complete. The pinned API review, initial 34-spec
 baseline, repository inventory and native feasibility findings are recorded in
-the [prerequisite feasibility record](../tests/acid/acid_m35_s_manual.md#prerequisite-feasibility-record).
+the prerequisite feasibility record.
 The native undo/source mismatch found there is addressed by the independent
 source/output compatibility contract; 8×8 native Undo/Redo and cold reopen passed. Gate 8 is closed by user decision. Current M4.7 implementation and test
 status is tracked above and in playbook 2.9.

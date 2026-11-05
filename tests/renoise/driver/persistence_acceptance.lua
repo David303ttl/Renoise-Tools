@@ -25,7 +25,8 @@ function M.failures(done)
     assert(previous == nil or previous == "", "requires empty disposable song data")
     instrument.name=INSTRUMENT_NAME
     local phrase = instrument:insert_phrase_at(1)
-    phrase.name = assert(ownership.make_name(phrase, SOURCE_ID))
+    local snapshot, snapshot_error = ownership.snapshot(phrase)
+    phrase.name = assert(ownership.make_name_from_verified_snapshot(snapshot, SOURCE_ID), snapshot_error)
     local source = sequence.new_pattern(SOURCE_LENGTH)
     local draft = sequence.new_pattern(DRAFT_LENGTH)
     assert(store.save(song, SOURCE_ID, source, "repeat", PB_RANGE))
@@ -97,12 +98,12 @@ function M.failures(done)
     renoise.song = function() return proxy end
     context = require("runtime.context").new({
       writer = require("writers.phrase_writer"),
-      capture = function() return nil, "acceptance does not generate" end,
       sink = function() return false, "acceptance does not audition" end,
     })
     context:attach_document(proxy)
     context:open_dialog()
-    context:bind_new(instrument)
+    local target = context:transition("target", {instrument=instrument,kind="new"})
+    assert(target and target.kind == "new", "cannot select pending New Phrase target")
     assert(context:restore_editor_target(instrument, nil), "cannot install pending editor source")
     local context_baseline = song.tool_data
     mode, writes = "third", 0

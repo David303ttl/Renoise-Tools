@@ -421,12 +421,6 @@ local function resolve(song,instrument,phrase,options)
   return record,nil,verified,"session"
 end
 
-function M.get(song,instrument,phrase,options)
-  local record,err=resolve(song,instrument,phrase,options)
-  if not record then return nil,err end
-  return values(record)
-end
-
 function M.restore(song,instrument,phrase,options)
   local record,err,verified=resolve(song,instrument,phrase,options)
   if record then return values(record) end

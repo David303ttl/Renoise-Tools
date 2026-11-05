@@ -32,7 +32,7 @@ local function apply(phrase,planned)
    for key,value in pairs(cell)do phrase.lines[line_index].effect_columns[column][key]=value end
   end
  end
- phrase.name=assert(ownership.make_name(phrase,1))
+ phrase.name=assert(ownership.make_name_from_verified_snapshot(assert(ownership.snapshot(phrase)),1))
 end
 local planned=output(source)
 local materialization_plan=materialization_output(source)
@@ -193,7 +193,7 @@ local reference_result=assert(validator.classify_against_reference(proof_song,pr
 assert(rawequal(reference_result.baseline,retained_weak[2]),
  "opaque reference classification must reuse the private retained image")
 local proof_name=proof_phrase.name
-proof_phrase.name=assert(ownership.make_name(proof_phrase,2))
+proof_phrase.name=assert(ownership.make_name_from_verified_snapshot(assert(ownership.snapshot(proof_phrase)),2))
 assert(not validator.classify_against_reference(proof_song,proof_instrument,proof_phrase,
  sample,capacities,options,proof_reference),"opaque references must reject a changed exact phrase name")
 assert(not validator.classify_against(proof_song,proof_instrument,proof_phrase,
@@ -272,7 +272,7 @@ assert(store.save(song,1,source,'play_once',0))
 assert(classify())
 local function rejects(object,key,changed)
  local old,name=object[key],phrase.name
- object[key]=changed;phrase.name=assert(ownership.make_name(phrase,1))
+ object[key]=changed;phrase.name=assert(ownership.make_name_from_verified_snapshot(assert(ownership.snapshot(phrase)),1))
  local ok,message,status=classify()
  assert(not ok and message and status=='unavailable',key)
  object[key]=old;phrase.name=name
@@ -289,7 +289,7 @@ for _,key in ipairs({'number_value','amount_value'})do rejects(phrase.lines[1].e
 rejects(phrase.lines[1].note_columns[1],'is_empty',true)
 rejects(phrase.lines[1].effect_columns[1],'is_empty',false)
 -- Extra visible empty columns are supported; hidden ancillary data is blocked.
-phrase.visible_note_columns=12;phrase.visible_effect_columns=8;phrase.name=assert(ownership.make_name(phrase,1))
+phrase.visible_note_columns=12;phrase.visible_effect_columns=8;phrase.name=assert(ownership.make_name_from_verified_snapshot(assert(ownership.snapshot(phrase)),1))
 assert(classify())
 apply(phrase,planned)
 local note=phrase.lines[1].note_columns[12]
