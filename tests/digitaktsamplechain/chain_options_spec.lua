@@ -41,7 +41,7 @@ assert(not options.validate({}))
 assert(select(2, options.validate({ mode = "nope", mono = "average", fade = true, dither = false, zero_pad = false })):find("export mode"))
 assert(select(2, options.validate({ mode = "spaced", mono = "sum", fade = true, dither = false, zero_pad = false })):find("mono"))
 assert(select(2, options.validate({ mode = "spaced", mono = "average", slot_count = 0, fade = true, dither = false, zero_pad = false })):find("grid division"))
-assert(select(2, options.validate({ mode = "spaced", mono = "average", slot_count = 2.5, fade = true, dither = false, zero_pad = false })):find("slot count"))
+assert(select(2, options.validate({ mode = "spaced", mono = "average", slot_count = 2.5, fade = true, dither = false, zero_pad = false })):find("grid division"))
 for _, invalid in ipairs({ math.huge, -math.huge, 0/0, "4", 30 }) do
   local input = options.defaults()
   input.slot_count = invalid
