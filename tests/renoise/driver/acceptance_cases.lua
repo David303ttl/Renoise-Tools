@@ -83,6 +83,30 @@ local function same_native_color(left, right)
   return #left == #right
 end
 
+local PRIMARY_SELECTION_BORDER = 2
+local PRIMARY_SELECTION_COLOR = {0xF2,0xC5,0x46}
+local SELECTED_PROGRAM_PAGE_COLOR = {0xF0,0x70,0x70}
+
+local function canvas_draws_primary_selection(render)
+  if type(render) ~= "function" then return false end
+  local strokes = 0
+  local context = {}
+  function context:stroke_rect()
+    strokes = strokes + 1
+  end
+  render(context)
+  return strokes == 1 and context.line_width == PRIMARY_SELECTION_BORDER and
+    same_native_color(context.stroke_color, PRIMARY_SELECTION_COLOR)
+end
+
+local function has_selected_page_marker(view)
+  return view ~= nil and tostring(view.text):find("[*]",1,true) ~= nil
+end
+
+local function has_selected_page_color(view)
+  return view ~= nil and same_native_color(view.color, SELECTED_PROGRAM_PAGE_COLOR)
+end
+
 local function production_output_matches(snapshot,expected)
   if #snapshot.lines~=#expected.lines then return false,"line inventory" end
   for field,value in pairs(expected.properties) do
@@ -2627,6 +2651,7 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
   end
   local function measure_gui_callbacks()
     local callbacks,controls,callback_counts,action_memory_kb={},{},{},{}
+    local canvas_renderers={}
     local native_selection_before=native_selection(song)
     metrics.editor_fixture_native_selection_changed=
       not same_native_selection(native_selection_at_start,native_selection_before)
@@ -3236,10 +3261,15 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
               end
             end
           end
+          local canvas_render=properties_table and properties_table.render
           local view=constructor(builder,properties,...)
           if properties_table and original_notifier then properties_table.notifier=original_notifier end
           if id then controls[id]=view end
           if alias then controls[alias]=view end
+          if name=="canvas" and type(canvas_render)=="function" then
+            local selection_id=type(id)=="string" and id:match("^(.*)_selection$")
+            if selection_id then canvas_renderers[selection_id]=canvas_render end
+          end
           if alias then track_added_notifiers(view,alias) end
           if name=="popup" and properties_table and properties_table.width==360 and
               type(properties_table.items)=="table" and properties_table.notifier then
@@ -3420,10 +3450,10 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
     end
     select_first_pitch_page()
     select_first_pitch()
-    if not same_native_color(controls.acid_program_select_pitch_01.color,
-        controls.acid_program_pitch_page_1.color) then
+    if not has_selected_page_color(controls.acid_program_pitch_page_1) or
+        not canvas_draws_primary_selection(canvas_renderers.acid_program_select_pitch_01) then
       close_test_gui()
-      return nil,"GUI Program first PITCH selection was not verified"
+      return nil,"GUI Program first PITCH selection is not shown with its primary outline"
     end
     local note_pitch_index=1
     metrics.gui_program_pitch_position_before_note=note_pitch_index
@@ -3573,9 +3603,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       if not selector then return nil,"GUI "..kind.." selector was not captured" end
       local program_page_id=(kind=="pitch" and "acid_program_pitch_page_" or
         "acid_program_time_page_")..page
-      if not controls[program_page_id] or
-          not same_native_color(selector.color,controls[program_page_id].color) then
-        return nil,"GUI "..kind.." selected position is not highlighted with its page"
+      if not has_selected_page_color(controls[program_page_id]) or
+          not canvas_draws_primary_selection(canvas_renderers[selector_id]) then
+        return nil,"GUI "..kind.." selected position is not shown with its primary outline"
       end
       return true
     end
@@ -4344,6 +4374,9 @@ run_editor_responsiveness = function(done,profile_mode,requested_fixture_instrum
       end)
     if not grid_command_ok then close_test_gui();return nil,grid_command_error end
     actions[#actions+1]="grid-time-command"
+    local grid_pitch_selected,grid_pitch_selection_error=
+      select_grid_position("pitch",1,grid_pitch_index)
+    if not grid_pitch_selected then close_test_gui();return nil,grid_pitch_selection_error end
     for key_index=1,12 do
       local key_id=string.format("acid_grid_key_%02d",key_index)
       local key_ok,key_error=invoke("grid-label",key_id,callbacks[key_id],nil,function(updated)
@@ -7253,9 +7286,8 @@ local function run_production_session(done,case_name,options,json)
   local ownership=require("renoise.phrase_ownership")
   local store=require("renoise.pattern_store")
   local context_module=require("runtime.context")
-  local controls,callbacks,targets,foreign={},{},{},{}
+  local controls,callbacks,targets,foreign,canvas_renderers={},{},{},{},{}
   local context,dialog,suppress,settled,key_handler,midi_input,expected_native_selection
-  local selected_color
   local trace=json.array()
   local original_builder,original_app=renoise.ViewBuilder,renoise.app
   local original_context_new=context_module.new
@@ -7399,10 +7431,9 @@ local function run_production_session(done,case_name,options,json)
     local selector_id=string.format(kind=="pitch" and "acid_grid_pitch_%02d" or
       "acid_grid_select_time_%02d",cell)
     local page_id=(kind=="pitch" and "acid_pitch_page_" or "acid_time_page_")..page
-    assert(controls[selector_id] and controls[page_id] and selected_color and
-      tostring(controls[page_id].text):find("[*]",1,true) and
-      same_native_color(controls[selector_id].color,selected_color),
-      "GUI "..kind.." selection is not highlighted with its page")
+    assert(controls[selector_id] and has_selected_page_marker(controls[page_id]) and
+      canvas_draws_primary_selection(canvas_renderers[selector_id]),
+      "GUI "..kind.." selection is not shown with its primary outline")
   end
   local function capture(id,callback)
     callbacks[id]=callback
@@ -7432,7 +7463,12 @@ local function run_production_session(done,case_name,options,json)
         return function(_,p,...)
           local id=type(p)=="table" and alias(kind,p)
           if id and p.notifier then p.notifier=capture(id,p.notifier) end
+          local canvas_render=type(p)=="table" and p.render
           local view=constructor(builder,p,...)
+          if kind=="canvas" and type(canvas_render)=="function" then
+            local selection_id=type(p.id)=="string" and p.id:match("^(.*)_selection$")
+            if selection_id then canvas_renderers[selection_id]=canvas_render end
+          end
           if id then
             controls[id]=view
             local add
@@ -7468,7 +7504,6 @@ local function run_production_session(done,case_name,options,json)
     context_module.new=original_context_new
     assert(ok,err)
     assert(context and dialog and dialog.visible,"production GUI capture failed")
-    selected_color=controls.acid_program_pitch_page_1.color
     invoke("acid_editor_view",2)
     assert(rawequal(controls.acid_editor_view_holder.views[1],controls.acid_grid_panel),"production GUI did not enter Grid view")
   end

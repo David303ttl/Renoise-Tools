@@ -624,6 +624,14 @@ function M.show()
     end
     return stage.prepared_resolution
   end
+  local function has_pitch_target()
+    if stage then
+      return stage.memory=="pitch" and selected_pitch<=#stage.target_positions
+    end
+    if ui.selection_memory=="pitch" then return true end
+    local event=project().mapping[selected_step]
+    return event~=nil and event.pitch_index~=nil
+  end
   local render
   local rendered=setmetatable({},{__mode="k"})
   local function same_render_value(left,right)
@@ -728,7 +736,7 @@ function M.show()
   end
   refresh_stage=function()
     if label_ui.display then render(label_ui.display,"text",phrase_label) end
-    local audition_active=current_session() and (not stage or (stage.memory=="pitch" and valid_stage()))
+    local audition_active=current_session() and has_pitch_target() and (not stage or valid_stage())
     if program_audition_button then render(program_audition_button,"active",audition_active) end
     if grid_audition_button then render(grid_audition_button,"active",audition_active) end
     if stage_status then
@@ -753,7 +761,7 @@ function M.show()
         clipboard.scope==scope and eligible and editor_available)
     end
   end
-  update=function()
+  update=function(reveal_pitch)
     updating=true
     local projection=project()
     if stage and editor_view==1 then
@@ -765,19 +773,17 @@ function M.show()
       ui.selection_memory=="pitch" and selected_pitch or selected_step,output_policy=="repeat")
     local selected_event=projection.mapping[selected_step]
     local linked_pitch=ui.selection_memory=="time" and selected_event and selected_event.pitch_index
-    if not stage and linked_pitch and selected_pitch~=linked_pitch then
+    if linked_pitch and (reveal_pitch or selected_pitch~=linked_pitch) then
       selected_pitch=linked_pitch
       pitch_page=editor.page_for(selected_pitch)
     end
     local function pitch_selected(index)
-      return slide_selection.pitches[index] or
-        index==(ui.selection_memory=="pitch" and selected_pitch or linked_pitch)
+      if slide_selection.primary.pitches[index] then return "primary" end
+      if slide_selection.related.pitches[index] then return "related" end
     end
     local function time_selected(index)
-      local event=projection.mapping[index]
-      return slide_selection.times[index] or
-        ui.selection_memory=="pitch" and event and event.pitch_index==selected_pitch or
-        (ui.selection_memory=="time" and index==selected_step) or false
+      if slide_selection.primary.times[index] then return "primary" end
+      if slide_selection.related.times[index] then return "related" end
     end
     local function pitch_color(index)
       return index>source.pitch_length and colors.inactive or
@@ -877,10 +883,10 @@ function M.show()
       render(time_header,"style",step>pattern.length and "disabled" or "strong")
     end end
     if editor_view==2 then
-      render(accent,"active",stage==nil)
-      render(slide,"active",stage==nil)
-      for _,button in ipairs(ui.grid.key_buttons) do render(button,"active",stage==nil) end
-      for _,button in ipairs(ui.grid.octave_buttons) do render(button,"active",stage==nil) end
+      render(accent,"active",stage==nil and has_pitch_target())
+      render(slide,"active",stage==nil and has_pitch_target())
+      for _,button in ipairs(ui.grid.key_buttons) do render(button,"active",stage==nil and has_pitch_target()) end
+      for _,button in ipairs(ui.grid.octave_buttons) do render(button,"active",stage==nil and has_pitch_target()) end
     end
     local p=pitch_at(selected_pitch)
     local key,octave=sequencer.pitch_controls(p)
@@ -941,7 +947,7 @@ function M.show()
       render(program_slide,"value",p.slide==true)
       render(program_c_plus,"active",p.octave==1)
       render(program_c_plus,"color",p.note==60 and colors.selected or colors.idle)
-      local pitch_active=not stage or (stage.memory=="pitch" and selected_pitch<=#stage.target_positions)
+      local pitch_active=has_pitch_target()
       for _,button in ipairs(ui.program.key_buttons) do render(button,"active",pitch_active) end
       for _,button in ipairs(ui.program.octave_buttons) do render(button,"active",pitch_active) end
       render(program_accent,"active",pitch_active)
@@ -949,7 +955,7 @@ function M.show()
       render(program_c_plus,"active",pitch_active and p.octave==1)
     end
     if editor_view==2 then
-      render(grid_c_plus,"active",stage==nil and p.octave==1)
+      render(grid_c_plus,"active",stage==nil and has_pitch_target() and p.octave==1)
       render(grid_c_plus,"color",p.note==60 and colors.selected or colors.idle)
     end
     for index,button in ipairs(ui.time_assignment) do
@@ -992,14 +998,7 @@ function M.show()
     selected_step=index
     ui.selection_memory=stage and stage.memory or "time"
     time_page=editor.page_for(index)
-    if not stage then
-      local event=project().mapping[index]
-      if event and event.pitch_index then
-        selected_pitch=event.pitch_index
-        pitch_page=editor.page_for(selected_pitch)
-      end
-    end
-    update()
+    update(true)
   end
   local function reveal_missing_position(position)
     if position and editor_view==1 then
@@ -1103,6 +1102,7 @@ function M.show()
       feedback.set_issue("input","label_editor_open")
       return false
     end
+    if memory=="pitch" and not has_pitch_target() then return false end
     if not stage then return true end
     if not valid_stage() then report_stale_stage();return false end
     return editor_view==1 and stage.memory==memory and position<=#stage.target_positions
@@ -1852,7 +1852,7 @@ function M.show()
   entry_navigation=vb:row{spacing=4,stage_actions.back,stage_actions.enter,
     stage_actions.restart,stage_actions.finish,stage_actions.cancel}
   local function audition_pitch()
-    if not current_session() or (stage and (stage.memory~="pitch" or not valid_stage())) then return end
+    if not current_session() or not has_pitch_target() or (stage and not valid_stage()) then return end
     local records=stage and editor_view==1 and stage_resolution().resolved_records or project().resolved_records
     local record=records and records[selected_pitch]
     if not record then feedback.audition_failed("audition_start_failed");return end

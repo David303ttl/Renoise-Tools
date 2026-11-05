@@ -11,9 +11,11 @@ audible playback separately.
 2. Edit PITCH spans and TIME lengths at positions 16, 17 and 32. Check note
    keys, octaves, C+, accent, slide and TIME commands. Switch Program and Grid,
    page each memory, and confirm TIME selection reveals its linked PITCH slot,
-   inactive TIME positions remain inspectable but cannot be assigned, TIME
-   assignments highlight the selected command, and view/page changes add no
-   edit, save or generation.
+   inactive TIME positions remain inspectable but cannot be assigned, and
+   view/page changes add no edit, save or generation. A REST, silent TIE and
+   inactive TIME disable pitch editing and audition in both views; in normal
+   editing, selecting PITCH or mapped TIME restores them. TIME assignments
+   highlight the selected command.
    With Length 8 and Pitch span 16, set TIME to Note, Tie, Note, Note, Note,
    Note, Note, Note. Both views identify P01, P01 hold, P02 through P07; only
    P01–P07 are green. Set P01 to E2 and P02 to E4. Grid shows these resolved
@@ -30,7 +32,10 @@ audible playback separately.
    edit restores references and outlines. During timing entry Program maps the
    pending candidate, Grid maps accepted source, and Cancel restores accepted
    references. Check amber borders and both Program button lines at normal and
-   high display scaling, including long note labels with ACC/SLD.
+   high display scaling, including long note labels with ACC/SLD. Selection
+   borders fit their canvases at both scales. Related slide positions have a
+   secondary outline distinct from the primary selection; NOTE/TIE/REST fills
+   remain visible.
    Enable Slide on P01. Both views show `SLD→`; TIME references show outgoing
    arrows on T01/T02 and an incoming arrow on T03. Selecting T01, T02, T03,
    P01 or P02 outlines both pitch endpoints and T01–T03. The context reads
@@ -39,6 +44,9 @@ audible playback separately.
    `SLD`, and selecting P01 identifies T02 as the blocking REST. Undo restores
    the connection. Repeat during timing entry: Program shows pending connections,
    Grid shows accepted connections, and Cancel restores the accepted mapping.
+   With Length and Pitch span including T17, confirm P17 is revealed without
+   editing a pitch or marking an additional timing step entered; reselecting
+   T17 after browsing to P01 reveals P17 again.
    Enable Slide on the final used pitch. Repeat shows loop arrows and a context
    containing `next cycle`; Play Once removes that boundary connection and
    identifies the pattern end. Test a slide through ties across TIME pages 16/17,

@@ -176,14 +176,30 @@ function M.slide_text(link)
 end
 
 function M.slide_selection(projection,memory,index,repeat_enabled)
-  local selection={pitches={},times={},descriptions={}}
+  local selection={primary={pitches={},times={}},related={pitches={},times={}},descriptions={}}
+  if memory=="pitch" then
+    selection.primary.pitches[index]=true
+    for step,event in ipairs(projection.mapping) do
+      if event.pitch_index==index then selection.related.times[step]=true end
+    end
+  elseif memory=="time" then
+    selection.primary.times[index]=true
+    local event=projection.mapping[index]
+    if event and event.pitch_index then selection.primary.pitches[event.pitch_index]=true end
+  end
   for _,link in ipairs(projection.slides) do
     if (repeat_enabled or not link.next_cycle) and
         ((memory=="pitch" and (link.from_pitch==index or link.to_pitch==index)) or
           (memory=="time" and link.times[index])) then
-      selection.pitches[link.from_pitch]=true
-      selection.pitches[link.to_pitch]=true
-      for step in pairs(link.times) do selection.times[step]=true end
+      if not selection.primary.pitches[link.from_pitch] then
+        selection.related.pitches[link.from_pitch]=true
+      end
+      if not selection.primary.pitches[link.to_pitch] then
+        selection.related.pitches[link.to_pitch]=true
+      end
+      for step in pairs(link.times) do
+        if not selection.primary.times[step] then selection.related.times[step]=true end
+      end
       selection.descriptions[#selection.descriptions+1]=M.slide_text(link)
     end
   end

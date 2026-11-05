@@ -22,12 +22,35 @@ for _,memory in ipairs({"pitch","time"}) do
   local indices=memory=="pitch" and {1,2} or {1,2,3}
   for _,index in ipairs(indices) do
     local selection=editor.slide_selection(projection,memory,index,false)
-    assert(selection.pitches[1] and selection.pitches[2] and not selection.pitches[3])
-    assert(selection.times[1] and selection.times[2] and selection.times[3] and not selection.times[4])
+    assert(selection.primary and selection.related and selection.pitches==nil and selection.times==nil)
+    assert(selection.related.pitches[memory=="pitch" and (index==1 and 2 or 1) or
+      (index==3 and 1 or 2)])
+    assert(selection.related.times[1] or selection.primary.times[1])
+    assert(selection.related.times[2] or selection.primary.times[2])
+    assert(selection.related.times[3] or selection.primary.times[3])
+    assert(not selection.related.times[4] and not selection.primary.times[4])
+    if memory=="pitch" then
+      assert(selection.primary.pitches[index] and not selection.primary.times[index])
+    else
+      local event=projection.mapping[index]
+      assert(selection.primary.times[index] and selection.primary.pitches[event.pitch_index])
+      assert(not selection.related.times[index])
+    end
     assert(#selection.descriptions==1)
   end
 end
-assert(#editor.slide_selection(projection,"time",4,false).descriptions==0)
+local unrelated=editor.slide_selection(projection,"time",4,false)
+assert(#unrelated.descriptions==0 and unrelated.primary.times[4] and
+  not unrelated.primary.pitches[1] and not unrelated.related.pitches[1])
+
+local plain=seq.new_pattern(2)
+plain.pitch_length=2
+plain.pitch_events[2]=seq.new_pitch(5,0)
+local plain_projection=editor.project(plain)
+local plain_selection=editor.slide_selection(plain_projection,"pitch",1,false)
+assert(#plain_projection.slides==0 and plain_selection.primary.pitches[1] and
+  plain_selection.related.times[1] and not plain_selection.related.times[2],
+  "a selected PITCH relates its mapped TIME step without a slide")
 
 source.time_events[2]="R"
 local blocked=editor.project(source)
@@ -54,7 +77,8 @@ assert(editor.time_reference(seam,1,false,false)=="P01")
 assert(editor.time_reference(seam,2,false,false)=="P02")
 assert(#editor.slide_selection(seam,"time",1,false).descriptions==0)
 assert(editor.slide_block_reason(seam,2,false)=="Slide: ends at pattern boundary")
-assert(editor.slide_selection(seam,"time",1,true).times[4])
+local seam_selection=editor.slide_selection(seam,"time",1,true)
+assert(seam_selection.related.times[4] and seam_selection.primary.times[1])
 
 source=seq.new_pattern(1)
 source.pitch_length=1
@@ -71,7 +95,8 @@ source.time_events[16]="T"
 source.time_events[17]="T"
 local paged=editor.project(source)
 local selected=editor.slide_selection(paged,"time",18,false)
-assert(selected.times[15] and selected.times[16] and selected.times[17] and selected.times[18],
+assert(selected.related.times[15] and selected.related.times[16] and selected.related.times[17] and
+  selected.primary.times[18],
   "a slide can cross a TIME page with held steps")
 source.time_events[1]=nil
 local incomplete=editor.project(source)

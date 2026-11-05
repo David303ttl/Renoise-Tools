@@ -5,6 +5,11 @@ local editor=require("model.editor_state")
 local PITCH_COUNT,TIME_COUNT=3,4
 local LONG_ENTRY_COUNT,MISSING_POSITION=20,5
 local PAGE_SIZE=seq.PAGE_SIZE
+local PITCH_KEY_COUNT=12
+local OCTAVE_IDS={"down","normal","up"}
+local REST_POSITION,SILENT_TIE_POSITION=1,2
+local INACTIVE_TIME_POSITION=TIME_COUNT+1
+local C_KEY,UP_OCTAVE=0,1
 local SELECTED_COLOR=0xF0
 local ACCEPTED_PITCH_NAME,CANDIDATE_PITCH_NAME="C#3","E3"
 local song,instrument=fixture.fixture()
@@ -1023,12 +1028,15 @@ renoise.Track={TRACK_TYPE_SEQUENCER=1,TRACK_TYPE_MASTER=2,TRACK_TYPE_GROUP=4}
 function tool:has_timer(callback)return timers[callback]~=nil end
 function tool:add_timer(callback,interval)timers[callback]=interval end
 function tool:remove_timer(callback)timers[callback]=nil end
-song.selected_track={type=renoise.Track.TRACK_TYPE_SEQUENCER}
-song.tracks={song.selected_track}
-song.tracks_observable=observable()
-song.selected_track_observable=observable()
-function song:trigger_instrument_note_on(i,t,n,v)note_calls[#note_calls+1]={kind="on",note=n}end
-function song:trigger_instrument_note_off(i,t,n)note_calls[#note_calls+1]={kind="off",note=n}end
+local function attach_audition_host()
+  song.selected_track={type=renoise.Track.TRACK_TYPE_SEQUENCER}
+  song.tracks={song.selected_track}
+  song.tracks_observable=observable()
+  song.selected_track_observable=observable()
+  function song:trigger_instrument_note_on(i,t,n,v)note_calls[#note_calls+1]={kind="on",note=n}end
+  function song:trigger_instrument_note_off(i,t,n)note_calls[#note_calls+1]={kind="off",note=n}end
+end
+attach_audition_host()
 fire("acid_audition")
 assert(note_calls[#note_calls].note==38 and note_calls[#note_calls].kind=="on")
 local function contains(parent,target)
@@ -1087,6 +1095,118 @@ fire("acid_audition")
 fire("acid_grid_audition")
 assert(#note_calls==calls_before_time,"TIME-stage notifier cannot trigger audition")
 cancel_stage("Cancel")
+do
+  local unmapped=seq.new_pattern(TIME_COUNT)
+  unmapped.length=TIME_COUNT
+  unmapped.pitch_length=PITCH_COUNT
+  unmapped.pitch_events[1]=seq.new_pitch(C_KEY,UP_OCTAVE,false,false)
+  unmapped.time_events[1],unmapped.time_events[2],unmapped.time_events[3],unmapped.time_events[4]="R","T","R","T"
+  fresh(unmapped)
+  attach_audition_host()
+  local function find_child(parent,predicate)
+    for _,child in ipairs(parent.views or {})do
+      if predicate(child)then return child end
+      local found=find_child(child,predicate)
+      if found then return found end
+    end
+  end
+  local grid_c_plus=assert(find_child(view("acid_grid_panel"),function(node)
+    return node.kind=="button" and node.text=="C+ / MIDI 60"
+  end))
+  local grid_checkboxes={}
+  local function collect_grid_checkboxes(parent)
+    for _,child in ipairs(parent.views or {})do
+      if child.kind=="checkbox"then grid_checkboxes[#grid_checkboxes+1]=child end
+      collect_grid_checkboxes(child)
+    end
+  end
+  collect_grid_checkboxes(view("acid_grid_panel"))
+  assert(#grid_checkboxes==2,"Grid exposes accent and slide controls")
+  local function assert_pitch_controls_disabled()
+    for index=1,PITCH_KEY_COUNT do
+      assert(not view(string.format("acid_program_key_%02d",index)).active and
+        not view(string.format("acid_grid_key_%02d",index)).active,
+        "unmapped TIME disables pitch keys")
+    end
+    for _,octave in ipairs(OCTAVE_IDS)do
+      assert(not view("acid_program_octave_"..octave).active and
+        not view("acid_grid_octave_"..octave).active,
+        "unmapped TIME disables octave controls")
+    end
+    assert(not view("acid_program_accent").active and not view("acid_program_slide").active and
+      not grid_checkboxes[1].active and not grid_checkboxes[2].active and
+      not view("acid_program_c_plus").active and not grid_c_plus.active and
+      not view("acid_audition").active and not view("acid_grid_audition").active,
+      "unmapped TIME disables articulation, C+ and audition controls")
+  end
+  local function assert_unmapped_callbacks_noop()
+    local before=assert(seq.copy_source(current()))
+    local prior_revision,prior_saves,prior_writes=history.revision,saves,writes
+    local calls_before=#note_calls
+    fire("acid_program_key_06")
+    fire("acid_program_octave_down")
+    fire("acid_program_accent",true)
+    fire("acid_program_slide",true)
+    fire("acid_program_c_plus")
+    fire("acid_audition")
+    assert(#note_calls==calls_before and next(timers)==nil,
+      "Program callbacks cannot edit or audition an unmapped TIME")
+    unchanged(before,prior_revision,prior_saves,prior_writes)
+    fire("acid_editor_view",2)
+    assert_pitch_controls_disabled()
+    fire("acid_grid_key_06")
+    fire("acid_grid_octave_down")
+    grid_checkboxes[1]:fire(true)
+    grid_checkboxes[2]:fire(true)
+    grid_c_plus:fire()
+    fire("acid_grid_audition")
+    assert(#note_calls==calls_before and next(timers)==nil,
+      "Grid callbacks cannot edit or audition an unmapped TIME")
+    unchanged(before,prior_revision,prior_saves,prior_writes)
+    fire("acid_editor_view",1)
+  end
+  for _,position in ipairs({REST_POSITION,SILENT_TIE_POSITION,INACTIVE_TIME_POSITION})do
+    fire(string.format("acid_program_select_time_%02d",position))
+    assert_pitch_controls_disabled()
+    assert_unmapped_callbacks_noop()
+  end
+
+  fresh()
+  attach_audition_host()
+  fire("acid_pitch_length",LONG_ENTRY_COUNT)
+  fire("acid_last_step",LONG_ENTRY_COUNT)
+  local before=assert(seq.copy_source(current()))
+  local prior_revision,prior_saves,prior_writes=history.revision,saves,writes
+  begin("time")
+  assert(view("acid_program_stage_status").text=="Timing 1 of 20")
+  select_stage_position("time",PAGE_SIZE+1)
+  assert(view("acid_program_stage_status").text=="Timing 17 of 20" and
+    view("acid_program_select_pitch_01").text=="P17" and
+    view("acid_program_pitch_page_2").color[1]==SELECTED_COLOR and
+    view("acid_selection_mapping").text:find("P17",1,true),
+    "selecting mapped T17 during timing entry reveals its P17 page")
+  assert_pitch_controls_disabled()
+  fire("acid_program_key_06")
+  fire("acid_program_octave_down")
+  fire("acid_program_accent",true)
+  fire("acid_program_slide",true)
+  assert(view("acid_program_stage_status").text=="Timing 17 of 20",
+    "pitch callbacks cannot advance timing entry")
+  unchanged(before,prior_revision,prior_saves,prior_writes)
+  fire("acid_program_pitch_page_1")
+  assert(view("acid_program_pitch_page_1").color[1]==SELECTED_COLOR and
+    view("acid_program_stage_status").text=="Timing 17 of 20")
+  fire("acid_program_select_time_01")
+  assert(view("acid_program_select_pitch_01").text=="P17" and
+    view("acid_program_pitch_page_2").color[1]==SELECTED_COLOR and
+    view("acid_program_stage_status").text=="Timing 17 of 20",
+    "reselecting T17 reveals its pitch page without advancing timing entry")
+  unchanged(before,prior_revision,prior_saves,prior_writes)
+  cancel_stage("Cancel")
+  fresh(masked)
+  attach_audition_host()
+  fire("acid_program_select_pitch_01")
+end
 local function releases(action,label)
   fire("acid_audition")
   assert(note_calls[#note_calls].kind=="on",label.." onset")

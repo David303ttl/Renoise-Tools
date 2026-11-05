@@ -1,5 +1,9 @@
 dofile("tests/bootstrap.lua")("acid")
 
+local UI_SCALE=1.5
+local PRIMARY_BORDER=2
+local RELATED_BORDER=1
+
 local function observable()
   local handlers,notifier_history={},{}
   return {
@@ -82,8 +86,12 @@ local function view_builder()
     function node:update()
       assert(self.kind=="canvas")
       self.outlined=false
-      self.render({size=self.size,stroke_rect=function(_,x,y,width,height)
-        assert(x==1 and y==1 and width==self.size.width-2 and height==self.size.height-2)
+      self.render({size={width=self.size.width*UI_SCALE,height=self.size.height*UI_SCALE},
+        pixel_size={width=self.size.width*UI_SCALE,height=self.size.height*UI_SCALE},
+        stroke_rect=function(context,x,y,width,height)
+        local border=context.line_width
+        assert((border==PRIMARY_BORDER or border==RELATED_BORDER) and x==border/2 and
+          y==border/2 and width==self.size.width-border and height==self.size.height-border)
         self.outlined=true
       end})
     end
