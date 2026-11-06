@@ -291,7 +291,7 @@ function Get-Preflight {
 try {
     New-Item -ItemType Directory -Path $artifactRoot -ErrorAction Stop | Out-Null
     if ($Scenario -and $Suite -eq 'Keyboard') { throw '-Scenario is only supported with Native or All suites.' }
-    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('integrity-observers','writer-recovery','editor-responsiveness','gui-redesign','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','revision-undo','revision-live-undo','persistence-failures','metadata-undo','metadata-recovery')) {
+    if ($AcceptanceCase -and $AcceptanceCase -cnotin @('integrity-observers','writer-recovery','editor-responsiveness','gui-layout','gui-lifecycle','ownership-negatives','cold-reopen-regenerate','cold-reopen-verify','multi-instrument-workflow','revision-undo','revision-live-undo','persistence-failures','metadata-undo','metadata-recovery')) {
         throw "Unsupported native acceptance case '$AcceptanceCase'."
     }
     if ($metadataRecoveryAcceptance -and $RenoiseProcessId -gt 0) {

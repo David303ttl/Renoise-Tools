@@ -391,8 +391,8 @@ local function valid_args_for_operation(current, request)
     return validate_timeout(args, LIMITS.default_timeout_ms) ~= nil
   elseif operation == "acid.acceptance.run" then
     local case_allowed = args.case == "integrity-observers" or args.case == "writer-recovery" or
-        args.case == "editor-responsiveness" or args.case == "gui-redesign" or
-        args.case == "gui-layout" or args.case == "gui-lifecycle" or
+        args.case == "editor-responsiveness" or args.case == "gui-layout" or
+        args.case == "gui-lifecycle" or
         args.case == "import-donor" or args.case == "ownership-negatives" or
         args.case == "revision-undo-fixture" or args.case == "revision-undo-prepare" or args.case == "revision-undo" or
         args.case == "revision-live-undo-fixture" or args.case == "revision-live-undo-prepare" or args.case == "revision-live-undo" or

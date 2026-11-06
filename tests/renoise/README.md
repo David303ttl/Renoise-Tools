@@ -1,148 +1,63 @@
-# Renoise test host
+# Renoise host tests
 
-## Development bundle
-
-Build a disposable ACID bundle below the repository's ignored `tmp/` directory:
-
-~~~powershell
-$runDirectory = Join-Path 'tmp' ("acid-dev-" + [guid]::NewGuid().ToString("N"))
-pwsh -NoProfile -File ./scripts/package_dev.ps1 -Tool ACID -OutputDirectory $runDirectory
-~~~
-
-`OutputDirectory` is repository-relative. Build staging, the session file and
-the output bundle stay under `tmp/`; `.gitignore` excludes that directory.
-The packaging test exercises a non-ASCII repository path. Renoise's Lua file
-APIs use UTF-8 paths; the bootstrap passes `bundle_path` through unchanged and
-adds only ASCII relative path components.
-
-The output contains an extracted **com.david303ttl.ACID.xrnx** development tool,
-a sibling **fixtures/** directory staged from `tests/renoise/acid/fixtures/`,
-and **acid-test-session.conf**. The tool is derived from the normal release
-archive, with a test-only transport/JSON codec and a bootstrap appended to its
-staged **main.lua**; production source files and the manifest stay unchanged.
-The bootstrap resolves the sidecar next to the bundle at runtime and contains
-no absolute desktop path. The session file contains only the loopback address,
-port and random per-run test secrets; it stores no username or operating
-system session identifier. Its ACL is limited to the current Windows user.
-Keep the output directory at its generated path while using the bundle because
-the staged bootstrap locates that sidecar relative to the bundle. This command
-does not install the tool or modify Renoise.
-
-The driver binds only to **127.0.0.1**, authenticates one client with the
-per-run token, and processes bounded commands from `app_idle_observable`.
-Requests and responses are newline-delimited JSON. It accepts only the fixed
-command allowlist in the playbook; fixture loading accepts a filename directly
-under the bundle's sibling `fixtures/` or `temp/` directory. It has no Lua
-execution, generic module dispatch or arbitrary path command. Request IDs are
-unique for one connection, and document commands complete only after a new
-document notification. Idle processing uses bounded work counts. Timeout values
-round up to whole seconds because the driver uses `os.time()`; expiration is
-checked after the deadline boundary so it cannot fire early, and host load can
-delay reporting. A song snapshot is capped at 512 phrases and the response size
-is bounded.
-
-Offline transport tests use mocked SocketServer and document observables.
-Native results are listed in [host_verification.md](host_verification.md).
-Run the deterministic packaging and transport checks with:
-
-~~~powershell
-pwsh -NoProfile -File ./tests/renoise/test_package_dev.ps1
-lua ./tests/renoise/remote_driver_spec.lua
-~~~
-
-The packaging test compiles each generated `main.lua` with the selected
-interpreter without executing the Renoise bootstrap. Lua 5.1 or newer and
-LuaJIT 2.x are accepted through `_VERSION`. It defaults to `lua` from `PATH`;
-use `-LuaCommand lua5.4` (or an executable path) to override it. Syntax checks
-with newer Lua versions do not establish Lua 5.1 runtime compatibility.
-Run `./scripts/run_tests.ps1 -LuaCommand lua5.1`
-to check the production language baseline.
-
-## Interactive runner
-
-Use PowerShell 7 and Lua 5.1 or newer. Run the available Native test against a fresh Renoise
-process, or select an existing instance with a disposable song:
+The interactive runner requires Windows, PowerShell 7, Lua 5.1 or newer, and
+Renoise 3.5. It builds a disposable ACID development bundle under ignored
+`tmp/`, installs it for the test, and restores backed-up tool files that remain
+unchanged. The selected song may be reset, so use `-ApproveDisposableSong` only
+with a disposable song.
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong
 ./scripts/run_interactive_tests.ps1 -RenoiseProcessId <pid> -Install -ApproveDisposableSong
 ```
 
-| Acceptance case | Checks |
+Use `-RenoiseExe <path>` and `-ToolsDirectory <path>` to override executable and
+tool-folder discovery. Most Native cases do not use keyboard input. Undo and metadata cases that do are listed below and follow the focus rules. The runner
+validates the target process, backs up the installed tool before replacement,
+and restores it after the driver shuts down. If shutdown cannot be confirmed or
+deployed files changed, it preserves backups for recovery.
+
+## Native acceptance cases
+
+Choose the case that covers the changed behavior. Without `-AcceptanceCase`, the
+runner executes transport and the scenario catalog.
+
+| Case | Coverage |
 | --- | --- |
-| `persistence-failures` | Injected setter failures over native song storage, exact rollback/cache isolation, native phrase preimages and sticky integrity blocking after bytes are restored |
-| `metadata-undo` | Real Enter-driven label rename followed by native Undo/Redo; fails if the host exposes no undo entry or does not restore exact metadata |
-| `metadata-recovery` | Guarded Enter-driven label rename; uncertain setter blocking, exact-byte restoration without retry, unrelated native edit preservation and automatic cold-process readback |
-| `editor-responsiveness` | Native Program/Grid editing, feedback membership, retained controls, and responsive callbacks; functional checks only, not a performance threshold |
-| `gui-redesign` | Task 12 native GUI callback subset, including Program staging, Grid guard controls, accepted Grid audition, staged Program audition, and fixture cleanup; visual fit and audible sound require separate observation |
-| `gui-layout` | Real production dialog compact/expanded Program and Grid states, random parameters, multiline feedback and collapsed holders; each state settles through Renoise idle before measurement |
-| `gui-lifecycle` | Unequal length boundaries, native instrument/phrase changes, stale-target rejection, real XRNS draft restoration, scale import and generation from restored edits |
-| `integrity-observers` | Sticky post-commit integrity blocker survives reopen/target change and rejects Generate/Duplicate without phrase or store mutation |
-| `writer-recovery` | Contradictory writer result preserves both committed source revisions; a dirty blocked editor remains unavailable after reopen and rejects Generate/Duplicate without mutation |
+| `persistence-failures` | Storage and phrase rollback after injected setter failures |
+| `metadata-undo` | Label rename with native Undo/Redo |
+| `metadata-recovery` | Rename failure recovery and cold-process readback |
+| `editor-responsiveness` | Program/Grid edits and callback behavior |
+| `gui-layout` | Compact and expanded GUI layouts |
+| `gui-lifecycle` | Target changes, draft restoration and generation |
+| `integrity-observers` | Integrity blocking after reopen or target change |
+| `writer-recovery` | Post-commit recovery and blocked-editor behavior |
+| `ownership-negatives` | Rejection of phrases without local ownership records |
+| `cold-reopen-regenerate`, `cold-reopen-verify` | Persistence across a cold reopen |
+| `multi-instrument-workflow` | Workflow across multiple instruments |
+| `revision-undo`, `revision-live-undo` | Revision Undo/Redo behavior |
 
 ```powershell
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures -RenoiseExe <renoise-executable>
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase persistence-failures
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase gui-layout
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase metadata-undo -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -Scenario transport -AcceptanceCase metadata-recovery -TestEnvironment <keyboard-environment.json> -AllowKeyboardFocusActivation
 ```
 
-`metadata-undo` uses the existing guarded AutoHotkey Enter action.
-`metadata-recovery` uses that guarded dialog action and requires a runner-owned
-process for its automatic cold reopen. It exercises the runtime rename seam; the
-label editor UI retains its separate acceptance requirements. Fault injection
-uses a test-only proxy; it does not emulate disk failure. All cases use
-disposable songs and restore the original tool installation.
+`metadata-undo`, `metadata-recovery`, `revision-undo` and `revision-live-undo`
+use AutoHotkey to press Enter and require its keyboard setup. For shared desktop
+runs, use an existing Renoise PID that owns foreground focus. `metadata-recovery`
+requires a runner-launched process for cold reopen, so run it only in a dedicated
+interactive session with `-AllowKeyboardFocusActivation`. Other Native cases do
+not require AutoHotkey. For visual layout, audible output or physical
+interaction, follow the relevant [manual check](../README.md#renoise-checks).
 
-Other instances and virtual desktops can stay in use. No dedicated account,
-active-desktop check, profile registry match, screenshots or trace evidence is
-required. Install release XRNX tools normally in Renoise; they have no test-harness dependencies.
+## Keyboard suite
 
-The runner discovers Renoise, or accepts `-RenoiseExe '<path>'`. The default tool
-location is the current user's version-specific Renoise Tools folder; override it
-with `-ToolsDirectory '<path>'` for a custom installation. Missing folders are
-created during installation. Linked parent folders are supported. Replacement
-requires a verifiable backup; links inside the tool being backed up are rejected
-because the backup does not copy their external contents.
+`Keyboard` and `All` require AutoHotkey v2. Renoise stores key assignments per
+user; ACID has no default shortcut. Configure the shortcut assigned to
+`Global:ACID:Show` in an external JSON file:
 
-### Ownership acceptance
-
-Run the native ownership rejection checks separately:
-
-```powershell
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase ownership-negatives
-```
-
-The import check exports a donor instrument, imports it into a separate
-recipient song, and verifies that generation rejects a phrase without a local
-source record while preserving unrelated recipient records. Removed recovery
-and Make Independent actions are not part of the current native case set.
-
-Result classes are consistent across scenario and run reports: `PASS` means
-every requested postcondition was independently observed; `FAIL` means an
-assertion found a contract violation; `ERROR` means a runner, host or transport
-operation failed; `SKIP` is reserved for unavailable optional coverage; and
-`MANUAL` marks a check without an automated assertion. A selected suite cannot
-pass when a required case is skipped or lacks an assertion. Manual observations
-are recorded separately and do not count as automated passes.
-
-`-Install` allows temporary replacement of ACID and `-ApproveDisposableSong`
-allows resetting the test song. The selected PID and listener owner are checked
-before commands. The transport scenario always runs first and checks ping,
-capabilities, new-document completion and stable native inventory readback.
-### Keyboard E2E
-
-The `Keyboard` and `All` suites also need AutoHotkey v2. Get it from the
-[official AutoHotkey releases](https://github.com/AutoHotkey/AutoHotkey/releases).
-The runner finds `AutoHotkey64.exe` or `AutoHotkey.exe` on `PATH`; configure
-`Keyboard.AutoHotkeyPath` in the developer's TestEnvironment file if it is
-installed elsewhere.
-
-After ACID loads, Renoise lists its real `Global:ACID:Show` command under Edit >
-Preferences > Keys. The current developer keymap assigns **Ctrl+Alt+B**; enter
-the same key as `^!b` in the AutoHotkey v2 key-sequence configuration. Renoise
-stores assignments per user, and ACID supplies no default. For example:
-
-~~~json
+```json
 {
   "RenoiseExe": "<path to Renoise.exe>",
   "Keyboard": {
@@ -151,165 +66,42 @@ stores assignments per user, and ACID supplies no default. For example:
     "TimeoutSeconds": 10
   }
 }
-~~~
-
-`^!b` matches the current developer keymap. Change `ShowShortcut` if you assign
-a different key combination in Renoise.
-
-Pass the external configuration file when selecting the Keyboard suite:
-
-~~~powershell
-# Dedicated interactive Windows test session only (may activate Renoise)
-./scripts/run_interactive_tests.ps1 -Suite Keyboard -TestEnvironment '<path>' -Install -ApproveDisposableSong -AllowKeyboardFocusActivation
-./scripts/run_interactive_tests.ps1 -Suite All -TestEnvironment '<path>' -Install -ApproveDisposableSong -AllowKeyboardFocusActivation
-# Shared work desktop: no activation; requires an existing, loaded Renoise PID in foreground
-./scripts/run_interactive_tests.ps1 -Suite Keyboard -RenoiseProcessId <pid> -TestEnvironment '<path>' -Install -ApproveDisposableSong
-~~~
-
-Each sequence validates the selected Renoise PID. On a shared desktop, the helper never activates another window: if Renoise is not already foreground, it refuses input. The runner also requires an explicit existing `-RenoiseProcessId` in this mode to avoid a focus-stealing application launch. `-AllowKeyboardFocusActivation` explicitly permits activation and is intended only for a separate interactive Windows test session. A global Renoise shortcut cannot be reliably tested through real keyboard input in the background of the same Windows desktop. Native tests remain focus-free.
-The runner does not change keyboard preferences. It waits for the ACID dialog's
-API-visible state, closes the dialog with Escape, then uses Renoise's native
-Alt+Down/Alt+Up instrument navigation documented in the
-[Instrument Selector manual](https://tutorials.renoise.com/wiki/Instrument_Selector)
-and verifies the selected instrument index through `song.snapshot`.
-The development driver inserts a second blank instrument in the disposable song
-only when needed to make that navigation observable.
-
-Keyboard preflight checks missing mapping configuration, the helper's wrong-PID
-and focus-mismatch guards, and its bounded observed-state timeout. Native remains
-independently selectable and does not require AutoHotkey or a keyboard mapping.
-Reports include the shortcut, AHK version, negative-case results, observed dialog
-state and instrument readback. The unattended Renoise 3.5.4 / API 6.2 host run
-passed on 2026-10-30; see the
-[keyboard verification record](host_verification.md#keyboard-e2e-host-acceptance-2026-10-30).
-Offline checks alone do not establish host acceptance.
-
-The checked-in native fixture is built independently of the production writer:
-
-```powershell
-./tests/renoise/acid/build_fixture.ps1 -ApproveInstall -Force
-lua tests/renoise/acid/probe_spec.lua
 ```
 
-The builder launches its own disposable Renoise instance and temporarily installs
-its fixture probe under ACID's tool ID so the saved `tool_data` belongs to ACID.
-It verifies the existing installation backup and restores it after closing that
-instance. Close Renoise before rebuilding the fixture; ordinary Native runner
-runs support concurrent instances. Fixture construction uses explicit native
-field values, and scenario expectations come from independent golden values.
+```powershell
+./scripts/run_interactive_tests.ps1 -Suite Keyboard -RenoiseProcessId <pid> -TestEnvironment <path> -Install -ApproveDisposableSong
+```
 
-### GUI responsiveness acceptance
+On a shared desktop, pass an existing Renoise PID. The helper sends input only
+while that process owns foreground focus; it does not activate windows.
+`-AllowKeyboardFocusActivation` permits activation and is intended for a
+dedicated interactive session.
 
-The existing responsiveness cases default to the `Warm` profile, which measures the real GUI callback without diagnostic wrappers. `Detailed` keeps the function-level profiler for diagnosis and records instrumented timings separately. Both modes retain the same functional assertions.
+## Scenario fixtures
 
-~~~powershell
-./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness
-./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase editor-responsiveness -AcceptanceProfile Detailed
-./scripts/run_interactive_tests.ps1 -Suite Native -Install -ApproveDisposableSong -AcceptanceCase multi-instrument-workflow -AcceptanceProfile Warm
-~~~
+Scenarios are JSON files in `tests/renoise/acid/scenarios/`; fixture songs are
+flat `.xrns` files in `tests/renoise/acid/fixtures/`. See
+[phrase-inventory.json](acid/scenarios/phrase-inventory.json) for an
+example. Each scenario has a unique lowercase `name`, `fixture`, a
+`preconditions` object (optional non-negative `instrument_count` and
+`phrase_count`), fixed `actions` and `waits`, nonempty `unchanged` snapshot
+paths, and nonempty `{path, expected}` assertions. `description` is optional.
+`expects` defaults to `pass`; for `fail`, provide nonempty `expected_diffs`
+entries with `path`, `expected` and `actual`.
 
+The fixed `actions` sequence is `document.new`, `fixture.load`, then two
+`song.snapshot` reads. `waits` must be `document.changed`, `inventory.settled`,
+`snapshot.stable`. Snapshot paths use dot notation and zero-based array indexes,
+for example `instruments.0.phrases.0.name`. The complete snapshots are compared
+in addition to declared assertions.
 
-### Native scenario catalog
+```powershell
+./scripts/run_interactive_tests.ps1 -Scenario transport -Install -ApproveDisposableSong
+./scripts/run_interactive_tests.ps1 -Scenario <scenario-name> -Install -ApproveDisposableSong
+./scripts/run_interactive_tests.ps1 -VerifyScenarioOrder -Install -ApproveDisposableSong
+```
 
-Native fixture scenarios are JSON files in `tests/renoise/acid/scenarios/`.
-The catalog is required for an interactive run; a missing directory fails
-before any document is changed. Each file is one scenario:
-
-~~~json
-{
-  "name": "independent-phrase",
-  "fixture": "independent-phrase.xrns",
-  "description": "Optional operator-facing summary",
-  "preconditions": {"instrument_count": 1, "phrase_count": 1},
-  "actions": ["document.new", "fixture.load", "song.snapshot", "song.snapshot"],
-  "waits": ["document.changed", "inventory.settled", "snapshot.stable"],
-  "unchanged": ["instruments", "tool_data_hex", "selected_instrument_index"],
-  "expects": "pass",
-  "assertions": [
-    {"path": "instrument_count", "expected": 1},
-    {"path": "instruments.0.phrases.0.name", "expected": "Phrase"}
-  ]
-}
-~~~
-
-`name` matches `^[a-z][a-z0-9-]{0,63}$` and must be unique. `fixture` must be a
-flat `*.xrns` file name staged in the development bundle's `fixtures/`
-directory. Optional `description` is a string. Required `preconditions` is an
-object containing only `instrument_count` and `phrase_count`, each a
-non-negative integer when present; when a count is omitted, the runner reads it
-from the loaded fixture before waiting for the matching native inventory.
-Optional `expects` is `pass` (the default) or `fail`. When
-`expects` is `fail`, a non-empty `expected_diffs` array is required and
-forbidden otherwise; each item has exactly `path`, `expected` and `actual`.
-`assertions` is a non-empty array of `{path, expected}` objects. Required
-`actions` and `waits` declare the fixed read-only workflow shown above; the
-runner rejects other sequences. Required `unchanged` lists snapshot paths that
-must exist and retain exactly the same values across both readbacks. The whole
-snapshot is also compared, so unspecified fields cannot silently change. The
-expected musical, selection, identity and source changes for this workflow are
-none; reset/load are the only authorized document changes.
-
-`path` walks the song snapshot with zero-based indices for arrays, for example
-`instruments.0.phrases.1.lines.0.note_columns.0.note_value`. Unknown top-level
-keys, malformed preconditions and malformed diffs are rejected. The catalog
-sets `source_path` on each loaded scenario.
-
-Run just the transport checks with `-Scenario transport`, transport plus one
-catalog scenario with `-Scenario <name>`, or leave `-Scenario` empty to run
-transport plus every catalog scenario in sorted name order. Unknown names fail
-with the available scenario names. The transport-only run skips native catalog
-validation and builds/deploys the driver without native fixtures. The default
-suite is `Native`.
-
-The staged fixtures directory is deployed beside the tool as
-`<Tools>/fixtures`. If that path already exists, it is first copied to a
-hash-verified run artifact and moved to a same-volume restore location, using
-the same verified backup/restore flow as the tool directory. Restoration removes
-the deployed fixtures only when their directory hash still matches the staged
-hash, then restores any moved-aside original. Each scenario resets the document,
-loads its fixture, and resumes after the native inventory matches on two
-consecutive application-idle callbacks. The wait response records the number of
-matching idle callbacks and whether settlement was observed. Its two
-canonical snapshot JSON files are written under
-`tmp/interactive-<run-id>/scenario-<name>/`; order acceptance writes phase-prefixed
-scenario directories. The run report records epochs,
-snapshot SHA-256 values and any diff.
-
-A scenario passes only when the document was settled before and after the run,
-two consecutive snapshots are identical, and the freshly loaded fixture plus
-read-only inspection created no undo/redo history, did not change the selection,
-and left pending and queued command counts at zero. Snapshot comparisons are
-canonical value comparisons with stable key ordering and explicit `null`
-handling. They make no persistent host-object-identity claims; identity-sensitive
-writer checks belong to later playbook steps. This fixture contains deliberately
-foreign phrases and a separate canonical source/draft store; it verifies exact
-ID/source/settings bytes without claiming that either phrase is owned or safe
-to regenerate. After all scenarios the runner
-performs a final document reset and diagnostics settle check so the host is left
-on a clean document.
-
-Run the scenario-order acceptance check with
-`./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -VerifyScenarioOrder`.
-It captures each catalog scenario individually in sorted order, then executes
-the catalog in reverse order in the same Renoise process and driver session. It
-compares canonical snapshot values by scenario after removing only the top-level
-`document_epoch`; all other snapshot fields must match. The report and separate
-scenario artifact directories record each run and the driver's post-load idle
-settlement observation. At least two distinct catalog scenarios are required;
-a smaller catalog fails before any document is changed. This check requires a
-disposable song, like other interactive runs.
-
-The `shutdown` response confirms acceptance. The driver then stops its listener,
-detaches callbacks and writes a per-run completion file beside the session config.
-The runner verifies and removes that file before restoring unchanged installation files. An existing
-Renoise instance stays open; reload ACID to load the restored release code. A
-runner-launched instance is closed after testing. If a song prompt appears,
-resolve it in Renoise. Timeouts and failed assertions return nonzero. On connection
-loss, backups are retained if driver shutdown cannot be confirmed. Changed files
-are preserved for manual recovery. Reports and backups are under ignored `tmp/`;
-reports omit session tokens.
-
-Run offline harness checks without Renoise:
+## Offline harness checks
 
 ```powershell
 ./scripts/test_host_preflight.ps1
@@ -319,91 +111,6 @@ lua tests/renoise/remote_driver_spec.lua
 lua tests/renoise/acceptance_cases_spec.lua
 ```
 
-## Coverage handoff
-
-The table separates recorded harness acceptance from behavior acceptance. `PASS`
-below cites existing results, not a new execution. `PENDING` means the owning
-runtime gate and its native acceptance remain open; it does not block unrelated
-runtime work. Methods on pending rows are the required verification method.
-Native assertions must inspect host state independently of ACID's success result.
-Mocks can establish local contracts but cannot close these native rows.
-
-| Case / test or guide | Owning step | Step 8 | Method | Independent assertion | Current status |
-| --- | --- | --- | --- | --- | --- |
-| Harness reset, read-only fixture inventory, repeat and deliberate assertion failure: `-Suite Native`, `phrase-inventory`, `phrase-inventory-expected-diff` | T0; handoff to 2.2–2.3 / 2.9 | A, D foundation only | Native | New document epoch; exact golden native fields and store bytes; two stable snapshots; unchanged selection; no undo/redo history; wrong note expectation returns FAIL/nonzero; subsequent clean run passes | PASS recorded in [harness verification](host_verification.md#t07-harness-integration-and-native-e2e-2026-10-30); no owned-target or writer claim |
-| Fixture isolation/order: `-VerifyScenarioOrder` | T0; handoff to 2.2–2.3 | A foundation only | Native | Individually loaded and reverse-order snapshots match after removing only document epoch; each load observes two matching idle cycles | PASS rerun in [handoff verification](host_verification.md#t08-coverage-handoff-and-closeout-2026-10-30) |
-| Real Show shortcut, Escape and native instrument navigation: `-Suite Keyboard` | T0; handoff to 2.6 / 2.8 | A routing foundation only | Keyboard + Native | API-visible dialog opens/closes; native selected instrument changes 1 → 2; wrong PID/focus/configuration/timeout guards reject | PASS before activation-policy hardening; post-hardening host rerun PENDING, as recorded in [keyboard verification](host_verification.md#keyboard-e2e-host-acceptance-2026-10-30) |
-| Document/session lifetime, release/reload and late delivery | 2.2, 2.9; writer disposal in 3; observers in 6 | A, C | Native + Keyboard | Close/reopen and new/reloaded document cannot receive old delivery; no old-song callback accesses or leaked listeners; only exact safe recovery objects remain | Local `tests/acid/acid_runtime_lifetime_spec.lua` passes document/session isolation and retained-closure scrubbing; production GUI integration and native acceptance PENDING; harness epochs do not prove session isolation |
-| Live inventory, classification, raw identity and preserved baselines | 2.3, 2.9 | A, C | Native + Keyboard | Add/rename/remove/reorder and same-index replacement preserve exact target identity; identical-content phrases remain distinct; Foreign/Unavailable never becomes New; no navigation writes | PENDING; current foreign-fixture readback proves values only |
-| Mutation scope, temporary neutrality and no ownership exclusions | 2.4; real writer integration in 3 | A, C, D | Native | Stage/backup names contain no owner ID across async waits; all live holders count toward collisions; own notifications do not bind temporary objects or mask external changes | PENDING; fake-writer tests cannot prove native notification ordering |
-| Song blockers, global occupancy and explicit read-only revalidation | 2.5; writer terminal in 3; UI in 5 | C, D | Native + Keyboard | Pending render denies writes across songs; only its terminal callback retires occupancy; completed recovery remains blocked until an unchanged successful read-only proof; no repair writes or automatic retry | PENDING; missing/duplicate callbacks remain local injection cases unless observed natively |
-| Transitions, frozen request guards and GUI authority | 2.6–2.8; closeout in 2.9 | A, B, C | Native + Keyboard | Opening/navigation/arming/reset/recovery make no request; native selection, changed baselines, removed targets and old sessions prevent stale commit or append; both manual and Live Edit use exact intended target | PENDING; Show/navigation foundation does not prove admission safety |
-| Create/regenerate, capacity, rollback, preservation and undo/redo | 3 | B, C, D | Native + Manual | Create adds one actual destination; regenerate retains exact object/count; insufficient slots mutate nothing; failures restore destination/store or retain named blocked recovery; sentinel metadata/mapping/script survive; each reachable native undo/redo state is consistent or visibly blocked | PENDING; native undo/redo execution and grouping unverified; fixture no-history checks are not writer undo acceptance |
-| Explicit Make Independent for native copies | 4 | C, D | Native + Keyboard | Same-/cross-instrument and mixed-instrument copies block all colliding holders; selected valid holder alone gets new ID/source; note/effect bytes and original association stay unchanged; 3-holder and source-less cases reject/admit as specified; undo/redo and save/reload remain safe | PENDING; no automatic adoption or copy-resolution pass claimed |
-| Drafts, scheduling, recovery and save/reload: [regeneration](../acid/acid_regeneration_manual.md), [Live Edit](../acid/acid_live_edit_manual.md) | 5 | B, C, D | Native + Keyboard + Manual | Dirty A survives B/close/reopen/save/reload with its own settings; occupied scratch/recovery remains recoverable without rendering; only matching committed revision clears; requests never overlap or drain after blocked/stale completion | PENDING; actual runtime save/reload and durable/session draft acceptance unverified |
-| Notifications, undo invalidation and late callbacks | 6 | A, C, D | Native + Keyboard | Internal mutations reconcile once without self-cancellation; external changes revoke authorization; native undo cannot silently adopt mismatched source/output; repeated opens/documents leave no duplicate listeners or old callbacks | PENDING; driver notifier cleanup does not establish runtime watcher safety |
-| Supported musical output: [gate](../acid/acid_gate_manual.md), [timing](../acid/acid_timing_manual.md), [slide](../acid/acid_slide_manual.md), [articulation](../acid/acid_articulation_manual.md) | 3 / 5; final acceptance in 8 | E | Native + Manual | Independently inspect final pitch/gate/accent/slide cells and timing/loop metadata; listen on supported sampler/VST paths and record observed playback separately | MANUAL / PENDING current-writer acceptance; harness and synthetic cells do not establish audible behavior |
-
-Steps 2.9 and 7 must map their local regressions to actual test cases/results;
-the handoff does not pre-author future scenario fixtures or replace those gates.
-Gate 8 closure and accepted test scope are recorded in [native evidence and accepted scope](../acid/runtime_acceptance.md#production-session-native-evidence). Reference checks cover
-final-writer sentinel-field round trips, real undo/redo and save/reload.
-Unsupported-field preflight rejection must be recorded as rejection, not a
-preservation pass. Add each behavior's scenarios with its owning implementation;
-the read-only harness catalog deliberately contains no simulated future writer.
-
-## Pinned API 6.2 contract
-
-These signatures come from `sdk/renoise-api-6.2/definitions/` and the matching
-offline API pages and guides. They describe the scripting surface; observed host
-results are recorded in [host_verification.md](host_verification.md).
-
-| API | Signature and lifecycle constraints | Workaround supported by 6.2 docs |
-| --- | --- | --- |
-| Socket server creation | `renoise.Socket.create_server(server_address: string, server_port: integer, protocol?: renoise.Socket.Protocol) -> SocketServer?, error?`; an overload omits the address. Failures return a nil server and optional error. | Bind explicitly to `127.0.0.1`; do not use the no-address overload, which accepts connections on any address. |
-| Server callbacks | `SocketServer:run(notifier_table_or_class)` starts server callbacks; optional callbacks are `socket_error(error_message)`, TCP `socket_accepted(client)`, and `socket_message(client, message)`. The SDK explicitly places socket errors on a server background thread; it does not specify callback thread affinity for accepted/message events. `SocketServer:stop()` stops a running server. | Treat every callback as asynchronous to the GUI path: authenticate, frame, validate and enqueue only. Process Renoise APIs from bounded idle work. `SocketServer:wait(timeout)` blocks the calling thread and the docs say it should be avoided when possible. |
-| Tool idle | `renoise.tool().app_idle_observable: Observable`; periodically called, around ten times per second, but the interval is undefined and varies with host load. | Use it for bounded, nonblocking work; never use elapsed idle intervals as proof that a host operation settled. |
-| Document lifecycle | `app_release_document_observable` fires before the old song closes and also just before application exit. `app_new_document_observable` fires after a document is created/loaded and `renoise.song()` changes; it also fires when a tool script is reloaded by auto-reload. `tool_will_unload_observable` fires before tool disable/reload and application exit. | Attach song-specific observers on new-document and release them before the old document closes. Keep stable notifier references for removal and unload cleanup. |
-| New document | `renoise.app():new_song_no_template()` takes no arguments and is asynchronous: the new song appears soon after the call if the user does not abort. | Continue from `app_new_document_observable`, not immediately after the call. |
-| Load song | `renoise.app():load_song(filename: string)` asks to save changes when needed, reports errors to the user, and does not load immediately. | Await the new-document observable. The docs do not specify prompt automation or a completion timeout. |
-| Save song as | `renoise.app():save_song_as(filename: string)` takes a filename and saves the current song under that name; errors are shown to the user. | No synchronous completion result is documented. Observe save/document state rather than treating invocation as proof of completion. |
-| Saved-document notification | `renoise.tool().app_saved_document_observable: Observable` fires after each successful document save; `renoise.song().file_name` points to the saved filename. | Use this as the documented success observation; no timing guarantee is stated. |
-| Undo / redo | `renoise.song():undo()` and `:redo()` take no arguments and do nothing if unavailable; `:can_undo()` / `:can_redo()` report availability. `:is_undo_redoing()` is true while an undo/redo action is invoked. | Use `is_undo_redoing()` only to identify processing in observers; it does not promise cross-callback atomicity. |
-| Key binding | `renoise.tool():add_keybinding(keybinding: ToolKeybindingEntry)` registers a binding. Entries provide a `name` and `invoke(repeated: boolean)` callback. | Check `has_keybinding(name)` before registration if duplicate registration is possible; remove with `remove_keybinding(name)`. Renoise has no API for a default shortcut: users must map the binding manually in Keyboard Preferences. |
-
-The offline application guide states that loading and saving are not always
-instantaneous because prompts may be shown. It does not establish dirty-song
-prompt handling, asynchronous reload behavior, or reliable window activation.
-Unknown modal dialogs must fail closed; do not patch `renoise.app()` or infer success from a
-request return or fixed delay.
-
-## Optional host diagnostics
-
-The standalone `spike_tool/`, `Capture-Foreground.ps1` and
-`build_spike_evidence.ps1` are diagnostic aids for investigating Renoise lifecycle
-and keyboard behavior. Their historical observations are in
-[host_verification.md](host_verification.md). They are not setup requirements or
-permission gates for running tests, developing tools, or installing releases.
-Native API tests do not require foreground focus. Nonintrusive Keyboard tests
-require an existing selected PID that already owns foreground focus. Activation
-requires `-AllowKeyboardFocusActivation` in a dedicated interactive session;
-both modes verify focus before sending each input sequence.
-
-`./scripts/test_host_preflight_live.ps1 -RenoiseExe '<path>'` checks executable
-and temporary-directory readiness; add `-RenoiseProcessId <pid>` to check a target.
-No host acceptance is inferred from offline mocks. Record actual native results
-when those tests run, and keep unexecuted checks visibly pending.
-
-### Exceptional writer recovery
-
-Run all four exceptional admission/recovery regressions on real native phrases:
-
-```powershell
-./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase writer-recovery -StartupTimeoutSeconds 120 -CommandTimeoutSeconds 90
-```
-
-The fixed case checks post-commit identity/source preservation, contradictory
-success, a sticky blocker after dialog reopen, and rejected Generate and Duplicate
-requests with the committed phrase and store unchanged. It uses a disposable host
-and restores its hooks. Historical retry/clearance results remain in the
-[verification record](host_verification.md#exceptional-writer-recovery-verification-2026-10-31).
+The bundle contains the ACID tool, loopback-only test driver, session file and
+fixture directory. Build and transport checks do not establish native GUI
+behavior, playback, Undo/Redo or persistence.

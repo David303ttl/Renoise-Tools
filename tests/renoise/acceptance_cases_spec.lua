@@ -86,22 +86,17 @@ assert(helpers.callback_latency_acceptance("Detailed")=="NOT_CLAIMED",
 assert(helpers.resolve_acceptance_profile("editor-responsiveness")=="Warm" and
   helpers.resolve_acceptance_profile("multi-instrument-workflow")=="Warm",
   "profiled native acceptance cases must default to Warm")
-assert(helpers.resolve_acceptance_profile("gui-redesign")==nil,
-  "GUI redesign acceptance must not claim instrumentation or performance acceptance")
 assert(helpers.resolve_acceptance_profile("editor-responsiveness","Detailed")=="Detailed")
 local ignored_profile,ignored_error=helpers.resolve_acceptance_profile("ownership-negatives","Detailed")
 assert(ignored_profile==nil and ignored_error,"profile selector was accepted by an unrelated native case")
 local invalid_profile,invalid_error=helpers.resolve_acceptance_profile("editor-responsiveness","Verbose")
 assert(invalid_profile==nil and invalid_error,"unknown instrumentation profile was accepted")
 local acceptance_cases=dofile("tests/renoise/driver/acceptance_cases.lua")
-for _,case_name in ipairs({"production-session-8x8","production-stress-16x8",
-    "phrase-midi-delivery"}) do
-  local accepted,reason=acceptance_cases.run(case_name,function()
-    error("retired native acceptance case was dispatched")
-  end)
-  assert(accepted==false and reason=="native acceptance case is not allowlisted",
-    "retired native acceptance case remains executable: "..case_name)
-end
+local accepted,reason=acceptance_cases.run("unsupported-case",function()
+  error("unsupported native acceptance case was dispatched")
+end)
+assert(accepted==false and reason=="native acceptance case is not allowlisted",
+  "unsupported native acceptance case was not rejected")
 local rejected_profile_result
 assert(acceptance_cases.run("ownership-negatives",function(result) rejected_profile_result=result end,nil,"Detailed"))
 assert(rejected_profile_result.status=="ERROR" and rejected_profile_result.reason==ignored_error,
