@@ -4,7 +4,7 @@ local settings = require("chain_options")
 local host = require("host_stub")
 local wav = require("wav_writer")
 local SLOW_JOB_FRAMES, PROGRESS_JOB_FRAMES = 4000, 128
-local LEGACY_TICK_LIMIT, WAV_HEADER_BYTES, WAV_FRAME_BYTES = 100, 44, 2
+local MIN_PROGRESS_TICKS, WAV_HEADER_BYTES, WAV_FRAME_BYTES = 100, 44, 2
 local SIMULATED_CLOCK_STEP_SECONDS = 1
 local REAL_CLOCK_READ_SECONDS, REAL_CLOCK_SOURCE_FRAMES = 0.001, 256
 
@@ -12,7 +12,7 @@ local REAL_CLOCK_READ_SECONDS, REAL_CLOCK_SOURCE_FRAMES = 0.001, 256
 for _, failure in ipairs({ "stalled", "detached", "terminal", "regressed", "overflow", "unexpected" }) do
   local source = host.instrument({ host.buffer(1) })
   local tool = host.host(source)
-  local job = { plan = { total_frames = 1 }, written_frames = 0, verified_frames = 0,
+  local job = { plan = { total_frames = 1 }, written_frames = 0,
     finished = failure == "terminal" }
   if failure == "regressed" then job.written_frames = 1 end
   job.timer = function()
@@ -20,7 +20,7 @@ for _, failure in ipairs({ "stalled", "detached", "terminal", "regressed", "over
       job.written_frames = 1
       tool:remove_timer(job.timer)
     elseif failure == "regressed" then
-      job.written_frames, job.verified_frames = 0, 1
+      job.written_frames = 0
     elseif failure == "overflow" then
       job.written_frames = 2
     end
@@ -37,24 +37,19 @@ for _, failure in ipairs({ "stalled", "detached", "terminal", "regressed", "over
   if tool:has_timer(timer) then tool:remove_timer(timer) end
 end
 
--- A progressing job can legitimately take more ticks than the old fixed cap.
+-- The driver bounds ticks by planned work, including small incremental writes.
 do
   local tool = host.host(host.instrument({ host.buffer(1) }))
-  local job = { plan = { total_frames = PROGRESS_JOB_FRAMES }, written_frames = 0,
-    verified_frames = 0, finished = false }
+  local job = { plan = { total_frames = PROGRESS_JOB_FRAMES }, written_frames = 0, finished = false }
   job.timer = function()
-    if job.written_frames < job.plan.total_frames then
-      job.written_frames = job.written_frames + 1
-    else
-      job.verified_frames = job.verified_frames + 1
-      if job.verified_frames == job.plan.total_frames then
-        job.finished = true
-        tool:remove_timer(job.timer)
-      end
+    job.written_frames = job.written_frames + 1
+    if job.written_frames == job.plan.total_frames then
+      job.finished = true
+      tool:remove_timer(job.timer)
     end
   end
   tool:add_timer(job.timer, 1)
-  assert(host.drive(tool, job) > LEGACY_TICK_LIMIT and job.finished)
+  assert(host.drive(tool, job) > MIN_PROGRESS_TICKS and job.finished)
 end
 
 local function clean(tool, song, instrument)
@@ -85,6 +80,7 @@ local job = assert(runner.start(instrument, settings.defaults(), path, callbacks
 assert(instrument.samples[1].sample_buffer.reads == 0, "start should not read full audio")
 host.drive(tool, job)
 assert(job.finished and result and not failure)
+assert(instrument.samples[1].sample_buffer.reads == 3 and instrument.samples[2].sample_buffer.reads == 5, "source should be read once")
 assert(result.mode == "spaced" and result.frames == 20 and result.slot_count == 4)
 assert(result.slot_sec == 5 / 48000 and result.total_sec == 20 / 48000)
 assert(host.read_file(path):sub(45) == string.char(
@@ -115,7 +111,7 @@ do
   if not ok then slow_job:cancel(); error(ticks) end
   assert(ticks > 1 and completed and not failed)
   assert(completed.frames == SLOW_JOB_FRAMES)
-  assert(slow_job.written_frames == SLOW_JOB_FRAMES and slow_job.verified_frames == SLOW_JOB_FRAMES)
+  assert(slow_job.written_frames == SLOW_JOB_FRAMES)
   local bytes = host.read_file(path)
   assert(#bytes == WAV_HEADER_BYTES + SLOW_JOB_FRAMES * WAV_FRAME_BYTES)
   assert(bytes:sub(WAV_HEADER_BYTES + 1) == string.rep(string.char(0, 32), SLOW_JOB_FRAMES))
@@ -210,73 +206,34 @@ job:cancel()
 assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
 clean(tool, song, long)
 
--- Failed teardown retains its handles and retries them on a later timer tick.
+-- A file cleanup failure is reported after callbacks are detached, without retries.
 do
   local source = host.instrument({ host.buffer(100) })
   tool, song = host.host(source)
   host.write_file(path, "original")
-  local timer_removals, notifier_removals, aborts = 0, 0, 0
-  local original_remove_timer = tool.remove_timer
-  tool.remove_timer = function(self, timer)
-    timer_removals = timer_removals + 1
-    if timer_removals == 1 then return end
-    if timer_removals == 2 then error("simulated timer cleanup failure") end
-    return original_remove_timer(self, timer)
-  end
-  local observable = source.samples_observable
-  local original_remove_notifier = observable.remove_notifier
-  observable.remove_notifier = function(self, callback)
-    notifier_removals = notifier_removals + 1
-    if notifier_removals <= 2 then error("simulated notifier cleanup failure") end
-    return original_remove_notifier(self, callback)
-  end
-  local canceled, cancel_message = 0, nil
+  local message
   job = assert(runner.start(source, settings.defaults(), path, {
-    on_cancel = function(message) canceled, cancel_message = canceled + 1, message end,
+    on_cancel = function(value) message = value end,
   }))
   local output = job.output
-  local original_abort = output.abort
-  output.abort = function(self)
-    aborts = aborts + 1
-    if aborts <= 2 then return nil, "simulated output cleanup failure" end
-    return original_abort(self)
-  end
   temporary = output.temporary
-
+  local remove, attempts = os.remove, 0
+  os.remove = function(name)
+    if name == temporary then
+      attempts = attempts + 1
+      return nil, "simulated cleanup failure"
+    end
+    return remove(name)
+  end
   job:cancel()
-  assert(canceled == 1 and cancel_message:find("simulated", 1, true))
-  assert(job.output == output and #job.guards > 0 and tool:has_timer(job.timer))
-  assert(aborts == 2 and notifier_removals == 2 and timer_removals == 0)
-
+  job:cancel()
   job.timer()
-  assert(job.output == nil and #job.guards == 0 and tool:has_timer(job.timer))
-  assert(aborts == 3 and notifier_removals == 3 and timer_removals == 2)
-
-  job.timer()
-  assert(job.output == nil and #job.guards == 0 and not tool:has_timer(job.timer))
-  assert(timer_removals == 3)
-  assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
-  clean(tool, song, source)
-end
-
--- Buffer/list notifications and dimensions invalidate an in-flight export.
-for _, change in ipairs({ "buffer", "samples", "instruments", "slices", "frames", "rate", "channels", "empty" }) do
-  local source = host.instrument({ host.buffer(100000) })
-  tool, song = host.host(source)
-  failure, result = nil, nil
-  job = assert(runner.start(source, settings.defaults(), path, callbacks))
-  temporary = job.output.temporary
-  if change == "buffer" then source.samples[1].sample_buffer_observable:notify()
-  elseif change == "samples" then source.samples_observable:notify()
-  elseif change == "instruments" then song.instruments_observable:notify()
-  elseif change == "slices" then source.samples[1].slice_markers_observable:notify()
-  elseif change == "frames" then source.samples[1].sample_buffer.number_of_frames = 1
-  elseif change == "rate" then source.samples[1].sample_buffer.sample_rate = 44100
-  elseif change == "channels" then source.samples[1].sample_buffer.number_of_channels = 2
-  else source.samples[1].sample_buffer.has_sample_data = false end
-  host.drive(tool, job)
-  assert(job.finished and failure and failure:find("changed") and not result)
-  assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
+  os.remove = remove
+  assert(attempts == 1 and message:find(temporary, 1, true))
+  assert(message:find("simulated cleanup failure", 1, true))
+  assert(next(tool.timers) == nil and #job.guards == 0 and job.snapshot == nil)
+  assert(host.read_file(path) == "original")
+  assert(output:abort())
   clean(tool, song, source)
 end
 
@@ -293,65 +250,8 @@ for _, lifetime in ipairs({ "app_release_document_observable", "tool_will_unload
   clean(tool, song, long)
 end
 
--- Readback catches same-size edits to frames emitted before verification.
-local changed_value = false
-local changing = host.instrument({ host.buffer(100, 48000, 1, function(_, frame)
-  if frame == 1 and changed_value then return 0.75 end
-  return 0.25
-end) })
-tool, song = host.host(changing)
-host.write_file(path, "original")
-result, failure = nil, nil
-job = assert(runner.start(changing, settings.defaults(), path, {
-  on_error = function(err) failure = err end,
-  on_progress = function(message)
-    if message:find("Verifying", 1, true) then changed_value = true end
-  end,
-}))
-temporary = job.output.temporary
-host.drive(tool, job)
-assert(failure and failure:find("changed", 1, true) and not result)
-assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
-clean(tool, song, changing)
-
--- A source edit in the last writing progress callback is rechecked immediately.
-local final_write = host.instrument({ host.buffer(40000) })
-tool, song = host.host(final_write)
-failure, result = nil, nil
-local final_options = settings.defaults()
-final_options.mode = "chain"
-job = assert(runner.start(final_write, final_options, path, {
-  on_error = function(err) failure = err end,
-  on_progress = function()
-    if job and job.written_frames > 0 and not job.verifying then
-      final_write.samples_observable:notify()
-    end
-  end,
-}))
-temporary = job.output.temporary
-host.drive(tool, job)
-assert(failure and failure:find("changed", 1, true) and not result)
-assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
-clean(tool, song, final_write)
-
--- Cancellation during verification closes and removes the staging file.
-local verifying = host.instrument({ host.buffer(100) })
-tool, song = host.host(verifying)
-canceled = 0
-job = assert(runner.start(verifying, settings.defaults(), path, {
-  on_cancel = function() canceled = canceled + 1 end,
-  on_progress = function(message)
-    if message:find("Verifying", 1, true) then job:cancel() end
-  end,
-}))
-temporary = job.output.temporary
-host.drive(tool, job)
-assert(job.finished and job.canceled and canceled == 1)
-assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
-clean(tool, song, verifying)
-
 -- Read/encoding/write/commit failures remove staging files without success callbacks.
-for _, kind in ipairs({ "read", "nan", "write", "verify", "commit" }) do
+for _, kind in ipairs({ "read", "nan", "write", "commit" }) do
   local source = host.instrument({ host.buffer(100) })
   tool, song = host.host(source)
   result, failure = nil, nil
@@ -371,8 +271,8 @@ for _, kind in ipairs({ "notifier", "timer" }) do
   local source = host.instrument({ host.buffer(100) })
   tool, song = host.host(source)
   if kind == "notifier" then
-    local original = source.samples_observable.add_notifier
-    source.samples_observable.add_notifier = function(self, callback)
+    local original = tool.app_release_document_observable.add_notifier
+    tool.app_release_document_observable.add_notifier = function(self, callback)
       original(self, callback)
       error("simulated notifier setup failure")
     end
@@ -387,147 +287,6 @@ for _, kind in ipairs({ "notifier", "timer" }) do
   assert(not rejected and err:find("simulated"))
   clean(tool, song, source)
   assert(host.read_file(path) == "original")
-end
-
--- Setup rollback retries a notifier left attached before export timer setup.
-do
-  local source = host.instrument({ host.buffer(100) })
-  tool, song = host.host(source)
-  local observable = source.samples_observable
-  local original_add = observable.add_notifier
-  local original_remove = observable.remove_notifier
-  local removals = 0
-  observable.add_notifier = function(self, callback)
-    original_add(self, callback)
-    error("simulated pre-timer notifier setup failure")
-  end
-  observable.remove_notifier = function(self, callback)
-    removals = removals + 1
-    if removals <= 2 then error("simulated pre-timer notifier cleanup failure") end
-    return original_remove(self, callback)
-  end
-
-  local rejected, err = runner.start(source, settings.defaults(), path, {})
-  assert(not rejected and err:find("pre%-timer notifier setup failure"))
-  assert(err:find("Cleanup retry scheduled", 1, true) and removals == 2)
-  local retry_timer = next(tool.timers)
-  assert(retry_timer, "rollback did not schedule a retry timer")
-  retry_timer()
-  assert(removals == 3 and not tool:has_timer(retry_timer))
-  clean(tool, song, source)
-end
-
--- A failed initial timer registration still permits bounded output-abort retry.
-do
-  local source = host.instrument({ host.buffer(100) })
-  tool, song = host.host(source)
-  host.write_file(path, "original")
-  local original_add_timer = tool.add_timer
-  local timer_additions, aborts, output, temporary = 0, 0, nil, nil
-  tool.add_timer = function(self, timer, interval)
-    timer_additions = timer_additions + 1
-    if timer_additions == 1 then error("simulated timer setup failure before registration") end
-    return original_add_timer(self, timer, interval)
-  end
-  local original_open = wav.open
-  wav.open = function(...)
-    local opened, open_err = original_open(...)
-    if opened then
-      output = opened
-      temporary = opened.temporary
-      local original_abort = opened.abort
-      opened.abort = function(self)
-        aborts = aborts + 1
-        if aborts <= 2 then return nil, "simulated pre-timer output cleanup failure" end
-        return original_abort(self)
-      end
-    end
-    return opened, open_err
-  end
-
-  local rejected, err = runner.start(source, settings.defaults(), path, {})
-  wav.open = original_open
-  assert(not rejected and err:find("timer setup failure before registration", 1, true))
-  assert(err:find("Cleanup retry scheduled", 1, true) and aborts == 2)
-  assert(timer_additions == 2 and output and next(tool.timers))
-  local retry_timer = next(tool.timers)
-  retry_timer()
-  assert(aborts == 3 and not tool:has_timer(retry_timer))
-  assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
-  clean(tool, song, source)
-end
-
--- Failed retry scheduling is reported rather than claiming rollback recovery.
-do
-  local source = host.instrument({ host.buffer(100) })
-  tool, song = host.host(source)
-  local observable = source.samples_observable
-  local original_add = observable.add_notifier
-  local original_remove = observable.remove_notifier
-  local removals = 0
-  observable.add_notifier = function(self, callback)
-    original_add(self, callback)
-    error("simulated setup failure")
-  end
-  observable.remove_notifier = function(self, callback)
-    removals = removals + 1
-    if removals <= 2 then error("simulated persistent cleanup failure") end
-    return original_remove(self, callback)
-  end
-  tool.add_timer = function() error("simulated retry scheduler failure") end
-
-  local rejected, err = runner.start(source, settings.defaults(), path, {})
-  assert(not rejected and err:find("Could not schedule cleanup retry", 1, true))
-  assert(err:find("simulated retry scheduler failure", 1, true) and not next(tool.timers))
-  observable:notify()
-  assert(removals == 3)
-  clean(tool, song, source)
-end
-
--- Persistent rollback failure exhausts the finite retry budget and reports it.
-do
-  local source = host.instrument({ host.buffer(100) })
-  tool, song = host.host(source)
-  host.write_file(path, "original")
-  local original_add_timer = tool.add_timer
-  local timer_additions, aborts, output, temporary, finish_abort = 0, 0, nil, nil, nil
-  tool.add_timer = function(self, timer, interval)
-    timer_additions = timer_additions + 1
-    if timer_additions == 1 then error("simulated initial timer registration failure") end
-    return original_add_timer(self, timer, interval)
-  end
-  local original_open = wav.open
-  wav.open = function(...)
-    local opened, open_err = original_open(...)
-    if opened then
-      output = opened
-      temporary = opened.temporary
-      finish_abort = opened.abort
-      output.abort = function(self)
-        aborts = aborts + 1
-        return nil, "simulated persistent output abort failure"
-      end
-    end
-    return opened, open_err
-  end
-  local original_print, messages = print, {}
-  print = function(message) messages[#messages + 1] = message end
-
-  local rejected, err = runner.start(source, settings.defaults(), path, {})
-  wav.open = original_open
-  assert(not rejected and err:find("Cleanup retry scheduled", 1, true))
-  local retry_timer = next(tool.timers)
-  assert(retry_timer and aborts == 2)
-  retry_timer()
-  assert(tool:has_timer(retry_timer) and aborts == 4)
-  retry_timer()
-  print = original_print
-
-  assert(not tool:has_timer(retry_timer) and aborts == 6)
-  assert(#messages == 1 and messages[1]:find("retries exhausted", 1, true))
-  assert(finish_abort(output))
-  assert(host.read_file(path) == "original" and not io.open(temporary, "rb"))
-  clean(tool, song, source)
 end
 
 -- Preflight validation runs before filesystem output or timer attachment.
@@ -585,7 +344,7 @@ for _, terminal in ipairs({ "on_finish", "on_error", "on_cancel" }) do
         error("simulated terminal failure")
       end,
     }))
-    if terminal == "on_error" then source.samples_observable:notify()
+    if terminal == "on_error" then source.samples[1].sample_buffer.sample_data = function() error("source unavailable") end
     elseif terminal == "on_cancel" then job:cancel() end
     host.drive(tool, job)
     job.timer()
@@ -595,14 +354,14 @@ for _, terminal in ipairs({ "on_finish", "on_error", "on_cancel" }) do
   print = original_print
   assert(ok, err)
   assert(calls == 1 and #messages == 1)
-  assert(job.callback_error:find(terminal, 1, true))
+  assert(messages[1]:find(terminal, 1, true))
   assert(messages[1]:find("simulated terminal failure", 1, true))
   assert(next(job.callbacks) == nil)
   clean(tool, song, source)
   if terminal == "on_finish" then assert(os.remove(path)) end
 end
 
--- Slow reads yield during both passes without changing dither or slot offsets.
+-- Slow reads yield without changing dither or slot offsets.
 do
   local elapsed, clock = 0, os.clock
   local source = host.instrument({ host.buffer(200, 192000, 1, function()
@@ -618,9 +377,6 @@ do
   local ok, err = pcall(function()
     job.timer()
     assert(job.written_frames > 0 and job.written_frames < job.plan.total_frames)
-    host.drive(tool, job, function() return job.verifying end)
-    job.timer()
-    assert(job.verified_frames > 0 and job.verified_frames < job.plan.total_frames)
     host.drive(tool, job)
   end)
   os.clock = clock

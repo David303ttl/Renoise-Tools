@@ -277,13 +277,24 @@ do
   equal(#state.dialogs, 2)
   truthy(state.dialogs[2] ~= old_dialog)
   local new_status = feedback_text(state, 3)
+  old_dialog:show()
+  local old_duration = feedback_text(state, 2)
   old_call.callbacks.on_finish({ slot_count = 4, frames = 400, sample_rate = 48000,
-    mode = 'spaced', slot_sec = 1, total_sec = 4 })
+    mode = 'spaced', slot_sec = 1, total_sec = 4, warning = 'obsolete warning' })
   equal(new_status.text, '')
+  equal(old_duration.text, '')
+  equal(#state.warnings, 0)
   click_export(state)
   equal(new_status.text, 'Exporting...')
   equal(state.jobs[1].canceled, true)
   equal(#state.starts, 2)
+  old_call.callbacks.on_progress('obsolete progress')
+  equal(state.jobs[2].canceled, false, 'obsolete dialog must not cancel the new export')
+  old_call.callbacks.on_cancel('obsolete cancellation')
+  click_export(state)
+  equal(#state.starts, 2, 'obsolete dialog must not clear the new export guard')
+  click_cancel(state)
+  equal(state.jobs[2].canceled, true)
 end
 
 -- Runtime errors use error presentation, and entry registration invokes gui.show.

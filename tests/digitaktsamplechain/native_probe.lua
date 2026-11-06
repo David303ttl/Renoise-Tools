@@ -7,7 +7,6 @@ local tool = renoise.tool()
 local RATE, BUFFER_BITS, MONO, STEREO = 48000, 32, 1, 2
 local HEADER_BYTES, PCM_BYTES, FULL_SCALE, BYTE_BASE = 44, 2, 32768, 256
 local GRID_COUNT, EDGE_FRAMES, LONG_FRAMES = 4, 64, 131072
-local FINAL_EDIT_FRAMES = 32769
 local TEST_TONE_HZ, ALIAS_TONE_HZ, TONE_LEVEL = 1000, 30000, 0.5
 local SIGNAL_EDGE_FRAMES, MAX_ALIAS_RMS = 64, 0.02
 local CONTROLLER_INTERVAL_MS, CASE_TIMEOUT_SECONDS = 10, 20
@@ -86,18 +85,16 @@ local function export(source, options, path, progress)
   local job = current_job
   local staging_directory = job.output.staging_directory
   local original_timer = job.timer
-  local timing = { output = path:match("[^/\\]+$"), ticks = 0, max_ms = 0, writing_max_ms = 0, verification_max_ms = 0 }
+  local timing = { output = path:match("[^/\\]+$"), ticks = 0, max_ms = 0 }
   report.export_timings = report.export_timings or json.array()
   report.export_timings[#report.export_timings + 1] = timing
   tool:remove_timer(original_timer)
   job.timer = function()
-    local verifying, started = job.verifying, os.clock()
+    local started = os.clock()
     original_timer()
     local elapsed = (os.clock() - started) * MILLISECONDS_PER_SECOND
     timing.ticks = timing.ticks + 1
     timing.max_ms = math.max(timing.max_ms, elapsed)
-    local field = verifying and "verification_max_ms" or "writing_max_ms"
-    timing[field] = math.max(timing[field], elapsed)
   end
   tool:add_timer(job.timer, CONTROLLER_INTERVAL_MS)
   wait_for(function() return job.finished end)
@@ -395,68 +392,6 @@ add("native-cancel-preserves-destination", function()
   check(canceled and job.finished and not tool:has_timer(job.timer))
   check(read_file(path) == "original" and not io.exists(temporary), "cancellation damaged destination or leaked staging")
   current_job = nil
-end)
-
-for _, change in ipairs({ "same-size", "resize", "sample-list", "slices" }) do
-  local mutation = change
-  add("native-source-change-" .. change, function()
-    local source = instrument({ LONG_FRAMES })
-    local sample, buffer = source.samples[1], source.samples[1].sample_buffer
-    local notifications = 0
-    local function observe() notifications = notifications + 1 end
-    sample.sample_buffer_observable:add_notifier(observe)
-    defer(function()
-      if sample.sample_buffer_observable:has_notifier(observe) then
-        sample.sample_buffer_observable:remove_notifier(observe)
-      end
-    end)
-    local path = output("change-" .. mutation)
-    write_file(path, "original")
-    local failure, result
-    current_job = assert(runner.start(source, settings.defaults(), path, {
-      on_finish = function(info) result = info end,
-      on_error = function(message) failure = message end,
-    }))
-    local job, temporary = current_job, current_job.output.temporary
-    wait_for(function() return job.written_frames > 0 or job.finished end)
-    if mutation == "same-size" then
-      buffer:prepare_sample_data_changes()
-      buffer:set_sample_data(1, 1, -0.25)
-      buffer:finalize_sample_data_changes()
-    elseif mutation == "resize" then
-      check(buffer:create_sample_data(RATE, BUFFER_BITS, MONO, LONG_FRAMES / 2))
-    elseif mutation == "sample-list" then
-      source:insert_sample_at(#source.samples + 1)
-    else
-      sample:insert_slice_marker(LONG_FRAMES / 2)
-    end
-    wait_for(function() return job.finished end)
-    check(failure and not result, "source mutation did not reject export: " .. mutation)
-    check(read_file(path) == "original" and not io.exists(temporary))
-    check(not tool:has_timer(job.timer))
-    current_job = nil
-    return { buffer_notifications = notifications }
-  end)
-end
-
-add("native-final-progress-edit-rejected", function()
-  local source = instrument({ FINAL_EDIT_FRAMES })
-  local path = output("final-edit")
-  write_file(path, "original")
-  local edited = false
-  local options = settings.defaults()
-  options.mode = "chain"
-  local result, failure = export(source, options, path, function()
-    if current_job and current_job.written_frames > 0 and not edited then
-      edited = true
-      local buffer = source.samples[1].sample_buffer
-      buffer:prepare_sample_data_changes(false)
-      buffer:set_sample_data(1, 1, -0.25)
-      buffer:finalize_sample_data_changes()
-    end
-  end)
-  check(edited and failure and not result, "final progress callback source edit was committed")
-  check(read_file(path) == "original")
 end)
 
 add("native-dialog-and-export-callbacks", function()

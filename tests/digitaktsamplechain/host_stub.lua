@@ -1,6 +1,6 @@
 local M = {}
 local SAMPLE_RATE, MONO_CHANNELS = 48000, 1
-local EXPORT_PASSES, MAX_TERMINAL_TICKS = 2, 10
+local MAX_TERMINAL_TICKS = 10
 
 -- Standalone Lua lacks Renoise's directory API. Keep directory ownership in
 -- memory while delegating file bytes and failures to real filesystem handles.
@@ -121,7 +121,7 @@ end
 
 function M.drive(tool, job, until_ready)
   local ticks, terminal_ticks = 0, 0
-  local max_ticks = EXPORT_PASSES * job.plan.total_frames + MAX_TERMINAL_TICKS
+  local max_ticks = job.plan.total_frames + MAX_TERMINAL_TICKS
   while not (until_ready and until_ready()) do
     local timer = next(tool.timers)
     if not timer then
@@ -131,17 +131,17 @@ function M.drive(tool, job, until_ready)
     assert(timer == job.timer and not next(tool.timers, timer), "unexpected export timer")
     ticks = ticks + 1
     assert(ticks <= max_ticks, "export exceeded its progress bound")
-    local written, verified, finished = job.written_frames, job.verified_frames, job.finished
+    local written, finished = job.written_frames, job.finished
     timer()
     if finished then
       terminal_ticks = terminal_ticks + 1
       assert(terminal_ticks <= MAX_TERMINAL_TICKS, "export timer did not detach")
     else
-      assert(job.written_frames >= written and job.verified_frames >= verified,
+      assert(job.written_frames >= written,
         "export progress counters regressed")
-      assert(job.written_frames <= job.plan.total_frames and job.verified_frames <= job.written_frames,
+      assert(job.written_frames <= job.plan.total_frames,
         "export progress exceeds planned frames")
-      assert(job.finished or job.written_frames > written or job.verified_frames > verified,
+      assert(job.finished or job.written_frames > written,
         "export timer made no progress")
     end
   end

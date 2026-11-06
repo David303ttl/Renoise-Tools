@@ -30,7 +30,7 @@ function M.show()
   local export_button, cancel_button
   local opened_dialog
   local controls = {}
-  local function is_open() return opened_dialog and opened_dialog.visible end
+  local function is_open() return dialog == opened_dialog and opened_dialog and opened_dialog.visible end
   local function set_text(view, text)
     if is_open() then view.text = text end
   end
@@ -41,6 +41,7 @@ function M.show()
   end
 
   local function set_running(running, message)
+    if dialog ~= opened_dialog then return end
     if not running then current_job = nil end
     if not is_open() then return end
     for _, control in ipairs(controls) do control.active = not running end
@@ -52,6 +53,7 @@ function M.show()
 
   local callbacks = {
     on_progress = function(message)
+      if dialog ~= opened_dialog then return end
       if not is_open() then
         if current_job then current_job:cancel() end
         return
@@ -179,6 +181,7 @@ function M.show()
     spacing = SPACING,
 
     vb:text { text = "Export Digitakt Sample Chain" },
+    vb:text { text = "Do not edit or delete source samples during export." },
     row("Export Mode:", mode_selector),
     row("Grid Divisions:", slot_selector),
     row(string.format("Apply %d ms fade-out to each sample", chain_options.FADE_OUT_MS), fade_checkbox),

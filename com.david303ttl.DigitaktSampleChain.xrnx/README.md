@@ -42,26 +42,19 @@ Audio is read and written in bounded chunks on Renoise's GUI thread between UI
 events. Rendering and PCM encoding yield after an 8 ms budget, checked every
 32 frames. File I/O, callbacks and an individual batch can exceed that budget.
 No complete chain or complete source audio is copied into Lua tables.
-Before replacement, a second bounded pass re-renders the source and compares it
-with the staged PCM; the WAV header and length are also checked. The source
-buffers are never modified and export creates no song undo entry.
+The source buffers are never modified and export creates no song undo entry.
 
-Do not edit source audio while exporting. Observed buffer, slice, sample-list or
-instrument-list changes abort the export; song release and tool unload cancel
-it and release timers and observers. Buffer dimensions are checked between
-chunks. Renoise 3.5.4 does not notify same-size edits; PCM readback verification
-detects changes affecting audio that has not yet been checked. An edit after a
-region is checked can go undetected. Continuous editing is not snapshot-isolated,
-so keep sources stable during both passes.
+Do not edit, replace or delete source samples while exporting. Changes made
+between chunks can produce inconsistent audio. If a source becomes unavailable,
+the export reports a read error. Song release and tool unload cancel the export
+and release its timer and observers.
 
 Output is staged in an atomically reserved directory beside the destination.
 Colliding paths are retried without opening or truncating them.
-Cancellation and write/read/seek/flush/close
-failures leave an existing destination unchanged. Replacement uses a temporary
-backup and rejects an existing destination that is not a regular file; failed
-restoration reports the original backup's recovery path. Cleanup failures are
-reported rather than hidden. The destination is not locked against other
-processes, and replacement is not a power-loss-safe file transaction.
+Cancellation and failures before installation leave an existing destination
+unchanged. An existing regular file is removed before the staged WAV is moved
+into place; if that final move fails, the destination is no longer present.
+The destination is not locked against other processes.
 Chains exceeding the standard 32-bit RIFF size limit are rejected.
 
 ## Verification
@@ -85,7 +78,7 @@ installations are not replaced. Reports, copied test inputs and logs stay under
 ignored `tmp/digitakt-native-<run-id>/`; the owned process and unchanged probe
 are removed after the run.
 
-Native coverage includes buffers, timers, source changes, undo, GUI views,
+Earlier native coverage included buffers, timers, source changes, undo, GUI views,
 WAV reimport, 44.1/96/192 kHz conversion and staging collisions. See the
 [host verification record](../tests/renoise/host_verification.md#digitakt-hardening-verification-2026-11-06).
 
@@ -103,9 +96,7 @@ against file-backed PCM and reimported into Renoise. Other sample rates use the
 exporter's resampling model for the PCM reference; separate analytical tone tests
 check pitch and alias suppression independently.
 
-Results: 53/53 native cases with 256 supplied 44.1 kHz files; 43/43 with
-65 generated 48 kHz files, including a partial batch. See the
-[supplied-corpus results](../tests/renoise/host_verification.md#digitakt-supplied-single-cycle-corpus-2026-11-06)
+See the [supplied-corpus results](../tests/renoise/host_verification.md#digitakt-supplied-single-cycle-corpus-2026-11-06)
 and [generated-corpus check](../tests/renoise/host_verification.md#digitakt-native-export-2026-11-06).
 
 Remaining manual checks:
