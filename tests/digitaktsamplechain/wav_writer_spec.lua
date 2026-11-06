@@ -11,6 +11,37 @@ local function file_proxy(file, overrides)
   end
   return proxy
 end
+local function inject_staged_fault(output, failure)
+  if failure == "header" then
+    assert(output.file:seek("set", 0))
+    assert(output.file:write("X"))
+  else
+    assert(output.file:seek("end"))
+    assert(output.file:write("unexpected trailing bytes"))
+  end
+  assert(output.file:flush())
+end
+local function truncate_staged_file(output, contents)
+  assert(output.file:close())
+  output.file = assert(io.open(output.temporary, "w+b"))
+  assert(output.file:write(contents))
+  assert(output.file:flush())
+end
+local function assert_commit_rejected(destination, frames, payload, expected_error)
+  local writer = assert(wav.open(destination, frames, 48000))
+  local temporary = writer.temporary
+  assert(writer:write(payload) and writer:verify(payload))
+  local rename, rename_calls = os.rename, 0
+  os.rename = function(...)
+    rename_calls = rename_calls + 1
+    return rename(...)
+  end
+  local committed, err = writer:commit()
+  os.rename = rename
+  assert(not committed and err:find(expected_error, 1, true), err)
+  assert(rename_calls == 0, "rejected destination must not be renamed")
+  assert(writer:abort() and not io.open(temporary, "rb"))
+end
 local function uint(bytes, offset, length)
   local value = 0
   for index = offset + length - 1, offset, -1 do value = value * 256 + bytes:byte(index) end
@@ -46,6 +77,7 @@ for _ = 1, 100 do
 end
 local values = { 0.25, -0.5, 0, 1, -1 }
 local payload = wav.encode(values, 1, #values)
+local output_header = assert(wav.header(#values, 48000))
 assert(payload == string.char(0, 32, 0, 192, 0, 0, 255, 127, 0, 128))
 local all = wav.encode(values, 1, #values, wav.new_dither())
 local rng = wav.new_dither()
@@ -61,7 +93,7 @@ assert(host.read_file(path) == "original WAV")
 assert(output:verify(payload))
 assert(output:commit())
 local content = host.read_file(path)
-assert(#content == 44 + #payload and content:sub(45) == payload)
+assert(#content == 44 + #payload and content:sub(1, 44) == output_header and content:sub(45) == payload)
 assert(not io.open(temporary, "rb"))
 assert(not output:write(payload) and not output:commit())
 assert(output:abort() and host.read_file(path) == content)
@@ -87,7 +119,11 @@ for _, failure in ipairs({ "mismatch", "partial", "read", "seek" }) do
   else
     local overrides = {}
     if failure == "partial" then
-      overrides.read = function(self, count) return self.file:read(count - 1) end
+      local read_calls = 0
+      overrides.read = function(self, count)
+        read_calls = read_calls + 1
+        return self.file:read(read_calls == 1 and count or count - 1)
+      end
     elseif failure == "read" then
       overrides.read = function() return nil, "simulated read failure" end
     else
@@ -106,6 +142,67 @@ for _, failure in ipairs({ "mismatch", "partial", "read", "seek" }) do
   assert(output:abort() and host.read_file(path) == content)
   assert(not io.open(temporary, "rb"))
 end
+
+-- Physical truncation is rejected both during readback and at commit.
+for _, stage in ipairs({ "readback", "commit" }) do
+  output = assert(wav.open(path, #values, 48000))
+  temporary = output.temporary
+  assert(output:write(payload))
+  if stage == "commit" then assert(output:verify(payload)) end
+  truncate_staged_file(output, output_header .. payload:sub(1, #payload - 2))
+  local verified, verify_err
+  if stage == "readback" then
+    verified, verify_err = output:verify(payload)
+  else
+    verified, verify_err = output:commit()
+  end
+  assert(not verified and verify_err:find("shorter than planned", 1, true))
+  if stage == "readback" then assert(not output:commit(), "truncated output must not commit") end
+  assert(output:abort())
+  assert(host.read_file(path) == content and not io.open(temporary, "rb"))
+end
+
+-- Structural corruption is rejected during readback and immediately before install.
+for _, stage in ipairs({ "readback", "commit" }) do
+  for _, failure in ipairs({ "header", "trailing" }) do
+    output = assert(wav.open(path, #values, 48000))
+    temporary = output.temporary
+    assert(output:write(payload))
+    if stage == "commit" then assert(output:verify(payload)) end
+    inject_staged_fault(output, failure)
+    local verified, verify_err
+    if stage == "readback" then
+      verified, verify_err = output:verify(payload)
+    else
+      verified, verify_err = output:commit()
+    end
+    assert(not verified)
+    assert(verify_err:find(failure == "header" and "header changed" or "unexpected trailing data", 1, true))
+    if stage == "readback" then assert(not output:commit(), "structurally invalid output must not commit") end
+    assert(output:abort())
+    assert(host.read_file(path) == content and not io.open(temporary, "rb"))
+  end
+end
+
+-- Existing destinations must stat as regular files before any rename.
+local directory_destination = path .. ".destination-directory"
+assert(os.mkdir(directory_destination))
+assert_commit_rejected(directory_destination, #values, payload, "not a regular file")
+assert(io.exists(directory_destination) and os.remove(directory_destination))
+
+host.set_stat_type(path, "link")
+assert_commit_rejected(path, #values, payload, "not a regular file")
+host.set_stat_type(path, nil)
+assert(host.read_file(path) == content)
+
+local stat = io.stat
+io.stat = function(name)
+  if name == path then return nil, "simulated destination stat failure", 13 end
+  return stat(name)
+end
+assert_commit_rejected(path, #values, payload, "simulated destination stat failure")
+io.stat = stat
+assert(host.read_file(path) == content)
 
 -- Errors from writes, flushes and close are all surfaced and cleanable.
 for _, failure in ipairs({ "write", "flush", "close" }) do

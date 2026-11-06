@@ -2,12 +2,13 @@
 local settings = require("chain_options")
 local M = {}
 local MILLISECONDS_PER_SECOND, SLOT_EDGES = 1000, 2
+local MIN_SAMPLE_FRAMES = 1
 
 function M.plan(lengths, options, sample_rate)
   if #lengths == 0 then return nil, "No samples to lay out." end
   local max_length, total = 0, 0
   for _, length in ipairs(lengths) do
-    if type(length) ~= "number" or length < 1 or length >= math.huge
+    if type(length) ~= "number" or length < MIN_SAMPLE_FRAMES or length >= math.huge
         or length ~= math.floor(length) then
       return nil, "Invalid sample length."
     end

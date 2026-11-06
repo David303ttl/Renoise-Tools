@@ -32,6 +32,18 @@ Snapshots contain native inventory values and selection indices. Indices describ
 positions at readback time, not persistent object identity. Driver shutdown is
 complete only after its per-run completion file is observed and removed.
 
+## Digitakt hardening verification (2026-11-06)
+
+The native base suite passed **34/34 cases** with the current staged WAV
+validation and destination-type guard, including rejection of a directory
+containing a marker file. The staged runtime was compared with the working tree.
+The offline Digitakt Lua 5.1 suite passed **8/8 specs**. The generated and
+supplied corpora below were not rerun for this change.
+
+Report: `tmp/digitakt-native-e81f2e7be3c2473dbd28e96021bbf046/native-report.json`.
+Physical UI interaction, audible playback, actual tool unload and Digitakt
+hardware import remain manual checks.
+
 ## Digitakt native export (2026-11-06)
 
 | Check | Result |

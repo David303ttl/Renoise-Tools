@@ -12,7 +12,8 @@ local RIFF_OVERHEAD = 36
 local MAX_RIFF_SIZE = 4294967295
 local RNG_MODULUS, RNG_MULTIPLIER, DEFAULT_SEED = 2147483647, 48271, 1
 local MAX_TEMP_ATTEMPTS = 16
-local ROUNDING_OFFSET = 0.5
+local ROUNDING_OFFSET, TPDF_CENTERING_OFFSET = 0.5, 1
+local MIN_FRAME_COUNT, MIN_SAMPLE_RATE = 1, 1
 
 local function le16(value)
   return string.char(value % BYTE_BASE, math.floor(value / BYTE_BASE) % BYTE_BASE)
@@ -23,7 +24,7 @@ local function le32(value)
 end
 
 function M.assert_size(frames)
-  if type(frames) ~= "number" or frames < 1 or frames ~= math.floor(frames)
+  if type(frames) ~= "number" or frames < MIN_FRAME_COUNT or frames ~= math.floor(frames)
       or RIFF_OVERHEAD + frames * BYTES_PER_FRAME > MAX_RIFF_SIZE then
     return nil, "Invalid frame count or chain exceeds the 4 GB WAV size limit."
   end
@@ -33,7 +34,7 @@ end
 function M.header(frames, rate)
   local valid, err = M.assert_size(frames)
   if not valid then return nil, err end
-  if type(rate) ~= "number" or rate < 1 or rate ~= math.floor(rate)
+  if type(rate) ~= "number" or rate < MIN_SAMPLE_RATE or rate ~= math.floor(rate)
       or rate * BYTES_PER_FRAME > MAX_RIFF_SIZE then
     return nil, "Invalid WAV sample rate."
   end
@@ -59,7 +60,7 @@ function M.quantize(value, rng)
     and value > -math.huge and value < math.huge, "Invalid audio frame")
   -- Keep padded regions digitally silent.
   if rng and value ~= 0 then
-    value = value + (rng() + rng() - 1) / FULL_SCALE
+    value = value + (rng() + rng() - TPDF_CENTERING_OFFSET) / FULL_SCALE
   end
   local integer = math.floor(value * FULL_SCALE + ROUNDING_OFFSET)
   return math.max(INT16_MIN, math.min(INT16_MAX, integer))
@@ -77,6 +78,28 @@ local function file_call(file, method, ...)
   local ok, result, err = pcall(file[method], file, ...)
   if not ok then return nil, tostring(result) end
   if not result then return nil, tostring(err) end
+  return true
+end
+
+local function verify_staged_structure(writer)
+  local ok, size, seek_err = pcall(writer.file.seek, writer.file, "end")
+  if not ok then return nil, "WAV size check failed: " .. tostring(size) end
+  if not size then return nil, "WAV size check failed: " .. tostring(seek_err) end
+  if type(size) ~= "number" then return nil, "WAV size check failed: invalid file position." end
+
+  local expected_size = HEADER_BYTES + writer.expected
+  if size > expected_size then return nil, "WAV staged artifact contains unexpected trailing data." end
+  if size < expected_size then return nil, "WAV staged artifact is shorter than planned." end
+
+  local positioned, position_err = file_call(writer.file, "seek", "set", 0)
+  if not positioned then return nil, "WAV seek failed: " .. position_err end
+  local read_ok, header, read_err = pcall(writer.file.read, writer.file, HEADER_BYTES)
+  if not read_ok then return nil, "WAV header readback failed: " .. tostring(header) end
+  if not header then return nil, "WAV header readback failed: " .. tostring(read_err or "unexpected end of file") end
+  if type(header) ~= "string" or #header ~= HEADER_BYTES then
+    return nil, "WAV header readback failed: incomplete header."
+  end
+  if header ~= writer.expected_header then return nil, "WAV header changed during staging." end
   return true
 end
 
@@ -150,8 +173,8 @@ function Writer:verify(payload)
   if not self.verified then
     local flushed, flush_err = file_call(self.file, "flush")
     if not flushed then return nil, "WAV flush failed: " .. flush_err end
-    local positioned, seek_err = file_call(self.file, "seek", "set", HEADER_BYTES)
-    if not positioned then return nil, "WAV seek failed: " .. seek_err end
+    local structure_ok, structure_err = verify_staged_structure(self)
+    if not structure_ok then return nil, structure_err end
     self.verified = 0
   end
   if self.verified + #payload > self.expected then return nil, "WAV verification exceeds planned length." end
@@ -169,12 +192,26 @@ function Writer:commit()
   if self.verified ~= self.expected then return nil, "WAV verification is incomplete." end
   local flushed, flush_err = file_call(self.file, "flush")
   if not flushed then return nil, "WAV flush failed: " .. flush_err end
+  local structure_ok, structure_err = verify_staged_structure(self)
+  if not structure_ok then return nil, structure_err end
   local closed, close_err = file_call(self.file, "close")
   self.file = nil
   if not closed then return nil, "WAV close failed: " .. close_err end
 
   local backup
   if io.exists(self.destination) then
+    -- Stat and rename are separate operations, so this guard is not race-free.
+    local stat_ok, attributes, stat_err = pcall(io.stat, self.destination)
+    if not stat_ok then
+      return nil, "Could not inspect existing destination '" .. self.destination .. "': " .. tostring(attributes)
+    end
+    if not attributes then
+      return nil, "Could not inspect existing destination '" .. self.destination .. "': "
+        .. tostring(stat_err or "unknown stat error")
+    end
+    if type(attributes) ~= "table" or attributes.type ~= "file" then
+      return nil, "Existing destination is not a regular file: '" .. self.destination .. "'."
+    end
     backup = self.temporary .. ".bak"
     if io.exists(backup) then return nil, "Backup filename is already in use: " .. backup end
     local moved, move_err = os.rename(self.destination, backup)
@@ -212,7 +249,7 @@ function M.open(path, frames, rate)
   local file, open_err = io.open(temporary, "w+b")
   local writer = setmetatable({
     file = file, destination = path, temporary = file and temporary or nil, staging_directory = directory,
-    expected = frames * BYTES_PER_FRAME, written = 0,
+    expected = frames * BYTES_PER_FRAME, expected_header = header, written = 0,
   }, Writer)
   if not file then
     local cleaned, cleanup_err = writer:abort()

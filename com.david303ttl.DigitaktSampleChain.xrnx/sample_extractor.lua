@@ -4,6 +4,7 @@ local resampler = require("resampler")
 local M = {}
 local MONO_CHANNELS, STEREO_CHANNELS = 1, 2
 local LEFT_CHANNEL, RIGHT_CHANNEL = 1, 2
+local MIN_SAMPLE_FRAMES = 1
 
 function M.snapshot(instrument)
   if not instrument then return nil, "No instrument is selected." end
@@ -19,7 +20,7 @@ function M.snapshot(instrument)
         return nil, string.format("Sample %d has an invalid sample rate.", index)
       end
       local frames, channels = buffer.number_of_frames, buffer.number_of_channels
-      if frames < 1 or (channels ~= MONO_CHANNELS and channels ~= STEREO_CHANNELS) then
+      if frames < MIN_SAMPLE_FRAMES or (channels ~= MONO_CHANNELS and channels ~= STEREO_CHANNELS) then
         return nil, string.format("Sample %d has an invalid audio buffer.", index)
       end
       entries[#entries + 1] = {

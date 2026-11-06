@@ -9,6 +9,8 @@ local FRAMES_PER_STEP, TIMER_INTERVAL_MS = 32768, 10
 local RESAMPLED_FRAMES_PER_STEP = 2048
 local FRAMES_PER_BATCH, STEP_BUDGET_SECONDS = 32, 0.008
 local PERCENT_SCALE = 100
+local CLEANUP_ATTEMPTS = 2
+local MAX_CLEANUP_RETRY_TICKS = 2
 local Job = {}
 Job.__index = Job
 
@@ -23,33 +25,111 @@ local function notify_terminal(job, name, value)
   end
 end
 
+local function ensure_cleanup_timer(job)
+  local last_error
+  for _ = 1, CLEANUP_ATTEMPTS do
+    local ok, added = pcall(function()
+      if job.tool:has_timer(job.timer) then return false end
+      job.tool:add_timer(job.timer, TIMER_INTERVAL_MS)
+      assert(job.tool:has_timer(job.timer), "cleanup timer registration was not confirmed")
+      return true
+    end)
+    if ok then return true, added end
+    last_error = tostring(added)
+  end
+  return nil, last_error
+end
+
 local function cleanup(job, discard)
+  if job.cleanup_discard == nil then job.cleanup_discard = discard end
+  discard = job.cleanup_discard
   local errors = {}
   local function attempt(action)
-    local ok, err = pcall(action)
-    if not ok then errors[#errors + 1] = tostring(err) end
+    local last_error
+    for _ = 1, CLEANUP_ATTEMPTS do
+      local ok, err = pcall(action)
+      if ok then return true end
+      last_error = tostring(err)
+    end
+    errors[#errors + 1] = last_error
+    return false
   end
-  attempt(function()
-    if job.tool:has_timer(job.timer) then job.tool:remove_timer(job.timer) end
-  end)
+
+  local pending_guards = {}
   for index = #job.guards, 1, -1 do
     local guard = job.guards[index]
-    attempt(function()
+    local removed = attempt(function()
       if guard.observable:has_notifier(guard.callback) then
         guard.observable:remove_notifier(guard.callback)
       end
     end)
+    if not removed then pending_guards[#pending_guards + 1] = guard end
   end
+
+  local retained_guards = {}
+  for index = #pending_guards, 1, -1 do
+    retained_guards[#retained_guards + 1] = pending_guards[index]
+  end
+  job.guards = retained_guards
+
   if discard and job.output then
-    local ok, err = job.output:abort()
-    if not ok then errors[#errors + 1] = err end
+    local output = job.output
+    local aborted = attempt(function()
+      local ok, err = output:abort()
+      if not ok then error(err or "Could not abort export output.", 0) end
+    end)
+    if aborted then job.output = nil end
+  elseif not discard then
+    job.output = nil
   end
-  job.guards, job.snapshot, job.chunk, job.reader, job.output = {}, nil, nil, nil, nil
+
+  local has_pending_resources = #job.guards > 0 or (discard and job.output ~= nil)
+  local retry_ticks = job.cleanup_retry_ticks_remaining
+  if has_pending_resources and retry_ticks == nil then
+    retry_ticks = MAX_CLEANUP_RETRY_TICKS
+    job.cleanup_retry_ticks_remaining = retry_ticks
+  end
+
+  if has_pending_resources and retry_ticks > 0 then
+    local scheduled, detail = ensure_cleanup_timer(job)
+    if scheduled then
+      errors[#errors + 1] = "Cleanup retry scheduled for up to " .. retry_ticks .. " timer ticks."
+    else
+      job.cleanup_retry_ticks_remaining = 0
+      errors[#errors + 1] = "Could not schedule cleanup retry: " .. tostring(detail)
+    end
+  else
+    local removed = attempt(function()
+      if job.tool:has_timer(job.timer) then
+        job.tool:remove_timer(job.timer)
+        assert(not job.tool:has_timer(job.timer), "cleanup timer remains registered")
+      end
+    end)
+    retry_ticks = job.cleanup_retry_ticks_remaining
+    if not removed and (retry_ticks == nil or retry_ticks > 0) then
+      if retry_ticks == nil then
+        retry_ticks = MAX_CLEANUP_RETRY_TICKS
+        job.cleanup_retry_ticks_remaining = retry_ticks
+      end
+      local scheduled, detail = ensure_cleanup_timer(job)
+      if scheduled then
+        errors[#errors + 1] = "Cleanup retry scheduled for up to " .. retry_ticks .. " timer ticks."
+      else
+        job.cleanup_retry_ticks_remaining = 0
+        errors[#errors + 1] = "Could not schedule cleanup retry: " .. tostring(detail)
+      end
+    end
+  end
+
+  job.snapshot, job.chunk, job.reader = nil, nil, nil
   if #errors > 0 then return table.concat(errors, "\n") end
 end
 
 function Job:fail(message)
-  if self.finished then return end
+  if self.finished then
+    if self.cleanup_discard ~= nil then cleanup(self, self.cleanup_discard) end
+    return
+  end
   self.finished = true
   local cleanup_err = cleanup(self, true)
   if cleanup_err then message = tostring(message) .. "\n" .. cleanup_err end
@@ -57,7 +137,10 @@ function Job:fail(message)
 end
 
 function Job:cancel(message)
-  if self.finished then return end
+  if self.finished then
+    if self.cleanup_discard ~= nil then cleanup(self, self.cleanup_discard) end
+    return
+  end
   self.finished, self.canceled = true, true
   local cleanup_err = cleanup(self, true)
   message = message or "Export canceled."
@@ -163,6 +246,18 @@ function M.start(instrument, options, path, callbacks)
     slot = 1, offset = 0, written_frames = 0, verified_frames = 0, finished = false,
   }, Job)
   job.timer = function()
+    if job.finished then
+      local retries_left = job.cleanup_retry_ticks_remaining or 0
+      if retries_left > 0 then
+        job.cleanup_retry_ticks_remaining = retries_left - 1
+        local cleanup_err = cleanup(job, job.cleanup_discard)
+        if job.cleanup_retry_ticks_remaining == 0 and cleanup_err then
+          job.cleanup_retry_error = cleanup_err
+          print("[DigitaktSampleChain] Export cleanup retries exhausted: " .. cleanup_err)
+        end
+      end
+      return
+    end
     local ok, err = pcall(Job.step, job)
     if not ok then job:fail(err) end
   end
@@ -174,6 +269,10 @@ function M.start(instrument, options, path, callbacks)
   local setup_ok, setup_err = pcall(function()
     local song = assert(renoise.song(), "Open a Renoise song first.")
     local function invalidate()
+      if job.finished then
+        if job.cleanup_discard ~= nil then cleanup(job, job.cleanup_discard) end
+        return
+      end
       job.invalid_reason = "Source samples changed. Restart the export."
     end
     local function cancel_document() job:cancel("Export canceled because the song or tool closed.") end

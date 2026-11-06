@@ -122,17 +122,16 @@ readiness is not a native pass.
 DigitaktSampleChain offline checks cover streaming, file replacement, audio math
 and mocked GUI/lifecycle behavior. Run `./tests/digitaktsamplechain/run_native.ps1`
 with Renoise closed for its separate fresh-process native probe. The
-[native results](renoise/host_verification.md#digitakt-native-export-2026-11-05)
-cover real sample buffers, timers, reimport, undo preservation and notifier-driven
-GUI checks. These recorded results predate the mandatory explicit grid
-divisions change and must not be treated as a PASS for the updated grid behavior.
-Same-size edits emit no buffer notification on the verified host; the exporter
-detects already-written audio changes using bounded PCM readback.
+[native results](renoise/host_verification.md#digitakt-hardening-verification-2026-11-06)
+cover explicit grids, real sample buffers, timers, reimport, undo preservation,
+destination directories and notifier-driven GUI checks. Same-size edits emit no
+buffer notification on the verified host; bounded PCM readback detects changes
+that affect audio not yet checked, but does not provide an atomic snapshot.
 `-WaveformDirectory tmp/000` adds exhaustive 64-file batches against the supplied
 single-cycle corpus, preserving generated chains and a hashed source manifest;
 see the [corpus results](renoise/host_verification.md#digitakt-single-cycle-corpus-2026-11-05).
-Real Renoise integration, playback, undo and save/reload behavior require
-manual validation until an executed native scenario explicitly covers them.
+Native assertions do not establish physical UI interaction, audible playback,
+Digitakt import, or behavior outside the executed scenarios.
 
 ## Package license checks
 

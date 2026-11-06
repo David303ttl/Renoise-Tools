@@ -43,23 +43,26 @@ events. Rendering and PCM encoding yield after an 8 ms budget, checked every
 32 frames. File I/O, callbacks and an individual batch can exceed that budget.
 No complete chain or complete source audio is copied into Lua tables.
 Before replacement, a second bounded pass re-renders the source and compares it
-with the staged PCM. The source buffers are never modified and export creates
-no song undo entry.
+with the staged PCM; the WAV header and length are also checked. The source
+buffers are never modified and export creates no song undo entry.
 
 Do not edit source audio while exporting. Observed buffer, slice, sample-list or
 instrument-list changes abort the export; song release and tool unload cancel
 it and release timers and observers. Buffer dimensions are checked between
 chunks. Renoise 3.5.4 does not notify same-size edits; PCM readback verification
-detects changes to already-written audio before committing. Continuous editing
-is not snapshot-isolated, so keep sources stable during both passes.
+detects changes affecting audio that has not yet been checked. An edit after a
+region is checked can go undetected. Continuous editing is not snapshot-isolated,
+so keep sources stable during both passes.
 
 Output is staged in an atomically reserved directory beside the destination.
 Colliding paths are retried without opening or truncating them.
 Cancellation and write/read/seek/flush/close
 failures leave an existing destination unchanged. Replacement uses a temporary
-backup; failed restoration reports the original backup's recovery path. Cleanup
-failures are reported rather than hidden. This is not a power-loss-safe file
-transaction. Chains exceeding the standard 32-bit RIFF size limit are rejected.
+backup and rejects an existing destination that is not a regular file; failed
+restoration reports the original backup's recovery path. Cleanup failures are
+reported rather than hidden. The destination is not locked against other
+processes, and replacement is not a power-loss-safe file transaction.
+Chains exceeding the standard 32-bit RIFF size limit are rejected.
 
 ## Verification
 
@@ -84,7 +87,7 @@ are removed after the run.
 
 Native coverage includes buffers, timers, source changes, undo, GUI views,
 WAV reimport, 44.1/96/192 kHz conversion and staging collisions. See the
-[host verification record](../tests/renoise/host_verification.md#digitakt-native-export-2026-11-06).
+[host verification record](../tests/renoise/host_verification.md#digitakt-hardening-verification-2026-11-06).
 
 For a supplied mono 16-bit PCM WAV corpus:
 

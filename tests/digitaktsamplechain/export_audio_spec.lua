@@ -3,7 +3,6 @@ local runner = require('export_runner')
 local settings = require('chain_options')
 local host = require('host_stub')
 local RATE, HEADER_BYTES, PCM_SCALE = 48000, 44, 32768
-local MAX_TICKS = 100
 
 local function uint(bytes, offset, count)
   local value = 0
@@ -34,12 +33,7 @@ local function export(source, options)
     on_error = function(err) failure = err end,
   }))
   local temporary = job.output.temporary
-  local ticks = 0
-  while next(tool.timers) do
-    next(tool.timers)()
-    ticks = ticks + 1
-    assert(ticks < MAX_TICKS, 'export did not terminate')
-  end
+  host.drive(tool, job)
   assert(job.finished and result and not failure, failure)
   local bytes = host.read_file(path)
   assert(os.remove(path))
