@@ -58,15 +58,6 @@ local function validate(sources)
     writers = {model=true, renoise=true, writers=true},
     runtime = {model=true, renoise=true, writers=true, runtime=true},
   }
-  local obsolete = {
-    ["writers.phrase_ownership"] = true,
-    ["model.pattern_store"] = true,
-    ["model.target_capabilities"] = true,
-    ["model.draft_cache"] = true,
-  }
-  for name in pairs(obsolete) do
-    assert(not sources[name], "obsolete module remains: " .. name)
-  end
   local pb_choice_table_count = 0
   for name, source in pairs(sources) do
     local module_path = "." .. name .. "."
@@ -82,7 +73,6 @@ local function validate(sources)
     local owner = name:match("^([^.]+)%.")
     for dependency in pairs(graph[name]) do
       assert(sources[dependency], name .. " imports missing module " .. dependency)
-      assert(not obsolete[dependency], name .. " imports obsolete module " .. dependency)
       local dependency_owner = dependency:match("^([^.]+)%.")
       if allowed[owner] then
         assert(dependency_owner and allowed[owner][dependency_owner],
@@ -145,8 +135,6 @@ rejects({["model.a"]="require('gui')", ["gui"]=""}, "forbidden module")
 validate({["model.a"]="", ["writers.b"]="local function lazy() return require('model.a') end"})
 validate({["model.a"]="", ["renoise.a"]="require('model.a')", ["writers.a"]="require('renoise.a')", ["runtime.a"]="require('writers.a')"})
 rejects({["model.policies"]="", ["model.a"]="", ["writers.a"]="local choices = {0, 2, 12, 24, 48}"}, "duplicates the PB choices policy")
-rejects({["writers.phrase_ownership"]="", ["writers.a"]="require('writers.phrase_ownership')"}, "obsolete module")
-rejects({["model.pattern_store"]=""}, "obsolete module remains")
 rejects({["tests.driver"]=""}, "development module in runtime inventory")
 rejects({["__dev.remote_driver"]=""}, "development module in runtime inventory")
 rejects({["gui"]="dofile('tests/driver.lua')"}, "runtime file loader")

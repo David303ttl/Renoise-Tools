@@ -39,8 +39,8 @@ host objects govern release and cleanup is best effort if they disappear.
 Source, output settings and label/custom metadata share one linear Undo/Redo
 history. Changed operations enter through ordinary history/draft admission;
 identical results are no-ops. Active scope respects the relevant memory bound;
-All 32 includes inactive entries without changing bounds. TIME operations retain
-the leading-NOTE invariant. Reset preserves TIME length and label/custom metadata.
+All 32 includes inactive entries without changing bounds. TIME 01 normalizes
+TIE to NOTE. Reset preserves TIME length and label/custom metadata.
 
 Randomization is deterministic for a seed, parameters, mask and scope. PITCH
 randomization retains flags and samples uniformly from permitted notes in range;
@@ -130,17 +130,9 @@ selection loads source; foreign selection does not redirect the destination.
 Writer-owned structural notifications are suppressed during transactions; user
 selection remains observable. ACID never assigns native selection properties.
 
-## Verification boundaries
+## Tests and host checks
 
-[Runtime acceptance](../tests/acid/runtime_acceptance.md) records scoped native,
-deterministic and operator results, including waivers and limitations.
-[GUI acceptance](../tests/acid/acid_gui_redesign_acceptance.md) records native
-redesign, layout and lifecycle checks. Dated evidence applies to its tested build;
-older pending statements are not a current implementation checklist.
-
-Mocked tests do not establish audible playback. Recorded MIDI delivery does not
-establish receiver audio or sample continuity; sample/VST audio capture was
-waived and remains unverified. Use the
-[regeneration guide](../tests/acid/acid_regeneration_manual.md) and
-[timing guide](../tests/acid/acid_timing_manual.md) for host procedures and
-receiver-specific checks. Waived investigations are not implementation blockers.
+Run `./scripts/run_tests.ps1 -Tool ACID` from the repository root. See the
+[Renoise checks](../tests/README.md#renoise-checks) and their linked tool guides.
+Mocks cover logic and API interactions; use Renoise for behavior that depends on
+host playback, GUI, undo or save/reload.

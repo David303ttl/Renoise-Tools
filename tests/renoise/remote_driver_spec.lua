@@ -946,7 +946,7 @@ local function test_fixed_native_acceptance_command()
       assert(type(json_codec) == "table" and type(json_codec.array) == "function",
         "acceptance runner did not receive the shared response codec")
       assert(case_name == "integrity-observers" or case_name == "writer-recovery" or
-        case_name == "editor-responsiveness" or case_name == "gui-redesign" or case_name == "gui-layout" or
+        case_name == "editor-responsiveness" or case_name == "gui-layout" or
         case_name == "gui-lifecycle" or
         case_name == "import-donor" or case_name == "ownership-negatives" or
         case_name == "revision-undo-fixture" or case_name == "revision-undo-prepare" or case_name == "revision-undo" or
@@ -979,14 +979,10 @@ local function test_fixed_native_acceptance_command()
   assert_equal(find_response(invalid, "acceptance-profile-invalid-value").error.code, "invalid_arguments")
   assert_equal(completion, nil, "invalid acceptance command reached its runner")
 
-  for _, case_name in ipairs({"production-session-8x8", "production-stress-16x8", "phrase-midi-delivery",
-      "production-latency-8x8", "production-latency-16x8"}) do
-    local id = "acceptance-retired-" .. case_name
-    send_request(host, client, id, "acid.acceptance.run", {case = case_name})
-    fire_idle(host)
-    assert_equal(find_response(take_responses(client), id).error.code, "invalid_arguments")
-    assert_equal(completion, nil, "retired acceptance case reached its runner: " .. case_name)
-  end
+  send_request(host, client, "acceptance-unsupported-case", "acid.acceptance.run", {case = "unsupported-case"})
+  fire_idle(host)
+  assert_equal(find_response(take_responses(client), "acceptance-unsupported-case").error.code, "invalid_arguments")
+  assert_equal(completion, nil, "unsupported acceptance case reached its runner")
 
   local persistence_cases = {"persistence-failures",
     "metadata-recovery-prepare", "metadata-recovery", "metadata-recovery-cold",
@@ -1070,7 +1066,7 @@ local function test_fixed_native_acceptance_command()
   local gui_lifecycle = find_response(take_responses(client), "acceptance-gui-lifecycle")
   assert(gui_lifecycle and gui_lifecycle.ok)
   assert_equal(gui_lifecycle.result.status, "PASS")
-  send_request(host, client, "acceptance-document-scoped", "acid.acceptance.run", {case = "gui-redesign"})
+  send_request(host, client, "acceptance-document-scoped", "acid.acceptance.run", {case = "editor-responsiveness"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-document-scoped"), nil)
   host.release:fire()
@@ -1080,7 +1076,7 @@ local function test_fixed_native_acceptance_command()
   assert(canceled_acceptance and not canceled_acceptance.ok)
   assert_equal(canceled_acceptance.error.code, "canceled",
     "ordinary acceptance must remain scoped to its original document epoch")
-  assert(not completion({status = "PASS", case = "gui-redesign"}),
+  assert(not completion({status = "PASS", case = "editor-responsiveness"}),
     "late ordinary acceptance completion was accepted after document release")
   send_request(host, client, "acceptance-writer-recovery", "acid.acceptance.run", {case = "writer-recovery"})
   fire_idle(host)
@@ -1118,11 +1114,6 @@ local function test_fixed_native_acceptance_command()
   assert(gui_layout and gui_layout.ok, gui_layout and tostring(gui_layout.error and gui_layout.error.code) or "GUI layout response missing")
   assert_equal(gui_layout.result.status, "PASS")
   assert_equal(gui_layout.result.metrics.states[1].name, "program-compact")
-  send_request(host, client, "acceptance-retired-layout-sizing", "acid.acceptance.run", {case = "layout-sizing"})
-  fire_idle(host)
-  local retired_layout = find_response(take_responses(client), "acceptance-retired-layout-sizing")
-  assert(retired_layout and not retired_layout.ok)
-  assert_equal(retired_layout.error.code, "invalid_arguments")
   send_request(host, client, "acceptance-ownership-negatives", "acid.acceptance.run", {case = "ownership-negatives"})
   fire_idle(host)
   assert_equal(find_response(take_responses(client), "acceptance-ownership-negatives"), nil)

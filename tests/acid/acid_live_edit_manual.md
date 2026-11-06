@@ -1,38 +1,27 @@
-# ACID Live Edit manual verification
+# ACID Live Edit checks
 
-Use the [integrated setup and persistence checks](acid_regeneration_manual.md).
-These procedures do not claim an executed native result.
-Executed checks and remaining limits are recorded in
-[integrated native verification](runtime_acceptance.md#integrated-editor-and-live-edit-verification-2026-11-02).
+Use a disposable song with an ACID-owned phrase selected.
 
-1. Open **Tools > ACID...** with an unchanged owned phrase selected. With
-   **Live Edit** off, change a PITCH note and a TIME command. Verify a dirty
-   recoverable draft and unchanged native phrase cells. Save/cold-reopen the
-   song and compare draft and committed source separately.
-2. Return to the clean fixture. Enable **Live Edit** without editing. Compare
-   phrase cells, inventory and persisted source: arming alone must not write.
-   Switch Program/Grid, pages and targets. Navigation
-   must not generate; returning to a dirty target restores its own draft.
-3. Edit PITCH, octave, ACCENT, SLIDE, TIME and output settings individually.
-   Each accepted musical edit uses the guarded synchronous writer and updates
-   the same owned destination. Inspect actual cells, source association and
-   unchanged peers after each callback. Label-only edits and mask inspection
-   must not render. Do not describe a background render or asynchronous job.
-4. Make several successive edits and switch targets between settled callbacks.
-   Verify each target's source/output association and no stale write to another
-   target. Disable Live Edit, edit again and verify unchanged output until
-   **Generate**. Check ACID Undo/Redo with Live Edit both off and on; record
-   native host Undo separately, including metadata-only limitations.
-5. Select **New Phrase**, edit with Live Edit off, then explicitly **Generate**.
-   Only the selected New destination permits creation. Select a foreign,
-   manually modified, deleted or colliding target; generation must block and
-   retain the draft. Live Edit never silently creates a replacement phrase.
-6. Change songs or close ACID between edits. Reopen and inspect song context,
-   observers and destination identity. A stale editor must not write to the
-   replacement song. Save/cold-reopen and compare all source/settings/draft
-   values without automatic generation.
-7. Execute the safe failure cases in canonical 13.4/13.7 on disposable copies.
-   Preserve byte/preimage evidence, unsaved draft and independent blockers;
-   distinguish ordinary Generate retry from persistent unavailable outcomes.
-   Target switching and dialog reopening must not clear a song integrity
-   blocker. Do not infer durable success from status text alone.
+1. With Live Edit off, change a pitch and a TIME command. Confirm the draft is
+   dirty and the phrase cells stay unchanged. Save and reopen; confirm the draft
+   is recoverable separately from committed phrase content.
+2. Enable Live Edit without editing. Confirm arming and navigation do not write.
+   Switch views, pages and owned phrase destinations; each destination retains
+   its own draft and source/output association.
+3. Change a pitch, octave, ACCENT, SLIDE, TIME command or output setting. Confirm
+   each accepted musical edit writes the same owned phrase in place. Label changes
+   and mask browsing do not render. Turn Live Edit off and confirm edits leave the
+   phrase unchanged until **Generate**.
+4. Switch destinations between edits. Confirm no stale write reaches another
+   phrase. Test ACID Undo/Redo with Live Edit both off and on, then check native
+   Renoise Undo/Redo as described in the [destination checks](acid_phrase_destination_manual.md).
+5. Select **New Phrase** and edit with Live Edit off. The phrase is created
+   only after **Generate**. Foreign, manually changed, deleted or colliding
+   destinations must block writes while preserving the draft.
+6. Change songs or close ACID between edits. Reopen and verify the active song,
+   observers and destination identity. Save/reopen and compare source, settings,
+   draft and phrase cells; reopening must not generate.
+7. Cause an ordinary generation failure and retry with **Generate**. Then test a
+   persistent song-integrity blocker on a disposable copy: changing destination
+   or closing and reopening ACID must not clear it. Confirm blocked writes retain
+   the draft and do not change phrase cells.

@@ -1,140 +1,69 @@
-# Test suite
+# Tests
 
-The pure Lua specs run without Renoise. Each spec is launched in its own Lua
-process so mocked Renoise APIs and loaded modules cannot affect another tool.
-Default discovery includes the offline Renoise driver and fixture-probe specs;
-`-Tool ACID` includes those harness specs, and `-Tool Renoise` selects only them.
+## Lua suites
 
-From the repository root, run every spec with PowerShell:
+Run all specs, or select the affected tool. Each spec runs in a separate Lua
+process so mocks and module caches stay isolated.
 
 ```powershell
 ./scripts/run_tests.ps1
+./scripts/run_tests.ps1 -Tool ARP
+./scripts/run_tests.ps1 -Tool ACID -LuaCommand lua5.1
+./scripts/run_tests.ps1 -Tool Renoise
 ```
 
-If Lua is installed under a different command name, pass it explicitly:
-
-```powershell
-./scripts/run_tests.ps1 -LuaCommand lua5.1
-./scripts/run_tests.ps1 -Tool DigitaktSampleChain -LuaCommand lua5.1
-```
-
-Run the offline Lua, PowerShell preflight, runner and package checks with one
-command. Lua 5.1 or newer and LuaJIT 2.x are supported:
-
-```powershell
-./scripts/run_offline_tests.ps1 -LuaCommand lua5.1
-```
-
-The shared runner owns interpreter/process checks, registration regressions, Lua
-specs, and release packaging. Tool checks live behind an optional
-`tests/<short-name>/offline.ps1` entrypoint accepting `-LuaCommand`. Entrypoints
-run in separate PowerShell processes in tool-name order and must return a
-nonzero exit code on failure. ACID owns host preflight, native runner mocks,
-development packaging, and loop-oracle validation through its entrypoint.
-Adding another tool does not require editing either shared runner.
-
-The checks remain available individually: `./scripts/run_tests.ps1`,
-`./scripts/test_host_preflight.ps1`, `./tests/renoise/runner_spec.ps1`,
-`./tests/renoise/test_package_dev.ps1 -LuaCommand lua5.1`, and
-`./tests/package_license_spec.ps1`.
-
-The development package integration suite requires Windows and Lua 5.1 or newer.
-Both runners check `_VERSION` and report the interpreter used. They default to
-`lua` from `PATH`; use `-LuaCommand` for an explicit executable name or path.
-See the [development setup guide](../docs/DEVELOPMENT.md#required-tools).
-Production code remains Lua 5.1 compatible, with explicit Lua 5.1 baseline checks.
-A newer local interpreter cannot validate that baseline.
-
-A single spec can also be run directly from the repository root, for example:
-
-```sh
-lua tests/arp/arp_writer_spec.lua
-lua tests/acid/acid_compiler_spec.lua
-```
-
-Tool suites are discovered from root `.xrnx` directories and matching directories
-under `tests/` (lowercase short names). Specifications are discovered
-recursively in deterministic order. `All` is reserved for suite selection;
-`renoise` is a reserved host suite: ACID
-includes it, while other tools do not. Unknown selectors, ambiguous registrations,
-orphaned test directories, and missing or
-invalid configuration fail explicitly. A tool without specs is skipped by `All`;
-selecting that tool directly fails.
-
-To register a tool, add its implementation and `tests/<short-name>/config.lua`:
+`-Tool ACID` includes the Renoise harness specs; `-Tool Renoise` runs only those
+specs. The runner discovers root `.xrnx` tools and matching
+`tests/<short-name>/` directories. To register a tool, add
+`tests/<short-name>/config.lua`:
 
 ```lua
 return { runtime_root = "com.example.MyTool.xrnx" }
 ```
 
-Configuration uses this single-field literal form (a trailing comma is allowed).
-The runtime root must identify the matching repository tool directory. Put Lua
-specifications anywhere under that test directory and start each spec with
-`dofile("tests/bootstrap.lua")("mytool")`. The bootstrap derives the test path
-and configures module lookup for that tool. Specs still run
-as separate processes when using the suite runner.
+Specs can live anywhere below that directory and start with
+`dofile("tests/bootstrap.lua")("mytool")`. A spec can also run directly from
+the repository root with `lua tests/<tool>/<spec>.lua`.
 
-ACID regression coverage targets the synchronous production planner, phrase
-materializer, writer and runtime. Musical expectations must be independent of
-retired writers. Native acceptance covers ownership, rollback, persistence,
-Undo/Redo and lifecycle behavior; mocked checks do not establish playback.
+`./scripts/run_offline_tests.ps1` runs the Lua suites and repository offline
+checks. Tool-specific offline checks are registered in
+`tests/<short-name>/offline.ps1`.
 
-For ACID runtime tests, use `runtime_phrase_fixture.fixture('new')` for checks
-that need no owned destination. The default fixture retains complete owned
-phrases for content, identity, navigation and recovery checks. Keep full-capacity
-snapshot coverage, including hidden columns and inactive lines. Reuse
-`tests/assert_unreachable.lua` for retained-reference checks.
+## Renoise checks
 
-## Real Renoise and manual checks
-
-Run the available Native smoke in a fresh Renoise instance with a disposable song:
+Mocks cover model logic and API interactions they meaningfully simulate. Run
+host checks when the change depends on actual Renoise behavior. Use a disposable
+song and choose the relevant case; see the [host runner guide](renoise/README.md).
 
 ```powershell
 ./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong
+./scripts/run_interactive_tests.ps1 -Install -ApproveDisposableSong -AcceptanceCase gui-layout
 ```
 
-Add `-RenoiseProcessId <pid>` to use an existing instance. Other instances and
-virtual desktops can remain in use. No desktop/profile attestation or recorded
-spike evidence is required. Select `-Suite Keyboard` or `-Suite All` to run
-keyboard checks; Native remains focus-free and does not require AutoHotkey.
-Offline mocks and manual diagnostics do not count as native test passes. See
-[Renoise testing](renoise/README.md) for executable/tool path overrides and checks.
-Normal release tools are independent of this development harness.
+The runner supports `Native`, `Keyboard` and `All` suites. Keyboard tests and
+Native cases that send keys require AutoHotkey v2 and an external configuration.
+On a shared desktop, select a foreground Renoise instance with
+`-RenoiseProcessId`. Window activation requires `-AllowKeyboardFocusActivation`.
 
-For other manual checks, use a disposable song and follow the relevant guides:
+Manual cases requiring listening or physical interaction are documented by tool:
 
-- [ARP v0.4 gates and regeneration](arp/arp_v04_manual.md)
-- [ARP v0.5 routing and note divisions](arp/arp_v05_manual.md)
+- [ARP](arp/arp_manual.md)
 - [ACID phrase playback](acid/acid_phrase_manual.md)
-- [ACID articulation modes](acid/acid_slide_manual.md)
-- [ACID sampler and control signals](acid/acid_sampler_control_manual.md)
-- [ACID Repeat acceptance and deferred audio checks](acid/acid_loop_manual.md)
-- [ACID Live Edit](acid/acid_live_edit_manual.md)
-- [ACID integrated editor procedures and evidence](acid/acid_regeneration_manual.md)
-- [Digitakt sample-chain export checks](../com.david303ttl.DigitaktSampleChain.xrnx/README.md#verification)
+- [ACID timing](acid/acid_timing_manual.md)
+- [ACID articulation](acid/acid_articulation_manual.md)
+- [ACID destinations and sampler controls](acid/acid_phrase_destination_manual.md)
+- [ACID live editing](acid/acid_live_edit_manual.md)
+- [ACID editor presentation](acid/acid_editor_presentation_manual.md)
+- [ACID operations](acid/acid_operations_manual.md)
+- [DigitaktSampleChain](../com.david303ttl.DigitaktSampleChain.xrnx/README.md#verification)
 
-The [integrated editor guide](acid/acid_regeneration_manual.md)
-defines native checks and evidence fields, including operation
-dialogs with inactive memory. Scripted modal answers do not establish that
-human journey or distinguish Active from All-32 at 32/32 bounds. Procedure
-readiness is not a native pass.
+## Packaging
 
-DigitaktSampleChain offline checks cover streaming, file replacement, audio math
-and mocked GUI/lifecycle behavior. Run `./tests/digitaktsamplechain/run_native.ps1`
-with Renoise closed for its separate fresh-process native probe. The
-[native results](renoise/host_verification.md#digitakt-hardening-verification-2026-11-06)
-cover explicit grids, real sample buffers, timers, reimport, undo preservation,
-destination directories and notifier-driven GUI checks. Same-size edits emit no
-buffer notification on the verified host; bounded PCM readback detects changes
-that affect audio not yet checked, but does not provide an atomic snapshot.
-`-WaveformDirectory tmp/000` adds exhaustive 64-file batches against the supplied
-single-cycle corpus, preserving generated chains and a hashed source manifest;
-see the [corpus results](renoise/host_verification.md#digitakt-single-cycle-corpus-2026-11-05).
-Native assertions do not establish physical UI interaction, audible playback,
-Digitakt import, or behavior outside the executed scenarios.
+Package after changing runtime layout or package inputs:
 
-## Package license checks
+```powershell
+./scripts/package.ps1 -Tool ACID
+```
 
-Run `./tests/package_license_spec.ps1` with PowerShell 7 to build all XRNX
-archives into a temporary directory and verify that each contains the
-identical, full GPLv3 LICENSE at archive root.
+`./tests/package_license_spec.ps1` checks that every archive contains its tool's
+full GPLv3 license.

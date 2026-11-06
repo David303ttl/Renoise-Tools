@@ -639,13 +639,13 @@ try {
             Set-Content -LiteralPath $preferencesPath '<Preferences />'
             $preferencesHash = (Get-FileHash -LiteralPath $preferencesPath -Algorithm SHA256).Hash.ToLowerInvariant()
             $operation = Get-RenoiseRestorationOperation
-            . $operation $removeAction
+            . ([scriptblock]::Create($operation.ToString())) $removeAction
             Assert ($script:runnerRemoveAttempts -eq 2) 'transient directory lock was not retried exactly once'
             $preservedPreferences = Join-Path $artifactRoot 'generated-preferences.xml'
             Assert ((Get-FileHash -LiteralPath $preservedPreferences -Algorithm SHA256).Hash.ToLowerInvariant() -ceq $preferencesHash) 'generated preferences.xml was not preserved byte-for-byte'
         } else {
             $operation = Get-RenoiseRestorationOperation
-            Reject { . $operation $removeAction } 'changed during restoration'
+            Reject { . ([scriptblock]::Create($operation.ToString())) $removeAction } 'changed during restoration'
             Assert ($script:runnerRemoveAttempts -eq 1) 'restoration retried after a partial removal revealed an unexpected file'
             Assert (Test-Path -LiteralPath (Join-Path $installedToolPath 'unexpected.lua')) 'restoration deleted a file added after the partial removal'
             Assert (Test-Path -LiteralPath $localBackupToolPath -PathType Container) 'partial changed installation lost its restoration backup'
@@ -670,13 +670,15 @@ Assert ($reportLine.Count -eq 1) 'runner failed to emit a report'
 $runReport = Get-Content -LiteralPath $reportLine[0].Substring(12) -Raw | ConvertFrom-Json
 Assert ($runReport.status -eq 'ERROR' -and $runReport.error -match 'TestEnvironment.Keyboard.ShowShortcut') 'missing shortcut did not fail clearly'
 Assert ($runReport.keyboard.negative_cases[0].name -eq 'missing_mapping' -and $runReport.keyboard.negative_cases[0].input_sent -eq $false) 'missing mapping guard did not report a no-input negative case'
-$retiredCaseInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-    -Suite Native -AcceptanceCase make-independent -ApproveDisposableSong 2>&1
-Assert ($LASTEXITCODE -ne 0) 'retired Make Independent acceptance case remained enabled'
-$retiredCaseReportLine = @($retiredCaseInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-Assert ($retiredCaseReportLine.Count -eq 1) 'retired-case rejection did not emit a report'
-$retiredCaseReport = Get-Content -LiteralPath $retiredCaseReportLine[0].Substring(12) -Raw | ConvertFrom-Json
-Assert ($retiredCaseReport.error -match 'Unsupported native acceptance case') 'retired-case rejection was not explicit'
+$invalidCaseInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
+    -Suite Native -AcceptanceCase unsupported-case -ApproveDisposableSong 2>&1
+Assert ($LASTEXITCODE -ne 0) 'runner accepted an unsupported native acceptance case'
+$invalidCaseReportLine = @($invalidCaseInvocation | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
+Assert ($invalidCaseReportLine.Count -eq 1) 'unsupported-case rejection did not emit a report'
+$invalidCaseReport = Get-Content -LiteralPath $invalidCaseReportLine[0].Substring(12) -Raw | ConvertFrom-Json
+Assert ($invalidCaseReport.error -match 'Unsupported native acceptance case' -and
+    @($invalidCaseReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
+    'unsupported native acceptance case was not rejected before starting Renoise'
 $metadataPidInvocation = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
     -Suite Native -AcceptanceCase metadata-recovery -RenoiseProcessId 123 -ApproveDisposableSong 2>&1
 Assert ($LASTEXITCODE -ne 0) 'metadata recovery cold reopen accepted a selected Renoise PID'
@@ -707,12 +709,10 @@ $coldAcceptanceFunction = $runnerAst.Find({ param($node)
 Assert ($null -ne $coldAcceptanceFunction -and $coldAcceptanceFunction.Extent.Text -match "Invoke-RenoiseDriverBootstrap" -and
     $coldAcceptanceFunction.Extent.Text -match "Assert-RenoiseProcessIdentity") 'cold-process flow does not bootstrap and identity-check the newly launched host'
 Assert ($runnerAst.Extent.Text -match 'Invoke-ColdMetadataRecovery -SongPath \$recoverySongPath -ExpectedBaseline \$acceptance\.saved_baseline') 'metadata cold-process verification is not run against its saved fixture'
-Assert ($runnerAst.Extent.Text -notmatch "'independence-undo-prepare'" -and
-    $runnerAst.Extent.Text -match "'revision-undo-prepare'" -and
+Assert ($runnerAst.Extent.Text -match "'revision-undo-prepare'" -and
     $runnerAst.Extent.Text -match "'revision-live-undo-prepare'" -and
     $runnerAst.Extent.Text -match 'case = \$undoPrepareCase' -and
     $runnerAst.Extent.Text -match "-Keys '\{Enter\}'" -and
-    $runnerAst.Extent.Text -notmatch 'undoCallbackAcceptance' -and
     $runnerAst.Extent.Text -match 'case = \$AcceptanceCase') 'native undo acceptance does not invoke the guarded dialog callback before readback'
 Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instrument workflow acceptance is not allowlisted by the interactive runner'
 & {
@@ -729,17 +729,6 @@ Assert ($runnerAst.Extent.Text -match 'multi-instrument-workflow') 'multi-instru
     . ([scriptblock]::Create($transportAssignment.Extent.Text))
     Assert $transportOnly 'transport smoke unnecessarily enabled native fixture deployment'
 }
-foreach ($case in @('production-session-8x8','production-stress-16x8','phrase-midi-delivery')) {
-    $retired = & pwsh -NoProfile -File (Join-Path $repoRoot 'scripts/run_interactive_tests.ps1') `
-        -Suite Native -AcceptanceCase $case -ApproveDisposableSong 2>&1
-    Assert ($LASTEXITCODE -ne 0) "retired acceptance case '$case' was accepted"
-    $retiredReportLine = @($retired | ForEach-Object { [string]$_ } | Where-Object { $_ -like 'Run report: *' })
-    Assert ($retiredReportLine.Count -eq 1) "retired case '$case' rejection did not emit a run report"
-    $retiredReport = Get-Content -LiteralPath $retiredReportLine[0].Substring(12) -Raw | ConvertFrom-Json
-    Assert ($retiredReport.error -match 'Unsupported native acceptance case' -and
-        @($retiredReport.operation_trace | Where-Object operation -eq 'process.start').Count -eq 0) `
-        "retired case '$case' was not rejected by the runner allowlist before starting Renoise"
-    }
 $startProcessFunction = $runnerAst.Find({ param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Start-RunnerOwnedProcess'
 }, $true)

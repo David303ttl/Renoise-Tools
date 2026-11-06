@@ -1,45 +1,25 @@
-# ACID native phrase workflow acceptance
+# ACID phrase playback checks
 
-Use the [integrated setup and workflow checks](acid_regeneration_manual.md).
-Use [timing acceptance](acid_timing_manual.md) for Straight/Triplet, Play Once,
-Repeat and sentinel inspection. Native playback remains unverified until an
-observed result is recorded against the tested build and receiver.
+Use a disposable song and an instrument with an audible receiver. Generate a
+phrase with **Generate**, then select it in Renoise's instrument Phrase Editor.
 
-1. Open **Tools > ACID...**, select **New Phrase** and prepare a representative
-   NOTE/TIE/REST source with ACCENT and outgoing SLIDE on the last consumed
-   PITCH entry. Select **Output > Phrase output > Repeat**, then **Generate**.
-   Record LAST STEP, PITCH span, timing, actual phrase cells and receiver.
-2. In Renoise's instrument **Phrase Editor**, select the generated phrase and
-   choose native phrase playback **Prg** with that phrase program selected.
-   In the **Pattern Editor**, enter a C-4 note with the same instrument on a
-   sequencer track, followed by OFF after the listening interval. Start the
-   song transport. Verify actual receiver output, then stop and retrigger.
-   Record the chosen phrase program, trigger note, track, transport settings,
-   note release and observed end-to-start slide. If the host labels differ,
-   record the actual controls rather than assuming equivalent settings.
-3. In Renoise's **Pattern Sequencer**, insert/repeat the trigger pattern and
-   add a second trigger at a known song position. Play through both. ACID
-   supplies phrase content; native patterns arrange and trigger it. Compare
-   stop/retrigger with the continuous single-sequence loop. Independent phrase
-   switches have no inherited continuity guarantee.
-4. On a separate disposable copy, use the Phrase Editor's native key tracking
-   **Transpose** and base note C-4, then trigger C-4 and D-4 from the Pattern
-   Editor. Record actual transposition and receiver behavior. Also transpose
-   phrase cells with Renoise's phrase selection transpose command and record
-   the exact command. Reopen ACID and try **Regenerate** after destination
-   changes: record ownership/incompatibility rejection and retained draft.
-5. On another fixture copy, change native phrase length in the Phrase Editor
-   and inspect playback and ACID's rejection of the changed destination.
-   Contrast this with changing ACID **LAST STEP** or **Active PITCH span** and
-   regenerating an unchanged owned target. Those source controls retain all
-   32 stored slots; manual destination edits may invalidate ownership and
-   regeneration does not promise to preserve arbitrary manual phrase edits.
-6. Execute canonical 13.8 indicator cases on both Grid pages with a 32-slot
-   fixture: default-but-referenced, nondefault-but-unreferenced, edited back to
-   baseline, Undo/Redo and reload. Record legibility of stored/referenced/
-   modified indicators separately from stage markers and canonical values.
-7. Execute canonical 13.8 populated-song responsiveness checks. Record actual
-   instrument/phrase counts, max-32 fixture, selection/page/view actions and
-   observable stalls. Verify navigation neither persists nor generates; do not
-   invent a millisecond acceptance threshold or infer resolution counts from
-   perceived responsiveness.
+1. Set native phrase playback to **Prg** and select the generated phrase
+   program. In the Pattern Editor, trigger the instrument with C-4 on a sequencer
+   track and place OFF after the listening interval. Start transport, listen, stop
+   and retrigger. Check receiver output, release and a Repeat end-to-start slide.
+2. Arrange the trigger pattern in the Pattern Sequencer and add another trigger
+   at a known song position. Compare stop/retrigger with continuous phrase looping.
+   Phrase switches do not guarantee inherited note or slide continuity.
+3. On a separate copy, enable native key tracking **Transpose**, set base note
+   C-4, then trigger C-4 and D-4. Check receiver transposition. Separately use
+   Renoise's phrase selection transpose command and check the result. ACID must
+   reject **Generate** if the native edit invalidates destination ownership while
+   retaining the source draft.
+4. Change native phrase length and confirm ACID rejects the modified
+   destination. Change ACID **Length** or **Pitch span** instead and confirm the
+   owned phrase can be generated from the edited source. These source bounds do
+   not discard the other stored slots.
+
+Use the [timing checks](acid_timing_manual.md) for Straight/Triplet, Play Once,
+Repeat and loop-seam behavior, and the [destination checks](acid_phrase_destination_manual.md)
+for ownership and save/reopen behavior.

@@ -5666,17 +5666,6 @@ function M.run(case_name, done, json, profile_mode)
     return true
   end
   profile_mode=resolved_profile
-  if case_name == "gui-redesign" then
-    return run_editor_responsiveness(function(result, context)
-      if type(result) == "table" then
-        result.case = case_name
-        result.native_visual_acceptance = "NOT_CAPTURED"
-        result.native_audio_acceptance = "NOT_CAPTURED"
-        if result.status == "PASS" then result.native_gui_callbacks_verified = true end
-      end
-      done(result, context)
-    end, "Warm")
-  end
   if case_name == "gui-layout" then
     return dofile(renoise.tool().bundle_path .. "\\__dev\\gui_layout_acceptance.lua").run(done, json)
   end
