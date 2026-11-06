@@ -4,6 +4,8 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 
 | Check | Result |
 | --- | --- |
+| Digitakt supplied single-cycle corpus (2026-11-06) | PASS: 53 cases, all 256 supplied 44.1 kHz waveforms, four batches, 24 retained chain WAVs; original hashes unchanged |
+| DigitaktSampleChain native export (2026-11-06) | PASS: 33 base cases with explicit grids, staging reservation/collision checks, clock units and 192 kHz stereo conversion; 43 cases with 65 generated waveforms |
 | Digitakt single-cycle corpus (2026-11-05) | PASS: 72 cases, all 465 supplied waveforms, eight batches, 56 retained chain WAVs; original hashes unchanged |
 | DigitaktSampleChain native export (2026-11-05) | PASS: 24 cases; native audio buffers, streaming timers, WAV bytes/reimport, conversion/pitch/alias checks, source edits, undo preservation, cancellation, real GUI views and document release; see record below |
 | Interactive persistence (2026-11-02) | PASS: injected setter failures, exact rollback/cache isolation, explicit revalidation and fresh-process recovery-label restoration/generation; [evidence](../acid/runtime_acceptance.md#interactive-persistence-acceptance-2026-11-02) |
@@ -29,6 +31,46 @@ Environment: Windows, PowerShell 7, Lua 5.1, Renoise 3.5.4, API 6.2.
 Snapshots contain native inventory values and selection indices. Indices describe
 positions at readback time, not persistent object identity. Driver shutdown is
 complete only after its per-run completion file is observed and removed.
+
+## Digitakt native export (2026-11-06)
+
+| Check | Result |
+| --- | --- |
+| Offline Lua 5.1 | PASS: 8/8 specs |
+| Native base suite | PASS: 33/33 cases |
+| Generated 48 kHz corpus | PASS: 43/43 cases, 65 files, full and partial batches |
+| Package | PASS: root entries validated, ten runtime files |
+
+Coverage: explicit grids, PCM geometry, padding, fades, dither, reimport,
+44.1/96/192 kHz conversion, pitch/alias checks, source changes, cancellation,
+undo, GUI views, document release and staging collisions/cleanup.
+
+Generated-corpus report:
+`tmp/digitakt-native-c14f814505254601a41b6ccd05b1e659/native-report.json`.
+The native clock check confirms seconds; the 8 ms rendering budget is cooperative.
+
+Remaining manual checks: physical save dialog, DPI fit, actual tool unload and
+Digitakt hardware import.
+
+## Digitakt supplied single-cycle corpus (2026-11-06)
+
+```powershell
+./tests/digitaktsamplechain/run_native.ps1 -WaveformDirectory tmp/001 -StartupTimeoutSeconds 600
+```
+
+**53/53 PASS**: 33 base cases and 20 corpus cases. Inputs: 256 mono 16-bit
+44.1 kHz files, 512 frames each, in four 64-file batches. Source hashes unchanged.
+
+Variants: grid-64, padded, concatenated, fade and dither; 24 retained WAVs.
+Each converted sample has 557 frames at 48 kHz. Chains contain 35,648 frames
+without padding or 43,840 with padding. PCM comparisons, native reimport and
+byte-identical dither repeats pass; no staging directories remain.
+
+The converted-PCM reference shares the production resampler. Analytical tone
+tests check pitch and alias suppression independently.
+
+Report and exports:
+`tmp/digitakt-native-2a941fd709cf410bbf21293a7d79f565/`.
 
 ## Digitakt native export (2026-11-05)
 
@@ -89,7 +131,7 @@ Renoise 3.5.4 / API 6.2: **72/72 PASS**, including the 24 base cases and
   40,960 frames (0.853333 seconds). The last Auto/Chain batch contains 8,704 frames
   (0.181333 seconds); its fixed grid has 17 occupied and 47 silent slots.
 
-The native-tested runtime copies match the current source. The test-only probe
+The native-tested runtime copies match the source used for that run. The test-only probe
 was removed; chain outputs, manifest, report and process logs remain available.
 This verifies PCM and native reimport, not listening or Digitakt hardware playback.
 

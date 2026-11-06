@@ -5,6 +5,7 @@ local host = require("host_stub")
 local MAX_TIMER_STEPS = 100
 
 local function clean(tool, song, instrument)
+  host.assert_no_staging_directories()
   assert(next(tool.timers) == nil, "timer leaked")
   local observables = { tool.app_release_document_observable, tool.tool_will_unload_observable,
     song.instruments_observable, instrument.samples_observable }
@@ -259,7 +260,6 @@ assert(not rejected and err:find("do not fit"))
 assert(host.read_file(path) == "original")
 clean(tool, song, long)
 assert(os.remove(path))
-print("DigitaktSampleChain streaming, source lifetime and cancellation specs passed")
 
 -- Mixed source rates use converted lengths for both layouts and cross chunks.
 for _, mode in ipairs({ "chain", "spaced" }) do
@@ -281,3 +281,69 @@ for _, mode in ipairs({ "chain", "spaced" }) do
   clean(tool, song, source)
   assert(os.remove(path))
 end
+
+-- Terminal callback failures are reported once after resources are released.
+for _, terminal in ipairs({ "on_finish", "on_error", "on_cancel" }) do
+  local source = host.instrument({ host.buffer(100) })
+  tool, song = host.host(source)
+  local calls, messages = 0, {}
+  local original_print = print
+  print = function(message) messages[#messages + 1] = message end
+  local ok, err = pcall(function()
+    job = assert(runner.start(source, settings.defaults(), path, {
+      [terminal] = function()
+        calls = calls + 1
+        clean(tool, song, source)
+        error("simulated terminal failure")
+      end,
+    }))
+    if terminal == "on_error" then source.samples_observable:notify()
+    elseif terminal == "on_cancel" then job:cancel() end
+    drive(tool)
+    job.timer()
+    job:cancel()
+    job:fail("late failure")
+  end)
+  print = original_print
+  assert(ok, err)
+  assert(calls == 1 and #messages == 1)
+  assert(job.callback_error:find(terminal, 1, true))
+  assert(messages[1]:find("simulated terminal failure", 1, true))
+  assert(next(job.callbacks) == nil)
+  clean(tool, song, source)
+  if terminal == "on_finish" then assert(os.remove(path)) end
+end
+
+-- Slow reads yield during both passes without changing dither or slot offsets.
+do
+  local elapsed, clock = 0, os.clock
+  local source = host.instrument({ host.buffer(200, 192000, 1, function()
+    elapsed = elapsed + 0.001
+    return 0.25
+  end) })
+  tool, song = host.host(source)
+  opts = settings.defaults()
+  opts.mode, opts.dither = "chain", true
+  result, failure = nil, nil
+  job = assert(runner.start(source, opts, path, callbacks))
+  os.clock = function() return elapsed end
+  local ok, err = pcall(function()
+    job.timer()
+    assert(job.written_frames > 0 and job.written_frames < job.plan.total_frames)
+    while not job.verifying do job.timer() end
+    job.timer()
+    assert(job.verified_frames > 0 and job.verified_frames < job.plan.total_frames)
+    drive(tool)
+  end)
+  os.clock = clock
+  assert(ok, err)
+  assert(result and not failure)
+  local budgeted = host.read_file(path)
+  clean(tool, song, source)
+  job = assert(runner.start(source, opts, path, callbacks))
+  drive(tool)
+  assert(host.read_file(path) == budgeted, "tick budget changed PCM or dither")
+  clean(tool, song, source)
+  assert(os.remove(path))
+end
+print("DigitaktSampleChain streaming, source lifetime and cancellation specs passed")

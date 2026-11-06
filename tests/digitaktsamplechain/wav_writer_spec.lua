@@ -183,6 +183,22 @@ os.remove = remove
 assert(ok and committed and warning:find("could not remove backup"))
 assert(host.read_file(temporary .. ".bak") == content)
 assert(remove(temporary .. ".bak"))
+assert(output:abort())
+
+-- A directory cleanup failure warns after installation and remains retryable.
+output = assert(wav.open(path, #values, 48000))
+assert(output:write(payload) and output:verify(payload))
+local directory = output.staging_directory
+os.remove = function(name)
+  if name == directory then return nil, "simulated directory cleanup failure" end
+  return remove(name)
+end
+ok, committed, warning = pcall(output.commit, output)
+os.remove = remove
+assert(ok and committed and warning:find(directory, 1, true))
+assert(warning:find("simulated directory cleanup failure", 1, true))
+assert(host.read_file(path) == content and io.exists(directory))
+assert(output:abort() and not io.exists(directory))
 
 -- Header write errors close the staging file without touching the destination.
 local io_open = io.open
@@ -203,5 +219,62 @@ io.open = io_open
 assert(ok and not opened and open_err:find("simulated header failure"))
 assert(not io.open(staged, "rb") and host.read_file(path) == content)
 assert(not wav.open(path .. "/missing/out.wav", #values, 48000))
+
+-- A competing file appearing at reservation time is preserved and retried.
+local mkdir = os.mkdir
+local collision
+os.mkdir = function(directory)
+  if not collision then
+    collision = directory
+    host.write_file(directory, "competing writer")
+  end
+  return mkdir(directory)
+end
+ok, opened, open_err = pcall(wav.open, path, #values, 48000)
+os.mkdir = mkdir
+assert(ok and opened, open_err)
+assert(host.read_file(collision) == "competing writer")
+assert(opened:abort() and os.remove(collision))
+
+-- Exhausted collisions and directory errors never truncate existing paths.
+local tmpname = os.tmpname
+os.tmpname = function() return "digitakt-reservation-token" end
+collision = path .. ".digitakt-reservation-token.tmp"
+host.write_file(collision, "existing staging path")
+ok, opened, open_err = pcall(wav.open, path, #values, 48000)
+os.tmpname = tmpname
+assert(ok and not opened and open_err:find("reserve", 1, true))
+assert(host.read_file(collision) == "existing staging path")
+assert(os.remove(collision))
+os.mkdir = function() return nil, "simulated directory failure" end
+ok, opened, open_err = pcall(wav.open, path, #values, 48000)
+os.mkdir = mkdir
+assert(ok and not opened and open_err:find("simulated directory failure", 1, true))
+
+-- Failed file creation releases its reservation; cleanup failures name the path.
+for _, cleanup_failure in ipairs({ false, true }) do
+  local directory
+  io.open = function(name, mode)
+    if mode == "w+b" then
+      directory = name:match("^(.*)/audio.wav$")
+      return nil, "simulated open failure"
+    end
+    return io_open(name, mode)
+  end
+  os.remove = function(name)
+    if cleanup_failure and name == directory then return nil, "simulated directory cleanup failure" end
+    return remove(name)
+  end
+  ok, opened, open_err = pcall(wav.open, path, #values, 48000)
+  io.open, os.remove = io_open, remove
+  assert(ok and not opened and open_err:find("simulated open failure", 1, true))
+  if cleanup_failure then
+    assert(open_err:find(directory, 1, true) and open_err:find("simulated directory cleanup failure", 1, true))
+    assert(remove(directory))
+  end
+  host.assert_no_staging_directories()
+end
+assert(host.read_file(path) == content)
 assert(os.remove(path))
+host.assert_no_staging_directories()
 print("DigitaktSampleChain PCM, dither and transactional file specs passed")

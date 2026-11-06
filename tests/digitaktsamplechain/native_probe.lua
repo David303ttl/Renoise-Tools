@@ -2,6 +2,7 @@
 local json = require("native_json")
 local runner = require("export_runner")
 local settings = require("chain_options")
+local resampler = require("resampler")
 local tool = renoise.tool()
 local RATE, BUFFER_BITS, MONO, STEREO = 48000, 32, 1, 2
 local HEADER_BYTES, PCM_BYTES, FULL_SCALE, BYTE_BASE = 44, 2, 32768, 256
@@ -12,6 +13,8 @@ local SIGNAL_EDGE_FRAMES, MAX_ALIAS_RMS = 64, 0.02
 local CONTROLLER_INTERVAL_MS, CASE_TIMEOUT_SECONDS = 10, 20
 local CORPUS_BATCH_SIZE, CORPUS_TIMEOUT_SECONDS, VERIFY_YIELD_FRAMES = 64, 90, 4096
 local SOURCE_BITS, MILLISECONDS_PER_SECOND = 16, 1000
+local ROUNDING_OFFSET = 0.5
+local CLOCK_CHECK_SECONDS, CLOCK_CHECK_TOLERANCE_SECONDS = 2, 1
 local RIFF_CHUNK_START, CHUNK_HEADER_BYTES = 13, 8
 local tests, cleanups, current_job = {}, {}, nil
 
@@ -81,8 +84,25 @@ local function export(source, options, path, progress)
     on_progress = progress,
   }))
   local job = current_job
+  local staging_directory = job.output.staging_directory
+  local original_timer = job.timer
+  local timing = { output = path:match("[^/\\]+$"), ticks = 0, max_ms = 0, writing_max_ms = 0, verification_max_ms = 0 }
+  report.export_timings = report.export_timings or json.array()
+  report.export_timings[#report.export_timings + 1] = timing
+  tool:remove_timer(original_timer)
+  job.timer = function()
+    local verifying, started = job.verifying, os.clock()
+    original_timer()
+    local elapsed = (os.clock() - started) * MILLISECONDS_PER_SECOND
+    timing.ticks = timing.ticks + 1
+    timing.max_ms = math.max(timing.max_ms, elapsed)
+    local field = verifying and "verification_max_ms" or "writing_max_ms"
+    timing[field] = math.max(timing[field], elapsed)
+  end
+  tool:add_timer(job.timer, CONTROLLER_INTERVAL_MS)
   wait_for(function() return job.finished end)
   check(not tool:has_timer(job.timer), "export timer remained registered")
+  check(not io.exists(staging_directory), "export staging directory leaked")
   current_job = nil
   return result, failure, canceled, job
 end
@@ -112,6 +132,45 @@ add("native-menu-registration", function()
   check(tool:has_menu_entry("Sample Editor:Export Digitakt Sample Chain"), "production menu was not registered")
 end)
 
+add("native-staging-directory-reservation", function()
+  local directory = config.run_directory .. "/reservation.tmp"
+  check(os.mkdir(directory), "could not create staging directory")
+  local duplicate, duplicate_error = os.mkdir(directory)
+  check(not duplicate and duplicate_error, "mkdir must reject an existing staging directory")
+  check(os.remove(directory), "could not remove empty staging directory")
+end)
+
+add("native-staging-collision", function()
+  local wav = require("wav_writer")
+  local path, collision = output("reservation-collision"), nil
+  local mkdir = os.mkdir
+  os.mkdir = function(directory)
+    if not collision then
+      collision = directory
+      write_file(directory, "competing writer")
+    end
+    return mkdir(directory)
+  end
+  local ok, writer, err = pcall(wav.open, path, 1, RATE)
+  os.mkdir = mkdir
+  check(ok and writer, err)
+  local directory = writer.staging_directory
+  check(read_file(collision) == "competing writer", "competing path was modified")
+  check(writer:abort())
+  check(not io.exists(directory), "reservation leaked after abort")
+  check(os.remove(collision))
+end)
+
+add("native-clock-seconds", function()
+  local wall, clock = os.time(), os.clock()
+  wait_for(function() return os.time() >= wall + CLOCK_CHECK_SECONDS end)
+  local elapsed = os.clock() - clock
+  -- API 6.2's os.clock documentation mislabels its native seconds as milliseconds.
+  check(elapsed >= CLOCK_CHECK_SECONDS - CLOCK_CHECK_TOLERANCE_SECONDS
+    and elapsed <= CLOCK_CHECK_SECONDS + CLOCK_CHECK_TOLERANCE_SECONDS, "unexpected os.clock units")
+  return { elapsed_seconds = elapsed }
+end)
+
 for _, divisions in ipairs({ 4, 8, 16, 32, 64 }) do
   for _, padded in ipairs({ false, true }) do
     local count, use_padding = divisions, padded
@@ -126,8 +185,9 @@ for _, divisions in ipairs({ 4, 8, 16, 32, 64 }) do
       local before = source.samples[1].sample_buffer:sample_data(1, 1)
       coroutine.yield()
       local original_name = source.name
-      source.name = "Native export undo sentinel"
+      source.name = string.format("Native export undo sentinel %d %s", count, tostring(use_padding))
       coroutine.yield()
+      wait_for(function() return renoise.song():can_undo() end)
       local undo = renoise.song():can_undo()
       local result, failure = export(source, options, path)
       check(result and not failure, failure)
@@ -242,12 +302,14 @@ add("native-reproducible-dither-and-reimport", function()
 end)
 
 add("native-rate-conversion", function()
-  for _, rate in ipairs({ 44100, 96000 }) do
-    local source = instrument({ rate }, rate)
+  for _, rate in ipairs({ 44100, 96000, 192000 }) do
+    local channels = rate == 192000 and STEREO or MONO
+    local source = instrument({ rate }, rate, channels)
     local buffer = source.samples[1].sample_buffer
     buffer:prepare_sample_data_changes(false)
     for frame = 1, rate do
-      buffer:set_sample_data(1, frame, TONE_LEVEL * math.sin(2 * math.pi * TEST_TONE_HZ * (frame - 1) / rate))
+      local value = TONE_LEVEL * math.sin(2 * math.pi * TEST_TONE_HZ * (frame - 1) / rate)
+      for channel = 1, channels do buffer:set_sample_data(channel, frame, value) end
     end
     buffer:finalize_sample_data_changes()
     local options = settings.defaults()
@@ -516,13 +578,21 @@ if config.waveforms then
           check(sample.sample_buffer:load_from(fixture.path), "could not load " .. fixture.name)
           sample.name = fixture.name
           local buffer = sample.sample_buffer
-          check(buffer.sample_rate == RATE and buffer.number_of_channels == MONO
-            and buffer.bit_depth == SOURCE_BITS, "corpus oracle requires 48 kHz mono 16-bit PCM")
+          check(buffer.number_of_channels == MONO and buffer.bit_depth == SOURCE_BITS,
+            "corpus oracle requires mono 16-bit PCM")
           local payload = source_pcm(fixture.path)
-          local frames = buffer.number_of_frames
+          local frames, source_rate = buffer.number_of_frames, buffer.sample_rate
           check(#payload == frames * PCM_BYTES)
-          entries[#entries + 1] = { buffer = buffer, frames = frames, pcm = payload, name = fixture.name }
-          longest, total = math.max(longest, frames), total + frames
+          local output_frames = math.max(1, math.floor(frames * RATE / source_rate + ROUNDING_OFFSET))
+          -- File PCM bypasses native sample reads and exporter layout. Conversion
+          -- shares the resampling model; analytical tone tests check its numerics.
+          local reference = resampler.reader(function(frame) return source_frame(payload, frame) end,
+            frames, source_rate, RATE)
+          entries[#entries + 1] = {
+            buffer = buffer, frames = frames, pcm = payload, name = fixture.name,
+            source_rate = source_rate, output_frames = output_frames, reference = reference,
+          }
+          longest, total = math.max(longest, output_frames), total + output_frames
         end
         local options = settings.defaults()
         options.mode, options.slot_count = chosen.mode, chosen.slots
@@ -541,21 +611,22 @@ if config.waveforms then
         local absolute = 0
         for slot = 1, slots do
           local entry = entries[slot]
-          local length = options.mode == "chain" and entry.frames or slot_frames
-          local fade = entry and math.min(entry.frames,
+          local length = options.mode == "chain" and entry.output_frames or slot_frames
+          local fade = entry and math.min(entry.output_frames,
             math.floor(RATE * settings.FADE_OUT_MS / MILLISECONDS_PER_SECOND)) or 0
           for frame = 1, length do
             local original_frame, expected = frame - edge, 0
-            if entry and original_frame >= 1 and original_frame <= entry.frames then
-              expected = source_frame(entry.pcm, original_frame)
-              if options.fade and original_frame > entry.frames - fade then
-                local gain = fade == 1 and 0 or (entry.frames - original_frame) / (fade - 1)
-                expected = math.floor(expected * gain + 0.5)
+            if entry and original_frame >= 1 and original_frame <= entry.output_frames then
+              expected = entry.reference(original_frame)
+              if options.fade and original_frame > entry.output_frames - fade then
+                local gain = fade == 1 and 0 or (entry.output_frames - original_frame) / (fade - 1)
+                expected = expected * gain
               end
             end
             absolute = absolute + 1
             local actual = pcm(content, absolute)
             local tolerance = options.dither and expected ~= 0 and 1 or 0
+            expected = math.max(-FULL_SCALE, math.min(FULL_SCALE - 1, math.floor(expected + ROUNDING_OFFSET)))
             check(math.abs(actual - expected) <= tolerance,
               string.format("%s slot %d frame %d: expected %d, got %d", name, slot, frame, expected, actual))
             if absolute % VERIFY_YIELD_FRAMES == 0 then coroutine.yield() end
@@ -578,7 +649,7 @@ if config.waveforms then
           check(read_file(output(name .. "-repeat")) == content, "corpus dither is not reproducible")
         end
         for _, entry in ipairs(entries) do
-          check(entry.buffer.number_of_frames == entry.frames and entry.buffer.sample_rate == RATE)
+          check(entry.buffer.number_of_frames == entry.frames and entry.buffer.sample_rate == entry.source_rate)
           for frame = 1, entry.frames do
             check(entry.buffer:sample_data(1, frame) * FULL_SCALE == source_frame(entry.pcm, frame), "source waveform changed")
           end

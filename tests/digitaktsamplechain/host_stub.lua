@@ -1,11 +1,46 @@
 local M = {}
 local SAMPLE_RATE, MONO_CHANNELS = 48000, 1
 
+-- Standalone Lua lacks Renoise's directory API. Keep directory ownership in
+-- memory while delegating file bytes and failures to real filesystem handles.
+local directories, backing_paths = {}, {}
+local raw_open, raw_remove, raw_rename = io.open, os.remove, os.rename
+local function backing_path(path)
+  local parent, name = path:match("^(.*)/([^/]+)$")
+  if directories[parent] then backing_paths[path] = parent .. "_" .. name end
+  return backing_paths[path] or path
+end
+io.open = function(path, mode) return raw_open(backing_path(path), mode) end
 io.exists = function(path)
+  if directories[path] then return true end
   local file = io.open(path, "rb")
   if not file then return false end
   assert(file:close())
   return true
+end
+
+os.mkdir = function(path)
+  if io.exists(path) then return nil, "Path already exists" end
+  directories[path] = true
+  return true
+end
+os.remove = function(path)
+  if directories[path] then
+    for virtual, physical in pairs(backing_paths) do
+      if virtual:sub(1, #path + 1) == path .. "/" then
+        local file = raw_open(physical, "rb")
+        if file then file:close(); return nil, "Directory is not empty" end
+      end
+    end
+    directories[path] = nil
+    return true
+  end
+  return raw_remove(backing_path(path))
+end
+os.rename = function(from, to) return raw_rename(backing_path(from), backing_path(to)) end
+
+function M.assert_no_staging_directories()
+  assert(next(directories) == nil, "staging directory leaked")
 end
 
 function M.observable()
@@ -74,7 +109,9 @@ end
 function M.temp_path()
   local name = os.tmpname()
   os.remove(name)
-  return name .. "_digitakt.wav"
+  -- Some Windows Lua builds return a drive-root name regardless of TEMP.
+  local token = assert(name:match("[^/\\]+$"))
+  return "tests/digitaktsamplechain/" .. token .. "_digitakt.wav.tmp"
 end
 
 function M.read_file(path)

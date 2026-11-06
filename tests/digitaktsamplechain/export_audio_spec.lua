@@ -44,6 +44,7 @@ local function export(source, options)
   local bytes = host.read_file(path)
   assert(os.remove(path))
   assert(not io.exists(temporary), 'staging file leaked')
+  host.assert_no_staging_directories()
   return decode(bytes), result, bytes
 end
 

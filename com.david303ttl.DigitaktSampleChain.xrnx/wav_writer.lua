@@ -80,7 +80,7 @@ local function file_call(file, method, ...)
   return true
 end
 
-local function staging_path(destination)
+local function reserve_staging_directory(destination)
   for _ = 1, MAX_TEMP_ATTEMPTS do
     local temporary = os.tmpname()
     if io.exists(temporary) then
@@ -89,13 +89,26 @@ local function staging_path(destination)
     end
     local token = temporary:match("[^/\\]+$")
     local candidate = destination .. "." .. token .. ".tmp"
-    if not io.exists(candidate) then return candidate end
+    -- mkdir reserves the namespace atomically; file creation happens inside it.
+    local created, create_err = os.mkdir(candidate)
+    if created then return candidate end
+    if not io.exists(candidate) then return nil, create_err end
   end
-  return nil, "Could not reserve a temporary WAV filename."
+  return nil, "Could not reserve a temporary WAV directory."
 end
 
 local Writer = {}
 Writer.__index = Writer
+
+local function remove_staging_directory(writer)
+  if not writer.staging_directory then return true end
+  local removed, err = os.remove(writer.staging_directory)
+  if not removed then
+    return nil, "Could not remove staging directory '" .. writer.staging_directory .. "': " .. tostring(err)
+  end
+  writer.staging_directory = nil
+  return true
+end
 
 function Writer:abort()
   local errors = {}
@@ -113,6 +126,8 @@ function Writer:abort()
       errors[#errors + 1] = "Could not remove temporary file '" .. self.temporary .. "': " .. tostring(err)
     end
   end
+  local removed, remove_err = remove_staging_directory(self)
+  if not removed then errors[#errors + 1] = remove_err end
   if #errors > 0 then return nil, table.concat(errors, "\n") end
   return true
 end
@@ -183,20 +198,27 @@ function Writer:commit()
       return true, "WAV exported; could not remove backup '" .. backup .. "': " .. tostring(err)
     end
   end
+  local removed, remove_err = remove_staging_directory(self)
+  if not removed then return true, "WAV exported; " .. remove_err end
   return true
 end
 
 function M.open(path, frames, rate)
   local header, err = M.header(frames, rate)
   if not header then return nil, err end
-  local temporary, temp_err = staging_path(path)
-  if not temporary then return nil, "Could not create export staging file: " .. tostring(temp_err) end
+  local directory, temp_err = reserve_staging_directory(path)
+  if not directory then return nil, "Could not create export staging directory: " .. tostring(temp_err) end
+  local temporary = directory .. "/audio.wav"
   local file, open_err = io.open(temporary, "w+b")
-  if not file then return nil, "Could not open WAV output: " .. tostring(open_err) end
   local writer = setmetatable({
-    file = file, destination = path, temporary = temporary,
+    file = file, destination = path, temporary = file and temporary or nil, staging_directory = directory,
     expected = frames * BYTES_PER_FRAME, written = 0,
   }, Writer)
+  if not file then
+    local cleaned, cleanup_err = writer:abort()
+    return nil, "Could not open WAV output: " .. tostring(open_err)
+      .. (cleaned and "" or "\n" .. cleanup_err)
+  end
   local written, write_err = file_call(file, "write", header)
   if not written then
     local cleaned, cleanup_err = writer:abort()

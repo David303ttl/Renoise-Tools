@@ -7,9 +7,21 @@ local wav = require("wav_writer")
 local M = {}
 local FRAMES_PER_STEP, TIMER_INTERVAL_MS = 32768, 10
 local RESAMPLED_FRAMES_PER_STEP = 2048
+local FRAMES_PER_BATCH, STEP_BUDGET_SECONDS = 32, 0.008
 local PERCENT_SCALE = 100
 local Job = {}
 Job.__index = Job
+
+local function notify_terminal(job, name, value)
+  local callback = job.callbacks[name]
+  job.callbacks = {}
+  if not callback then return end
+  local ok, err = pcall(callback, value)
+  if not ok then
+    job.callback_error = "Export " .. name .. " callback failed: " .. tostring(err)
+    print("[DigitaktSampleChain] " .. job.callback_error)
+  end
+end
 
 local function cleanup(job, discard)
   local errors = {}
@@ -41,9 +53,7 @@ function Job:fail(message)
   self.finished = true
   local cleanup_err = cleanup(self, true)
   if cleanup_err then message = tostring(message) .. "\n" .. cleanup_err end
-  local callback = self.callbacks.on_error
-  self.callbacks = {}
-  if callback then callback(tostring(message)) end
+  notify_terminal(self, "on_error", tostring(message))
 end
 
 function Job:cancel(message)
@@ -52,13 +62,12 @@ function Job:cancel(message)
   local cleanup_err = cleanup(self, true)
   message = message or "Export canceled."
   if cleanup_err then message = message .. "\n" .. cleanup_err end
-  local callback = self.callbacks.on_cancel
-  self.callbacks = {}
-  if callback then callback(message) end
+  notify_terminal(self, "on_cancel", message)
 end
 
 function Job:step()
   if self.finished then return end
+  local deadline = os.clock() + STEP_BUDGET_SECONDS
   if self.invalid_reason then self:fail(self.invalid_reason); return end
   if self.callbacks.on_progress then
     local frames = self.verifying and self.verified_frames or self.written_frames
@@ -78,7 +87,7 @@ function Job:step()
     end
   end
 
-  local count = 0
+  local count, payloads = 0, {}
   while count < self.frames_per_step and self.slot <= self.plan.slot_count do
     local entry = self.snapshot.buffers[self.slot]
     local source_length = entry and entry.output_frames or 0
@@ -87,16 +96,19 @@ function Job:step()
       self.reader = layout.make_slot_reader(self.plan,
         entry and extractor.reader(entry, self.options.mono) or nil, source_length)
     end
-    local frames = math.min(self.frames_per_step - count, slot_length - self.offset)
+    local frames = math.min(FRAMES_PER_BATCH, self.frames_per_step - count, slot_length - self.offset)
     for index = 1, frames do
-      self.chunk[count + index] = self.reader(self.offset + index)
+      self.chunk[index] = self.reader(self.offset + index)
     end
+    payloads[#payloads + 1] = wav.encode(self.chunk, 1, frames, self.dither)
     count, self.offset = count + frames, self.offset + frames
     if self.offset == slot_length then
       self.slot, self.offset, self.reader = self.slot + 1, 0, nil
     end
+    -- Yield after a complete PCM batch; file I/O and callbacks can still block.
+    if count > 0 and os.clock() >= deadline then break end
   end
-  local payload = wav.encode(self.chunk, 1, count, self.dither)
+  local payload = table.concat(payloads)
   local accepted, output_err
   if self.verifying then
     accepted, output_err = self.output:verify(payload)
@@ -118,15 +130,11 @@ function Job:step()
   self.finished = true
   local cleanup_err = cleanup(self, false)
   if cleanup_err then warning = (warning and warning .. "\n" or "") .. cleanup_err end
-  local callback = self.callbacks.on_finish
-  self.callbacks = {}
-  if callback then
-    callback({
-      path = self.path, mode = self.plan.mode, sample_rate = options_model.SAMPLE_RATE,
-      frames = self.plan.total_frames, slot_count = self.plan.slot_count,
-      slot_sec = self.plan.slot_sec, total_sec = self.plan.total_sec, warning = warning,
-    })
-  end
+  notify_terminal(self, "on_finish", {
+    path = self.path, mode = self.plan.mode, sample_rate = options_model.SAMPLE_RATE,
+    frames = self.plan.total_frames, slot_count = self.plan.slot_count,
+    slot_sec = self.plan.slot_sec, total_sec = self.plan.total_sec, warning = warning,
+  })
 end
 
 function M.start(instrument, options, path, callbacks)
