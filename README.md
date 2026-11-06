@@ -5,7 +5,6 @@ contains one independently installable tool.
 
 | Tool | Description |
 | --- | --- |
-| [ARP](com.david303ttl.ARP.xrnx/README.md) | Pattern arpeggiator with guarded regeneration. |
 | [ACID](com.david303ttl.ACID.xrnx/README.md) | PITCH/TIME phrase editor and generator. |
 | [Digitakt Sample Chain](com.david303ttl.DigitaktSampleChain.xrnx/README.md) | 48 kHz mono WAV chain exporter. |
 

@@ -1,6 +1,6 @@
 # Renoise development setup
 
-ARP, ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2 and
+ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2 and
 Lua 5.1 syntax. Repository scripts require PowerShell 7. Tests accept Lua 5.1 or
 newer, including LuaJIT 2.x; set `-LuaCommand` to select an executable. A newer
 local interpreter does not verify Lua 5.1 compatibility.

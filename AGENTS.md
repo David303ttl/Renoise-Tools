@@ -16,7 +16,7 @@
 
 - Each root `.xrnx` directory is independently installable. Keep `main.lua`,
   `manifest.xml`, and all runtime dependencies inside that tool's directory.
-- ARP, ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2,
+- ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2,
   using Lua 5.1-compatible syntax. Do not raise manifest API or tool versions as
   incidental cleanup.
 - Keep modules private to each tool. ACID uses qualified module names such as
@@ -63,7 +63,7 @@
 ## Verification and releases
 
 - Run the affected Lua suite after Lua changes with `./scripts/run_tests.ps1`
-  and `-Tool ARP`, `-Tool ACID` or `-Tool DigitaktSampleChain`. Every spec runs
+  and `-Tool ACID` or `-Tool DigitaktSampleChain`. Every spec runs
   in a separate process to isolate mocks and module caches. Direct specs run
   from the repository root.
 - Keep deterministic model behavior testable without Renoise. Use meaningful
@@ -76,4 +76,4 @@
   Packages must contain `manifest.xml` and `main.lua` at archive root, preserve
   module directories, and exclude the SDK and development files.
 - Keep downloaded SDK files, build output, and temporary artifacts untracked.
-  Release tools independently from their manifests, with tags such as `arp/v0.7`.
+  Release tools independently from their manifests, with tags such as `acid/v0.1`.

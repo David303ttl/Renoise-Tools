@@ -7,7 +7,6 @@ process so mocks and module caches stay isolated.
 
 ```powershell
 ./scripts/run_tests.ps1
-./scripts/run_tests.ps1 -Tool ARP
 ./scripts/run_tests.ps1 -Tool ACID -LuaCommand lua5.1
 ./scripts/run_tests.ps1 -Tool Renoise
 ```
@@ -47,7 +46,6 @@ On a shared desktop, select a foreground Renoise instance with
 
 Manual cases requiring listening or physical interaction are documented by tool:
 
-- [ARP](arp/arp_manual.md)
 - [ACID phrase playback](acid/acid_phrase_manual.md)
 - [ACID timing](acid/acid_timing_manual.md)
 - [ACID articulation](acid/acid_articulation_manual.md)

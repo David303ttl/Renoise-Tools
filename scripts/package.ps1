@@ -12,8 +12,8 @@ image/audio formats, and BIN files; extend $runtimeExtensions when a tool adds
 another runtime file type.
 
 .PARAMETER Tool
-Optional short name (ARP), manifest ID (com.david303ttl.ARP), or tool directory
-name (com.david303ttl.ARP.xrnx). Omit to package every root .xrnx directory.
+Optional short name (ACID), manifest ID (com.david303ttl.ACID), or tool directory
+name (com.david303ttl.ACID.xrnx). Omit to package every root .xrnx directory.
 
 .PARAMETER OutputDirectory
 Destination directory. Defaults to the repository's dist directory.
@@ -23,13 +23,13 @@ Destination directory. Defaults to the repository's dist directory.
 Packages all tools into dist\.
 
 .EXAMPLE
-.\scripts\package.ps1 -Tool ARP
-Packages only ARP.
+.\scripts\package.ps1 -Tool ACID
+Packages only ACID.
 #>
 [CmdletBinding()]
 param(
-  # Accept a directory name (for example com.david303ttl.ARP.xrnx), a
-  # manifest ID (com.david303ttl.ARP), or a short name (ARP).
+  # Accept a directory name (for example com.david303ttl.ACID.xrnx), a
+  # manifest ID (com.david303ttl.ACID), or a short name (ACID).
   [Parameter(Position = 0)]
   [string[]] $Tool = @(),
 
@@ -59,7 +59,7 @@ if ($Tool.Count -gt 0) {
       $_.Name.EndsWith(".$requested.xrnx", [System.StringComparison]::OrdinalIgnoreCase)
     })
     if ($matches.Count -ne 1) {
-      throw "Tool '$requested' matched $($matches.Count) tool directories. Use a directory name such as com.david303ttl.ARP.xrnx."
+      throw "Tool '$requested' matched $($matches.Count) tool directories. Use a directory name such as com.david303ttl.ACID.xrnx."
     }
     if (@($selected | Where-Object FullName -eq $matches[0].FullName).Count -gt 0) {
       throw "Tool '$requested' was selected more than once."

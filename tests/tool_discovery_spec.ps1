@@ -12,11 +12,10 @@ $luaHelper = Join-Path $repoRoot 'scripts/lua_interpreter.ps1'
 $lua = Resolve-LuaInterpreter -LuaCommand $LuaCommand
 $current = Get-DiscoveredTools -RepositoryRoot $repoRoot
 $currentAcid = Get-DiscoveredTool -Discovery $current -Name 'ACID'
-$currentArp = Get-DiscoveredTool -Discovery $current -Name 'ARP'
 $currentAllCount = @($current.Tools | ForEach-Object { $_.Specs } | Where-Object { $null -ne $_ }).Count + $current.HostSpecs.Count
-if ($currentAllCount -lt 67 -or $currentAcid.Specs.Count + $current.HostSpecs.Count -ne 64 -or
-    $currentArp.Specs.Count -ne 3 -or $current.HostSpecs.Count -ne 6) {
-    throw "Existing suite selection changed: All=$currentAllCount, ACID=$($currentAcid.Specs.Count + $current.HostSpecs.Count), ARP=$($currentArp.Specs.Count), Renoise=$($current.HostSpecs.Count)."
+if ($currentAllCount -lt 71 -or $currentAcid.Specs.Count + $current.HostSpecs.Count -ne 63 -or
+    $current.HostSpecs.Count -ne 5) {
+    throw "Existing suite selection changed: All=$currentAllCount, ACID=$($currentAcid.Specs.Count + $current.HostSpecs.Count), Renoise=$($current.HostSpecs.Count)."
 }
 $fixture = Join-Path $repoRoot ('tmp/tool-discovery-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($fixture)
