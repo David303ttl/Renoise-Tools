@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.2</ApiVersion>
+  <Id>com.david303ttl.SuperOS303</Id>
+  <Version>0.1</Version>
+  <Author>David303ttl</Author>
+  <Name>SuperOS-303</Name>
+  <Category>Sequencing</Category>
+  <Description>SuperOS-303 hardware MIDI and SysEx control (no firmware flashing)</Description>
+  <License>GPL-3.0-only</License>
+  <LicensePath>LICENSE</LicensePath>
+</RenoiseScriptingTool>
