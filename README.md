@@ -7,6 +7,7 @@ contains one independently installable tool.
 | --- | --- |
 | [ACID](com.david303ttl.ACID.xrnx/README.md) | PITCH/TIME phrase editor and generator. |
 | [Digitakt Sample Chain](com.david303ttl.DigitaktSampleChain.xrnx/README.md) | 48 kHz mono WAV chain exporter. |
+| [SuperOS-303](com.david303ttl.SuperOS303.xrnx/README.md) | MIDI/SysEx hardware control and variation 1 pattern edits (no flashing). |
 
 Use PowerShell 7 (`pwsh`) for repository scripts. Run `./scripts/run_tests.ps1`
 to run the suites and `./scripts/package.ps1` to build installable archives in
