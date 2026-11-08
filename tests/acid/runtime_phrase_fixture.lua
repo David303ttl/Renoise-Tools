@@ -1,0 +1,65 @@
+dofile('tests/bootstrap.lua')('acid')
+local context=require('runtime.context')
+local ownership=require('renoise.phrase_ownership')
+local planner=require('model.output_planner')
+local store=require('renoise.pattern_store')
+local seq=require('model.sequencer')
+local phrase_fixture=dofile('tests/acid/complete_phrase_fixture.lua')
+local limits={max_lines=20,max_note_columns=2,max_effect_columns=1,number_of_lines=16}
+renoise={InstrumentPhrase={MAX_NUMBER_OF_LINES=limits.max_lines,
+ MAX_NUMBER_OF_NOTE_COLUMNS=limits.max_note_columns,
+ MAX_NUMBER_OF_EFFECT_COLUMNS=limits.max_effect_columns,PLAY_PATTERN=1,KEY_TRACKING_NONE=1},
+ Instrument={MAX_NUMBER_OF_PHRASES=126,PHRASES_OFF=1},Transport={TIMING_MODEL_LPB=1}}
+local capacities={max_lines=limits.max_lines,max_note_columns=limits.max_note_columns,
+ max_effect_columns=limits.max_effect_columns,play_pattern=1,key_tracking_none=1}
+local profile={sample=true,plugin=false,midi=false,alias=false}
+local eq_calls=0
+local content_equality={__eq=function()eq_calls=eq_calls+1;return true end}
+local function phrase(source,id)
+ local p=phrase_fixture(limits)
+ local plan=assert(planner.plan(source,'play_once',0,capacities,profile,{pitch_bend_delivery=true}))
+ for key,value in pairs(plan.expected.properties)do p[key]=value end
+ for key,value in pairs(plan.required_visibility)do p[key]=value end
+ for index,line in ipairs(plan.expected.lines)do
+  for column,cell in ipairs(line.note_columns)do
+   for key,value in pairs(cell)do p.lines[index].note_columns[column][key]=value end
+  end
+  for column,cell in ipairs(line.effect_columns)do
+   for key,value in pairs(cell)do p.lines[index].effect_columns[column][key]=value end
+  end
+ end
+ local snapshot=assert(ownership.snapshot(p))
+ local seal_columns={}
+ for column=1,12 do seal_columns[column]=p:column_is_muted(column) end
+ p.name=assert(ownership.make_name_from_verified_snapshot(snapshot,id,seal_columns))
+ return setmetatable(p,content_equality)
+end
+local function instrument(phrases)
+ return {name='Sampler',phrases=phrases,samples={{sample_buffer={has_sample_data=true}}},
+  plugin_properties={plugin_loaded=false,alias_instrument_index=0,alias_fx_track_index=0,
+   alias_fx_device_index=0,midi_output_routing_index=0},
+  midi_output_properties={device_name='',instrument_type=1,channel=1},
+  phrase_playback_mode=2,phrase_program=1}
+end
+local function runtime(song,temporary)
+ local ctx=context.new{writer={state=function()return 'idle',nil end,
+  is_temporary=function(_,_,p)return p~=nil and rawequal(p,temporary)end},
+  sink=function()error('inventory must not render')end}
+ ctx:attach_document(song);ctx:open_dialog()
+ return ctx
+end
+local function fixture(kind)
+ local source=seq.new_pattern(4)
+ local a,b
+ if kind=='new' then a,b={name='Native phrase'},{name='Other native phrase'}
+ else a,b=phrase(source,101),phrase(source,102)end
+ local inst=instrument({a,b})
+ local song={instruments={inst},tool_data='',transport={timing_model=1,groove_enabled=false},
+  is_undo_redoing=function()return false end}
+ if kind~='new' then
+  assert(store.save(song,101,source,'play_once',0))
+  assert(store.save(song,102,source,'play_once',0))
+ end
+ return song,inst,a,b,source
+end
+return {fixture=fixture,phrase=phrase,instrument=instrument,runtime=runtime,limits=limits,eq_calls=function()return eq_calls end}

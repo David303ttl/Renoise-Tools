@@ -1,0 +1,79 @@
+# Repository development instructions
+
+## Shell
+
+- Use PowerShell 7 (`pwsh`) exclusively for repository scripts and shell work.
+  Do not use Windows PowerShell (`powershell.exe`) or maintain 5.1 compatibility.
+
+## Commit messages
+
+- Use Conventional Commits: `type(scope): description`, with an optional scope,
+  lowercase imperative description and no trailing period. Mark breaking changes
+  with `!`. Commit types do not change manifest versions. Do not add automatic
+  commit-message enforcement.
+
+## Tool boundaries
+
+- Each root `.xrnx` directory is independently installable. Keep `main.lua`,
+  `manifest.xml`, and all runtime dependencies inside that tool's directory.
+- ACID and DigitaktSampleChain target Renoise 3.5 / scripting API 6.2,
+  using Lua 5.1-compatible syntax. Do not raise manifest API or tool versions as
+  incidental cleanup.
+- Keep modules private to each tool. ACID uses qualified module names such as
+  `model.sequencer` and `writers.phrase_writer`.
+
+## Code naming, comments and documentation
+
+- Keep code simple and DRY. Use named constants for meaningful limits and
+  configuration; obvious, one-off values can remain inline.
+- Keep documentation concise and focused on current behavior and contracts.
+  Do not add historical narratives, progress prose, run-result ledgers or
+  evidence templates.
+- Name code files, modules, symbols, tests and fixture formats by behavior or
+  responsibility. Do not embed roadmap, blueprint, milestone, phase or work-step
+  labels such as `M1` or `M2` in names, comments, generated code, diagnostics or
+  UI text.
+- Keep comments concise and technical: describe behavior, invariants, constraints
+  or the reason for a non-obvious decision. Do not add task narratives, progress
+  reports, future-work prose or version-history commentary to code.
+- Preserve meaningful domain terms such as sequencer steps and signal phase.
+  Preserve manifest versions, persisted schema identifiers and compatibility
+  markers; do not rename them as cosmetic cleanup.
+- Keep documentation paths portable. Use repository-relative paths, pinned
+  upstream links or sanitized placeholders for external checkouts. Never commit
+  machine-specific absolute paths, usernames or local workspace locations.
+
+## Renoise API references
+
+- When a Renoise API change needs SDK references that are not installed, run
+  `./scripts/setup_sdk.ps1` to obtain the pinned API 6.2 starter pack.
+- Before adding or changing Renoise API calls, inspect the relevant definitions
+  under `sdk/renoise-api-6.2/definitions/` and the accompanying offline docs under
+  `sdk/renoise-api-6.2/docs/`. Check signatures, indexing, access restrictions,
+  observable lifetimes, and API availability rather than guessing from memory.
+- If the SDK cannot be downloaded, consult the official versioned sources at
+  <https://github.com/renoise/xrnx/tree/API-6.2> and explain any unresolved API
+  uncertainty. The official online guide may describe a newer API.
+- Definitions and examples are development references, not runtime libraries or
+  substitutes for running Renoise. Never `require` them from a tool or copy the
+  SDK into a tool bundle.
+- `.luarc.json` configures the shared API library. Tool module names can overlap;
+  do not add every tool root to one shared runtime module search path.
+
+## Verification and releases
+
+- Run the affected Lua suite after Lua changes with `./scripts/run_tests.ps1`
+  and `-Tool ACID` or `-Tool DigitaktSampleChain`. Every spec runs
+  in a separate process to isolate mocks and module caches. Direct specs run
+  from the repository root.
+- Keep deterministic model behavior testable without Renoise. Use meaningful
+  mocks for API integration, but do not claim those validate actual playback.
+- Choose verification based on change risk. Mocked tests suffice for behavior
+  they meaningfully cover. Use manual Renoise checks from `tests/` when
+  correctness depends on host behavior that mocks cannot establish, such as
+  playback, native GUI behavior, undo, or save/reload.
+- Run `./scripts/package.ps1` after changing runtime layout or package inputs.
+  Packages must contain `manifest.xml` and `main.lua` at archive root, preserve
+  module directories, and exclude the SDK and development files.
+- Keep downloaded SDK files, build output, and temporary artifacts untracked.
+  Release tools independently from their manifests, with tags such as `acid/v0.1`.

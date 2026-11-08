@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.2</ApiVersion>
+  <Id>com.david303ttl.ACID</Id>
+  <Version>0.1</Version>
+  <Author>David303ttl</Author>
+  <Name>ACID</Name>
+  <Category>Sequencing</Category>
+  <Description>ACID pitch/time sequencer with experimental native phrase output</Description>
+  <License>GPL-3.0-only</License>
+  <LicensePath>LICENSE</LicensePath>
+</RenoiseScriptingTool>

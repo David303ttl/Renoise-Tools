@@ -1,0 +1,100 @@
+dofile("tests/bootstrap.lua")("acid")
+local seq=require("model.sequencer")
+local gates=require("model.control_signals")
+local output_planner=require("model.output_planner")
+local legato=require("model.legato")
+
+local function render(notes,slides,range,policy,commands,mode)
+  local p=seq.new_pattern(commands and #commands or #notes)
+  p.timing_mode=mode or 'straight'
+  p.pitch_length=#notes
+  for i,note in ipairs(notes) do
+    local octave=math.floor((note-36)/12)
+    p.pitch_events[i]=seq.new_pitch((note-36)%12,octave,false,slides[i] or false)
+  end
+  for i=1,p.length do p.time_events[i]=commands and commands[i] or "N" end
+  local plan,layout=assert(output_planner.plan_output(p,policy or "play_once",512))
+  local timeline=assert(gates.compile(p,{plan=plan,successor=plan.loop and plan.loop.steady,output_policy=policy or "play_once"}))
+  return assert(legato.plan(plan,timeline,layout,{pb_range=range,instrument_value=3})),timeline
+end
+local function attacks(plan)
+  local count=0
+  for _,row in pairs(plan.cells) do for _,cell in pairs(row) do
+    if cell.note_value<120 then count=count+1 end
+  end end
+  return count
+end
+
+local up=render({36,43},{true,false},12)
+assert(attacks(up)==1)
+assert(up.midi_commands[1].value==8192 and up.midi_commands[1].number_string=="40")
+assert(up.midi_commands[3].value==math.floor(8192+3.5/12*8191+0.5))
+assert(up.midi_commands[5].value==math.floor(8192+7/12*8191+0.5))
+assert(not table.concat(up.diagnostics," "):find("SLIDE approximated",1,true))
+assert(up.midi_commands[7].value==8192)
+assert(up.cells[1][1].delay_value==1 and up.cells[7][1].note_value==120)
+local down=render({43,36},{true,false},12)
+assert(down.midi_commands[3].value==math.floor(8192-3.5/12*8192+0.5))
+assert(down.midi_commands[5].value==math.floor(8192-7/12*8192+0.5))
+local chain=render({36,40,43},{true,true,false},12)
+assert(attacks(chain)==1)
+assert(chain.midi_commands[3].value==math.floor(8192+2/12*8191+0.5))
+assert(chain.midi_commands[5].value==math.floor(8192+4/12*8191+0.5))
+assert(chain.midi_commands[7].value==math.floor(8192+5.5/12*8191+0.5))
+assert(chain.midi_commands[9].value==math.floor(8192+7/12*8191+0.5))
+assert(chain.midi_commands[11].value==8192)
+local same=render({36,36},{true,false},12)
+assert(attacks(same)==1 and not same.midi_commands[5])
+local exceeded=render({36,43},{true,false},2)
+assert(attacks(exceeded)==2)
+assert(exceeded.cells[5][1].note_value==120 and exceeded.cells[5][2].note_value==43)
+assert(exceeded.cells[5][2].delay_value==1 and exceeded.midi_commands[5].value==8192)
+assert(table.concat(exceeded.diagnostics," "):find("TIME step 02: SLIDE approximated: bend range exceeded",1,true))
+local accumulated=render({36,43,50},{true,true,false},12)
+assert(attacks(accumulated)==2 and accumulated.midi_commands[9].value==8192)
+assert(table.concat(accumulated.diagnostics," "):find("TIME step 03: SLIDE approximated: bend range exceeded",1,true))
+local positive=render({36,48},{true,false},12)
+local negative=render({48,36},{true,false},12)
+assert(positive.midi_commands[5].value==16383 and negative.midi_commands[5].value==0)
+local fresh=render({36,43,40},{true,false,false},12)
+assert(attacks(fresh)==2 and fresh.midi_commands[7].value==8192)
+assert(not fresh.midi_commands[9] and fresh.cells[9][1].note_value==40 and
+  fresh.cells[9][1].delay_value==0)
+local seam=render({36,40,43},{true,true,true},12,"repeat")
+assert(seam.midi_commands and attacks(seam)==1)
+assert(seam.midi_commands[11].value~=8192 and seam.midi_commands[13].value==8192)
+for _,mode in ipairs({'straight','triplet'}) do
+  local ordered=render({36,43},{true,false},2,'play_once',nil,mode)
+  assert(ordered.midi_commands[1].value==8192 and ordered.cells[1][1].delay_value==1)
+  assert(ordered.midi_commands[5].value==8192 and ordered.cells[5][2].delay_value==1)
+  local loop=render({36,40,43},{true,true,true},12,'repeat',nil,mode)
+  assert(loop.midi_commands[11].value~=8192 and loop.midi_commands[13].value==8192)
+  assert(attacks(loop)==1)
+  local notes,slides={},{}
+  for i=1,32 do notes[i]=i%2==1 and 36 or 43;slides[i]=false end
+  local many=render(notes,slides,12,'play_once',nil,mode)
+  -- Fresh attacks align to the phrase line when centered; only cold entry is
+  -- offset by the minimum delay unit, and that offset never accumulates.
+  for i=1,32 do
+    local line=(i-1)*4+1
+    if i==1 then
+    assert(many.midi_commands[line].value==8192 and
+      many.cells[line][1].note_value==notes[i] and many.cells[line][1].delay_value==1)
+    else
+      assert(not many.midi_commands[line] and many.cells[line][1].note_value==notes[i] and
+        many.cells[line][1].delay_value==0)
+    end
+    assert(many.cells[line+2][1].note_value==120 and many.cells[line+2][1].delay_value==0)
+    assert(many.midi_commands[line+2].value==8192)
+  end
+end
+local unsafe=render({24,38,52},{true,true,true},12,"repeat")
+assert(not unsafe.midi_commands)
+assert(table.concat(unsafe.diagnostics," "):find("loop seam",1,true))
+local rest=render({36,43},{true,false},12,"play_once",{"N","N","R"})
+assert(rest.midi_commands[9].value==8192 and rest.cells[9][1].note_value==120)
+for _,range in ipairs({2,12,24,48}) do
+  local result=render({36,38},{true,false},range)
+  assert(result.midi_commands[5].value<=16383)
+end
+print("ACID pitch-bend anchor, endpoints, release and seam checks passed")

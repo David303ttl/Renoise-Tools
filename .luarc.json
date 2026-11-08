@@ -1,0 +1,7 @@
+{
+  "runtime.version": "Lua 5.1",
+  "workspace.library": [
+    "./sdk/renoise-api-6.2/definitions"
+  ],
+  "runtime.plugin": "./sdk/renoise-api-6.2/definitions/plugin.lua"
+}

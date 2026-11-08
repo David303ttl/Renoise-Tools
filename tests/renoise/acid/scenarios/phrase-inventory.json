@@ -1,0 +1,463 @@
+{
+  "name": "phrase-inventory",
+  "fixture": "phrase-inventory.xrns",
+  "description": "Read-only inventory baseline with foreign phrase content; asserts the song tool-data bytes independently without claiming a phrase/source association.",
+  "preconditions": {
+    "instrument_count": 2,
+    "phrase_count": 2
+  },
+  "assertions": [
+    {
+      "path": "instrument_count",
+      "expected": 2
+    },
+    {
+      "path": "phrase_count",
+      "expected": 2
+    },
+    {
+      "path": "tool_data_present",
+      "expected": true
+    },
+    {
+      "path": "tool_data_length",
+      "expected": 797
+    },
+    {
+      "path": "tool_data_hex",
+      "expected": "414349442d50495443482d54494d452d310a327c7265706561747c32347c747269706c65747c337c31377c33363a303a303a30302c32353a313a2d313a31312c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c36303a31323a313a31307c4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e54524e4e4e4e4e4e4e4e4e4e4e4e4e4e540a44524146547c317c307c344236393734374330417c7265706561747c32347c747269706c65747c337c31377c33363a303a303a30302c32353a313a2d313a31312c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c33363a303a303a30302c36303a31323a313a31307c4e4e4e4e4e4e4e4e4e4e4e4e4e4e4e54524e4e4e4e4e4e4e4e4e4e4e4e4e4e540a"
+    },
+    {
+      "path": "instruments.0.name",
+      "expected": "Fixture Lead"
+    },
+    {
+      "path": "instruments.1.name",
+      "expected": "Fixture Pad"
+    },
+    {
+      "path": "instruments.0.phrases.0.name",
+      "expected": "fixture-snapshot-phrase"
+    },
+    {
+      "path": "instruments.0.phrases.0.number_of_lines",
+      "expected": 16
+    },
+    {
+      "path": "instruments.0.phrases.0.properties",
+      "expected": {
+        "playback_mode": 1,
+        "visible_note_columns": 1,
+        "visible_effect_columns": 1,
+        "key_tracking": 1,
+        "base_note": 48,
+        "looping": true,
+        "loop_start": 1,
+        "loop_end": 16,
+        "autoseek": false,
+        "lpb": 4,
+        "shuffle": 0,
+        "instrument_column_visible": false,
+        "volume_column_visible": true,
+        "panning_column_visible": false,
+        "delay_column_visible": false,
+        "sample_effects_column_visible": false
+      }
+    },
+    {
+      "path": "instruments.0.phrases.0.mapping",
+      "expected": {
+        "key_tracking": 2,
+        "base_note": 48,
+        "note_range": [
+          36,
+          60
+        ],
+        "looping": false,
+        "loop_start": 1,
+        "loop_end": 16
+      }
+    },
+    {
+      "path": "instruments.0.phrases.1.name",
+      "expected": "fixture-plain-arp"
+    },
+    {
+      "path": "instruments.0.phrases.1.number_of_lines",
+      "expected": 8
+    },
+    {
+      "path": "instruments.0.phrases.1.properties",
+      "expected": {
+        "playback_mode": 1,
+        "visible_note_columns": 1,
+        "visible_effect_columns": 0,
+        "key_tracking": 1,
+        "base_note": 48,
+        "looping": false,
+        "loop_start": 1,
+        "loop_end": 8,
+        "autoseek": false,
+        "lpb": 4,
+        "shuffle": 0,
+        "instrument_column_visible": false,
+        "volume_column_visible": false,
+        "panning_column_visible": false,
+        "delay_column_visible": false,
+        "sample_effects_column_visible": false
+      }
+    },
+    {
+      "path": "instruments.1.phrase_mappings",
+      "expected": []
+    },
+    {
+      "path": "selected_instrument_index",
+      "expected": 1
+    },
+    {
+      "path": "selected_phrase_index",
+      "expected": 1
+    },
+    {
+      "path": "can_undo",
+      "expected": false
+    },
+    {
+      "path": "can_redo",
+      "expected": false
+    },
+    {
+      "path": "is_undo_redoing",
+      "expected": false
+    },
+    {
+      "path": "instruments.0.phrases.0.note_columns",
+      "expected": [
+        {
+          "index": 1,
+          "name": "fixture-note-01",
+          "muted": false
+        },
+        {
+          "index": 2,
+          "name": "fixture-note-02",
+          "muted": true
+        },
+        {
+          "index": 3,
+          "name": "fixture-note-03",
+          "muted": false
+        },
+        {
+          "index": 4,
+          "name": "fixture-note-04",
+          "muted": false
+        },
+        {
+          "index": 5,
+          "name": "fixture-note-05",
+          "muted": false
+        },
+        {
+          "index": 6,
+          "name": "fixture-note-06",
+          "muted": false
+        },
+        {
+          "index": 7,
+          "name": "fixture-note-07",
+          "muted": false
+        },
+        {
+          "index": 8,
+          "name": "fixture-note-08",
+          "muted": false
+        },
+        {
+          "index": 9,
+          "name": "fixture-note-09",
+          "muted": false
+        },
+        {
+          "index": 10,
+          "name": "fixture-note-10",
+          "muted": false
+        },
+        {
+          "index": 11,
+          "name": "fixture-note-11",
+          "muted": false
+        },
+        {
+          "index": 12,
+          "name": "fixture-note-12",
+          "muted": false
+        }
+      ]
+    },
+    {
+      "path": "instruments.0.phrases.1.note_columns",
+      "expected": [
+        {
+          "index": 1,
+          "name": "plain-note-01",
+          "muted": false
+        },
+        {
+          "index": 2,
+          "name": "plain-note-02",
+          "muted": false
+        },
+        {
+          "index": 3,
+          "name": "plain-note-03",
+          "muted": false
+        },
+        {
+          "index": 4,
+          "name": "plain-note-04",
+          "muted": false
+        },
+        {
+          "index": 5,
+          "name": "plain-note-05",
+          "muted": false
+        },
+        {
+          "index": 6,
+          "name": "plain-note-06",
+          "muted": false
+        },
+        {
+          "index": 7,
+          "name": "plain-note-07",
+          "muted": false
+        },
+        {
+          "index": 8,
+          "name": "plain-note-08",
+          "muted": false
+        },
+        {
+          "index": 9,
+          "name": "plain-note-09",
+          "muted": false
+        },
+        {
+          "index": 10,
+          "name": "plain-note-10",
+          "muted": false
+        },
+        {
+          "index": 11,
+          "name": "plain-note-11",
+          "muted": false
+        },
+        {
+          "index": 12,
+          "name": "plain-note-12",
+          "muted": false
+        }
+      ]
+    },
+    {
+      "path": "instruments.0.phrases.0.lines",
+      "expected": [
+        {
+          "index": 1,
+          "note_column_count": 12,
+          "effect_column_count": 8,
+          "note_columns": [
+            {
+              "index": 1,
+              "note_value": 48,
+              "instrument_value": 255,
+              "volume_value": 96,
+              "panning_value": 128,
+              "delay_value": 2,
+              "effect_number_value": 0,
+              "effect_amount_value": 0
+            },
+            {
+              "index": 2,
+              "note_value": 60,
+              "instrument_value": 255,
+              "volume_value": 255,
+              "panning_value": 255,
+              "delay_value": 0,
+              "effect_number_value": 0,
+              "effect_amount_value": 0
+            }
+          ],
+          "effect_columns": []
+        },
+        {
+          "index": 4,
+          "note_column_count": 12,
+          "effect_column_count": 8,
+          "note_columns": [],
+          "effect_columns": [
+            {
+              "index": 1,
+              "number_value": 12,
+              "amount_value": 64
+            },
+            {
+              "index": 2,
+              "number_value": 13,
+              "amount_value": 65
+            }
+          ]
+        },
+        {
+          "index": 64,
+          "note_column_count": 12,
+          "effect_column_count": 8,
+          "note_columns": [
+            {
+              "index": 1,
+              "note_value": 36,
+              "instrument_value": 255,
+              "volume_value": 255,
+              "panning_value": 255,
+              "delay_value": 0,
+              "effect_number_value": 0,
+              "effect_amount_value": 0
+            }
+          ],
+          "effect_columns": [
+            {
+              "index": 8,
+              "number_value": 14,
+              "amount_value": 70
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "instruments.0.phrases.1.lines",
+      "expected": [
+        {
+          "index": 1,
+          "note_column_count": 12,
+          "effect_column_count": 8,
+          "note_columns": [
+            {
+              "index": 1,
+              "note_value": 57,
+              "instrument_value": 255,
+              "volume_value": 96,
+              "panning_value": 255,
+              "delay_value": 0,
+              "effect_number_value": 0,
+              "effect_amount_value": 0
+            }
+          ],
+          "effect_columns": []
+        },
+        {
+          "index": 3,
+          "note_column_count": 12,
+          "effect_column_count": 8,
+          "note_columns": [
+            {
+              "index": 1,
+              "note_value": 64,
+              "instrument_value": 255,
+              "volume_value": 96,
+              "panning_value": 255,
+              "delay_value": 0,
+              "effect_number_value": 0,
+              "effect_amount_value": 0
+            }
+          ],
+          "effect_columns": []
+        },
+        {
+          "index": 5,
+          "note_column_count": 12,
+          "effect_column_count": 8,
+          "note_columns": [
+            {
+              "index": 1,
+              "note_value": 69,
+              "instrument_value": 255,
+              "volume_value": 64,
+              "panning_value": 255,
+              "delay_value": 0,
+              "effect_number_value": 0,
+              "effect_amount_value": 0
+            }
+          ],
+          "effect_columns": []
+        }
+      ]
+    },
+    {
+      "path": "instruments.0.phrase_mappings",
+      "expected": [
+        {
+          "index": 1,
+          "key_tracking": 2,
+          "base_note": 48,
+          "note_range": [
+            36,
+            60
+          ],
+          "looping": false,
+          "loop_start": 1,
+          "loop_end": 16
+        }
+      ]
+    },
+    {
+      "path": "instruments.1.phrases",
+      "expected": []
+    }
+  ],
+  "actions": [
+    "document.new",
+    "fixture.load",
+    "song.snapshot",
+    "song.snapshot"
+  ],
+  "waits": [
+    "document.changed",
+    "inventory.settled",
+    "snapshot.stable"
+  ],
+  "unchanged": [
+    "selected_instrument_index",
+    "selected_phrase_index",
+    "can_undo",
+    "can_redo",
+    "tool_data_present",
+    "tool_data_length",
+    "tool_data_hex",
+    "instruments.0.name",
+    "instruments.1.name",
+    "instruments.0.phrases.0.name",
+    "instruments.0.phrases.0.number_of_lines",
+    "instruments.0.phrases.0.properties",
+    "instruments.0.phrases.0.mapping",
+    "instruments.0.phrase_mappings.0",
+    "instruments.0.phrases.0.lines.0",
+    "instruments.0.phrases.0.lines.1",
+    "instruments.0.phrases.0.lines.2",
+    "instruments.0.phrases.1.name",
+    "instruments.0.phrases.1.number_of_lines",
+    "instruments.0.phrases.1.properties",
+    "instruments.0.phrases.1.lines.0",
+    "instruments.0.phrases.1.lines.1",
+    "instruments.0.phrases.1.lines.2",
+    "instruments.1.phrase_mappings",
+    "instruments.0.phrases.0.note_columns",
+    "instruments.0.phrases.1.note_columns",
+    "instruments.0.phrases.0.lines",
+    "instruments.0.phrases.1.lines",
+    "instruments.0.phrase_mappings",
+    "instruments.1.phrases"
+  ]
+}
