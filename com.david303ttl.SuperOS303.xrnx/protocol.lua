@@ -139,7 +139,17 @@ function M.decode(message)
     local raw, issue = decode_blob(body, C.POLY_SIZE, C.PACKED_POLY_SIZE)
     if not raw then return nil, issue end
     if body[C.BODY_ADDRESS] >= C.PATTERNS then return nil, "invalid poly address" end
-    return {type = "poly", pattern = body[C.BODY_ADDRESS], variation = C.VARIATION_POLY, raw = raw}
+    if raw[115] < 1 or raw[115] > C.STEPS or raw[113] > C.STEPS then
+      return nil, "invalid poly pattern size"
+    end
+    return {type = "poly", pattern = body[C.BODY_ADDRESS], variation = C.VARIATION_POLY,
+      raw = raw, length = raw[115]}
+  elseif cmd == CMD.PROBABILITY_REPLY then
+    if #body ~= C.BLOB_HEADER_SIZE + C.PACKED_PROBABILITY_SIZE then return nil, "unsupported probability length" end
+    local raw, issue = decode_blob(body, C.PROBABILITY_SIZE, C.PACKED_PROBABILITY_SIZE)
+    if not raw then return nil, issue end
+    if body[C.BODY_ADDRESS] >= C.PATTERNS then return nil, "invalid probability address" end
+    return {type = "probability", pattern = body[C.BODY_ADDRESS], raw = raw}
   elseif cmd == CMD.ACK then
     if #body < C.BODY_ADDRESS then return nil, "short acknowledgement" end
     return {type = "ack", status = body[C.BODY_ADDRESS]}
@@ -251,6 +261,43 @@ function M.write_config(original, changes)
   local flags = preserved + (changes.clock and C.CONFIG_FLAG.CLOCK or 0) +
     (changes.thru and C.CONFIG_FLAG.THRU or 0)
   return {C.MANUFACTURER_ID, CMD.WRITE_CONFIG, channel, flags, original.direction, brightness, v2, v3}
+end
+
+
+-- Full mono blobs retain every unedited byte, including reserved hardware metadata.
+function M.write_blob(pattern, raw)
+  assert(pattern.type == "pattern" and #raw == C.PATTERN_SIZE, "mono pattern blob required")
+  local checksum = M.checksum(raw)
+  local body = {C.MANUFACTURER_ID, CMD.WRITE_BLOB, pattern.pattern,
+    checksum % C.MIDI_DATA_BASE, floor(checksum / C.MIDI_DATA_BASE)}
+  for _, byte in ipairs(M.pack7(raw)) do body[#body + 1] = byte end
+  if pattern.variation ~= C.VARIATION_CV then body[#body + 1] = pattern.variation end
+  return body
+end
+
+function M.write_scale(pat, mask, enabled)
+  integer(pat, 0, C.PATTERNS - 1, "pattern")
+  integer(mask, 1, 4095, "scale mask")
+  return {C.MANUFACTURER_ID, C.COMMAND.SCALE, pat,
+    mask % 128, floor(mask / 128), enabled and 1 or 0}
+end
+
+function M.request_probability(pat)
+  integer(pat, 0, C.PATTERNS - 1, "pattern")
+  return {C.MANUFACTURER_ID, CMD.REQUEST_PROBABILITY, pat}
+end
+
+function M.write_probability(pat, step, accent, slide, down, up, double)
+  integer(pat, 0, C.PATTERNS - 1, "pattern")
+  integer(step, 0, C.STEPS - 1, "step")
+  local b0 = integer(accent, 0, 13, "accent level") +
+    16 * integer(slide, 0, 13, "slide level")
+  local b1 = integer(down, 0, 13, "down level") +
+    16 * integer(up, 0, 13, "up level")
+  local b2 = double and 1 or 0
+  local msbs = floor(b0 / 128) + 2 * floor(b1 / 128) + 4 * floor(b2 / 128)
+  return {C.MANUFACTURER_ID, C.COMMAND.PROBABILITY, pat, step,
+    b0 % 128, b1 % 128, b2 % 128, msbs}
 end
 
 return M

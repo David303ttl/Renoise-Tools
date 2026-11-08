@@ -1,69 +1,95 @@
 # SuperOS-303 Renoise Tool
 
-A standalone Renoise 3.5 / scripting API 6.2 tool for controlling SuperOS-303
-hardware directly over MIDI/SysEx. It does **not** flash firmware or switch
-firmware modes. The tool does not depend on ACID or DigitaktSampleChain.
+Native MIDI/SysEx hardware editor for Renoise 3.5 / scripting API 6.2, targeting
+the current SuperOS-303 firmware in `David303ttl/303-OS`. It runs as a separate
+Renoise tool; ACID and DigitaktSampleChain are unaffected.
 
 ## Install
 
-From the Renoise-Tools repository root, run:
+From the repository root, run:
 
 ```powershell
 ./scripts/run_tests.ps1 -Tool SuperOS303 -LuaCommand lua5.1
 ./scripts/package.ps1 -Tool SuperOS303
 ```
 
-Open the generated `dist/com.david303ttl.SuperOS303_0.1.xrnx` with Renoise.
-Use **Tools > SuperOS-303...** (or the Pattern Editor menu).
+Install `dist/com.david303ttl.SuperOS303_0.1.xrnx` and open
+**Tools > SuperOS-303...**.
 
-## Basic hardware test
+## MIDI connection
 
-1. Connect hardware MIDI OUT to Renoise MIDI IN, and Renoise MIDI OUT to
-   hardware MIDI IN (USB MIDI or an interface with properly wired DIN ports).
-   Select **both** ports in the tool and click **Connect**.
-2. **Read config** queries SysEx 0x20 and should receive 0x21 (configuration)
-   and 0x1C (active group). The displayed group is read from the hardware.
-3. Pick pattern A1-A8 or B1-B8 and variation 1-3; click **Fetch**. The tool
-   reports the hardware's active pattern and fetches it with **Use hardware
-   pattern**. Choosing a pattern in the editor only selects what to edit.
-   Mono patterns are checked against the 60-byte firmware format and checksum.
-4. For **variation 1** only, choose a step and adjust NOTE/REST/TIE,
-   pitch, accent, slide, ratchet or length. Write buttons apply immediately,
-   including during playback. Each write triggers an automatic readback; a
-   mismatch displays the returned value. Use **Fetch** to retry a missing reply.
-   Changing controls alone does not write to hardware.
-5. **Queue pattern** selects a pattern at the next hardware pattern wrap
-   (immediately when stopped). **Set edit variation** sends the hardware
-   edit-target command. Both prompt before sending.
+1. Connect both MIDI IN and OUT to the SuperOS device (USB or DIN interface).
+   Close the desktop editor if it is using the same interface.
+2. Select the input/output ports, click **Connect**, then **Read config**.
+   The device should report its firmware version, MIDI channels and hardware
+   group. A port that opens is not sufficient evidence of an actual device.
+3. The active group is determined by the hardware knob; pattern numbers A1-A8
+   and B1-B8 are *inside that group*. Select a pattern and variation, then
+   **Fetch**. Use **Use hardware pattern** to follow the most recent active
+   hardware pattern broadcast.
+4. A 4×8 overview shows all 32 step positions, notes/ties/rests, accent,
+   slide and ratchet indicators. Click any active step to edit it.
 
-## Important constraints
+## Editing
 
-- **Group selection is performed on the hardware.** The firmware's pattern
-  request command addresses 16 slots inside its currently active group; a
-  pattern number alone does not select a group. Switching hardware groups
-  invalidates the cached snapshot.
-- **Variations 2 and 3 are read-only.** Variation 3 poly messages are
-  recognized; chord editing is not supported.
-- Variation 1 edits affect hardware pattern storage. Save a backup with the
-  working desktop editor before testing writes.
-- Incoming hardware edits to the displayed variation refresh the cached pattern
-  automatically. A successful send means the MIDI driver accepted the message,
-  not that the hardware persisted it. Readback is required.
-- SysEx RX and TX must be enabled on the hardware. An unmatched or incomplete
-  response is not interpreted as a connected device.
-- The tool does not send MIDI clock or Start/Stop. For Renoise-led transport,
-  enable the correct MIDI clock output in Renoise and external clock receive
-  on the hardware. Keep clock routing separate from the tool's control port.
-- If another editor uses the same MIDI port, disconnect it while testing
-  to avoid competing SysEx messages.
-- The tool cannot manage the host's physical port permissions or reconnect
-  automatically after hot-unplugging. Use Refresh ports, then Connect.
+- **Mono variations 1, 2 and 3**: step note, time, accent, slide and length
+  editing. Variation 1 sends efficient per-step SysEx; variations 2/3 use a
+  checked full-pattern blob for non-resident shadow consistency.
+- **Variation 3 poly**: fetch and inspect the four-voice chord list, use the
+  four voice selectors (or empty voices), time/NOTE/TIE/REST, accent and slide,
+  then **Write poly step** (0x27). Poly output is four voices per NOTE event,
+  and the time stream indexes chords rather than individual notes.
+- **Pattern settings**: direction (forward/reverse/ping-pong/random/half
+  random/Brownian), triplet mode, transpose (-24..24), and length. Changes are
+  sent as validated full pattern blobs, preserving other stored metadata.
+  Triplet patterns cannot exceed 24 steps.
+- **Scales**: edit the 12 pitch-class bits and enable/disable quantization.
+  Variation 1 uses scale SysEx; mono variations 2/3 use checked full blobs.
+- **Probability** (variation 1): click **Read probabilities** first, then
+  choose accent, slide, down/up probability levels (0..13) and double-up,
+  and click **Write probability**. A follow-up probability request is issued.
+- **MIDI configuration**: MIDI listen channel (0=omni), external clock
+  receive, MIDI Thru, LED brightness, and variation 2/3 output channels.
+  **Write MIDI config** preserves the device's current SysEx RX/TX flags.
+- **Hardware selection**: queue a pattern (at wrap or immediately when
+  stopped) and choose the hardware's edit-target variation.
 
-The application protocol is defined by
+The incoming SysEx stream is decoded and checksummed; the tool monitors
+hardware edits and refreshes the matching pattern. Normal pattern writes
+automatically request a readback and report whether the returned hardware
+values match. Saving via MIDI driver does not prove persistent hardware
+storage. Do not simultaneously edit the same hardware state in multiple
+editors.
+
+## Constraints
+
+- This is a native Renoise implementation, **not** an embedded web browser.
+  It remains less extensive than the standalone SuperOS desktop editor.
+- The 32-step overview displays one 32-step section (A or B); linked A/B
+  sections remain separate addresses in this tool.
+- Full bank management, track-chain arrangement, randomization, extensive
+  probability-lane editing, advanced poly operations, and backup/restore
+  workflows are not yet implemented.
+- This tool deliberately excludes all bootloader, firmware-update,
+  EEPROM diagnostic and firmware-switch opcodes.
+- It does not emit MIDI clock. Configure Renoise's normal MIDI clock output
+  and enable clock RX on SuperOS if you want Renoise to be the timing master.
+- The hardware must have SysEx RX/TX enabled. If a control does not respond,
+  check input/output direction, device firmware, and port ownership.
+- Make a backup in the tested desktop editor before trying bulk or live
+  writes on valuable patterns.
+
+The current firmware protocol is defined in
 `303-OS/src/midi.cpp` and `303-OS/tools/web-pattern-edit/index.html`.
-Current mono pattern format: 32 pitch bytes, 8 packed time bytes,
-12 metadata bytes (length is byte 52), 8 packed ratchet bytes;
-60 bytes raw, 69 bytes 7-bit packed. Firmware needs the matching protocol.
+The mono blob is 60 bytes raw and 69 bytes 7-bit packed; the poly chord
+blob is 115 bytes raw and 132 bytes packed.
+
+## Verification
+
+Offline tests cover codecs, packet framing, two-stream editing and UI
+readback. Run the above test command. See `tests/superos303/README.md`
+for the Windows MIDI hardware probe; that script modifies and restores a
+pattern, and must be used only with a known backup.
 
 ## License
 

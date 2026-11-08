@@ -9,7 +9,9 @@ Transport.__index = Transport
 local allowed = {
   [CMD.REQUEST_PATTERN] = true, [CMD.WRITE_STEP] = true, [CMD.WRITE_LENGTH] = true,
   [CMD.QUEUE_PATTERN] = true, [CMD.EDIT_VARIATION] = true, [CMD.REQUEST_CONFIG] = true,
-  [CMD.WRITE_CONFIG] = true, [CMD.WRITE_RATCHET] = true
+  [CMD.WRITE_CONFIG] = true, [CMD.WRITE_RATCHET] = true,
+  [CMD.WRITE_BLOB] = true, [CMD.POLY_STEP] = true,
+  [CMD.SCALE] = true, [CMD.PROBABILITY] = true, [CMD.REQUEST_PROBABILITY] = true
 }
 
 function Transport.new(on_event)
