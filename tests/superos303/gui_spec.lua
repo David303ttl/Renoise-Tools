@@ -186,11 +186,11 @@ click("Use hardware pattern")
 assert(#sent == before + 1 and sent[#sent][3] == 0x10 and sent[#sent][4] == 8,
   "B1 must fetch slot 8 without queuing a different hardware pattern")
 readback(8)
-assert(find("text", "Hardware reports group 1, pattern B1"))
+assert(find("text", "B1"))
 
 input.on_sysex(protocol.frame({0x7D, 0x15, 8, 0, 2}))
 editable(false)
-assert(find("text", "Hardware reports group 3, pattern B1"))
+assert(find("text", "G3"))
 click("Use hardware pattern")
 readback(8)
 

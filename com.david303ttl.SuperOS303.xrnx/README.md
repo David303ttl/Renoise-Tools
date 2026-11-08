@@ -27,8 +27,10 @@ Install `dist/com.david303ttl.SuperOS303_0.1.xrnx` and open
    and B1-B8 are *inside that group*. Select a pattern and variation, then
    **Fetch**. Use **Use hardware pattern** to follow the most recent active
    hardware pattern broadcast.
-4. A 4×8 overview shows all 32 step positions, notes/ties/rests, accent,
-   slide and ratchet indicators. Click any active step to edit it.
+4. Use **Steps**, **Scale**, **Probability**, and **MIDI** tabs. The MIDI tab
+   opens first while disconnected; loading a pattern switches to Steps.
+   A 4×8 overview shows all 32 positions, notes/ties/rests, accent,
+   slide and ratchet indicators. Click a step to edit it.
 
 ## Editing
 
@@ -43,11 +45,15 @@ Install `dist/com.david303ttl.SuperOS303_0.1.xrnx` and open
   random/Brownian), triplet mode, transpose (-24..24), and length. Changes are
   sent as validated full pattern blobs, preserving other stored metadata.
   Triplet patterns cannot exceed 24 steps.
-- **Scales**: edit the 12 pitch-class bits and enable/disable quantization.
-  Variation 1 uses scale SysEx; mono variations 2/3 use checked full blobs.
-- **Probability** (variation 1): click **Read probabilities** first, then
-  choose accent, slide, down/up probability levels (0..13) and double-up,
-  and click **Write probability**. A follow-up probability request is issued.
+- **Scales**: edit the 12 pitch-class mask bits or choose a root and preset,
+  then apply the mask. Enable/disable quantization and click **Write scale**.
+  Variation 1 uses scale SysEx 0x2A; mono variations 2/3 use checked full blobs.
+  The device's returned mask and enable state are verified, not unrelated bytes.
+- **Probability** (variation 1): tables are fetched automatically with a
+  newly loaded variation-1 pattern. **Read probabilities** refreshes on demand.
+  Set accent, slide, down/up levels (0..13) and double-up, then **Write
+  probability**. Readback validates the requested step and preserves the table
+  when that same pattern is refreshed.
 - **MIDI configuration**: MIDI listen channel (0=omni), external clock
   receive, MIDI Thru, LED brightness, and variation 2/3 output channels.
   **Write MIDI config** preserves the device's current SysEx RX/TX flags.
@@ -67,6 +73,9 @@ editors.
   It remains less extensive than the standalone SuperOS desktop editor.
 - The 32-step overview displays one 32-step section (A or B); linked A/B
   sections remain separate addresses in this tool.
+- The UI uses compact tabs instead of displaying diagnostics and all controls
+  simultaneously. Errors and readback confirmations appear on the status line
+  and in Renoise's status area.
 - Full bank management, track-chain arrangement, randomization, extensive
   probability-lane editing, advanced poly operations, and backup/restore
   workflows are not yet implemented.
@@ -86,8 +95,8 @@ blob is 115 bytes raw and 132 bytes packed.
 
 ## Verification
 
-Offline tests cover codecs, packet framing, two-stream editing and UI
-readback. Run the above test command. See `tests/superos303/README.md`
+Offline tests cover codecs, packet framing, two-stream editing,
+scale and probability readback, and tabbed UI behavior. Run the above test command. See `tests/superos303/README.md`
 for the Windows MIDI hardware probe; that script modifies and restores a
 pattern, and must be used only with a known backup.
 

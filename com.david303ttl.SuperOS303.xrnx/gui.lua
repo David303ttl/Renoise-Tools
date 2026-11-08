@@ -16,6 +16,9 @@ local grid_buttons = {}
 local scale_boxes = {}
 local poly_boxes = {}
 local probability_boxes = {}
+local active_page = 4
+local pages = {}
+local pending_address = nil
 
 local function pattern_name(pattern)
   return (pattern < C.PATTERNS_PER_SECTION and "A" or "B") ..
@@ -47,12 +50,16 @@ local function requested_variation()
   return display.variation_select.value - C.UI_INDEX_BASE
 end
 
-local function clear_snapshot()
+local function clear_snapshot(keep_probability)
   state.pattern = nil
   state.pending_write = nil
-  state.probability = nil
-  state.pending_probability = nil
-  if display.pattern_info then display.pattern_info.text = "No verified pattern loaded" end
+  if not keep_probability then
+    state.probability = nil
+    state.pending_probability = nil
+    state.probability_request = nil
+    pending_address = nil
+  end
+  if display.pattern_info then display.pattern_info.text = "--" end
   if display.write_step then display.write_step.active = false end
   if display.write_ratchet then display.write_ratchet.active = false end
   if display.write_length then display.write_length.active = false end
@@ -60,7 +67,8 @@ local function clear_snapshot()
   if display.write_scale then display.write_scale.active = false end
   if display.write_poly then display.write_poly.active = false end
   if display.write_probability then display.write_probability.active = false end
-  if display.grid_title then display.grid_title.text = "Fetch a pattern to view its steps" end
+  if display.grid_title then display.grid_title.text = "Pattern" end
+  if display.prob_info and not keep_probability then display.prob_info.text = "Not loaded" end
   for _, button in ipairs(grid_buttons) do button.text = "--" end
 end
 
@@ -73,18 +81,34 @@ local function fetch_pattern(message, expected)
     error_message("Read config and receive the hardware group first")
     return false
   end
-  clear_snapshot()
+  local old = state.pattern
+  local prob = state.probability
+  local keep_probability = requested_variation() == C.VARIATION_CV and
+    ((old and old.group == state.group and old.pattern == selected_pattern() and
+      old.variation == C.VARIATION_CV) or
+     (prob and prob.group == state.group and prob.pattern == selected_pattern()))
+  clear_snapshot(keep_probability)
   state.pending_write = expected
-  status(message or "Fetching selected pattern...")
-  return send(protocol.request_pattern(selected_pattern(), requested_variation()))
+  pending_address = {group = state.group, pattern = selected_pattern(),
+    variation = requested_variation()}
+  status(message or "Reading pattern...")
+  if not send(protocol.request_pattern(selected_pattern(), requested_variation())) then
+    state.pending_write = nil
+    pending_address = nil
+    return false
+  end
+  return true
 end
 
 local function matches_write(pattern, expected)
-  if expected.kind == "metadata" or expected.kind == "scale" then
-    for i = 1, #expected.raw do
-      if pattern.raw[i] ~= expected.raw[i] then return false end
-    end
-    return true
+  if expected.kind == "scale" then
+    local scale = model.scale(pattern)
+    return scale.mask == expected.mask and scale.enabled == expected.enabled
+  end
+  if expected.kind == "metadata" then
+    local meta = model.metadata(pattern)
+    return meta.direction == expected.direction and
+      meta.triplet == expected.triplet and meta.transpose == expected.transpose
   end
   if expected.kind == "length" then return pattern.length == expected.length end
   local step = model.step(pattern, expected.step)
@@ -149,7 +173,8 @@ local function update_controls()
     end
   end
   local prob = state.probability
-  if prob and prob.pattern == p.pattern and prob.group == p.group then
+  if prob and prob.pattern == p.pattern and prob.group == p.group and
+     p.variation == C.VARIATION_CV then
     local value = model.probability(prob.raw, step)
     for i, key in ipairs({"accent", "slide", "down", "up"}) do
       probability_boxes[i].value = value[key]
@@ -157,10 +182,10 @@ local function update_controls()
     display.prob_double.value = value.double
   end
   display.pattern_info.text = string.format(
-    "Group %d | Pattern %s | Variation %d%s | %d steps%s",
+    "G%d  %s  V%d%s  |  %d steps%s",
     state.group + C.UI_INDEX_BASE, pattern_name(p.pattern), p.variation + C.UI_INDEX_BASE,
     is_poly and " POLY" or "", p.length, info.triplet and " triplet" or "")
-  display.grid_title.text = "Pattern overview (select a step to edit)"
+  display.grid_title.text = "Steps"
   for index, button in ipairs(grid_buttons) do
     button.text = (index == step + 1 and ">" or "") .. model.step_label(p, index - 1)
     button.active = index <= p.length
@@ -176,7 +201,18 @@ local function update_controls()
   display.write_poly.active = not not (editable and is_poly)
   display.write_probability.active = not not (editable and
     p.variation == C.VARIATION_CV and prob and prob.pattern == p.pattern and
-    prob.group == state.group)
+    prob.group == state.group and not state.pending_probability)
+  if display.read_probability then
+    display.read_probability.active = not not (editable and p.variation == C.VARIATION_CV)
+  end
+  if display.prob_info then
+    display.prob_info.text = (prob and prob.pattern == p.pattern and
+      prob.group == p.group and p.variation == C.VARIATION_CV) and
+      "Loaded" or "Not loaded"
+  end
+  if display.poly_row then display.poly_row.visible = is_poly end
+  if display.write_poly then display.write_poly.visible = is_poly end
+  if display.write_step then display.write_step.visible = not is_poly end
 end
 
 local function on_event(event)
@@ -191,23 +227,15 @@ local function on_event(event)
     display.cfg_var2.value = event.var2_channel
     display.cfg_var3.value = event.var3_channel
     display.write_config.active = true
-    display.config_info.text = string.format(
-      "Firmware %s | MIDI ch %d | V2 ch %d | V3 ch %d | Clock %s | Thru %s | RX %s / TX %s",
-      event.version == "" and "unknown" or event.version, event.channel,
-      event.var2_channel, event.var3_channel,
-      protocol.has_flag(event.flags, C.CONFIG_FLAG.CLOCK) and "on" or "off",
-      protocol.has_flag(event.flags, C.CONFIG_FLAG.THRU) and "on" or "off",
-      protocol.has_flag(event.flags, C.CONFIG_FLAG.RX_DISABLED) and "off" or "on",
-      protocol.has_flag(event.flags, C.CONFIG_FLAG.TX_DISABLED) and "off" or "on")
+    display.config_info.text = "FW " .. (event.version == "" and "?" or event.version)
     status("Configuration received")
   elseif event.type == "group" then
     if state.group ~= event.group then
       state.group = event.group
       state.active_pattern = nil
       clear_snapshot()
-      display.active_info.text = "Active hardware pattern unknown; start playback or select a pattern on the 303"
-      display.group_info.text = "Hardware group " .. (event.group + C.UI_INDEX_BASE) ..
-        " (change groups on the 303, then fetch again)"
+      display.active_info.text = "--"
+      display.group_info.text = "G" .. (event.group + C.UI_INDEX_BASE)
     end
   elseif event.type == "pattern" or event.type == "poly" then
     if state.group == nil then
@@ -217,11 +245,22 @@ local function on_event(event)
     if event.pattern ~= selected_pattern() or event.variation ~= requested_variation() then
       return
     end
+    if pending_address and (pending_address.group ~= state.group or
+      pending_address.pattern ~= event.pattern or
+      pending_address.variation ~= event.variation) then return end
     event.group = state.group
+    pending_address = nil
     local expected = state.pending_write
     state.pending_write = nil
     state.pattern = event
     update_controls()
+    if display.tabs and display.tabs.value == 4 then display.tabs.value = 1 end
+    if event.variation == C.VARIATION_CV and
+       not state.probability and not state.pending_probability and
+       not state.probability_request then
+      state.probability_request = {group = event.group, pattern = event.pattern}
+      send(protocol.request_probability(event.pattern))
+    end
     if expected then
       status(matches_write(event, expected) and "Write confirmed by hardware readback" or
         "Write not confirmed: hardware returned a different value. Hardware state shown.")
@@ -229,7 +268,13 @@ local function on_event(event)
       status("Pattern received and checksum verified")
     end
   elseif event.type == "probability" then
-    if state.group ~= nil and state.pattern and event.pattern == state.pattern.pattern then
+    local request = state.probability_request
+    if state.group ~= nil and state.pattern and
+       state.pattern.variation == C.VARIATION_CV and
+       event.pattern == state.pattern.pattern and
+       (not request or (request.group == state.group and
+         request.pattern == event.pattern)) then
+      state.probability_request = nil
       event.group = state.group
       state.probability = event
       local expected = state.pending_probability
@@ -249,7 +294,9 @@ local function on_event(event)
   elseif event.type == "changed" then
     if event.command == C.COMMAND.PROBABILITY and state.pattern and
        state.pattern.variation == C.VARIATION_CV and
-       state.pattern.pattern == event.pattern then
+       state.pattern.pattern == event.pattern and
+       not state.probability_request then
+      state.probability_request = {group = state.group, pattern = event.pattern}
       send(protocol.request_probability(event.pattern))
       return
     end
@@ -258,14 +305,14 @@ local function on_event(event)
       fetch_pattern("Hardware edited this pattern. Reading back hardware state...")
     end
   elseif event.type == "ack" then
-    status(event.status == C.ACK_OK and "Device ACK" or
-      ("Device NAK (" .. event.status .. ")"))
+    if event.status ~= C.ACK_OK then
+      status("Device NAK (" .. event.status .. ")")
+    end
   elseif event.type == "active" or event.type == "position" then
     if event.group ~= nil and event.group < C.GROUPS then
       on_event({type = "group", group = event.group})
       state.active_pattern = event.pattern
-      display.active_info.text = string.format("Hardware reports group %d, pattern %s",
-        event.group + C.UI_INDEX_BASE, pattern_name(event.pattern))
+      display.active_info.text = pattern_name(event.pattern)
     end
   end
 end
@@ -273,12 +320,13 @@ end
 local function close_ports()
   if device then device:close() end
   state.config, state.group, state.active_pattern = nil, nil, nil
+  state.probability_request = nil
   if display.write_config then display.write_config.active = false end
   clear_snapshot()
   if display.connection then display.connection.text = "Disconnected" end
-  if display.group_info then display.group_info.text = "Hardware group unknown" end
-  if display.active_info then display.active_info.text = "Active hardware pattern unknown" end
-  if display.config_info then display.config_info.text = "No config read yet" end
+  if display.group_info then display.group_info.text = "--" end
+  if display.active_info then display.active_info.text = "--" end
+  if display.config_info then display.config_info.text = "FW --" end
 end
 
 local function refresh_ports()
@@ -300,8 +348,8 @@ local function connect()
   local ok, issue = device:open(ports_in[display.in_select.value],
                                ports_out[display.out_select.value])
   if not ok then error_message(issue) return end
-  display.connection.text = "Connected: " .. device.input.name .. " / " .. device.output.name
-  status("Ports open. Reading hardware configuration...")
+  display.connection.text = "Connected"
+  status("Reading hardware...")
   send(protocol.request_config())
 end
 
@@ -398,7 +446,10 @@ local function write_metadata()
     display.triplet_select.value, display.transpose_select.value)
   if not raw then error_message(issue) return end
   if send(protocol.write_blob(p, raw)) then
-    fetch_pattern("Pattern settings sent. Reading back...", {kind = "metadata", raw = raw})
+    fetch_pattern("Reading back...", {kind = "metadata",
+      direction = display.direction_select.value - 1,
+      triplet = display.triplet_select.value,
+      transpose = display.transpose_select.value})
   end
 end
 
@@ -415,7 +466,7 @@ local function write_scale()
   local body = p.variation == C.VARIATION_CV and
     protocol.write_scale(p.pattern, mask, enabled) or protocol.write_blob(p, raw)
   if send(body) then
-    fetch_pattern("Scale sent. Reading back...", {kind = "scale", raw = raw})
+    fetch_pattern("Reading scale...", {kind = "scale", mask = mask, enabled = enabled})
   end
 end
 
@@ -442,7 +493,10 @@ local function request_probability()
     error_message("Load variation 1 before requesting probabilities")
     return
   end
-  send(protocol.request_probability(p.pattern))
+  state.probability_request = {group = state.group, pattern = p.pattern}
+  if not send(protocol.request_probability(p.pattern)) then
+    state.probability_request = nil
+  end
 end
 
 local function write_probability()
@@ -453,24 +507,30 @@ local function write_probability()
     error_message("Fetch the probability table first")
     return
   end
+  local expected = {
+    step = state.step, accent = probability_boxes[1].value,
+    slide = probability_boxes[2].value, down = probability_boxes[3].value,
+    up = probability_boxes[4].value, double = display.prob_double.value
+  }
   if send(protocol.write_probability(p.pattern, state.step,
-      probability_boxes[1].value, probability_boxes[2].value,
-      probability_boxes[3].value, probability_boxes[4].value,
-      display.prob_double.value)) then
-    state.pending_probability = {
-      step = state.step, accent = probability_boxes[1].value,
-      slide = probability_boxes[2].value, down = probability_boxes[3].value,
-      up = probability_boxes[4].value, double = display.prob_double.value
-    }
-    state.probability = nil
+      expected.accent, expected.slide, expected.down, expected.up,
+      expected.double)) then
+    state.pending_probability = expected
+    state.probability_request = {group = state.group, pattern = p.pattern}
     display.write_probability.active = false
-    status("Probability edit sent; checking hardware table")
+    status("Reading probabilities...")
     if not send(protocol.request_probability(p.pattern)) then
       state.pending_probability = nil
+      state.probability_request = nil
     end
   end
 end
 
+
+local function switch_page(index)
+  active_page = index
+  for i, panel in ipairs(pages) do panel.visible = (i == index) end
+end
 
 local function make_ui()
   vb = renoise.ViewBuilder()
@@ -485,9 +545,9 @@ local function make_ui()
   display.out_select = vb:popup {items = {"(no outputs)"}, width = C.UI_PORT_WIDTH,
     notifier = close_ports}
   display.connection = text_view("Disconnected")
-  display.group_info = text_view("Hardware group unknown")
-  display.active_info = text_view("Active hardware pattern unknown")
-  display.config_info = text_view("No config read yet")
+  display.group_info = text_view("--")
+  display.active_info = text_view("--")
+  display.config_info = text_view("FW --")
   display.cfg_channel = vb:valuebox {min = 0, max = 16, value = 1, width = 58}
   display.cfg_clock = vb:checkbox {value = false}
   display.cfg_thru = vb:checkbox {value = false}
@@ -496,8 +556,8 @@ local function make_ui()
   display.cfg_var3 = vb:valuebox {min = 1, max = 16, value = 3, width = 58}
   display.write_config = vb:button {text = "Write MIDI config", active = false,
     notifier = write_config}
-  display.status = text_view("Connect a MIDI input and output to start")
-  display.pattern_info = text_view("No verified pattern loaded")
+  display.status = text_view("Ready")
+  display.pattern_info = text_view("--")
   local patterns = {}
   for pattern = 0, C.PATTERNS - 1 do patterns[#patterns + 1] = pattern_name(pattern) end
   display.pattern_select = vb:popup {items = patterns, value = C.UI_INDEX_BASE, width = C.UI_ADDRESS_WIDTH,
@@ -522,7 +582,7 @@ local function make_ui()
   display.ratchet_select = vb:popup {items = {"Off", "2x", "3x"}, value = C.UI_INDEX_BASE}
   display.length_select = vb:valuebox {min = C.MIN_LENGTH, max = C.STEPS,
     value = C.DEFAULT_LENGTH, width = C.UI_ADDRESS_WIDTH}
-  display.grid_title = text_view("Fetch a pattern to view its steps")
+  display.grid_title = text_view("Steps")
   grid_buttons = {}
   local grid_rows = {}
   for row_index = 0, 3 do
@@ -576,7 +636,9 @@ local function make_ui()
   end
   display.write_poly = vb:button {text = "Write poly step", active = false,
     notifier = write_poly}
+  display.write_poly.visible = false
   display.poly_row = vb:row {spacing = C.UI_SPACING, views = poly_controls}
+  display.poly_row.visible = false
   probability_boxes = {}
   local probability_views = {}
   for i, name in ipairs({"Accent", "Slide", "Down", "Up"}) do
@@ -599,8 +661,59 @@ local function make_ui()
   display.write_length = vb:button {text = "Write length", active = false,
     notifier = write_length}
 
-  return vb:column {margin = C.UI_MARGIN, spacing = C.UI_SPACING, views = {
-    text_view("SuperOS-303 | Hardware MIDI / SysEx"),
+  display.read_probability = vb:button {text = "Read probabilities",
+    notifier = request_probability, active = false}
+  display.scale_root = vb:popup {items = model.scale_roots, value = 1, width = 90}
+  display.scale_preset = vb:popup {items = model.scale_presets, value = 1, width = 145}
+  display.apply_scale_preset = vb:button {text = "Set mask", notifier = function()
+    local mask = model.preset_mask(display.scale_root.value - 1, display.scale_preset.value)
+    for i, control in ipairs(scale_boxes) do
+      control.value = protocol.has_flag(mask, 2 ^ (i - 1))
+    end
+  end}
+  local steps_page = vb:column {spacing = C.UI_SPACING, views = {
+    display.grid,
+    vb:row {spacing = C.UI_SPACING, views = {
+      text_view("Step"), display.step_select,
+      text_view("Time"), display.time_select,
+      text_view("Note"), display.note_select,
+      text_view("Oct"), display.octave_select,
+      text_view("Accent"), display.accent_select,
+      text_view("Slide"), display.slide_select
+    }},
+    vb:row {spacing = C.UI_SPACING, views = {
+      display.write_step, display.write_poly,
+      text_view("Ratchet"), display.ratchet_select, display.write_ratchet,
+      text_view("Length"), display.length_select, display.write_length
+    }},
+    display.poly_row,
+    vb:row {spacing = C.UI_SPACING, views = {
+      text_view("Direction"), display.direction_select,
+      text_view("Triplet"), display.triplet_select,
+      text_view("Transpose"), display.transpose_select,
+      display.write_metadata
+    }}
+  }}
+  local scale_page = vb:column {spacing = C.UI_SPACING, views = {
+    vb:row {spacing = C.UI_SPACING, views = {
+      text_view("Root"), display.scale_root,
+      text_view("Preset"), display.scale_preset,
+      display.apply_scale_preset
+    }},
+    display.scale_notes,
+    vb:row {spacing = C.UI_SPACING, views = {
+      text_view("Enabled"), display.scale_enabled, display.write_scale
+    }}
+  }}
+  display.prob_info = text_view("Not loaded")
+  local probability_page = vb:column {spacing = C.UI_SPACING, views = {
+    vb:row {spacing = C.UI_SPACING, views = {
+      display.read_probability, display.write_probability,
+      display.prob_info
+    }},
+    display.prob_row
+  }}
+  local midi_page = vb:column {spacing = C.UI_SPACING, views = {
     label_row("MIDI Input", display.in_select),
     label_row("MIDI Output", display.out_select),
     vb:row {spacing = C.UI_SPACING, views = {
@@ -609,28 +722,33 @@ local function make_ui()
       vb:button {text = "Disconnect", notifier = close_ports},
       vb:button {text = "Read config", notifier = function()
         if device and device:is_open() then send(protocol.request_config()) end
-      end}
+      end},
+      display.connection, display.config_info
     }},
-    display.connection, display.config_info,
     vb:row {spacing = C.UI_SPACING, views = {
-      text_view("MIDI channel"), display.cfg_channel,
-      text_view("Receive clock"), display.cfg_clock,
-      text_view("MIDI Thru"), display.cfg_thru,
-      text_view("LED"), display.cfg_brightness}},
+      text_view("MIDI ch"), display.cfg_channel,
+      text_view("Clock RX"), display.cfg_clock,
+      text_view("Thru"), display.cfg_thru,
+      text_view("LED"), display.cfg_brightness
+    }},
     vb:row {spacing = C.UI_SPACING, views = {
-      text_view("Variation 2 channel"), display.cfg_var2,
-      text_view("Variation 3 channel"), display.cfg_var3,
-      display.write_config}},
-    display.group_info, display.active_info,
+      text_view("V2 ch"), display.cfg_var2,
+      text_view("V3 ch"), display.cfg_var3,
+      display.write_config
+    }}
+  }}
+  pages = {steps_page, scale_page, probability_page, midi_page}
+  display.pages = vb:column {spacing = 0, views = pages}
+  display.tabs = vb:switch {items = {"Steps", "Scale", "Probability", "MIDI"},
+    value = active_page, notifier = switch_page}
+  return vb:column {margin = C.UI_MARGIN, spacing = C.UI_SPACING, views = {
     vb:row {spacing = C.UI_SPACING, views = {
       text_view("Pattern"), display.pattern_select,
       text_view("Variation"), display.variation_select,
-      vb:button {text = "Fetch", notifier = function()
-        fetch_pattern()
-      end},
+      vb:button {text = "Fetch", notifier = function() fetch_pattern() end},
       vb:button {text = "Use hardware pattern", notifier = function()
         if state.active_pattern == nil then
-          status("Start playback or select a pattern on the 303 to identify its active pattern")
+          status("No active hardware pattern received")
           return
         end
         display.pattern_select.value = state.active_pattern + C.UI_INDEX_BASE
@@ -643,7 +761,8 @@ local function make_ui()
         end
         local pat = selected_pattern()
         if confirm_write("Queue pattern",
-            string.format("Group %d, pattern %s", state.group + C.UI_INDEX_BASE, pattern_name(pat))) then
+            string.format("Group %d, pattern %s",
+              state.group + C.UI_INDEX_BASE, pattern_name(pat))) then
           send(protocol.queue_pattern(pat))
         end
       end},
@@ -652,46 +771,22 @@ local function make_ui()
           error_message("Connect and read group first")
           return
         end
-        if confirm_write("Set hardware edit variation",
-            string.format("Pattern %s, variation %d", pattern_name(selected_pattern()),
+        if confirm_write("Set edit variation",
+            string.format("Pattern %s, variation %d",
+              pattern_name(selected_pattern()),
               requested_variation() + C.UI_INDEX_BASE)) then
           send(protocol.select_variation(selected_pattern(), requested_variation()))
         end
       end}
     }},
-    display.pattern_info,
-    display.grid_title,
-    display.grid,
-    label_row("Step", display.step_select),
     vb:row {spacing = C.UI_SPACING, views = {
-      text_view("Time"), display.time_select,
-      text_view("Note"), display.note_select,
-      text_view("Octave"), display.octave_select,
-      text_view("Accent"), display.accent_select,
-      text_view("Slide"), display.slide_select
+      display.pattern_info, text_view("HW"), display.group_info, display.active_info
     }},
-    vb:row {spacing = C.UI_SPACING, views = {display.write_step, display.write_poly,
-      text_view("Ratchet"), display.ratchet_select, display.write_ratchet,
-      text_view("Length"), display.length_select, display.write_length}},
-    text_view("Variation 3 poly: four independent chord voices (empty = --)"),
-    display.poly_row,
-    text_view("Pattern settings"),
-    vb:row {spacing = C.UI_SPACING, views = {
-      text_view("Direction"), display.direction_select,
-      text_view("Triplet"), display.triplet_select,
-      text_view("Transpose"), display.transpose_select, display.write_metadata}},
-    text_view("Pitch-class scale (mono variations)"),
-    vb:row {spacing = C.UI_SPACING, views = {
-      text_view("Enabled"), display.scale_enabled, display.write_scale}},
-    display.scale_notes,
-    text_view("Variation 1 step probabilities (0-13, 13 = always)"),
-    vb:row {spacing = C.UI_SPACING, views = {
-      vb:button {text = "Read probabilities", notifier = request_probability},
-      display.write_probability}},
-    display.prob_row,
-    text_view("Write commands read back from hardware. No firmware update commands."),
+    display.tabs,
+    display.pages,
     display.status
   }}
+
 end
 
 function M.show()
@@ -700,6 +795,7 @@ function M.show()
   close_ports()
   local view = make_ui()
   refresh_ports()
+  switch_page(active_page)
   dialog = renoise.app():show_custom_dialog("SuperOS-303", view)
 end
 

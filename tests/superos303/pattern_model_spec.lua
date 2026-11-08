@@ -37,6 +37,15 @@ eq(scale.mask, 4095)
 assert(scale.enabled)
 eq(raw[42], 0)
 
+local masked = {}
+for i, byte in ipairs(raw) do masked[i] = byte end
+masked[43] = 0x70 -- stale non-scale bits must not survive the firmware's scale setter
+local normalized = model.with_scale({type = "pattern", raw = masked}, 0xABC, true)
+eq(normalized[42], 0xBC)
+eq(normalized[43], 0x8A)
+eq(model.preset_mask(0, 4), 1193) -- C minor pentatonic
+eq(model.preset_mask(2, 4), 677) -- D minor pentatonic
+
 local body = p.write_blob(mono, new_raw)
 eq(body[2], C.COMMAND.WRITE_BLOB)
 eq(body[#body], 1)

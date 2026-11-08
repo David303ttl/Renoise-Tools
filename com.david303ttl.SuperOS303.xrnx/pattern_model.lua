@@ -167,9 +167,29 @@ function M.with_scale(pattern, mask, enabled)
   assert(is_int(mask, 1, 4095), "select at least one scale note")
   local raw = copy(pattern.raw)
   raw[42] = mask % 256
-  raw[43] = floor(raw[43] / 16) % 8 * 16 + floor(mask / 256) +
-    (enabled and 128 or 0)
+  -- Firmware rewrites reserved[2] to mask high nibble plus the enable flag.
+  raw[43] = floor(mask / 256) + (enabled and 128 or 0)
   return raw
+end
+
+M.scale_presets = {"Chromatic", "Major", "Natural minor", "Minor pentatonic", "Major pentatonic"}
+M.scale_roots = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"}
+local PRESET_INTERVALS = {
+  {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11},
+  {0, 2, 4, 5, 7, 9, 11},
+  {0, 2, 3, 5, 7, 8, 10},
+  {0, 3, 5, 7, 10},
+  {0, 2, 4, 7, 9}
+}
+
+function M.preset_mask(root, preset)
+  assert(is_int(root, 0, 11) and is_int(preset, 1, #PRESET_INTERVALS),
+    "invalid scale preset")
+  local mask = 0
+  for _, interval in ipairs(PRESET_INTERVALS[preset]) do
+    mask = mask + 2 ^ ((root + interval) % 12)
+  end
+  return mask
 end
 
 function M.poly_length(pattern)
