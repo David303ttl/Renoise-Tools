@@ -112,7 +112,10 @@ readback()
 
 local note
 for _, control in ipairs(views) do
-  if control.items and control.items[1] == "C" then note = control end
+  if control.items and control.items[1] == "C" and control.items[13] == "High C" then
+    assert(not note, "note editor must be unique")
+    note = control
+  end
 end
 assert(note and note.value == 5, "fetched pitch must populate the editor")
 

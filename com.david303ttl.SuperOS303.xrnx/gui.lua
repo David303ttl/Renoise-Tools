@@ -16,7 +16,7 @@ local grid_buttons = {}
 local scale_boxes = {}
 local poly_boxes = {}
 local probability_boxes = {}
-local active_page = 4
+local active_page = C.UI_PAGE.MIDI
 local pages = {}
 local pending_address = nil
 
@@ -50,6 +50,16 @@ local function requested_variation()
   return display.variation_select.value - C.UI_INDEX_BASE
 end
 
+local function probability_hint(pattern, step)
+  if pattern.variation ~= C.VARIATION_CV then
+    return "Probabilities affect variation 1 only."
+  end
+  local time = model.step(pattern, step).time
+  if time == C.TIME_TIE then return "TIE holds the previous NOTE's probability result. Choose a NOTE step." end
+  if time ~= C.TIME_NOTE then return "This step is silent. Choose a NOTE step to hear probabilities." end
+  return string.format("NOTE rolls probabilities: 0 = off, %d = always.", C.PROBABILITY_LEVEL_MAX)
+end
+
 local function clear_snapshot(keep_probability)
   state.pattern = nil
   state.pending_write = nil
@@ -67,6 +77,9 @@ local function clear_snapshot(keep_probability)
   if display.write_scale then display.write_scale.active = false end
   if display.write_poly then display.write_poly.active = false end
   if display.write_probability then display.write_probability.active = false end
+  if display.prob_step_select then display.prob_step_select.active = false end
+  if display.prob_step_info then display.prob_step_info.text = "--" end
+  if display.prob_help then display.prob_help.text = "Fetch variation 1 to edit step probabilities." end
   if display.grid_title then display.grid_title.text = "Pattern" end
   if display.prob_info and not keep_probability then display.prob_info.text = "Not loaded" end
   for _, button in ipairs(grid_buttons) do button.text = "--" end
@@ -134,6 +147,10 @@ local function update_controls()
   state.step = step
   display.step_select.max = p.length
   display.step_select.value = step + C.UI_INDEX_BASE
+  display.prob_step_select.max = p.length
+  display.prob_step_select.value = step + C.UI_INDEX_BASE
+  display.prob_step_info.text = model.step_label(p, step)
+  display.prob_help.text = probability_hint(p, step)
   local s = model.step(p, step)
   state.draft_time = (s.time <= C.TIME_TIE) and s.time or C.TIME_REST
   state.draft_note = s.semitone or C.DEFAULT_SEMITONE
@@ -152,7 +169,7 @@ local function update_controls()
   end
   display.length_select.value = p.length
   local info = model.metadata(p)
-  display.direction_select.value = math.min(info.direction, 5) + 1
+  display.direction_select.value = math.min(info.direction, C.DIRECTION_MAX) + C.UI_INDEX_BASE
   display.triplet_select.value = info.triplet
   display.transpose_select.value = info.transpose
   local is_poly = p.type == "poly"
@@ -160,16 +177,17 @@ local function update_controls()
     local scale = model.scale(p)
     display.scale_enabled.value = scale.enabled
     for i, control in ipairs(scale_boxes) do
-      control.value = protocol.has_flag(scale.mask, 2 ^ (i - 1))
+      control.value = protocol.has_flag(scale.mask, C.BIT_BASE ^ (i - 1))
     end
   end
   for i, control in ipairs(poly_boxes) do
     local value = is_poly and s.voices and s.voices[i] or C.POLY_EMPTY
     if value == nil or value == C.POLY_EMPTY then
-      control.value = C.POLY_VOICES * 13 + 1
+      control.value = C.UI_POLY_EMPTY_INDEX
     else
-      local semi, octave = value % 16, math.floor(value / 16)
-      control.value = semi <= 12 and octave * 13 + semi + 1 or C.POLY_VOICES * 13 + 1
+      local semi, octave = value % C.PITCH_OCTAVE_BASE, math.floor(value / C.PITCH_OCTAVE_BASE)
+      control.value = semi <= C.MAX_SEMITONE and
+        octave * C.PITCH_NOTE_COUNT + semi + C.UI_INDEX_BASE or C.UI_POLY_EMPTY_INDEX
     end
   end
   local prob = state.probability
@@ -202,6 +220,7 @@ local function update_controls()
   display.write_probability.active = not not (editable and
     p.variation == C.VARIATION_CV and prob and prob.pattern == p.pattern and
     prob.group == state.group and not state.pending_probability)
+  display.prob_step_select.active = not not editable
   if display.read_probability then
     display.read_probability.active = not not (editable and p.variation == C.VARIATION_CV)
   end
@@ -254,7 +273,9 @@ local function on_event(event)
     state.pending_write = nil
     state.pattern = event
     update_controls()
-    if display.tabs and display.tabs.value == 4 then display.tabs.value = 1 end
+    if display.tabs and display.tabs.value == C.UI_PAGE.MIDI then
+      display.tabs.value = C.UI_PAGE.STEPS
+    end
     if event.variation == C.VARIATION_CV and
        not state.probability and not state.pending_probability and
        not state.probability_request then
@@ -285,8 +306,12 @@ local function on_event(event)
         local same = actual.accent == expected.accent and
           actual.slide == expected.slide and actual.down == expected.down and
           actual.up == expected.up and actual.double == expected.double
-        status(same and "Probability write confirmed by hardware readback" or
-          "Probability write not confirmed: hardware returned different values")
+        if same then
+          status(string.format("Probability write confirmed by hardware readback: step %d. %s",
+            expected.step + C.UI_INDEX_BASE, probability_hint(state.pattern, expected.step)))
+        else
+          status("Probability write not confirmed: hardware returned different values")
+        end
       else
         status("Probability table received and checksum verified")
       end
@@ -442,12 +467,12 @@ end
 local function write_metadata()
   local p = require_snapshot()
   if not p or p.type == "poly" then return end
-  local raw, issue = model.with_metadata(p, display.direction_select.value - 1,
+  local raw, issue = model.with_metadata(p, display.direction_select.value - C.UI_INDEX_BASE,
     display.triplet_select.value, display.transpose_select.value)
   if not raw then error_message(issue) return end
   if send(protocol.write_blob(p, raw)) then
     fetch_pattern("Reading back...", {kind = "metadata",
-      direction = display.direction_select.value - 1,
+      direction = display.direction_select.value - C.UI_INDEX_BASE,
       triplet = display.triplet_select.value,
       transpose = display.transpose_select.value})
   end
@@ -458,7 +483,7 @@ local function write_scale()
   if not p or p.type == "poly" then return end
   local mask = 0
   for i, control in ipairs(scale_boxes) do
-    if control.value then mask = mask + 2 ^ (i - 1) end
+    if control.value then mask = mask + C.BIT_BASE ^ (i - 1) end
   end
   if mask == 0 then error_message("Scale must contain at least one note") return end
   local enabled = display.scale_enabled.value
@@ -473,12 +498,12 @@ end
 local function write_poly()
   local p = require_snapshot()
   if not p or p.type ~= "poly" then return end
-  local time = display.time_select.value - 1
+  local time = display.time_select.value - C.UI_INDEX_BASE
   local voices = {}
   for i, control in ipairs(poly_boxes) do
-    local v = control.value - 1
-    voices[i] = v >= C.POLY_VOICES * 13 and C.POLY_EMPTY or
-      (v % 13 + math.floor(v / 13) * 16)
+    local v = control.value - C.UI_INDEX_BASE
+    voices[i] = control.value >= C.UI_POLY_EMPTY_INDEX and C.POLY_EMPTY or
+      (v % C.PITCH_NOTE_COUNT + math.floor(v / C.PITCH_NOTE_COUNT) * C.PITCH_OCTAVE_BASE)
   end
   local accent, slide = display.accent_select.value, display.slide_select.value
   if send(model.with_poly_step(p, state.step, time, voices, accent, slide)) then
@@ -532,6 +557,13 @@ local function switch_page(index)
   for i, panel in ipairs(pages) do panel.visible = (i == index) end
 end
 
+local function select_step(value)
+  local step = value - C.UI_INDEX_BASE
+  if state.step == step then return end
+  state.step = step
+  if state.pattern then update_controls() end
+end
+
 local function make_ui()
   vb = renoise.ViewBuilder()
   local function text_view(value)
@@ -548,12 +580,16 @@ local function make_ui()
   display.group_info = text_view("--")
   display.active_info = text_view("--")
   display.config_info = text_view("FW --")
-  display.cfg_channel = vb:valuebox {min = 0, max = 16, value = 1, width = 58}
+  display.cfg_channel = vb:valuebox {min = C.MIDI_CHANNEL_OMNI, max = C.MIDI_CHANNELS,
+    value = C.DEFAULT_MIDI_CHANNEL, width = C.UI_CONFIG_VALUE_WIDTH}
   display.cfg_clock = vb:checkbox {value = false}
   display.cfg_thru = vb:checkbox {value = false}
-  display.cfg_brightness = vb:valuebox {min = 1, max = 8, value = 8, width = 58}
-  display.cfg_var2 = vb:valuebox {min = 1, max = 16, value = 2, width = 58}
-  display.cfg_var3 = vb:valuebox {min = 1, max = 16, value = 3, width = 58}
+  display.cfg_brightness = vb:valuebox {min = C.MIN_BRIGHTNESS, max = C.MAX_BRIGHTNESS,
+    value = C.MAX_BRIGHTNESS, width = C.UI_CONFIG_VALUE_WIDTH}
+  display.cfg_var2 = vb:valuebox {min = C.MIN_MIDI_CHANNEL, max = C.MIDI_CHANNELS,
+    value = C.DEFAULT_VAR2_CHANNEL, width = C.UI_CONFIG_VALUE_WIDTH}
+  display.cfg_var3 = vb:valuebox {min = C.MIN_MIDI_CHANNEL, max = C.MIDI_CHANNELS,
+    value = C.DEFAULT_VAR3_CHANNEL, width = C.UI_CONFIG_VALUE_WIDTH}
   display.write_config = vb:button {text = "Write MIDI config", active = false,
     notifier = write_config}
   display.status = text_view("Ready")
@@ -566,10 +602,12 @@ local function make_ui()
     value = C.UI_INDEX_BASE, width = C.UI_VARIATION_WIDTH, notifier = function() clear_snapshot() end}
   display.step_select = vb:valuebox {min = C.UI_INDEX_BASE, max = C.STEPS,
     value = C.UI_INDEX_BASE, width = C.UI_ADDRESS_WIDTH,
-    notifier = function(value)
-      state.step = value - C.UI_INDEX_BASE
-      if state.pattern then update_controls() end
-    end}
+    notifier = select_step}
+  display.prob_step_select = vb:valuebox {min = C.UI_INDEX_BASE, max = C.STEPS,
+    value = C.UI_INDEX_BASE, width = C.UI_ADDRESS_WIDTH, active = false,
+    notifier = select_step}
+  display.prob_step_info = text_view("--")
+  display.prob_help = text_view("Fetch variation 1 to edit step probabilities.")
   display.time_select = vb:popup {items = {"REST", "NOTE", "TIE"},
     value = C.TIME_NOTE + C.UI_INDEX_BASE, width = C.UI_NOTE_WIDTH}
   display.note_select = vb:popup {
@@ -585,11 +623,11 @@ local function make_ui()
   display.grid_title = text_view("Steps")
   grid_buttons = {}
   local grid_rows = {}
-  for row_index = 0, 3 do
+  for row_index = 0, math.ceil(C.STEPS / C.UI_GRID_COLUMNS) - 1 do
     local buttons = {}
-    for column = 1, 8 do
-      local step_number = row_index * 8 + column
-      local control = vb:button {text = "--", width = 72, active = false,
+    for column = 1, C.UI_GRID_COLUMNS do
+      local step_number = row_index * C.UI_GRID_COLUMNS + column
+      local control = vb:button {text = "--", width = C.UI_GRID_BUTTON_WIDTH, active = false,
         notifier = function()
           if state.pattern then
             state.step = step_number - 1
@@ -599,37 +637,39 @@ local function make_ui()
       grid_buttons[step_number] = control
       buttons[#buttons + 1] = control
     end
-    grid_rows[#grid_rows + 1] = vb:row {spacing = 4, views = buttons}
+    grid_rows[#grid_rows + 1] = vb:row {spacing = C.UI_COMPACT_SPACING, views = buttons}
   end
-  display.grid = vb:column {spacing = 4, views = grid_rows}
-  display.direction_select = vb:popup {items = model.directions, value = 1, width = 135}
+  display.grid = vb:column {spacing = C.UI_COMPACT_SPACING, views = grid_rows}
+  display.direction_select = vb:popup {items = model.directions, value = C.UI_INDEX_BASE,
+    width = C.UI_DIRECTION_WIDTH}
   display.triplet_select = vb:checkbox {value = false}
-  display.transpose_select = vb:valuebox {min = -24, max = 24, value = 0, width = 80}
+  display.transpose_select = vb:valuebox {min = -C.TRANSPOSE_LIMIT, max = C.TRANSPOSE_LIMIT,
+    value = 0, width = C.UI_TRANSPOSE_WIDTH}
   display.write_metadata = vb:button {text = "Write pattern settings", active = false,
     notifier = write_metadata}
   display.scale_enabled = vb:checkbox {value = false}
   scale_boxes = {}
   local scale_views = {}
-  for index = 1, 12 do
+  for index = 1, C.SEMITONES_PER_OCTAVE do
     local control = vb:checkbox {value = true}
     scale_boxes[index] = control
-    scale_views[#scale_views + 1] = vb:column {spacing = 3, views = {
+    scale_views[#scale_views + 1] = vb:column {spacing = C.UI_SCALE_NOTE_SPACING, views = {
       vb:text {text = model.notes[index]}, control}}
   end
-  display.scale_notes = vb:row {spacing = 12, views = scale_views}
+  display.scale_notes = vb:row {spacing = C.UI_SCALE_SPACING, views = scale_views}
   display.write_scale = vb:button {text = "Write scale", active = false,
     notifier = write_scale}
   poly_boxes = {}
   local voice_items = {}
-  for octave = 0, 3 do
-    for semi = 0, 12 do
-      voice_items[#voice_items + 1] = model.pitch_label(octave * 16 + semi)
+  for octave = 0, C.PITCH_OCTAVES - 1 do
+    for semi = 0, C.MAX_SEMITONE do
+      voice_items[#voice_items + 1] = model.pitch_label(octave * C.PITCH_OCTAVE_BASE + semi)
     end
   end
   voice_items[#voice_items + 1] = "--"
   local poly_controls = {}
-  for i = 1, 4 do
-    local voice = vb:popup {items = voice_items, value = #voice_items, width = 100}
+  for i = 1, C.POLY_VOICES do
+    local voice = vb:popup {items = voice_items, value = #voice_items, width = C.UI_NOTE_WIDTH}
     poly_boxes[i] = voice
     poly_controls[#poly_controls + 1] = vb:text {text = "Voice " .. i}
     poly_controls[#poly_controls + 1] = voice
@@ -642,7 +682,8 @@ local function make_ui()
   probability_boxes = {}
   local probability_views = {}
   for i, name in ipairs({"Accent", "Slide", "Down", "Up"}) do
-    local control = vb:valuebox {min = 0, max = 13, value = 0, width = 63}
+    local control = vb:valuebox {min = 0, max = C.PROBABILITY_LEVEL_MAX, value = 0,
+      width = C.UI_PROBABILITY_WIDTH}
     probability_boxes[i] = control
     probability_views[#probability_views + 1] = vb:text {text = name}
     probability_views[#probability_views + 1] = control
@@ -663,12 +704,15 @@ local function make_ui()
 
   display.read_probability = vb:button {text = "Read probabilities",
     notifier = request_probability, active = false}
-  display.scale_root = vb:popup {items = model.scale_roots, value = 1, width = 90}
-  display.scale_preset = vb:popup {items = model.scale_presets, value = 1, width = 145}
+  display.scale_root = vb:popup {items = model.scale_roots, value = C.UI_INDEX_BASE,
+    width = C.UI_SCALE_ROOT_WIDTH}
+  display.scale_preset = vb:popup {items = model.scale_presets, value = C.UI_INDEX_BASE,
+    width = C.UI_SCALE_PRESET_WIDTH}
   display.apply_scale_preset = vb:button {text = "Set mask", notifier = function()
-    local mask = model.preset_mask(display.scale_root.value - 1, display.scale_preset.value)
+    local mask = model.preset_mask(display.scale_root.value - C.UI_INDEX_BASE,
+      display.scale_preset.value)
     for i, control in ipairs(scale_boxes) do
-      control.value = protocol.has_flag(mask, 2 ^ (i - 1))
+      control.value = protocol.has_flag(mask, C.BIT_BASE ^ (i - 1))
     end
   end}
   local steps_page = vb:column {spacing = C.UI_SPACING, views = {
@@ -708,10 +752,15 @@ local function make_ui()
   display.prob_info = text_view("Not loaded")
   local probability_page = vb:column {spacing = C.UI_SPACING, views = {
     vb:row {spacing = C.UI_SPACING, views = {
+      text_view("Step"), display.prob_step_select, display.prob_step_info
+    }},
+    vb:row {spacing = C.UI_SPACING, views = {
       display.read_probability, display.write_probability,
       display.prob_info
     }},
-    display.prob_row
+    display.prob_row,
+    display.prob_help,
+    text_view("Up +24 requires Up above 0.")
   }}
   local midi_page = vb:column {spacing = C.UI_SPACING, views = {
     label_row("MIDI Input", display.in_select),
@@ -737,10 +786,11 @@ local function make_ui()
       display.write_config
     }}
   }}
-  pages = {steps_page, scale_page, probability_page, midi_page}
+  pages = {[C.UI_PAGE.STEPS] = steps_page, [C.UI_PAGE.SCALE] = scale_page,
+    [C.UI_PAGE.PROBABILITY] = probability_page, [C.UI_PAGE.MIDI] = midi_page}
   display.pages = vb:column {spacing = 0, views = pages}
   display.tabs = vb:switch {items = {"Steps", "Scale", "Probability", "MIDI"},
-    value = active_page, notifier = switch_page}
+    value = active_page, width = C.UI_TABS_WIDTH, notifier = switch_page}
   return vb:column {margin = C.UI_MARGIN, spacing = C.UI_SPACING, views = {
     vb:row {spacing = C.UI_SPACING, views = {
       text_view("Pattern"), display.pattern_select,

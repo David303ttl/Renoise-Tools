@@ -72,6 +72,7 @@ end
 local raw = {}
 for i = 1, C.PATTERN_SIZE do raw[i] = 0 end
 raw[1], raw[33], raw[52] = 0x10, 1, 16
+raw[2], raw[33] = 0x11, 1 + 2 * 4 + 16 -- NOTE, TIE, NOTE, REST
 local prob = {}
 for i = 1, C.PROBABILITY_SIZE do prob[i] = 0 end
 prob[1] = 13 + 8 * 16
@@ -128,6 +129,56 @@ assert(write[9] == 3, "high probability bits must be preserved")
 reply(C.COMMAND.PROBABILITY_REPLY, 0, prob)
 assert(status:match("Probability write confirmed"), status)
 
+local step_selectors = {}
+for _, v in ipairs(views) do
+  if v.views and v.views[1] and v.views[1].text == "Step" then
+    step_selectors[#step_selectors + 1] = v.views[2]
+  end
+end
+assert(#step_selectors == 2, "Steps and Probability must both expose step selection")
+local step_editor, probability_step = step_selectors[1], step_selectors[2]
+probability_step.value = 3
+assert(step_editor.value == 3, "probability selection must select the same grid step")
+assert(numbers[1].value == 0 and numbers[2].value == 0 and
+  numbers[3].value == 0 and numbers[4].value == 0, "selection must load that step's levels")
+
+local function change_probability()
+  numbers[1].value, numbers[2].value = 5, 9
+  numbers[3].value, numbers[4].value = 0, 13
+  click("Write probability")
+  local message = sent[#sent - 1]
+  assert(message[3] == C.COMMAND.PROBABILITY and message[5] == 2,
+    "probability write must address the step selected on the Probability tab")
+  assert(message[6] == 21 and message[7] == 80 and message[8] == 0 and message[9] == 3,
+    "changed levels must reach the wire with both high bits intact")
+end
+
+change_probability()
+reply(C.COMMAND.PROBABILITY_REPLY, 0, prob)
+assert(status:match("Probability write not confirmed"), "unchanged readback must reject the edit")
+assert(numbers[1].value == 0, "failed writes must show the returned hardware value")
+change_probability()
+prob[7], prob[8] = 149, 208
+reply(C.COMMAND.PROBABILITY_REPLY, 0, prob)
+assert(status:match("Probability write confirmed") and status:match("step 3") and status:match("NOTE"),
+  "confirmation must identify the edited NOTE step")
+assert(numbers[1].value == 5 and numbers[2].value == 9 and numbers[4].value == 13)
+
+probability_step.value = 2
+assert(control("TIE holds the previous NOTE's probability result. Choose a NOTE step."))
+numbers[1].value = 13
+click("Write probability")
+prob[4] = 13
+reply(C.COMMAND.PROBABILITY_REPLY, 0, prob)
+assert(status:match("step 2") and status:match("TIE holds"),
+  "stored TIE probabilities must explain why playback does not change")
+probability_step.value = 4
+assert(control("This step is silent. Choose a NOTE step to hear probabilities."))
+step_editor.value = 1
+assert(probability_step.value == 1 and numbers[1].value == 13,
+  "Steps selection must update the Probability tab and its values")
+
 send({0x7D, 0x1C, 1})
 assert(control("Write probability").active == false)
+assert(probability_step.active == false, "a cleared snapshot must disable probability selection")
 print("SuperOS-303 scale/probability and tab regression passed")

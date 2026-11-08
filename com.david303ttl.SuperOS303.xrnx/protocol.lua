@@ -139,11 +139,12 @@ function M.decode(message)
     local raw, issue = decode_blob(body, C.POLY_SIZE, C.PACKED_POLY_SIZE)
     if not raw then return nil, issue end
     if body[C.BODY_ADDRESS] >= C.PATTERNS then return nil, "invalid poly address" end
-    if raw[115] < 1 or raw[115] > C.STEPS or raw[113] > C.STEPS then
+    if raw[C.POLY_LENGTH_OFFSET] < C.MIN_LENGTH or raw[C.POLY_LENGTH_OFFSET] > C.STEPS or
+       raw[C.POLY_CHORD_COUNT_OFFSET] > C.STEPS then
       return nil, "invalid poly pattern size"
     end
     return {type = "poly", pattern = body[C.BODY_ADDRESS], variation = C.VARIATION_POLY,
-      raw = raw, length = raw[115]}
+      raw = raw, length = raw[C.POLY_LENGTH_OFFSET]}
   elseif cmd == CMD.PROBABILITY_REPLY then
     if #body ~= C.BLOB_HEADER_SIZE + C.PACKED_PROBABILITY_SIZE then return nil, "unsupported probability length" end
     local raw, issue = decode_blob(body, C.PROBABILITY_SIZE, C.PACKED_PROBABILITY_SIZE)
@@ -253,10 +254,10 @@ end
 
 function M.write_config(original, changes)
   assert(original and type(original.flags) == "number", "read configuration first")
-  local channel = integer(changes.channel, 0, C.MIDI_CHANNELS, "MIDI channel")
+  local channel = integer(changes.channel, C.MIDI_CHANNEL_OMNI, C.MIDI_CHANNELS, "MIDI channel")
   local brightness = integer(changes.brightness, C.MIN_BRIGHTNESS, C.MAX_BRIGHTNESS, "brightness")
-  local v2 = integer(changes.var2_channel, 1, C.MIDI_CHANNELS, "variation 2 channel")
-  local v3 = integer(changes.var3_channel, 1, C.MIDI_CHANNELS, "variation 3 channel")
+  local v2 = integer(changes.var2_channel, C.MIN_MIDI_CHANNEL, C.MIDI_CHANNELS, "variation 2 channel")
+  local v3 = integer(changes.var3_channel, C.MIN_MIDI_CHANNEL, C.MIDI_CHANNELS, "variation 3 channel")
   local preserved = floor(original.flags / C.CONFIG_FLAG.RX_DISABLED) * C.CONFIG_FLAG.RX_DISABLED
   local flags = preserved + (changes.clock and C.CONFIG_FLAG.CLOCK or 0) +
     (changes.thru and C.CONFIG_FLAG.THRU or 0)
@@ -277,9 +278,9 @@ end
 
 function M.write_scale(pat, mask, enabled)
   integer(pat, 0, C.PATTERNS - 1, "pattern")
-  integer(mask, 1, 4095, "scale mask")
+  integer(mask, 1, C.SCALE_MASK_MAX, "scale mask")
   return {C.MANUFACTURER_ID, C.COMMAND.SCALE, pat,
-    mask % 128, floor(mask / 128), enabled and 1 or 0}
+    mask % C.MIDI_DATA_BASE, floor(mask / C.MIDI_DATA_BASE), enabled and 1 or 0}
 end
 
 function M.request_probability(pat)
@@ -290,14 +291,15 @@ end
 function M.write_probability(pat, step, accent, slide, down, up, double)
   integer(pat, 0, C.PATTERNS - 1, "pattern")
   integer(step, 0, C.STEPS - 1, "step")
-  local b0 = integer(accent, 0, 13, "accent level") +
-    16 * integer(slide, 0, 13, "slide level")
-  local b1 = integer(down, 0, 13, "down level") +
-    16 * integer(up, 0, 13, "up level")
-  local b2 = double and 1 or 0
-  local msbs = floor(b0 / 128) + 2 * floor(b1 / 128) + 4 * floor(b2 / 128)
+  local b0 = integer(accent, 0, C.PROBABILITY_LEVEL_MAX, "accent level") +
+    C.NIBBLE_BASE * integer(slide, 0, C.PROBABILITY_LEVEL_MAX, "slide level")
+  local b1 = integer(down, 0, C.PROBABILITY_LEVEL_MAX, "down level") +
+    C.NIBBLE_BASE * integer(up, 0, C.PROBABILITY_LEVEL_MAX, "up level")
+  local b2 = double and C.PROBABILITY_DOUBLE_FLAG or 0
+  local msbs = floor(b0 / C.MIDI_DATA_BASE) + C.BIT_BASE * floor(b1 / C.MIDI_DATA_BASE) +
+    C.BIT_BASE ^ 2 * floor(b2 / C.MIDI_DATA_BASE)
   return {C.MANUFACTURER_ID, C.COMMAND.PROBABILITY, pat, step,
-    b0 % 128, b1 % 128, b2 % 128, msbs}
+    b0 % C.MIDI_DATA_BASE, b1 % C.MIDI_DATA_BASE, b2 % C.MIDI_DATA_BASE, msbs}
 end
 
 return M

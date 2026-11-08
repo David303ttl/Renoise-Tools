@@ -53,7 +53,10 @@ Install `dist/com.david303ttl.SuperOS303_0.1.xrnx` and open
   newly loaded variation-1 pattern. **Read probabilities** refreshes on demand.
   Set accent, slide, down/up levels (0..13) and double-up, then **Write
   probability**. Readback validates the requested step and preserves the table
-  when that same pattern is refreshed.
+  when that same pattern is refreshed. Select the target step on the Probability
+  tab; selection is shared with Steps. Probabilities roll on NOTE steps. TIE
+  holds the previous NOTE's result and REST is silent. Level 0 disables a
+  characteristic; 13 always applies it. **Up +24** requires a nonzero Up level.
 - **MIDI configuration**: MIDI listen channel (0=omni), external clock
   receive, MIDI Thru, LED brightness, and variation 2/3 output channels.
   **Write MIDI config** preserves the device's current SysEx RX/TX flags.

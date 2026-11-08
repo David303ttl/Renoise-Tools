@@ -28,3 +28,9 @@ step** while playback runs. Check that no prompt appears, readback confirms
 the edit, and a second write works without **Fetch**. Hardware panel edits
 should refresh automatically. The background check verifies the data and MIDI
 output; panel display and analog audio require checking the physical hardware.
+
+On the Probability tab, check that the tab labels and selected step are visible.
+Choose a NOTE step, set Up to 13 with Down at 0, then **Write probability** and
+check the octave change on its next playback, within the hardware pitch range.
+Select a TIE or REST and check the explanation of why that step does not roll
+probabilities. Confirm that step selection stays synchronized with Steps.
