@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<RenoiseScriptingTool doc_version="0">
+  <ApiVersion>6.2</ApiVersion>
+  <Id>com.david303ttl.MidiMonitor</Id>
+  <Version>0.1</Version>
+  <Author>David303ttl</Author>
+  <Name>MIDI Monitor</Name>
+  <Category>MIDI</Category>
+  <Description>Raw MIDI and SysEx input/output monitor</Description>
+  <License>GPL-3.0-only</License>
+  <LicensePath>LICENSE</LicensePath>
+</RenoiseScriptingTool>

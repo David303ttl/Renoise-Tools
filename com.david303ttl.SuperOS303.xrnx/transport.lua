@@ -1,12 +1,15 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Renoise raw MIDI device adapter. Only non-bootloader SuperOS opcodes are sent.
 local protocol = require("protocol")
+local C = require("constants")
+local CMD = C.COMMAND
 local Transport = {}
 Transport.__index = Transport
 
 local allowed = {
-  [0x10] = true, [0x16] = true, [0x18] = true, [0x1D] = true,
-  [0x1F] = true, [0x20] = true, [0x22] = true, [0x28] = true
+  [CMD.REQUEST_PATTERN] = true, [CMD.WRITE_STEP] = true, [CMD.WRITE_LENGTH] = true,
+  [CMD.QUEUE_PATTERN] = true, [CMD.EDIT_VARIATION] = true, [CMD.REQUEST_CONFIG] = true,
+  [CMD.WRITE_CONFIG] = true, [CMD.WRITE_RATCHET] = true
 }
 
 function Transport.new(on_event)
@@ -60,7 +63,7 @@ end
 
 function Transport:send(body)
   if not self:is_open() then return false, "MIDI ports not connected" end
-  if not allowed[body[2]] then return false, "unsupported or unsafe SuperOS opcode" end
+  if not allowed[body[C.BODY_COMMAND]] then return false, "unsupported or unsafe SuperOS opcode" end
   local ok, err = pcall(function() self.output:send(protocol.frame(body)) end)
   if not ok then return false, "MIDI send failed: " .. tostring(err) end
   return true

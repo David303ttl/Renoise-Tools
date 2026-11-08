@@ -24,12 +24,53 @@ eq(event.pattern, 3)
 eq(event.variation, 1)
 eq(event.length, 16)
 
-msg[6] = (msg[6] + 1) % 128
-local invalid, err = p.decode(p.frame(msg))
-assert(invalid == nil and err == "checksum mismatch")
+for _, index in ipairs({6, 7}) do
+  local saved = msg[index]
+  -- Flip one bit: multiple MSB flips can cancel in the XOR checksum.
+  msg[index] = saved + (saved % 2 == 0 and 1 or -1)
+  local invalid, err = p.decode(p.frame(msg))
+  assert(invalid == nil, "corrupted packed byte " .. index .. " must be rejected")
+  eq(err, "checksum mismatch", "corrupted packed byte " .. index)
+  msg[index] = saved
+end
 local short = assert(p.decode({0xF0, 0x7D, 0x21, 1, 3, 0, 8, 2, 3, 0xF7}))
 eq(short.type, "config")
 eq(short.var3_channel, 3)
+
+local active = assert(p.decode(p.frame({0x7D, 0x1E, 8, 2})))
+eq(active.type, "active")
+eq(active.pattern, 8)
+eq(active.group, 2)
+local position = assert(p.decode(p.frame({0x7D, 0x15, 8, 17, 2})))
+eq(position.type, "position")
+eq(position.step, 17)
+eq(position.group, 2)
+for _, body in ipairs({
+  {0x7D, 0x15, 8, 0}, {0x7D, 0x15, 8, 32, 2},
+  {0x7D, 0x15, 8, 0, 4}, {0x7D, 0x1E, 8, 4}
+}) do
+  local invalid, issue = p.decode(p.frame(body))
+  assert(invalid == nil)
+  eq(issue, "invalid pattern selection")
+end
+
+for _, edit in ipairs({
+  {{0x7D, 0x16, 0, 0, 0, 0, 1}, 0},
+  {{0x7D, 0x16, 0, 0, 0, 0, 1, 1}, 1},
+  {{0x7D, 0x18, 0, 8, 2}, 2},
+  {{0x7D, 0x28, 0, 0, 2}, 0},
+  {{0x7D, 0x29, 0, 1}, 2},
+  {{0x7D, 0x2A, 0, 0, 0, 1, 1}, 1}
+}) do
+  local changed = assert(p.decode(p.frame(edit[1])))
+  eq(changed.type, "changed")
+  eq(changed.variation, edit[2], "hardware edit variation")
+end
+for _, body in ipairs({{0x7D, 0x16}, {0x7D, 0x16, 0, 0, 0, 0, 1, 3}}) do
+  local invalid, issue = p.decode(p.frame(body))
+  assert(invalid == nil)
+  eq(issue, "invalid hardware edit")
+end
 
 local cfg = p.write_config({flags = 12, direction = 2},
   {channel = 0, clock = true, thru = false,

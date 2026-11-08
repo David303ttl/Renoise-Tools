@@ -23,13 +23,15 @@ Use **Tools > SuperOS-303...** (or the Pattern Editor menu).
    Select **both** ports in the tool and click **Connect**.
 2. **Read config** queries SysEx 0x20 and should receive 0x21 (configuration)
    and 0x1C (active group). The displayed group is read from the hardware.
-3. Pick pattern 1-16 and variation 1-3; click **Fetch**. Normal mono
-   patterns are checked against the current 60-byte firmware blob format and
-   XOR checksum; the panel shows length and the selected step's state.
+3. Pick pattern A1-A8 or B1-B8 and variation 1-3; click **Fetch**. The tool
+   reports the hardware's active pattern and fetches it with **Use hardware
+   pattern**. Choosing a pattern in the editor only selects what to edit.
+   Mono patterns are checked against the 60-byte firmware format and checksum.
 4. For **variation 1** only, choose a step and adjust NOTE/REST/TIE,
-   pitch, accent, slide, ratchet or length. Each Write button asks for
-   confirmation. After a successful MIDI send, **Fetch** to verify hardware
-   state. No writes occur simply by changing controls.
+   pitch, accent, slide, ratchet or length. Write buttons apply immediately,
+   including during playback. Each write triggers an automatic readback; a
+   mismatch displays the returned value. Use **Fetch** to retry a missing reply.
+   Changing controls alone does not write to hardware.
 5. **Queue pattern** selects a pattern at the next hardware pattern wrap
    (immediately when stopped). **Set edit variation** sends the hardware
    edit-target command. Both prompt before sending.
@@ -40,13 +42,12 @@ Use **Tools > SuperOS-303...** (or the Pattern Editor menu).
   request command addresses 16 slots inside its currently active group; a
   pattern number alone does not select a group. Switching hardware groups
   invalidates the cached snapshot.
-- **Variations 2 and 3 are read-only** in this initial editor. Variation 3
-  poly responses are recognized rather than decoded as mono; full chord
-  editing is reserved for a later update.
+- **Variations 2 and 3 are read-only.** Variation 3 poly messages are
+  recognized; chord editing is not supported.
 - Variation 1 edits affect hardware pattern storage. Save a backup with the
   working desktop editor before testing writes.
-- Incoming hardware edits invalidate the cached pattern; fetch again before
-  writing. A successful send means the MIDI driver accepted the message,
+- Incoming hardware edits to the displayed variation refresh the cached pattern
+  automatically. A successful send means the MIDI driver accepted the message,
   not that the hardware persisted it. Readback is required.
 - SysEx RX and TX must be enabled on the hardware. An unmatched or incomplete
   response is not interpreted as a connected device.

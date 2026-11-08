@@ -1,0 +1,56 @@
+-- SPDX-License-Identifier: GPL-3.0-only
+local C = {
+  MAX_ENTRIES = 500,
+  REFRESH_MS = 100,
+  PORT_WIDTH = 280,
+  PORT_LABEL_WIDTH = 70,
+  LOG_WIDTH = 800,
+  LOG_HEIGHT = 360,
+  SEND_WIDTH = 570,
+  MARGIN = 10,
+  SPACING = 8,
+  STATUS_INDEX = 1,
+  VELOCITY_INDEX = 3,
+  DATA_START = 2,
+  STATUS_MIN = 0x80,
+  DATA_MAX = 0x7F,
+  STATUS_GROUP_SIZE = 0x10,
+  NOTE_OFF = 0x80,
+  NOTE_ON = 0x90,
+  POLY_PRESSURE = 0xA0,
+  CONTROL_CHANGE = 0xB0,
+  PROGRAM_CHANGE = 0xC0,
+  CHANNEL_PRESSURE = 0xD0,
+  PITCH_BEND = 0xE0,
+  SYSEX_START = 0xF0,
+  SYSEX_END = 0xF7,
+  TIME_CODE = 0xF1,
+  SONG_POSITION = 0xF2,
+  SONG_SELECT = 0xF3,
+  TUNE_REQUEST = 0xF6,
+  CLOCK = 0xF8,
+  START = 0xFA,
+  CONTINUE = 0xFB,
+  STOP = 0xFC,
+  ACTIVE_SENSING = 0xFE,
+  RESET = 0xFF,
+  CHANNEL_MESSAGE_BYTES = 3,
+  PROGRAM_MESSAGE_BYTES = 2,
+  REALTIME_MESSAGE_BYTES = 1,
+  SYSEX_MIN_BYTES = 2,
+  HEX_BYTE_PATTERN = "^%x%x$",
+  HEX_BYTE_FORMAT = "%02X"
+}
+
+C.MESSAGE_NAMES = {
+  [C.NOTE_OFF] = "Note off", [C.NOTE_ON] = "Note on",
+  [C.POLY_PRESSURE] = "Poly pressure", [C.CONTROL_CHANGE] = "CC",
+  [C.PROGRAM_CHANGE] = "Program", [C.CHANNEL_PRESSURE] = "Pressure",
+  [C.PITCH_BEND] = "Pitch bend", [C.SYSEX_START] = "SysEx",
+  [C.TIME_CODE] = "Time code", [C.SONG_POSITION] = "Song position",
+  [C.SONG_SELECT] = "Song select", [C.TUNE_REQUEST] = "Tune request",
+  [C.CLOCK] = "Clock", [C.START] = "Start", [C.CONTINUE] = "Continue",
+  [C.STOP] = "Stop", [C.ACTIVE_SENSING] = "Active sensing", [C.RESET] = "Reset"
+}
+
+return C

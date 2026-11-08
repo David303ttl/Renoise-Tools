@@ -54,6 +54,7 @@ Manual cases requiring listening or physical interaction are documented by tool:
 - [ACID editor presentation](acid/acid_editor_presentation_manual.md)
 - [ACID operations](acid/acid_operations_manual.md)
 - [DigitaktSampleChain](../com.david303ttl.DigitaktSampleChain.xrnx/README.md#verification)
+- [SuperOS-303 live hardware editing](superos303/README.md)
 
 ## Packaging
 
